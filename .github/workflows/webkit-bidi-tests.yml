@@ -1,0 +1,86 @@
+name: WebKit BiDi Tests
+
+on:
+  workflow_dispatch: # You can also use 'push' or 'pull_request'
+
+jobs:
+  run-bidi-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout WebKit
+        uses: actions/checkout@v4
+        with:
+          repository: WebKit/WebKit
+          path: WebKit
+          fetch-depth: 1
+
+      - name: Install WebKit dependencies
+        run: |
+          sudo apt update
+          
+          # Add GCC 13 repository
+          sudo apt install -y software-properties-common
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+          sudo apt update
+          
+          # Install GCC 13 and set as default
+          sudo apt install -y gcc-13 g++-13
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
+          
+          # Verify GCC version
+          gcc --version
+          g++ --version
+                    
+      - name: Install WebKit dependencies using WebKit's script
+        run: |
+          cd WebKit
+          # Use WebKit's own dependency installer
+          sudo Tools/wpe/install-dependencies
+
+      - name: Build WebKit (WPE)
+        run: |
+          cd WebKit
+          # Set environment for headless build
+          export DISPLAY=:99
+          # Start virtual display
+          Xvfb :99 -screen 0 1024x768x24 &
+          sleep 2
+          
+          # Build with minimal configuration for testing
+          Tools/Scripts/build-webkit \
+            --wpe \
+            --release \
+            --minimal \
+            --no-experimental-features
+
+      - name: Import WebDriver tests
+        run: |
+          cd WebKit
+          Tools/Scripts/import-webdriver-tests --w3c
+
+      - name: Run BiDi tests
+        run: |
+          cd WebKit
+          export DISPLAY=:99
+          
+          # Run the BiDi tests
+          Tools/Scripts/run-webdriver-tests \
+            --wpe \
+            --release \
+            --display-server=xvfb \
+            --timeout=300 \
+            --verbose \
+            imported/w3c/webdriver/tests/bidi/
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bidi-test-results
+          path: |
+            WebKit/WebKitBuild/Release/webdriver-test-results/
+            WebKit/layout-test-results/
+          retention-days: 7

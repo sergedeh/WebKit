@@ -3224,7 +3224,13 @@
         "expected": { "all": { "status": ["SKIP"], "bug": "webkit.org/b/288058"}}
     },
     "imported/w3c/webdriver/tests/bidi/script/disown/handles.py": {
-        "expected": { "all": { "status": ["SKIP"], "bug": "webkit.org/b/288059"}}
+        "expected": { "all": { "status": ["PASS"], "bug": "webkit.org/b/288059"}},
+            "subtests": {
+            "test_basic_handle": {"expected": {"all": {"status": ["PASS"]}}},
+            "test_multiple_handles_for_different_objects": {"expected": {"all": {"status": ["SKIP"]}}},
+            "test_multiple_handles_for_same_object": {"expected": {"all": {"status": ["SKIP"]}}},
+            "test_unknown_handle": {"expected": {"all": {"status": ["SKIP"]}}}
+        }
     },
     "imported/w3c/webdriver/tests/bidi/script/disown/invalid.py": {
         "expected": { "all": { "status": ["SKIP"], "bug": "webkit.org/b/288059"}}

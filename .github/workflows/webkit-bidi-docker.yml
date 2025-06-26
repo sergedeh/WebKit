@@ -1,0 +1,45 @@
+name: WebKit GTK Test (using webkitdev equivalent for Linux)
+
+on: [push, pull_request, workflow_dispatch] # workflow_dispatch allows manual triggering
+
+jobs:
+  test-webkit-gtk:
+    runs-on: ubuntu-latest # act will use your local Docker daemon on Ubuntu
+
+    container:
+      # This is the 'webkitdev' equivalent for building and testing WebKit on Linux (GTK/WPE).
+      # It provides all the necessary tools and dependencies in a pre-configured environment.
+      image: ghcr.io/igalia/webkit-container-sdk:webkit-2.44-sdk-1 # <--- CHANGED THIS LINE
+
+    steps:
+      - name: Checkout WebKit Source
+        uses: actions/checkout@v4
+        with:
+          repository: WebKit/WebKit # Or your fork
+          path: webkit
+          # fetch-depth: 0 # Uncomment if a full clone is needed
+
+      - name: Configure and Build WebKit (GTK Debug) 
+        run: |
+          echo "Starting WebKit build for GTK port..."
+          cd webkit
+          # Use the build script provided by WebKit.
+          # Change --gtk to --wpe if targeting the WPE port.
+          ./Tools/Scripts/build-webkit --gtk --debug
+          echo "WebKit build completed."
+
+      - name: Run WebKit Layout Tests (Subset)
+        run: |
+          echo "Starting WebKit layout tests..."
+          cd webkit
+          # Running all layout tests can take many hours.
+          # Here, we run a very specific and fast test.
+          # You can specify directories like 'fast/css/' or 'editing/'.
+          ./Tools/Scripts/run-webkit-tests --gtk fast/css/text-emphasis-color.html
+
+      - name: Display Test Logs Path (Informational)
+        run: |
+          echo "Test results, if any, would typically be found in: $(pwd)/LayoutTests/results/"
+          # For actual GitHub Actions runs, you'd use 'actions/upload-artifact@v4' here
+          # to save generated results for review.
+        if: always() # Run this step even if previous steps fail

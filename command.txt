@@ -1,0 +1,382 @@
+    1  su frawa
+    2  ps -aux
+    3  Tools/Scripts/build-webkit --wpe --debug
+    4  export CC=clang
+    5  export CXX=clang++
+    6  Tools/Scripts/build-webkit --wpe --debug
+    7  Tools/Scripts/update-webkitwpe-libs
+    8  Tools/Scripts/build-webkit --wpe
+    9  sudo apt install flatpak
+   10  sudo update
+   11  sudo apt update
+   12  sudo apt install flatpak
+   13  Tools/Scripts/update-webkitwpe-libs
+   14  Tools/Scripts/build-webkit --wpe
+   15  git submodule update --init --recursive
+   16  Tools/Scripts/build-webkit --wpe
+   17  git submodule deinit -f .
+   18  git submodule update --init --recursive
+   19  Tools/Scripts/build-webkit --wpe
+   20  cd Source/ThirdParty/ANGLE
+   21  git reset --hard
+   22  git clean -fdx
+   23  git submodule update --init --recursive
+   24  cd ..
+   25  la
+   26  ls
+   27  cd ..
+   28  ls
+   29  git submodule update --init --recursive
+   30  ls third_party/zlib/google/compression_utils_portable.h
+   31  cd Source/ThirdParty/ANGLE
+   32  ls third_party/zlib/google/compression_utils_portable.h
+   33  ls
+   34  ls third_party/
+   35  cd ..
+   36  rm -rf WebKit/
+   37  ls
+   38  cd WebKit/
+   39  ls third_party/zlib/google/compression_utils_portable.h
+   40  Tools/Scripts/update-webkitwpe-libs
+   41  Tools/Scripts/build-webkit --wpe
+   42  ls
+   43  cd Source/
+   44  ls third_party/zlib/google/compression_utils_portable.h
+   45  ls third_party
+   46  ls
+   47  cd ThirdParty/
+   48  ls
+   49  cd ANGLE/
+   50  ls
+   51  ls third_party/zlib/google/compression_utils_portable.h
+   52  ls third_party
+   53  cd ..
+   54  mv ANGLE ANGLE.broken
+   55  cd ..
+   56  git submodule deinit -f Source/ThirdParty/ANGLE
+   57  rm -rf .git/modules/Source/ThirdParty/ANGLE
+   58  git submodule update --init --recursive Source/ThirdParty/ANGLE
+   59  ls Source/ThirdParty/ANGLE/third_party/zlib/google/compression_utils_portable.h
+   60  rm -rf .git/modules/Source/ThirdParty/ANGLE
+   61  rm -rf .git/modules/Source/ThirdParty/ANGLE.broken
+   62  git submodule update --init --recursive Source/ThirdParty/ANGLE
+   63  Source/ThirdParty/ANGLE/third_party/zlib/google/compression_utils_portable.h
+   64  grep ANGLE .gitmodules
+   65  cd ..
+   66  rm -rf WebKit/
+   67  git clone --depth=1 https://github.com/WebKit/WebKit.git
+   68  cd WebKit
+   69  git submodule update --init --recursive
+   70  ls .gitmodules
+   71  cd ..
+   72  rm -rf WebKit/
+   73  git clone https://git.webkit.org/git/WebKit.git
+   74  git clone https://github.com/WebKit/WebKit.git WebKit
+   75  cd WebKit/
+   76  Tools/wpe/install-dependencies
+   77  Tools/Scripts/update-webkitwpe-libs
+   78  Tools/Scripts/build-webkit --wpe --debug
+   79  sudo apt install clang
+   80  export CC=clang
+   81  export CXX=clang++
+   82  Tools/Scripts/build-webkit --wpe
+   83  Tools/Scripts/run-webkit-wpt --wpe --bidi
+   84  ls
+   85  ls Tools
+   86  ls Tools/Scripts/
+   87  Tools/Scripts/run-wpe-tests --wpe --bidi
+   88  Tools/Scripts/run-wpe-tests --wpe
+   89  passwd
+   90  git clone https://serge.deh%40gitstart.dev:ughulemu2024@git.gitstart.com/opensource/15151/WebKit
+   91  ls
+   92  cd WebKit/
+   93  code .
+   94  cd ..
+   95  ls
+   96  git clone https://serge.deh%40gitstart.dev:ughulemu2024@git.gitstart.com/opensource/15151/WebKit --recursive
+   97  cd WebKit/
+   98  WebKitBuild/WPE/Debug/bin/WPEWebDriver --port=9222 &
+   99  WebKitBuild/WPE/Debug/bin/MiniBrowser --automation --remote-debugging-port=9222 &
+  100  webdriver/tests/bidi/session/status/
+  101  ls
+  102  ps aux
+  103  WebKitBuild/WPE/Debug/bin/WPEWebDriver --port=9222 &
+  104  WebKitBuild/WPE/Debug/bin/MiniBrowser --automation &
+  105  WPEWebDriver --port=9222 &
+  106  WPE_BACKEND=fdo MiniBrowser --automation &
+  107  WebKitBuild/WPE/Debug/bin/WPEWebDriver --port=9223 &
+  108  WebKitBuild/WPE/Debug/bin/WPEWebDriver --port=9222 &
+  109  WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=127.0.0.1 --port=9222
+  110  ps aux
+  111  kill -9 3
+  112  WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=127.0.0.1 --port=9222
+  113  WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=127.0.0.1 --port=9222
+  114  git clone https://github.com/web-platform-tests/wpt.git
+  115  git clone https://github.com/web-platform-tests/wpt.git
+  116  exit
+  117  git clone https://github.com/web-platform-tests/wpt.git
+  118  ln -s /run/host/home/sergedeh/wpt /app/wpt
+  119  cd wpt
+  120  cd /app/wpt
+  121  ls
+  122  pwd
+  123  ln -s /home/sergedeh/wpt /app/wpt
+  124  ls /app
+  125  ls /app/wpt
+  126  ls /app/webkit/
+  127  rm -rf app/wpt
+  128  ln -s /home/sergedeh/wpt /app/wpt
+  129  rm -rf app/wpt
+  130  rm -rf /app/wpt
+  131  ln -s /home/sergedeh/wpt /app/wpt
+  132  ls /app/wpt
+  133  ./wpt run   --binary=/app/webkit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=/app/webkit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/
+  134  cd ..
+  135  cd wpt
+  136  ./wpt run   --binary=/app/webkit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=/app/webkit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/
+  137  ./wpt run   --binary=/app/webkit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=/app/webkit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/
+  138  ./wpt run   --binary=/app/webkit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=/app/webkit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status
+  139  ./wpt run   --binary=/app/webkit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=/app/webkit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status
+  140  netstat -tuln | grep 9222
+  141  ss -tuln | grep 9222
+  142  python3 -c "import socket; s = socket.socket(); print(s.connect_ex(('127.0.0.1', 9222)))"
+  143  python3 -c "import socket; s = socket.socket(); print(s.connect_ex(('127.0.0.1', 9222)))"
+  144   WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=0.0.0.0 --port=9222
+  145  cd ..
+  146  cd WebKit/
+  147   WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=0.0.0.0 --port=9222
+  148  python3 -c "import socket; s = socket.socket(); print(s.connect_ex(('127.0.0.1', 9222)))"
+  149  ps aux
+  150  kill -9 1
+  151  python3 -c "import socket; s = socket.socket(); print(s.connect_ex(('127.0.0.1', 9222)))"
+  152  pkill WebKitBuild/WPE/Debug/bin/WPEWebDriver
+  153  pkill WPEWebDriver
+  154  python3 -c "import socket; s = socket.socket(); print(s.connect_ex(('127.0.0.1', 9222)))"
+  155  exit
+  156  Tools/Scripts/webkit-flatpak --wpe
+  157  WPE_BACKEND=fdo WebKitBuild/WPE/Debug/bin/MiniBrowser --automation
+  158  WPE_BACKEND=headless WebKitBuild/WPE/Debug/bin/MiniBrowser --automation
+  159  ls /usr/lib*/wpebackend-*/libWPEBackend-*.so*
+  160  WPE_BACKEND=headless WebKitBuild/WPE/Debug/bin/MiniBrowser --automation
+  161  ls
+  162  WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=127.0.0.1 --port=9222
+  163  ps aux
+  164  kill -9 1
+  165  WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=127.0.0.1 --port=9222
+  166  python3 -c "import socket; s = socket.socket(); print(s.connect_ex(('127.0.0.1', 9222)))"
+  167  WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=0.0.0.0 --port=9222
+  168  Tools/Scripts/webkit-flatpak --wpe
+  169  mkdir -p ~/WebKitNativeBuild
+  170  cd ~/WebKitNativeBuild
+  171  cmake ~/WebKit   -DPORT=WPE   -DCMAKE_BUILD_TYPE=Debug   -DENABLE_MINIBROWSER=ON   -DWPE_BACKEND=headless   -G Ninja
+  172  sudo apt update
+  173  sudo apt install libwpe-1.0-dev libwpebackend-fdo-1.0-dev libegl1-mesa-dev
+  174  sudo apt update
+  175  sudo apt install libwpe-1.0-dev libwpebackend-fdo-1.0-dev libegl1-mesa-dev
+  176  docker run -it wpewebkit/wpewebkit bash
+  177  sudo apt install docker.io      # version 26.1.3-0ubuntu1~24.04.1, or
+  178  docker run -it wpewebkit/wpewebkit bash
+  179  sudo docker run -it wpewebkit/wpewebkit bash
+  180  # Create a build folder
+  181  mkdir -p ~/wpe-deps && cd ~/wpe-deps
+  182  # Clone libwpe
+  183  git clone https://github.com/WebPlatformForEmbedded/libwpe.git
+  184  cd libwpe
+  185  meson setup builddir --prefix=$HOME/wpe-install
+  186  ninja -C builddir install
+  187  # Clone wpebackend-fdo
+  188  cd ~/wpe-deps
+  189  git clone https://github.com/Igalia/wpebackend-fdo.git
+  190  cd wpebackend-fdo
+  191  meson setup builddir --prefix=$HOME/wpe-install
+  192  ninja -C builddir install
+  193  ls
+  194  cd ~
+  195  rm -rf wpe-deps/
+  196  ls
+  197  mkdir -p ~/wpe-deps && cd ~/wpe-deps
+  198  git clone https://github.com/WebPlatformForEmbedded/libwpe.git
+  199  cd libwpe
+  200  meson setup builddir --prefix=$HOME/wpe-install
+  201  ninja -C builddir install
+  202  export PKG_CONFIG_PATH=$HOME/wpe-install/lib/pkgconfig:$PKG_CONFIG_PATH
+  203  export LD_LIBRARY_PATH=$HOME/wpe-install/lib:$LD_LIBRARY_PATH
+  204  export PATH=$HOME/wpe-install/bin:$PATH
+  205  cd ~/wpe-deps
+  206  git clone https://github.com/Igalia/wpebackend-fdo.git
+  207  cd wpebackend-fdo
+  208  meson setup builddir --prefix=$HOME/wpe-install
+  209  ninja -C builddir install
+  210  ls ~/wpe-install/lib/pkgconfig/libwpe-1.0.pc
+  211  ls ~/wpe-deps/lib/pkgconfig/libwpe-1.0.pc
+  212  ls ~/wpe-deps
+  213  ls ~/wpe-deps/libwpe
+  214  ./wpt run --binary=$PWD/WebKitBuild/WPE/Debug/bin/MiniBrowser webkitgtk --bidi webdriver/tests/bidi/session/status/
+  215  cd wpt
+  216  ls
+  217  cd Tools/Scripts/webkitpy/w3c/wpt
+  218  cd Tools/Scripts/webkitpy/w3c
+  219  ls
+  220  ./wpt run --binary=$PWD/WebKitBuild/WPE/Debug/bin/MiniBrowser webkitgtk --bidi webdriver/tests/bidi/session/status/
+  221  pip install -r requirements.txt
+  222  sudo apt install python3-pip
+  223  pip install -r requirements.txt
+  224  cd ..
+  225  ls
+  226  cd w3c
+  227  ls
+  228  pip install
+  229  cd ..
+  230  Tools/Scripts/run-webdriver-tests --verbose --wpe --release --display-server=xvfb
+  231  ./Tools/Scripts/import-webdriver-tests --w3c`
+  232  ./Tools/Scripts/import-webdriver-tests --w3c
+  233  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   webkitgtk   --bidi   webdriver/tests/bidi/
+  234  cd /home/sergedeh/WebKit/WebKitBuild/WPE
+  235  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   webkitgtk   --bidi   webdriver/tests/bidi/
+  236  cd ~/WebKit/
+  237  Tools/Scripts/run-webdriver-tests --verbose --wpe --bidi --release
+  238  cd ~
+  239  git clone https://github.com/web-platform-tests/wpt.git
+  240  cd wpt
+  241  python3 -m venv venv
+  242  source venv/bin/activate
+  243  pip install .
+  244  sudo apt install python3.12-venv
+  245  python3 -m venv venv
+  246  source venv/bin/activate
+  247  pip install .
+  248  ls
+  249  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   webkitgtk   --bidi   webdriver/tests/bidi/session/status/
+  250  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   webkitgtk   webdriver/tests/bidi/session/status/
+  251  ./wpt make-hosts-file | sudo tee -a /etc/hosts
+  252  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   webkitgtk   webdriver/tests/bidi/session/status/
+  253  ./wpt serve
+  254  ./wpt run   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  255  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  256  ~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver --version
+  257  sudo apt install libwpebackend-fdo-1.0-1
+  258  sudo apt search libwpebackend
+  259  sudo apt install libwpe-1.0-1 libwpewebkit-1.0-3
+  260  find ~/WebKit -name 'libWPEBackend-fdo-1.0.so.1'
+  261  export LD_LIBRARY_PATH=~/WebKit/WebKitBuild/UserFlatpak/runtime/org.webkit.Platform/x86_64/23.08/06bc45d1ffe57fe45794ae55c1a2c1c5702687b988fdfbfb2bfdf97d97d481c6/files/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+  262  ldd ~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser
+  263  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  264  ldd ~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser
+  265  ./wpt run --install-browser --channel=nightly   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  266  unset LD_LIBRARY_PATH
+  267  ./wpt run --install-browser --channel=nightly   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  268  WPEWebDriver
+  269  ./wpt run --install-browser --channel=nightly   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  270  ln -s /home/sergedeh/wpt /app/wpt
+  271  ./wpt run --install-browser --channel=nightly   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  272  cd ..
+  273  cd wpt
+  274  ./wpt run --install-browser --channel=nightly   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  275  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  276  Tools/Scripts/run-webkit-wpt --wpe --bidi
+  277  cd ..
+  278  cd WebKit
+  279  Tools/Scripts/run-webkit-wpt --wpe --bidi
+  280  ls
+  281  WebKitBuild/WPE/Debug/bin/WPEWebDriver --port=9222
+  282  python3 -c "import socket; s = socket.socket(); print(s.connect_ex(('127.0.0.1', 9222)))"
+  283  WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=0.0.0.0 --port=9222
+  284  python3 -c "import socket; s = socket.socket(); print(s.connect_ex(('127.0.0.1', 9222)))"
+  285  WebKitBuild/WPE/Debug/bin/WPEWebDriver --host=0.0.0.0 --port=9222 &
+  286  python3 -c "import socket; s = socket.socket(); print(s.connect_ex(('127.0.0.1', 9222)))"
+  287  cd ..
+  288  cd wpt
+  289  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  290  sudo apt install mesa-utils libgl1-mesa-dri libgles2-mesa libegl1-mesa
+  291  apt install mesa-utils libgl1-mesa-dri libgles2-mesa libegl1-mesa
+  292  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  293  WPE_BACKEND=fdo EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=1 ~/WebKit/WebKitBuild/WPE/Release/bin/MiniBrowser https://example.com
+  294  exit
+  295  podman exec -it c9d74dd43889 /bin/sh
+  296  cd ..
+  297  ls
+  298  cd WebKitNativeBuild/
+  299  ls
+  300  cmake ~/WebKit   -DPORT=WPE   -DCMAKE_BUILD_TYPE=Debug   -DENABLE_MINIBROWSER=ON
+  301  sudo apt install libwpe-1.0-dev
+  302  sudo apt install git meson ninja-build libegl1-mesa-dev libgles2-mesa-dev libxkbcommon-dev
+  303  git clone https://github.com/WebPlatformForEmbedded/libwpe.git
+  304  cd libwpe/
+  305  meson setup builddir
+  306  ninja -C builddir
+  307  sudo ninja -C builddir install
+  308  sudo ldconfig
+  309  ls
+  310  cd ..
+  311  cd WebKit
+  312  Tools/Scripts/build-webkit --wpe
+  313  cd ..
+  314  cd wpt
+  315  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  316  cd ..
+  317  git clone https://github.com/Igalia/wpebackend-fdo.git
+  318  cd wpebackend-fdo
+  319  meson setup builddir
+  320  ninja -C builddir
+  321  sudo ninja -C builddir install
+  322  sudo ldconfig
+  323  cd ..
+  324  cd wpt
+  325  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  326  Tools/Scripts/build-webkit --wpe
+  327  cd ..
+  328  cd WebKit
+  329  Tools/Scripts/build-webkit --wpe
+  330  Tools/Scripts/run-minibrowser --release --wpe
+  331  cd ..
+  332  cd wpt
+  333  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  334  cd ..
+  335  cd WebKit
+  336  WPE_BACKEND=Headless Tools/Scripts/run-minibrowser --wpe
+  337  Tools/Scripts/build-webkit   --wpe   --cmakeargs="-DENABLE_WPE_BACKEND_HEADLESS=ON -DENABLE_WPE_BACKEND_FDO=OFF"
+  338  Tools/Scripts/run-minibrowser --release --wpe
+  339  WPE_BACKEND=Headless Tools/Scripts/run-minibrowser --wpe https://example.com
+  340  Tools/Scripts/build-webkit   --wpe   --no-flatpak   --cmakeargs="-DENABLE_WPE_BACKEND_HEADLESS=ON -DENABLE_WPE_BACKEND_FDO=OFF"
+  341  Tools/Scripts/webkit-flatpak --wpe
+  342  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  343  cd ..
+  344  cd wpt
+  345  ./wpt run   --binary=~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser   --webdriver-binary=~/WebKit/WebKitBuild/WPE/Debug/bin/WPEWebDriver   --headless   wpewebkit_minibrowser   webdriver/tests/bidi/session/status/
+  346  sudo apt install mesa-utils libgl1-mesa-dri libgles2-mesa libegl1-mesa
+  347  sudo apt install   mesa-utils   libgl1-mesa-dri   libgles-dev   libegl-dev   libgbm-dev   libxkbcommon-dev
+  348  LIBGL_ALWAYS_SOFTWARE=1 glxinfo | grep "OpenGL renderer"
+  349  # Expect: "OpenGL renderer string: llvmpipe (LLVM ...)"
+  350  LIBGL_ALWAYS_SOFTWARE=1 glxinfo | grep "OpenGL renderer"
+  351  eglinfo | grep -i "OpenGL renderer\|EGL version\|EGL extensions"
+  352  LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless eglinfo
+  353  WPE_BACKEND=fdo EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=1 ~/WebKit/WebKitBuild/WPE/Release/bin/MiniBrowser https://example.com
+  354  WPE_BACKEND=fdo EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=1 ~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser https://example.com
+  355  strings ~/WebKit/WebKitBuild/WPE/Debug/bin/MiniBrowser | grep -i wpe_backend
+  356  cd ..
+  357  ls
+  358  git clone https://github.com/Igalia/webkit-container-sdk.git
+  359  cd webkit-container-sdk
+  360  ./scripts/build-image
+  361  ls
+  362  ls scripts/
+  363  docker pull ghcr.io/igalia/webkit-container-sdk:latest
+  364  sudo docker pull ghcr.io/igalia/webkit-container-sdk:latest
+  365  so/webkit-container-sdk/register-sdk-on-host.sh
+  366  pwd
+  367  source /home/sergedeh/webkit-container-sdk/register-sdk-on-host.sh
+  368  wkdev-create --create-home
+  369  sudo apt update
+  370  sudo apt install -y podman
+  371  wkdev-create --create-home
+  372  wkdev-enter --name wkdev
+  373  wkdev-create   --create-home   --mount ~/WebKit:/home/user/WebKit   --mount ~/wpt:/home/user/wpt
+  374  cd ..
+  375  ls
+  376  code .bashrc
+  377  source .bashrc
+  378  wkdev-create   --create-home   --mount ~/WebKit:/home/user/WebKit   --mount ~/wpt:/home/user/wpt
+  379  wkdev-create --create-home
+  380  wkdev-enter   --bind ~/WebKit:/home/user/WebKit   --bind ~/wpt:/home/user/wpt
+  381  wkdev-enter --name wkdev
+  382  history >> command.txt
