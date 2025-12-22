@@ -145,6 +145,10 @@
 #include "WKContextPrivate.h"
 #include "WebAutomationSession.h"
 #include "WebAutomationSessionProxyMessages.h"
+#if ENABLE(WEBDRIVER_BIDI)
+#include "BidiScriptAgent.h"
+#include "WebDriverBidiProcessor.h"
+#endif
 #include "WebBackForwardCache.h"
 #include "WebBackForwardList.h"
 #include "WebBackForwardListCounts.h"
@@ -7945,6 +7949,53 @@ void WebPageProxy::didFinishLoadForFrame(IPC::Connection& connection, FrameIdent
 
     m_isLoadingAlternateHTMLStringForFailingProvisionalLoad = false;
 }
+
+#if ENABLE(WEBDRIVER_BIDI)
+void WebPageProxy::scriptRealmWasCreated(WebCore::FrameIdentifier frameID, String&& origin, CompletionHandler<void()>&& completionHandler)
+{
+    RefPtr automationSession = activeAutomationSession();
+    if (!automationSession) {
+        completionHandler();
+        return;
+    }
+
+    // Convert frameID to browsing context handle
+    String browsingContext;
+    if (RefPtr frame = WebFrameProxy::webFrame(frameID)) {
+        if (frame->isMainFrame())
+            browsingContext = automationSession->handleForWebPageProxy(*this);
+        else
+            browsingContext = automationSession->handleForWebFrameID(frameID);
+    }
+
+    if (!browsingContext.isEmpty())
+        automationSession->bidiProcessor().scriptAgent().notifyRealmCreated(browsingContext, origin);
+
+    completionHandler();
+}
+
+void WebPageProxy::scriptRealmWasDestroyed(WebCore::FrameIdentifier frameID, CompletionHandler<void()>&& completionHandler)
+{
+    RefPtr automationSession = activeAutomationSession();
+    if (!automationSession) {
+        completionHandler();
+        return;
+    }
+
+    String browsingContext;
+    if (RefPtr frame = WebFrameProxy::webFrame(frameID)) {
+        if (frame->isMainFrame())
+            browsingContext = automationSession->handleForWebPageProxy(*this);
+        else
+            browsingContext = automationSession->handleForWebFrameID(frameID);
+    }
+
+    if (!browsingContext.isEmpty())
+        automationSession->bidiProcessor().scriptAgent().notifyRealmDestroyed(browsingContext);
+
+    completionHandler();
+}
+#endif
 
 void WebPageProxy::didFailLoadForFrame(IPC::Connection& connection, FrameIdentifier frameID, FrameInfoData&& frameInfo, ResourceRequest&& request, std::optional<WebCore::NavigationIdentifier> navigationID, const ResourceError& error, const UserData& userData)
 {

@@ -53,12 +53,6 @@ class BidiScriptAgent final : public Inspector::BidiScriptBackendDispatcherHandl
     WTF_MAKE_TZONE_ALLOCATED(BidiScriptAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(BidiScriptAgent);
 
-    struct FrameRealmCacheEntry {
-        String url;
-        std::optional<String> documentID;
-        String realmId;
-    };
-
 public:
     BidiScriptAgent(WebAutomationSession&, Inspector::BackendDispatcher&);
     ~BidiScriptAgent() override;
@@ -68,7 +62,19 @@ public:
     void evaluate(const String& expression, bool awaitPromise, Ref<JSON::Object>&& target, std::optional<Inspector::Protocol::BidiScript::ResultOwnership>&&, RefPtr<JSON::Object>&& optionalSerializationOptions,  std::optional<bool>&& optionalUserActivation, Inspector::CommandCallbackOf<Inspector::Protocol::BidiScript::EvaluateResultType, String, RefPtr<Inspector::Protocol::BidiScript::RemoteValue>, RefPtr<Inspector::Protocol::BidiScript::ExceptionDetails>>&&) override;
     void getRealms(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext& optionalBrowsingContext , std::optional<Inspector::Protocol::BidiScript::RealmType>&& optionalRealmType, Inspector::CommandCallback<Ref<JSON::ArrayOf<Inspector::Protocol::BidiScript::RealmInfo>>>&&) override;
 
+    // Realm lifecycle events
+    void notifyRealmCreated(const String& browsingContext, const String& origin);
+    void notifyRealmDestroyed(const String& browsingContext);
+    bool hasRealmForContext(const String& browsingContext) const;
+
 private:
+    struct RealmInfo {
+        String realmId;
+        String origin;
+        String type; // "window", "dedicated-worker", etc.
+        String context;
+    };
+
     void processRealmsForPagesAsync(Deque<Ref<WebPageProxy>>&& pagesToProcess, std::optional<Inspector::Protocol::BidiScript::RealmType>&& optionalRealmType, std::optional<String>&& contextHandleFilter, Vector<RefPtr<Inspector::Protocol::BidiScript::RealmInfo>>&& accumulated, Inspector::CommandCallback<Ref<JSON::ArrayOf<Inspector::Protocol::BidiScript::RealmInfo>>>&&);
     void collectExecutionReadyFrameRealms(const FrameTreeNodeData&, Vector<RefPtr<Inspector::Protocol::BidiScript::RealmInfo>>& realms, const std::optional<String>& contextHandleFilter, bool recurseSubframes = true);
     bool isFrameExecutionReady(const FrameInfoData&);
@@ -81,11 +87,11 @@ private:
     WeakPtr<WebAutomationSession> m_session;
     Ref<Inspector::BidiScriptBackendDispatcher> m_scriptDomainDispatcher;
 
-    // Track realm IDs to ensure they change when realms are recreated
-    HashMap<WebCore::FrameIdentifier, FrameRealmCacheEntry> m_frameRealmCache; // frame ID -> (state signature, realm ID)
+    // Track navigation counter for unique realm IDs (shared between events and getRealms)
+    HashMap<String, uint64_t> m_realmNavigationCounters;
 
-    // Track realm counters for navigation detection: frame ID -> counter
-    HashMap<WebCore::FrameIdentifier, uint64_t> m_frameRealmCounters;
+    // Store active realms (key: realm ID, value: realm info)
+    HashMap<String, RealmInfo> m_activeRealms;
 };
 
 } // namespace WebKit

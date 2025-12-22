@@ -23,16 +23,20 @@
 
 #include "CommonVM.h"
 #include "DOMWrapperWorld.h"
+#include "DocumentLoader.h"
 #include "DocumentPage.h"
 #include "FrameConsoleClient.h"
+#include "FrameLoader.h"
 #include "GarbageCollectionController.h"
 #include "JSDOMWindowBase.h"
 #include "JSWindowProxy.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "Page.h"
 #include "PageGroup.h"
 #include "RemoteFrame.h"
 #include "ScriptController.h"
+#include "SecurityOrigin.h"
 #include "runtime_root.h"
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/StrongInlines.h>
@@ -40,9 +44,26 @@
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/TZoneMallocInlines.h>
 
+#if ENABLE(WEBDRIVER_BIDI)
+#include "AutomationInstrumentation.h"
+#endif
+
 namespace WebCore {
 
 using namespace JSC;
+
+#if ENABLE(WEBDRIVER_BIDI)
+static String resolveOriginForRealm(LocalFrame& localFrame)
+{
+    if (auto* document = localFrame.document())
+        return document->securityOrigin().toString();
+
+    if (auto* loader = localFrame.loader().activeDocumentLoader(); loader && !loader->url().isEmpty())
+        return SecurityOrigin::create(loader->url())->toString();
+
+    return "null"_s;
+}
+#endif
 
 static void collectGarbageAfterWindowProxyDestruction()
 {
@@ -107,6 +128,15 @@ void WindowProxy::destroyJSWindowProxy(DOMWrapperWorld& world)
 {
     ASSERT(m_jsWindowProxies.contains(&world));
     m_jsWindowProxies.remove(&world);
+
+#if ENABLE(WEBDRIVER_BIDI)
+    // Notify about realm destruction for automation
+    // Only notify for normal world (main page execution), not user/internal worlds
+    if (world.isNormal()) {
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*m_frame))
+            AutomationInstrumentation::scriptRealmDestroyed(localFrame->frameID());
+    }
+#endif
     world.didDestroyWindowProxy(this);
 }
 
@@ -122,6 +152,16 @@ JSWindowProxy& WindowProxy::createJSWindowProxy(DOMWrapperWorld& world)
     Strong<JSWindowProxy> jsWindowProxy(vm, &JSWindowProxy::create(vm, *m_frame->protectedWindow().get(), world));
     m_jsWindowProxies.add(&world, jsWindowProxy);
     world.didCreateWindowProxy(this);
+
+#if ENABLE(WEBDRIVER_BIDI)
+    // Notify about realm creation for automation.
+    // Only notify for normal world (main page execution), not user/internal worlds.
+    if (world.isNormal()) {
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*m_frame))
+            AutomationInstrumentation::scriptRealmCreated(localFrame->frameID(), resolveOriginForRealm(*localFrame));
+    }
+#endif
+
     return *jsWindowProxy.get();
 }
 
@@ -175,11 +215,10 @@ void WindowProxy::clearJSWindowProxiesNotMatchingDOMWindow(DOMWindow* newDOMWind
 void WindowProxy::setDOMWindow(DOMWindow* newDOMWindow)
 {
     ASSERT(newDOMWindow);
+    ASSERT(m_frame);
 
     if (m_jsWindowProxies.isEmpty())
         return;
-
-    ASSERT(m_frame);
 
     JSLockHolder lock(commonVM());
 
@@ -188,6 +227,16 @@ void WindowProxy::setDOMWindow(DOMWindow* newDOMWindow)
             continue;
 
         windowProxy->setWindow(*newDOMWindow);
+
+#if ENABLE(WEBDRIVER_BIDI)
+        // Navigations reuse the JSWindowProxy with a new DOMWindow, which means a new realm.
+        if (windowProxy->world().isNormal()) {
+            if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_frame.get())) {
+                AutomationInstrumentation::scriptRealmDestroyed(localFrame->frameID());
+                AutomationInstrumentation::scriptRealmCreated(localFrame->frameID(), resolveOriginForRealm(*localFrame));
+            }
+        }
+#endif
 
         if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_frame.get())) {
             CheckedRef scriptController = localFrame->script();

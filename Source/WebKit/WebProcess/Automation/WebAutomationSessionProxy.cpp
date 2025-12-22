@@ -33,6 +33,11 @@
 #include "WebAutomationSessionMessages.h"
 #include "WebAutomationSessionProxyMessages.h"
 #include "WebAutomationSessionProxyScriptSource.h"
+#if ENABLE(WEBDRIVER_BIDI)
+#include "WebPageProxyMessages.h"
+#include <WebCore/DOMWrapperWorld.h>
+#include <WebCore/WindowProxy.h>
+#endif
 #include "WebFrame.h"
 #include "WebImage.h"
 #include "WebPage.h"
@@ -1093,6 +1098,55 @@ void WebAutomationSessionProxy::deleteCookie(WebCore::PageIdentifier pageID, std
 void WebAutomationSessionProxy::addMessageToConsole(const JSC::MessageSource& source, const JSC::MessageLevel& level, const String& messageText, const JSC::MessageType& type, const WallTime& timestamp)
 {
     WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebAutomationSession::LogEntryAdded(source, level, messageText, type, timestamp), 0);
+}
+
+void WebAutomationSessionProxy::scriptRealmCreated(WebCore::FrameIdentifier frameID, const String& origin)
+{
+    WeakPtr frame = WebProcess::singleton().webFrame(frameID);
+    if (!frame)
+        return;
+
+    RefPtr<WebPage> page = frame->page();
+    if (!page)
+        return;
+
+    // Send to the specific WebPageProxy instance and wait for the UIProcess to handle it.
+    WebProcess::singleton().protectedParentProcessConnection()->sendWithAsyncReply(
+        Messages::WebPageProxy::ScriptRealmWasCreated(frameID, origin),
+        [] { },
+        page->identifier().toUInt64());
+}
+
+void WebAutomationSessionProxy::scriptRealmDestroyed(WebCore::FrameIdentifier frameID)
+{
+    // Get the page that owns this frame
+    WeakPtr frame = WebProcess::singleton().webFrame(frameID);
+    if (!frame)
+        return;
+
+    RefPtr<WebPage> page = frame->page();
+    if (!page)
+        return;
+
+    WebProcess::singleton().protectedParentProcessConnection()->sendWithAsyncReply(
+        Messages::WebPageProxy::ScriptRealmWasDestroyed(frameID),
+        [] { },
+        page->identifier().toUInt64());
+}
+
+void WebAutomationSessionProxy::ensureRealmForInitialEmptyDocument(WebCore::PageIdentifier pageID)
+{
+    RefPtr page = WebProcess::singleton().webPage(pageID);
+    if (!page)
+        return;
+
+    RefPtr frame = &page->mainWebFrame();
+    RefPtr coreFrame = frame->coreLocalFrame();
+    if (!coreFrame)
+        return;
+
+    // Force creation of JSWindowProxy for the normal world, which will trigger realm creation.
+    coreFrame->protectedWindowProxy()->jsWindowProxy(WebCore::mainThreadNormalWorldSingleton());
 }
 #endif
 

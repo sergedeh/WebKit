@@ -71,6 +71,7 @@
 
 #if ENABLE(WEBDRIVER_BIDI)
 #include "BidiBrowserAgent.h"
+#include "BidiScriptAgent.h"
 #include "WebDriverBidiProcessor.h"
 #endif
 
@@ -470,6 +471,10 @@ void WebAutomationSession::createBrowsingContext(std::optional<Inspector::Protoc
 
         // WebDriver allows running commands in a browsing context which has not done any loads yet. Force WebProcess to be created so it can receive messages.
         page->launchInitialProcessIfNecessary();
+
+#if ENABLE(WEBDRIVER_BIDI)
+        page->legacyMainFrameProcess().send(Messages::WebAutomationSessionProxy::EnsureRealmForInitialEmptyDocument(page->webPageIDInMainFrameProcess()), 0);
+#endif
         callback({ { protectedThis->handleForWebPageProxy(*page), toProtocol(protectedThis->m_client->currentPresentationOfPage(protectedThis.get(), *page)) } });
     });
 }
@@ -572,7 +577,7 @@ void WebAutomationSession::setWindowFrameOfBrowsingContext(const Inspector::Prot
                 WebCore::FloatRect newFrame = WebCore::FloatRect(WebCore::FloatPoint(x.value_or(originalFrame.location().x()), y.value_or(originalFrame.location().y())), WebCore::FloatSize(width.value_or(originalFrame.size().width()), height.value_or(originalFrame.size().height())));
                 if (newFrame != originalFrame)
                     page->setWindowFrame(newFrame);
-                
+
                 callback({ });
             });
         });
@@ -1195,6 +1200,9 @@ void WebAutomationSession::contextDestroyedForPage(const WebPageProxy& page)
         originalOpenerHandle = handleForWebPageProxy(*openerPage);
 
     auto [clientWindow, userContext] = getClientWindowAndUserContext(page);
+
+    // Ensure the active realm is destroyed even if the WebProcess terminates first.
+    m_bidiProcessor->scriptAgent().notifyRealmDestroyed(contextHandle);
 
     m_bidiProcessor->browsingContextDomainNotifier().contextDestroyed(contextHandle, url, originalOpenerHandle, parentContext, JSON::ArrayOf<Inspector::Protocol::BidiBrowsingContext::Info>::create(), clientWindow, userContext);
 

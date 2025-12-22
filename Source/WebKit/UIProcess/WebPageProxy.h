@@ -2954,6 +2954,10 @@ private:
     void didFinishDocumentLoadForFrame(IPC::Connection&, WebCore::FrameIdentifier, std::optional<WebCore::NavigationIdentifier>, const UserData&, WallTime);
     void didFinishLoadForFrame(IPC::Connection&, WebCore::FrameIdentifier, FrameInfoData&&, WebCore::ResourceRequest&&, std::optional<WebCore::NavigationIdentifier>, const UserData&, WallTime);
     void didFailLoadForFrame(IPC::Connection&, WebCore::FrameIdentifier, FrameInfoData&&, WebCore::ResourceRequest&&, std::optional<WebCore::NavigationIdentifier>, const WebCore::ResourceError&, const UserData&);
+#if ENABLE(WEBDRIVER_BIDI)
+    void scriptRealmWasCreated(WebCore::FrameIdentifier, String&& origin, CompletionHandler<void()>&&);
+    void scriptRealmWasDestroyed(WebCore::FrameIdentifier, CompletionHandler<void()>&&);
+#endif
     void didSameDocumentNavigationForFrame(IPC::Connection&, WebCore::FrameIdentifier, std::optional<WebCore::NavigationIdentifier>, SameDocumentNavigationType, URL&&, const UserData&);
     void didSameDocumentNavigationForFrameViaJS(IPC::Connection&, SameDocumentNavigationType, URL&&, NavigationActionData&&, const UserData&);
     void didChangeMainDocument(IPC::Connection&, WebCore::FrameIdentifier, std::optional<WebCore::NavigationIdentifier>);

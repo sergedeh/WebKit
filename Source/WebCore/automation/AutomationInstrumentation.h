@@ -32,6 +32,7 @@
 
 #if ENABLE(WEBDRIVER_BIDI)
 
+#include "FrameIdentifier.h"
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
@@ -53,6 +54,8 @@ public:
     virtual ~AutomationInstrumentationClient() = default;
 
     virtual void addMessageToConsole(const JSC::MessageSource&, const JSC::MessageLevel&, const String&, const JSC::MessageType&, const WallTime&) = 0;
+    virtual void scriptRealmCreated(FrameIdentifier, const String& origin) = 0;
+    virtual void scriptRealmDestroyed(FrameIdentifier) = 0;
 };
 
 
@@ -60,8 +63,11 @@ class WEBCORE_EXPORT AutomationInstrumentation {
 public:
     static void setClient(const AutomationInstrumentationClient&);
     static void clearClient();
+    static bool hasClient();
 
     static void addMessageToConsole(const std::unique_ptr<Inspector::ConsoleMessage>&);
+    static void scriptRealmCreated(FrameIdentifier, const String& origin);
+    static void scriptRealmDestroyed(FrameIdentifier);
 };
 
 } // namespace WebCore
