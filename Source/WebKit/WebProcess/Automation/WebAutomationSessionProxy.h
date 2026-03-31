@@ -110,6 +110,9 @@ private:
 
 #if ENABLE(WEBDRIVER_BIDI)
     void addMessageToConsole(const JSC::MessageSource&, const JSC::MessageLevel&, const String&, const JSC::MessageType&, const WallTime&) override;
+    void scriptRealmCreated(WebCore::FrameIdentifier, const String& origin) override;
+    void scriptRealmDestroyed(WebCore::FrameIdentifier) override;
+    void ensureRealmForInitialEmptyDocument(WebCore::PageIdentifier);
 #endif
 
     String m_sessionIdentifier;

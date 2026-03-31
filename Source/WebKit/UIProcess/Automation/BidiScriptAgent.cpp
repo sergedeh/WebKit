@@ -255,66 +255,29 @@ RefPtr<Inspector::Protocol::BidiScript::RealmInfo> BidiScriptAgent::createRealmI
 
 String BidiScriptAgent::generateRealmIdForFrame(const FrameInfoData& frameInfo)
 {
-    String currentURL = frameInfo.request.url().string();
-    std::optional<String> currentDocumentID = frameInfo.documentID ? std::optional<String>(frameInfo.documentID->toString()) : std::nullopt;
-
-    if (auto it = m_frameRealmCache.find(frameInfo.frameID); it != m_frameRealmCache.end()) {
-        const auto& cachedEntry = it->value;
-
-        if (cachedEntry.url == currentURL && cachedEntry.documentID == currentDocumentID)
-            return cachedEntry.realmId;
-
-        // FIXME: This is a workaround until realm.created/realm.destroyed events are implemented.
-        // https://bugs.webkit.org/show_bug.cgi?id=304062
-        // If only the documentID changed but URL is the same, reuse the cached realm ID to keep
-        // realm IDs stable between getRealms() and evaluate()/callFunction() calls on the same document.
-        // Once realm lifecycle events are implemented, they will handle cache updates properly.
-        if (cachedEntry.url == currentURL && currentURL != "about:blank"_s) {
-            m_frameRealmCache.set(frameInfo.frameID, FrameRealmCacheEntry { currentURL, currentDocumentID, cachedEntry.realmId });
-            return cachedEntry.realmId;
-        }
-
-        // Special case: Transitioning to/from about:blank is typically not a navigation,
-        // it's either the initial page load or a new test/session starting.
-        // Don't treat this as a state change that increments the counter.
-        bool transitioningToOrFromBlank = (cachedEntry.url == "about:blank"_s) != (currentURL == "about:blank"_s);
-
-        if (transitioningToOrFromBlank) {
-            m_frameRealmCache.remove(frameInfo.frameID);
-            m_frameRealmCounters.remove(frameInfo.frameID);
-        }
-    }
-
-    // Generate a new realm ID - the state has changed or this is a new frame
+    // Get the browsing context handle for this frame
     auto contextHandle = contextHandleForFrame(frameInfo);
-
-    String newRealmId;
-
     if (!contextHandle) {
         // Fallback to frame-based ID if we can't get context handle
-        newRealmId = makeString("realm-frame-"_s, String::number(frameInfo.frameID.toUInt64()));
-    } else {
-        // Use the contextHandle directly - it's already unique for both main frames and iframes
-        // For the first load of a context, use just the context handle
-        // For subsequent navigations/reloads, append a counter to make it unique
-        auto counterIt = m_frameRealmCounters.find(frameInfo.frameID);
-        if (counterIt == m_frameRealmCounters.end()) {
-            // First realm for this frame - no counter suffix
-            newRealmId = makeString("realm-"_s, *contextHandle);
-            // Start counter at 1 so the NEXT navigation will use "-1" suffix
-            m_frameRealmCounters.set(frameInfo.frameID, 1);
-        } else {
-            // Subsequent realm (reload/navigation) - use and increment counter
-            uint64_t counter = counterIt->value;
-            newRealmId = makeString("realm-"_s, *contextHandle, "-"_s, String::number(counter));
-            counterIt->value = counter + 1;
-        }
+        return makeString("realm-frame-"_s, String::number(frameInfo.frameID.toUInt64()));
     }
 
-    // Update the cache with the new realm ID
-    m_frameRealmCache.set(frameInfo.frameID, FrameRealmCacheEntry { currentURL, currentDocumentID, newRealmId });
+    // Use the shared m_realmNavigationCounters to ensure consistency with notifyRealmCreated/Destroyed
+    auto counterIt = m_realmNavigationCounters.find(*contextHandle);
+    if (counterIt == m_realmNavigationCounters.end()) {
+        // No realm has been created yet for this context - return the base realm ID
+        // Note: This should not normally happen since notifyRealmCreated should be called
+        // before getRealms due to the sendWithAsyncReply barrier
+        return makeString("realm-"_s, *contextHandle);
+    }
 
-    return newRealmId;
+    // Generate realm ID based on the current counter value
+    uint64_t counter = counterIt->value;
+    String realmId = counter <= 1
+        ? makeString("realm-"_s, *contextHandle)
+        : makeString("realm-"_s, *contextHandle, "-"_s, String::number(counter - 1));
+
+    return realmId;
 }
 
 String BidiScriptAgent::generateRealmIdForBrowsingContext(const String& browsingContext)
@@ -441,6 +404,93 @@ void BidiScriptAgent::collectExecutionReadyFrameRealms(const FrameTreeNodeData& 
         for (const auto& child : frameTree.children)
             collectExecutionReadyFrameRealms(child, realms, contextHandleFilter, true);
     }
+}
+
+void BidiScriptAgent::notifyRealmCreated(const String& browsingContext, const String& origin)
+{
+    RefPtr session = m_session.get();
+    if (!session)
+        return;
+
+    // Generate a realm ID consistent with generateRealmIdForFrame() semantics:
+    // first realm -> realm-{context}, subsequent -> realm-{context}-{counter}
+    auto counterIt = m_realmNavigationCounters.find(browsingContext);
+    String realmId;
+    if (counterIt == m_realmNavigationCounters.end()) {
+        realmId = makeString("realm-"_s, browsingContext);
+        m_realmNavigationCounters.set(browsingContext, 1);
+    } else {
+        uint64_t counter = counterIt->value;
+        realmId = makeString("realm-"_s, browsingContext, "-"_s, String::number(counter));
+        counterIt->value = counter + 1;
+    }
+
+    // Store realm info for getRealms queries
+    RealmInfo info;
+    info.realmId = realmId;
+    info.origin = origin;
+    info.type = "window"_s;
+    info.context = browsingContext;
+    m_activeRealms.set(realmId, WTF::move(info));
+
+    // FIXME: Only emit events to subscribers based on context-specific subscriptions.
+    // https://bugs.webkit.org/show_bug.cgi?id=282981
+    // Build script.realmCreated event per W3C BiDi spec
+    auto event = JSON::Object::create();
+    event->setString("method"_s, "script.realmCreated"_s);
+    event->setString("type"_s, "event"_s);
+
+    auto params = JSON::Object::create();
+    params->setString("realm"_s, realmId);
+    params->setString("origin"_s, origin);
+    params->setString("type"_s, "window"_s);
+    params->setString("context"_s, browsingContext);
+    event->setObject("params"_s, WTF::move(params));
+
+    // Send event immediately
+    session->sendBidiMessage(event->toJSONString());
+}
+
+void BidiScriptAgent::notifyRealmDestroyed(const String& browsingContext)
+{
+    RefPtr session = m_session.get();
+    if (!session)
+        return;
+
+    auto counterIt = m_realmNavigationCounters.find(browsingContext);
+    if (counterIt == m_realmNavigationCounters.end())
+        return;
+
+    uint64_t counter = counterIt->value;
+    String realmId = counter == 1
+        ? makeString("realm-"_s, browsingContext)
+        : makeString("realm-"_s, browsingContext, "-"_s, String::number(counter - 1));
+
+    auto activeIt = m_activeRealms.find(realmId);
+    if (activeIt != m_activeRealms.end())
+        m_activeRealms.remove(activeIt);
+
+    // FIXME: Only emit events to subscribers based on context-specific subscriptions.
+    // https://bugs.webkit.org/show_bug.cgi?id=282981
+    // Build script.realmDestroyed event per W3C BiDi spec
+    auto event = JSON::Object::create();
+    event->setString("method"_s, "script.realmDestroyed"_s);
+    event->setString("type"_s, "event"_s);
+
+    auto params = JSON::Object::create();
+    params->setString("realm"_s, realmId);
+    event->setObject("params"_s, WTF::move(params));
+
+    session->sendBidiMessage(event->toJSONString());
+}
+
+bool BidiScriptAgent::hasRealmForContext(const String& browsingContext) const
+{
+    for (const auto& entry : m_activeRealms) {
+        if (entry.value.context == browsingContext)
+            return true;
+    }
+    return false;
 }
 
 } // namespace WebKit

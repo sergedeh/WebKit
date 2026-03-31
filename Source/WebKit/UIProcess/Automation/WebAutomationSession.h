@@ -290,6 +290,7 @@ public:
 #if ENABLE(WEBDRIVER_BIDI)
     Inspector::CommandResult<void> processBidiMessage(const String&) override;
     void sendBidiMessage(const String&);
+    WebDriverBidiProcessor& bidiProcessor() const { return m_bidiProcessor; }
 #endif
 
 #if PLATFORM(MAC)

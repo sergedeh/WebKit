@@ -63,6 +63,11 @@ void AutomationInstrumentation::clearClient()
     automationClient().clear();
 }
 
+bool AutomationInstrumentation::hasClient()
+{
+    return !!automationClient();
+}
+
 void AutomationInstrumentation::addMessageToConsole(const std::unique_ptr<ConsoleMessage>& message)
 {
     if (!automationClient()) [[likely]]
@@ -71,6 +76,28 @@ void AutomationInstrumentation::addMessageToConsole(const std::unique_ptr<Consol
     WTF::ensureOnMainThread([source = message->source(), type = message->type(), level = message->level(), messageText = message->message(), timestamp = message->timestamp()] {
         if (RefPtr client = automationClient().get())
             client->addMessageToConsole(source, level, messageText, type, timestamp);
+    });
+}
+
+void AutomationInstrumentation::scriptRealmCreated(FrameIdentifier frameID, const String& origin)
+{
+    if (!automationClient()) [[likely]]
+        return;
+
+    WTF::ensureOnMainThread([frameID, origin = origin.isolatedCopy()] {
+        if (RefPtr client = automationClient().get())
+            client->scriptRealmCreated(frameID, origin);
+    });
+}
+
+void AutomationInstrumentation::scriptRealmDestroyed(FrameIdentifier frameID)
+{
+    if (!automationClient()) [[likely]]
+        return;
+
+    WTF::ensureOnMainThread([frameID] {
+        if (RefPtr client = automationClient().get())
+            client->scriptRealmDestroyed(frameID);
     });
 }
 
