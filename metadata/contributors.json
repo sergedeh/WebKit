@@ -7592,6 +7592,18 @@
    },
    {
       "emails" : [
+         "serge.deh@gitstart.dev",
+         "sergedeh@gmail.com"
+      ],
+      "expertise" : "WebDriver",
+      "github" : "sergedeh",
+      "name" : "Serge Deh",
+      "nicks" : [
+         "sergedeh"
+      ]
+   },
+   {
+      "emails" : [
          "chi187@gmail.com"
       ],
       "expertise" : "WebAssembly",
