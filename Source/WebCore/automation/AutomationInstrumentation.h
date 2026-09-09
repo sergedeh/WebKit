@@ -37,6 +37,7 @@
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/SecurityOriginData.h>
+#include <WebCore/SharedWorkerIdentifier.h>
 #include <tuple>
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/CompletionHandler.h>
@@ -64,6 +65,8 @@ public:
     virtual void scriptRealmDestroyed(FrameIdentifier) = 0;
     virtual void scriptDedicatedWorkerRealmCreated(const String& workerIdentifier, FrameIdentifier ownerFrameIdentifier, const SecurityOriginData&) = 0;
     virtual void scriptDedicatedWorkerRealmDestroyed(const String& workerIdentifier, FrameIdentifier ownerFrameIdentifier) = 0;
+    virtual void scriptSharedWorkerRealmStateChanged(SharedWorkerIdentifier, const Vector<FrameIdentifier>& activeOwnerFrameIdentifiers, const Vector<FrameIdentifier>& attachedOwnerFrameIdentifiers, const SecurityOriginData&) = 0;
+    virtual void scriptSharedWorkerRealmDestroyed(SharedWorkerIdentifier) = 0;
 };
 
 
@@ -71,6 +74,7 @@ class WEBCORE_EXPORT AutomationInstrumentation {
 public:
     using DedicatedWorkerRealmData = std::tuple<String, FrameIdentifier, SecurityOriginData>;
 
+    using SharedWorkerRealmData = std::tuple<SharedWorkerIdentifier, Vector<FrameIdentifier>, Vector<FrameIdentifier>, SecurityOriginData>;
     static void NODELETE setClient(const AutomationInstrumentationClient&);
     static void NODELETE clearClient();
 
@@ -80,6 +84,9 @@ public:
     static void scriptDedicatedWorkerRealmCreated(const String& workerIdentifier, FrameIdentifier ownerFrameIdentifier, const SecurityOriginData&);
     static void scriptDedicatedWorkerRealmDestroyed(const String& workerIdentifier, FrameIdentifier ownerFrameIdentifier);
     static Vector<DedicatedWorkerRealmData> dedicatedWorkerRealms(PageIdentifier);
+    static void scriptSharedWorkerRealmStateChanged(SharedWorkerIdentifier, const Vector<FrameIdentifier>& activeOwnerFrameIdentifiers, const Vector<FrameIdentifier>& attachedOwnerFrameIdentifiers, const SecurityOriginData&);
+    static void scriptSharedWorkerRealmDestroyed(SharedWorkerIdentifier);
+    static Vector<SharedWorkerRealmData> sharedWorkerRealms();
 };
 
 } // namespace WebCore

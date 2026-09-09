@@ -1257,6 +1257,21 @@ void WebAutomationSessionProxy::getDedicatedWorkerRealms(WebCore::PageIdentifier
     completionHandler(WTF::move(result));
 }
 
+void WebAutomationSessionProxy::scriptSharedWorkerRealmStateChanged(WebCore::SharedWorkerIdentifier workerIdentifier, const Vector<WebCore::FrameIdentifier>& activeOwnerFrameIdentifiers, const Vector<WebCore::FrameIdentifier>& attachedOwnerFrameIdentifiers, const WebCore::SecurityOriginData& origin)
+{
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebAutomationSession::ScriptSharedWorkerRealmStateChanged(workerIdentifier, activeOwnerFrameIdentifiers, attachedOwnerFrameIdentifiers, origin), 0);
+}
+
+void WebAutomationSessionProxy::scriptSharedWorkerRealmDestroyed(WebCore::SharedWorkerIdentifier workerIdentifier)
+{
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebAutomationSession::ScriptSharedWorkerRealmDestroyed(workerIdentifier), 0);
+}
+
+void WebAutomationSessionProxy::getSharedWorkerRealms(CompletionHandler<void(Vector<SharedWorkerRealmData>&&)>&& completionHandler)
+{
+    completionHandler(AutomationInstrumentation::sharedWorkerRealms());
+}
+
 void WebAutomationSessionProxy::ensureRealmForInitialEmptyDocument(WebCore::PageIdentifier pageID)
 {
     RefPtr page = WebProcess::singleton().webPage(pageID);

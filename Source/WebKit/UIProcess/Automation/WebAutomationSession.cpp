@@ -3283,6 +3283,17 @@ void WebAutomationSession::scriptDedicatedWorkerRealmDestroyed(const String& wor
 {
     m_bidiProcessor->scriptAgent().notifyDedicatedWorkerRealmDestroyed(workerIdentifier, ownerFrameIdentifier);
 }
+
+void WebAutomationSession::scriptSharedWorkerRealmStateChanged(WebCore::SharedWorkerIdentifier workerIdentifier, Vector<WebCore::FrameIdentifier>&& activeOwnerFrameIdentifiers, Vector<WebCore::FrameIdentifier>&& attachedOwnerFrameIdentifiers, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin)
+{
+    auto origin = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
+    m_bidiProcessor->scriptAgent().notifySharedWorkerRealmStateChanged(workerIdentifier, activeOwnerFrameIdentifiers, attachedOwnerFrameIdentifiers, origin);
+}
+
+void WebAutomationSession::scriptSharedWorkerRealmDestroyed(WebCore::SharedWorkerIdentifier workerIdentifier)
+{
+    m_bidiProcessor->scriptAgent().notifySharedWorkerRealmDestroyed(workerIdentifier);
+}
 #endif
 
 #if !PLATFORM(COCOA) && !USE(CAIRO) && !USE(SKIA)

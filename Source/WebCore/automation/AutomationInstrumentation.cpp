@@ -36,6 +36,8 @@
 #include "DOMWrapperWorld.h"
 #include "DocumentPage.h"
 #include "FrameDestructionObserverInlines.h"
+#include "SharedWorkerContextManager.h"
+#include "SharedWorkerThreadProxy.h"
 #include "WorkerInspectorProxy.h"
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/ConsoleTypes.h>
@@ -155,6 +157,41 @@ Vector<AutomationInstrumentation::DedicatedWorkerRealmData> AutomationInstrument
         result.append(DedicatedWorkerRealmData {
             worker->identifier().isolatedCopy(),
             frame->frameID(),
+            origin->isolatedCopy()
+        });
+    }
+
+    return result;
+}
+
+void AutomationInstrumentation::scriptSharedWorkerRealmStateChanged(SharedWorkerIdentifier workerIdentifier, const Vector<FrameIdentifier>& activeOwnerFrameIdentifiers, const Vector<FrameIdentifier>& attachedOwnerFrameIdentifiers, const SecurityOriginData& origin)
+{
+    ASSERT(isMainThread());
+    if (RefPtr client = automationClient().get())
+        client->scriptSharedWorkerRealmStateChanged(workerIdentifier, activeOwnerFrameIdentifiers, attachedOwnerFrameIdentifiers, origin);
+}
+
+void AutomationInstrumentation::scriptSharedWorkerRealmDestroyed(SharedWorkerIdentifier workerIdentifier)
+{
+    ASSERT(isMainThread());
+    if (RefPtr client = automationClient().get())
+        client->scriptSharedWorkerRealmDestroyed(workerIdentifier);
+}
+
+Vector<AutomationInstrumentation::SharedWorkerRealmData> AutomationInstrumentation::sharedWorkerRealms()
+{
+    ASSERT(isMainThread());
+    Vector<SharedWorkerRealmData> result;
+
+    for (Ref worker : SharedWorkerContextManager::singleton().sharedWorkers()) {
+        const auto& origin = worker->automationSecurityOrigin();
+        if (!origin)
+            continue;
+
+        result.append(SharedWorkerRealmData {
+            worker->identifier(),
+            worker->activeOwnerFrameIdentifiers(),
+            worker->attachedOwnerFrameIdentifiers(),
             origin->isolatedCopy()
         });
     }

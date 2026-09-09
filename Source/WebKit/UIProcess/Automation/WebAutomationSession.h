@@ -42,6 +42,7 @@
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/ShareableBitmap.h>
+#include <WebCore/SharedWorkerIdentifier.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
@@ -380,6 +381,8 @@ private:
     void scriptRealmDestroyed(WebCore::FrameIdentifier, RealmIdentifier);
     void scriptDedicatedWorkerRealmCreated(const String& workerIdentifier, WebCore::FrameIdentifier ownerFrameIdentifier, IPC::Untrusted<WebCore::SecurityOriginData>&&);
     void scriptDedicatedWorkerRealmDestroyed(const String& workerIdentifier, WebCore::FrameIdentifier ownerFrameIdentifier);
+    void scriptSharedWorkerRealmStateChanged(WebCore::SharedWorkerIdentifier, Vector<WebCore::FrameIdentifier>&& activeOwnerFrameIdentifiers, Vector<WebCore::FrameIdentifier>&& attachedOwnerFrameIdentifiers, IPC::Untrusted<WebCore::SecurityOriginData>&&);
+    void scriptSharedWorkerRealmDestroyed(WebCore::SharedWorkerIdentifier);
 #endif
 
     // Platform-dependent implementations.
