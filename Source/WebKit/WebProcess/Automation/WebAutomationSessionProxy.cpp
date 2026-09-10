@@ -1243,18 +1243,11 @@ void WebAutomationSessionProxy::scriptRealmCreated(WebCore::FrameIdentifier fram
 
 void WebAutomationSessionProxy::scriptRealmDestroyed(WebCore::FrameIdentifier frameID)
 {
-    WeakPtr frame = WebProcess::singleton().webFrame(frameID);
-    if (!frame)
+    auto destroyedRealmIdentifier = m_frameToRealmIdentifier.take(frameID);
+    if (!destroyedRealmIdentifier)
         return;
 
-    auto it = m_frameToRealmIdentifier.find(frameID);
-    if (it == m_frameToRealmIdentifier.end())
-        return;
-
-    auto realmIdentifier = it->value;
-    m_frameToRealmIdentifier.remove(it);
-
-    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebAutomationSession::ScriptRealmDestroyed(frameID, realmIdentifier), 0);
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebAutomationSession::ScriptRealmDestroyed(frameID, *destroyedRealmIdentifier), 0);
 }
 
 void WebAutomationSessionProxy::ensureRealmForInitialEmptyDocument(WebCore::PageIdentifier pageID)

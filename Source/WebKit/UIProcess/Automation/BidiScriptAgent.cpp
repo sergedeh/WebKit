@@ -999,17 +999,18 @@ void BidiScriptAgent::notifyRealmDestroyed(RealmIdentifier realmIdentifier, Insp
     if (!session)
         return;
 
-    // Match the realm identifier that the WebProcess reported for this realm.
+    auto activeRealmIterator = m_activeRealms.find(realmIdentifier);
+    if (activeRealmIterator == m_activeRealms.end())
+        return;
+    m_activeRealms.remove(activeRealmIterator);
+
+    auto currentRealmIterator = m_browsingContextToRealmId.find(browsingContext);
+    if (currentRealmIterator != m_browsingContextToRealmId.end() && currentRealmIterator->value == realmIdentifier)
+        m_browsingContextToRealmId.remove(currentRealmIterator);
+
     String realmID = makeString("realm-"_s, realmIdentifier.loggingString());
-
-    // Remove the realm from active realms.
-    m_activeRealms.remove(realmIdentifier);
-
-    // Remove the browsing context mapping (realm will be regenerated on next navigation).
-    m_browsingContextToRealmId.remove(browsingContext);
-
     session->bidiProcessor().emitEventIfEnabled(BidiEventNames::Script::RealmDestroyed, { browsingContext }, [&]() {
-        session->bidiProcessor().scriptDomainNotifier().realmDestroyed(realmID, browsingContext);
+        session->bidiProcessor().scriptDomainNotifier().realmDestroyed(realmID);
     });
 }
 
