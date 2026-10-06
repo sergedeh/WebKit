@@ -48,13 +48,13 @@
 //
 //     At birth (in SQLTransactionBackend::executeSQL()):
 //     =================================================
-//     SQLTransactionBackend           // Deque<RefPtr<SQLStatement>> m_statementQueue points to ...
+//     SQLTransaction           // Deque<std::unique_ptr<SQLStatement>> m_statementQueue points to ...
 //     --> SQLStatement         // std::unique_ptr<SQLStatement> m_frontend points to ...
 //         --> SQLStatement
 //
 //     After grabbing the statement for execution (in SQLTransactionBackend::getNextStatement()):
 //     =========================================================================================
-//     SQLTransactionBackend           // RefPtr<SQLStatement> m_currentStatementBackend points to ...
+//     SQLTransactionBackend    // RefPtr<SQLStatement> m_currentStatementBackend points to ...
 //     --> SQLStatement         // std::unique_ptr<SQLStatement> m_frontend points to ...
 //         --> SQLStatement
 //
@@ -117,7 +117,7 @@ bool SQLStatement::execute(Database& db)
 
     auto statement = database->prepareStatementSlow(m_statement);
     if (!statement) {
-        LOG(StorageAPI, "Unable to verify correctness of statement %s - error %i (%s)", m_statement.ascii().data(), database->lastError(), database->lastErrorMsg());
+        LOG(StorageAPI, "Unable to verify correctness of statement %s - error %i (%s)", m_statement.utf8(), database->lastError(), database->lastErrorMsg());
         if (database->lastError() == SQLITE_INTERRUPT)
             m_error = SQLError::create(SQLError::DATABASE_ERR, "could not prepare statement"_s, database->lastError(), "interrupted"_s);
         else
@@ -141,7 +141,7 @@ bool SQLStatement::execute(Database& db)
         }
 
         if (result != SQLITE_OK) {
-            LOG(StorageAPI, "Failed to bind value index %i to statement for query '%s'", i + 1, m_statement.ascii().data());
+            LOG(StorageAPI, "Failed to bind value index %i to statement for query '%s'", i + 1, m_statement.utf8());
             m_error = SQLError::create(SQLError::DATABASE_ERR, "could not bind value"_s, result, database->lastErrorMsg());
             return false;
         }
@@ -195,7 +195,7 @@ bool SQLStatement::execute(Database& db)
     if (!statement->isReadOnly())
         resultSet->setRowsAffected(database->lastChanges());
 
-    m_resultSet = WTF::move(resultSet);
+    lazyInitialize(m_resultSet, WTF::move(resultSet));
     return true;
 }
 

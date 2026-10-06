@@ -29,6 +29,7 @@
 #include "LibWebRTCObservers.h"
 #include "LibWebRTCProvider.h"
 #include "LibWebRTCRefWrappers.h"
+#include "LibWebRTCRtpReceiverBackend.h"
 #include "LibWebRTCRtpSenderBackend.h"
 #include "RTCRtpReceiver.h"
 #include "Timer.h"
@@ -55,7 +56,6 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 namespace webrtc {
 class CreateSessionDescriptionObserver;
 class DataChannelInterface;
-class MediaStreamInterface;
 class PeerConnectionObserver;
 class SessionDescriptionInterface;
 class SetSessionDescriptionObserver;
@@ -107,16 +107,16 @@ public:
     void removeTrack(LibWebRTCRtpSenderBackend&);
 
     struct Backends {
-        RefPtr<LibWebRTCRtpSenderBackend> senderBackend;
-        std::unique_ptr<LibWebRTCRtpReceiverBackend> receiverBackend;
-        std::unique_ptr<LibWebRTCRtpTransceiverBackend> transceiverBackend;
+        Ref<LibWebRTCRtpSenderBackend> senderBackend;
+        LibWebRTCRtpReceiverBackendAndSource receiverBackendAndSource;
+        UniqueRef<LibWebRTCRtpTransceiverBackend> transceiverBackend;
     };
     ExceptionOr<Backends> addTransceiver(const String& trackKind, const RTCRtpTransceiverInit&, PeerConnectionBackend::IgnoreNegotiationNeededFlag);
     ExceptionOr<Backends> addTransceiver(MediaStreamTrack&, const RTCRtpTransceiverInit&, PeerConnectionBackend::IgnoreNegotiationNeededFlag);
     std::unique_ptr<LibWebRTCRtpTransceiverBackend> transceiverBackendFromSender(LibWebRTCRtpSenderBackend&);
 
     void setSenderSourceFromTrack(LibWebRTCRtpSenderBackend&, MediaStreamTrack&);
-    void collectTransceivers();
+    void collectTransceivers(Vector<Ref<RTCRtpTransceiver>>&&);
 
     std::optional<bool> canTrickleIceCandidates() const;
 
@@ -127,9 +127,9 @@ public:
     bool isNegotiationNeeded(uint32_t) const;
 
     void startRTCLogs();
-    void stopRTCLogs();
+    void NODELETE stopRTCLogs();
 
-    void setPeerConnectionBackend(LibWebRTCPeerConnectionBackend&);
+    void NODELETE setPeerConnectionBackend(LibWebRTCPeerConnectionBackend&);
 
     bool shouldEnableServiceClass() const { return m_rtcSocketFactory && m_rtcSocketFactory->shouldEnableServiceClass(); }
 
@@ -137,7 +137,7 @@ private:
     LibWebRTCMediaEndpoint(RTCPeerConnection&, LibWebRTCProvider&, Document&, bool shouldEnableServiceClass);
 
     // webrtc::PeerConnectionObserver API
-    void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState) final;
+    void NODELETE OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState) final;
     void OnDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface>) final;
 
     void OnNegotiationNeededEvent(uint32_t) final;
@@ -173,19 +173,17 @@ private:
         return result ? webrtc::RefCountReleaseStatus::kOtherRefsRemained : webrtc::RefCountReleaseStatus::kDroppedLastRef;
     }
 
-    std::pair<LibWebRTCRtpSenderBackend::Source, Ref<webrtc::MediaStreamTrackInterface>> createSourceAndRTCTrack(MediaStreamTrack&);
+    std::pair<LibWebRTCRtpSenderBackend::Source, webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>> createSourceAndRTCTrack(MediaStreamTrack&);
     RefPtr<RealtimeMediaSource> sourceFromNewReceiver(webrtc::RtpReceiverInterface&);
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger.get(); }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "LibWebRTCMediaEndpoint"_s; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& NODELETE logChannel() const final;
 
     Seconds statsLogInterval(int64_t) const;
 #endif
-
-    RefPtr<LibWebRTCPeerConnectionBackend> protectedPeerConnectionBackend() const;
 
     WeakPtr<LibWebRTCPeerConnectionBackend> m_peerConnectionBackend;
     const Ref<webrtc::PeerConnectionFactoryInterface> m_peerConnectionFactory;
@@ -203,8 +201,6 @@ private:
 
     bool m_isInitiator { false };
     Timer m_statsLogTimer;
-
-    MemoryCompactRobinHoodHashMap<String, Ref<webrtc::MediaStreamInterface>> m_localStreams;
 
     const std::unique_ptr<LibWebRTCProvider::SuspendableSocketFactory> m_rtcSocketFactory;
 #if !RELEASE_LOG_DISABLED

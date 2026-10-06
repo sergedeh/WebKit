@@ -28,10 +28,10 @@
 
 #if ENABLE(WEBASSEMBLY)
 
-#include "JSCInlines.h"
-
 #include "ArrayBuffer.h"
 #include "JSArrayBuffer.h"
+#include "JSCInlines.h"
+#include "JSWebAssemblyHelpers.h"
 #include "ObjectConstructor.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -51,7 +51,6 @@ void JSWebAssemblyMemory::adopt(Ref<Wasm::Memory>&& memory)
 {
     m_memory.swap(memory);
     ASSERT(m_memory->refCount() == 1);
-    m_memory->checkLifetime();
 }
 
 Structure* JSWebAssemblyMemory::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -83,20 +82,11 @@ void JSWebAssemblyMemory::associateArrayBuffer(JSGlobalObject* globalObject, boo
             auto destructor = createSharedTask<void(void*)>([protectedHandle = WTF::move(protectedHandle)] (void*) { });
             m_buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(data), size }, WTF::move(destructor));
         } else {
-            // The determination of maxByteLength of a resizable non-shared array buffer may change in
-            // https://webassembly.github.io/threads/js-api/index.html#create-a-resizable-memory-buffer
-            // Currently we are implementing the behavior expected by WPT tests,
-            // so that maxByteLength is 2^32 if the memory has no user-defined max size.
-#if USE(LARGE_TYPED_ARRAYS)
-            // If sizeof(size_t) == 8 we use the proper spec value because it's representable.
-            constexpr size_t defaultMaxByteLengthIfMemoryHasNoMax = 65536ULL * 65536ULL;
-#else
-            // If sizeof(size_t) == 4, compute the largest page-aligned size that fits within MAX_ARRAY_BUFFER_SIZE.
-            uint32_t maxPages = MAX_ARRAY_BUFFER_SIZE / PageCount::pageSize;
-            const size_t defaultMaxByteLengthIfMemoryHasNoMax = static_cast<size_t>(PageCount(maxPages).bytes());
-#endif
+            // The buffer must not advertise a length this platform could never grow the memory to, so the
+            // ceiling is what can be allocated rather than what the address type may declare.
+            size_t ceilingBytes = Wasm::maxAllocatableBytes(m_memory->addressType());
             PageCount memoryMax = m_memory->maximum();
-            size_t maxByteLength = memoryMax.isValid() ? memoryMax.bytes() : defaultMaxByteLengthIfMemoryHasNoMax;
+            size_t maxByteLength = memoryMax ? std::min<uint64_t>(memoryMax.bytes(), ceilingBytes) : ceilingBytes;
             ArrayBufferContents contents(data, size, maxByteLength, WTF::move(protectedHandle));
             m_buffer = ArrayBuffer::create(WTF::move(contents));
         }
@@ -104,10 +94,10 @@ void JSWebAssemblyMemory::associateArrayBuffer(JSGlobalObject* globalObject, boo
             m_buffer->makeShared();
     }
     m_buffer->makeWasmMemory();
-    if (m_buffer->isResizableNonShared())
-        m_buffer->setAssociatedWasmMemory(m_memory.ptr());
 
     auto* arrayBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(m_buffer->sharingMode()), m_buffer.get());
+    if (m_buffer->isResizableNonShared())
+        arrayBuffer->setAssociatedWasmMemoryWrapper(vm, this);
     if (m_memory->sharingMode() == MemorySharingMode::Shared) {
         objectConstructorFreeze(globalObject, arrayBuffer);
         RETURN_IF_EXCEPTION(throwScope, void());
@@ -122,8 +112,9 @@ void JSWebAssemblyMemory::disassociateArrayBuffer(VM& vm)
     ASSERT(m_buffer);
     if (!m_buffer->isShared())
         m_buffer->detach(vm);
-    m_buffer->setAssociatedWasmMemory(nullptr);
     m_buffer = nullptr;
+    if (auto* wrapper = m_bufferWrapper.get())
+        wrapper->clearAssociatedWasmMemoryWrapper();
     m_bufferWrapper.clear();
 }
 
@@ -226,7 +217,7 @@ JSArrayBuffer* JSWebAssemblyMemory::toResizableBuffer(JSGlobalObject* globalObje
     return m_bufferWrapper.get();
 }
 
-PageCount JSWebAssemblyMemory::grow(VM& vm, JSGlobalObject* globalObject, uint32_t delta)
+PageCount JSWebAssemblyMemory::grow(VM& vm, JSGlobalObject* globalObject, uint64_t delta)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -258,19 +249,26 @@ PageCount JSWebAssemblyMemory::grow(VM& vm, JSGlobalObject* globalObject, uint32
 JSObject* JSWebAssemblyMemory::type(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    PageCount minimum = m_memory->initial();
+    PageCount minimum = PageCount::fromBytes(m_memory->size());
     PageCount maximum = m_memory->maximum();
+    auto addressType = m_memory->addressType();
 
     JSObject* result;
-    if (maximum.isValid()) {
-        result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        result->putDirect(vm, Identifier::fromString(vm, "maximum"_s), jsNumber(maximum.pageCount()));
+    if (maximum) {
+        result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+        JSValue maxValue = addressValueFromUint64(globalObject, maximum.pageCount(), addressType);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        result->putDirect(vm, Identifier::fromString(vm, "maximum"_s), maxValue);
     } else
-        result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
 
-    result->putDirect(vm, Identifier::fromString(vm, "minimum"_s), jsNumber(minimum.pageCount()));
+    JSValue minValue = addressValueFromUint64(globalObject, minimum.pageCount(), addressType);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    result->putDirect(vm, Identifier::fromString(vm, "minimum"_s), minValue);
     result->putDirect(vm, Identifier::fromString(vm, "shared"_s), jsBoolean(m_memory->sharingMode() == MemorySharingMode::Shared));
+    result->putDirect(vm, Identifier::fromString(vm, "address"_s), addressTypeString(vm, addressType));
 
     return result;
 }
@@ -298,9 +296,6 @@ void JSWebAssemblyMemory::growSuccessCallback(VM& vm, PageCount oldPageCount, Pa
         }
     }
 
-    
-    memory().checkLifetime();
-    
     vm.heap.reportExtraMemoryAllocated(this, newPageCount.bytes() - oldPageCount.bytes());
 }
 
@@ -320,7 +315,7 @@ void JSWebAssemblyMemory::destroy(JSCell* cell)
 template<typename Visitor>
 void JSWebAssemblyMemory::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSWebAssemblyMemory*>(cell);
+    auto* thisObject = uncheckedDowncast<JSWebAssemblyMemory>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     Base::visitChildren(thisObject, visitor);

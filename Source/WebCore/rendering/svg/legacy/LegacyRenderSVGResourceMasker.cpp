@@ -28,15 +28,15 @@
 #include "Image.h"
 #include "IntRect.h"
 #include "LegacyRenderSVGResourceMaskerInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "SVGRenderingContext.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGResourceMasker);
 
-LegacyRenderSVGResourceMasker::LegacyRenderSVGResourceMasker(SVGMaskElement& element, RenderStyle&& style)
+LegacyRenderSVGResourceMasker::LegacyRenderSVGResourceMasker(SVGMaskElement& element, Style::ComputedStyle&& style)
     : LegacyRenderSVGResourceContainer(Type::LegacySVGResourceMasker, element, WTF::move(style))
 {
 }
@@ -54,16 +54,17 @@ void LegacyRenderSVGResourceMasker::removeClientFromCache(RenderElement& client)
     m_masker.remove(client);
 }
 
-auto LegacyRenderSVGResourceMasker::applyResource(RenderElement& renderer, const RenderStyle&, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode) -> OptionSet<ApplyResult>
+auto LegacyRenderSVGResourceMasker::applyResource(RenderElement& renderer, const Style::ComputedStyle&, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode) -> OptionSet<ApplyResult>
 {
     ASSERT(context);
     ASSERT_UNUSED(resourceMode, !resourceMode);
 
-    bool missingMaskerData = !m_masker.contains(renderer);
-    if (missingMaskerData)
-        m_masker.set(renderer, makeUnique<MaskerData>());
+    auto result = m_masker.ensure(renderer, [] {
+        return makeUnique<MaskerData>();
+    });
 
-    MaskerData* maskerData = m_masker.get(renderer);
+    bool missingMaskerData = result.isNewEntry;
+    MaskerData* maskerData = result.iterator->value.get();
     AffineTransform absoluteTransform = SVGRenderingContext::calculateTransformationToOutermostCoordinateSystem(renderer);
     FloatRect decoratedBounds = renderer.decoratedBoundingBox();
 
@@ -78,14 +79,14 @@ auto LegacyRenderSVGResourceMasker::applyResource(RenderElement& renderer, const
     ImageBuffer::sizeNeedsClamping(decoratedBounds.size(), scale);
 
     if (!maskerData->maskImage && !decoratedBounds.isEmpty()) {
-        auto maskColorSpace = DestinationColorSpace::SRGB();
-        auto drawColorSpace = DestinationColorSpace::SRGB();
+        auto maskColorSpace = ColorSpace::SRGB();
+        auto drawColorSpace = ColorSpace::SRGB();
 
         if (style().colorInterpolation() == ColorInterpolation::LinearRGB) {
 #if USE(CG) || USE(SKIA)
-            maskColorSpace = DestinationColorSpace::LinearSRGB();
+            maskColorSpace = ColorSpace::LinearSRGB();
 #endif
-            drawColorSpace = DestinationColorSpace::LinearSRGB();
+            drawColorSpace = ColorSpace::LinearSRGB();
         }
         // FIXME (149470): This image buffer should not be unconditionally unaccelerated. Making it match the context breaks alpha masking, though.
         maskerData->maskImage = context->createScaledImageBuffer(decoratedBounds, scale, maskColorSpace, RenderingMode::Unaccelerated);
@@ -103,7 +104,7 @@ auto LegacyRenderSVGResourceMasker::applyResource(RenderElement& renderer, const
     return { ApplyResult::ResourceApplied };
 }
 
-bool LegacyRenderSVGResourceMasker::drawContentIntoMaskImage(MaskerData* maskerData, const DestinationColorSpace& colorSpace, RenderObject* object)
+bool LegacyRenderSVGResourceMasker::drawContentIntoMaskImage(MaskerData* maskerData, const ColorSpace& colorSpace, RenderObject* object)
 {
     RefPtr maskImage = maskerData->maskImage;
     auto& maskImageContext = maskImage->context();
@@ -145,7 +146,7 @@ bool LegacyRenderSVGResourceMasker::drawContentIntoContext(GraphicsContext& cont
         if (renderer->needsLayout())
             return false;
         const CheckedRef style = renderer->style();
-        if (style->display() == DisplayType::None)
+        if (style->display() == Style::DisplayType::None)
             continue;
         SVGRenderingContext::renderSubtreeToContext(context, *renderer, maskContentTransformation);
     }
@@ -158,6 +159,8 @@ bool LegacyRenderSVGResourceMasker::drawContentIntoContext(GraphicsContext& cont
     GraphicsContextStateSaver stateSaver(context);
 
     context.setCompositeOperation(options.compositeOperator(), options.blendMode());
+    if (options.interpolationQuality() != InterpolationQuality::Default)
+        context.setImageInterpolationQuality(options.interpolationQuality());
 
     context.translate(destinationRect.location());
 
@@ -176,7 +179,7 @@ void LegacyRenderSVGResourceMasker::calculateMaskContentRepaintRect(RepaintRectC
         if (!renderer || !childNode->isSVGElement())
             continue;
         const CheckedRef style = renderer->style();
-        if (style->display() == DisplayType::None)
+        if (style->display() == Style::DisplayType::None)
              continue;
         m_maskContentBoundaries[repaintRectCalculation].unite(renderer->localToParentTransform().mapRect(renderer->repaintRectInLocalCoordinates(repaintRectCalculation)));
     }

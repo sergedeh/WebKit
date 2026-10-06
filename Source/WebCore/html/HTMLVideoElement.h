@@ -32,10 +32,11 @@
 #include <WebCore/Supplementable.h>
 #include <WebCore/VideoFrameRequestCallback.h>
 #include <memory>
+#include <wtf/Forward.h>
 
 namespace WebCore {
 
-class DestinationColorSpace;
+class ColorSpace;
 class HTMLImageLoader;
 class ImageBuffer;
 class RenderVideo;
@@ -78,7 +79,7 @@ public:
     void requestFullscreen(FullscreenOptions&&, RefPtr<DeferredPromise>&&) override;
 #endif
 
-    RefPtr<ImageBuffer> createBufferForPainting(const FloatSize&, RenderingMode, const DestinationColorSpace&, ImageBufferFormat) const;
+    RefPtr<ImageBuffer> createBufferForPainting(const FloatSize&, RenderingMode, const ColorSpace&, ImageBufferFormat) const;
 
     // Used by render painting. Best effort, only paint if we already have an image generator or video output available.
     void paint(GraphicsContext&, const FloatRect&);
@@ -88,33 +89,35 @@ public:
 
     bool shouldGetNativeImageForCanvasDrawing() const;
     WEBCORE_EXPORT RefPtr<NativeImage> nativeImageForCurrentTime() const;
-    WEBCORE_EXPORT RefPtr<ShareableBitmap> bitmapImageForCurrentTime() const;
-    std::optional<DestinationColorSpace> colorSpace() const;
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> bitmapImageForCurrentTimeSync() const;
+    using BitmapImagePromise = MediaPlayer::BitmapImagePromise;
+    WEBCORE_EXPORT Ref<BitmapImagePromise> bitmapImageForCurrentTime() const;
+    std::optional<ColorSpace> colorSpace() const;
 
     WEBCORE_EXPORT bool shouldDisplayPosterImage() const;
 
     URL posterImageURL() const;
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isReplaced(const RenderStyle* = nullptr) const final { return true; }
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    bool isReplaced(const Style::ComputedStyle* = nullptr) const final { return true; }
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     enum class VideoPresentationMode { Inline, Fullscreen, PictureInPicture, InWindow };
-    static VideoPresentationMode toPresentationMode(HTMLMediaElementEnums::VideoFullscreenMode);
+    static VideoPresentationMode NODELETE toPresentationMode(HTMLMediaElementEnums::VideoFullscreenMode);
     WEBCORE_EXPORT bool webkitSupportsPresentationMode(VideoPresentationMode) const;
-    VideoPresentationMode webkitPresentationMode() const;
-    VideoPresentationMode webkitPresentationModeForBindings() const;
+    VideoPresentationMode NODELETE webkitPresentationMode() const;
+    VideoPresentationMode NODELETE webkitPresentationModeForBindings() const;
     void webkitSetPresentationMode(VideoPresentationMode);
 
     WEBCORE_EXPORT void setPresentationMode(VideoPresentationMode);
     WEBCORE_EXPORT void didEnterFullscreenOrPictureInPicture(const FloatSize&);
     WEBCORE_EXPORT void didExitFullscreenOrPictureInPicture();
-    WEBCORE_EXPORT bool isChangingPresentationMode() const;
+    WEBCORE_EXPORT bool NODELETE isChangingPresentationMode() const;
     WEBCORE_EXPORT void setPresentationModeIgnoringPermissionsPolicy(VideoPresentationMode);
 
     void setVideoFullscreenFrame(const FloatRect&) final;
 
 #if ENABLE(PICTURE_IN_PICTURE_API)
-    void setPictureInPictureObserver(PictureInPictureObserver*);
+    void NODELETE setPictureInPictureObserver(PictureInPictureObserver*);
 #endif
 #endif
 
@@ -143,26 +146,41 @@ public:
     WEBCORE_EXPORT void didEnterExternalPlayback();
     WEBCORE_EXPORT void didExitExternalPlayback();
     bool isInExternalPlayback() const { return m_isInExternalPlayback; };
+#else
+    bool isInExternalPlayback() const { return false; }
 #endif
 
     // ActiveDOMObject
+    void suspend(ReasonForSuspension) final;
     void stop() final;
 
+    bool isIntersectingViewport() const final { return m_isIntersectingViewport; }
+    void lazyLoadIntersectionCallbackInvoked(bool isIntersecting);
+
+    double cameraYaw() const { return m_cameraYaw; }
+    double cameraPitch() const { return m_cameraPitch; }
+    double cameraFieldOfView() const { return m_cameraFieldOfView; }
+    void spatialCameraDidMove(double yaw, double pitch, double fieldOfView);
+
 private:
+    friend class HTMLVideoElementPictureInPicture;
     HTMLVideoElement(const QualifiedName&, Document&, bool createdByParser);
 
     void scheduleResizeEvent(const FloatSize&) final;
     void scheduleResizeEventIfSizeChanged(const FloatSize&) final;
-    bool rendererIsNeeded(const RenderStyle&) final;
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+    void scheduleExternalPlaybackChangedEventIfNeeded();
+#endif
+    bool rendererIsNeeded(const Style::ComputedStyle&) final;
     void didAttachRenderers() final;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     bool hasPresentationalHintsForAttribute(const QualifiedName&) const final;
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) final;
     bool isVideo() const final { return true; }
-    bool hasVideo() const final { return player() && protectedPlayer()->hasVideo(); }
+    bool hasVideo() const final { return player() && protect(player())->hasVideo(); }
     bool supportsFullscreen(HTMLMediaElementEnums::VideoFullscreenMode) const final;
-    bool isURLAttribute(const Attribute&) const final;
-    const AtomString& imageSourceURL() const final;
+    bool NODELETE isURLAttribute(const Attribute&) const final;
+    String imageSourceURL() const final;
 
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
 
@@ -185,6 +203,10 @@ private:
     AtomString m_defaultPosterURL;
 
     FloatSize m_lastReportedNaturalSize { };
+
+    double m_cameraYaw { 0 };
+    double m_cameraPitch { 0 };
+    double m_cameraFieldOfView { 0 };
 
     bool m_renderingCanBeAccelerated { false };
 
@@ -211,6 +233,7 @@ private:
     Vector<UniqueRef<VideoFrameRequest>> m_videoFrameRequests;
     Vector<UniqueRef<VideoFrameRequest>> m_servicedVideoFrameRequests;
     unsigned m_nextVideoFrameRequestIndex { 0 };
+    bool m_isIntersectingViewport { false };
 
 #if USE(GSTREAMER)
     bool m_enableGStreamerHolePunching { false };

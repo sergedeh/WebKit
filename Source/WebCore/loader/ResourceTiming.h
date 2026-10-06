@@ -25,10 +25,10 @@
 
 #pragma once
 
-#include "LoaderMalloc.h"
-#include "NetworkLoadMetrics.h"
-#include "ResourceLoadTiming.h"
-#include "ServerTiming.h"
+#include <WebCore/LoaderMalloc.h>
+#include <WebCore/NetworkLoadMetrics.h>
+#include <WebCore/ResourceLoadTiming.h>
+#include <WebCore/ServerTiming.h>
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -42,17 +42,18 @@ class SecurityOrigin;
 class ResourceTiming {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResourceTiming, Loader);
 public:
-    static ResourceTiming fromMemoryCache(const URL&, const String& initiator, const ResourceLoadTiming&, const ResourceResponse&, const NetworkLoadMetrics&, const SecurityOrigin&);
+    static ResourceTiming NODELETE fromMemoryCache(const URL&, const String& initiator, const ResourceLoadTiming&, const ResourceResponse&, const NetworkLoadMetrics&, const SecurityOrigin&);
     static ResourceTiming fromLoad(CachedResource&, const URL&, const String& initiator, const ResourceLoadTiming&, const NetworkLoadMetrics&, const SecurityOrigin&);
-    static ResourceTiming fromSynchronousLoad(const URL&, const String& initiator, const ResourceLoadTiming&, const NetworkLoadMetrics&, const ResourceResponse&, const SecurityOrigin&);
+    static ResourceTiming NODELETE fromSynchronousLoad(const URL&, const String& initiator, const ResourceLoadTiming&, const NetworkLoadMetrics&, const ResourceResponse&, const SecurityOrigin&);
 
-    const URL& url() const { return m_url; }
-    const String& initiatorType() const { return m_initiatorType; }
+    const URL& url() const LIFETIME_BOUND { return m_url; }
+    const String& initiatorType() const LIFETIME_BOUND { return m_initiatorType; }
     String deliveryType() const;
-    const ResourceLoadTiming& resourceLoadTiming() const { return m_resourceLoadTiming; }
-    const NetworkLoadMetrics& networkLoadMetrics() const { return m_networkLoadMetrics; }
-    NetworkLoadMetrics& networkLoadMetrics() { return m_networkLoadMetrics; }
+    const ResourceLoadTiming& resourceLoadTiming() const LIFETIME_BOUND { return m_resourceLoadTiming; }
+    const NetworkLoadMetrics& networkLoadMetrics() const LIFETIME_BOUND { return m_networkLoadMetrics; }
+    NetworkLoadMetrics& networkLoadMetrics() LIFETIME_BOUND { return m_networkLoadMetrics; }
     Vector<Ref<PerformanceServerTiming>> populateServerTiming() const;
+    const Vector<ServerTiming>& serverTiming() const LIFETIME_BOUND { return m_serverTiming; }
     bool isSameOriginRequest() const { return m_isSameOriginRequest; }
     ResourceTiming isolatedCopy() const &;
     ResourceTiming isolatedCopy() &&;
@@ -61,16 +62,10 @@ public:
     void overrideInitiatorType(const String& type) { m_initiatorType = type; }
     bool isLoadedFromServiceWorker() const { return m_isLoadedFromServiceWorker; }
 
+    WEBCORE_EXPORT ResourceTiming(URL&&, String&& initiatorType, ResourceLoadTiming&&, NetworkLoadMetrics&&, Vector<ServerTiming>&&, bool isLoadedFromServiceWorker, bool isSameOriginRequest);
+
 private:
     ResourceTiming(const URL&, const String& initiator, const ResourceLoadTiming&, const NetworkLoadMetrics&, const ResourceResponse&, const SecurityOrigin&);
-    ResourceTiming(URL&& url, String&& initiatorType, const ResourceLoadTiming& resourceLoadTiming, NetworkLoadMetrics&& networkLoadMetrics, Vector<ServerTiming>&& serverTiming)
-        : m_url(WTF::move(url))
-        , m_initiatorType(WTF::move(initiatorType))
-        , m_resourceLoadTiming(resourceLoadTiming)
-        , m_networkLoadMetrics(WTF::move(networkLoadMetrics))
-        , m_serverTiming(WTF::move(serverTiming))
-    {
-    }
 
     URL m_url;
     String m_initiatorType;

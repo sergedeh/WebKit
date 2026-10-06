@@ -55,10 +55,6 @@
 
 namespace WebCore {
 
-const ASCIILiteral WebArchivePboardType = "Apple Web Archive pasteboard type"_s;
-const ASCIILiteral WebURLNamePboardType = "public.url-name"_s;
-const ASCIILiteral WebURLsWithTitlesPboardType = "WebURLsWithTitlesPboardType"_s;
-
 const ASCIILiteral WebSmartPastePboardType = "NeXT smart paste pasteboard type"_s;
 const ASCIILiteral WebURLPboardType = "public.url"_s;
 
@@ -666,7 +662,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return String();
 }
 
-void Pasteboard::addHTMLClipboardTypesForCocoaType(ListHashSet<String>& resultTypes, const String& cocoaType)
+void Pasteboard::addHTMLClipboardTypesForCocoaType(OrderedHashSet<String>& resultTypes, const String& cocoaType)
 {
     if (cocoaType == "NeXT plain ascii pasteboard type"_s)
         return; // Skip this ancient type that gets auto-supplied by some system conversion.

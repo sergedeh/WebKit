@@ -44,11 +44,13 @@ FontCustomPlatformData::FontCustomPlatformData(sk_sp<SkTypeface>&& typeface, Fon
 
 FontCustomPlatformData::~FontCustomPlatformData() = default;
 
-FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription& description, bool bold, bool italic, const FontCreationContext& fontCreationContext)
+FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription& description, const FontCreationContext& fontCreationContext)
 {
     sk_sp<SkTypeface> typeface = m_typeface;
 
     auto defaultValues = defaultFontVariationValues(*typeface);
+    bool hasWeightVariationAxis = defaultValues.contains(FontVariationAxisTag::wght);
+    bool hasSlopeVariationAxis = defaultValues.contains(FontVariationAxisTag::slnt) || defaultValues.contains(FontVariationAxisTag::ital);
     if (!defaultValues.isEmpty()) {
         Vector<SkFontArguments::VariationPosition::Coordinate> variationsToBeApplied;
         auto applyVariation = [&](const FontTag& tag, float value) {
@@ -62,20 +64,21 @@ FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription&
         float weight = description.weight();
         if (auto weightValue = fontCreationContext.fontFaceCapabilities().weight)
             weight = std::max(std::min(weight, static_cast<float>(weightValue->maximum)), static_cast<float>(weightValue->minimum));
-        applyVariation({ { 'w', 'g', 'h', 't' } }, weight);
+        applyVariation(FontVariationAxisTag::wght, weight);
 
         float width = description.width();
         if (auto widthValue = fontCreationContext.fontFaceCapabilities().width)
             width = std::max(std::min(width, static_cast<float>(widthValue->maximum)), static_cast<float>(widthValue->minimum));
-        applyVariation({ { 'w', 'd', 't', 'h' } }, width);
+        applyVariation(FontVariationAxisTag::wdth, width);
 
-        if (description.fontStyleAxis() == FontStyleAxis::ital)
-            applyVariation({ { 'i', 't', 'a', 'l' } }, 1);
+        if (variationStyleAxis(description, fontCreationContext.fontFaceCapabilities()) == FontStyleAxis::ital)
+            applyVariation(FontVariationAxisTag::ital, 1);
         else {
             float slope = description.fontStyleSlope().value_or(normalItalicValue());
-            if (auto slopeValue = fontCreationContext.fontFaceCapabilities().weight)
+            if (auto slopeValue = fontCreationContext.fontFaceCapabilities().slope)
                 slope = std::max(std::min(slope, static_cast<float>(slopeValue->maximum)), static_cast<float>(slopeValue->minimum));
-            applyVariation({ { 's', 'l', 'n', 't' } }, slope);
+            // The 'slnt' axis is positive counter-clockwise; a CSS oblique angle is positive clockwise.
+            applyVariation(FontVariationAxisTag::slnt, -slope);
         }
 
         // FIXME: optical sizing.
@@ -84,18 +87,15 @@ FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription&
         for (auto& variation : variations)
             applyVariation(variation.tag(), variation.value());
 
-        if (!variationsToBeApplied.isEmpty()) {
-            SkFontArguments fontArgs;
-            fontArgs.setVariationDesignPosition({ variationsToBeApplied.span().data(), static_cast<int>(variationsToBeApplied.size()) });
-            if (auto variationTypeface = typeface->makeClone(fontArgs))
-                typeface = WTF::move(variationTypeface);
-        }
+        if (!variationsToBeApplied.isEmpty())
+            typeface = retrieveOrAddCachedTypeface(variationsToBeApplied);
     }
 
     auto size = description.adjustedSizeForFontFace(fontCreationContext.sizeAdjust());
     auto features = FontCache::computeFeatures(description, fontCreationContext);
-    FontPlatformData platformData(WTF::move(typeface), size, bold, italic, description.orientation(), description.widthVariant(), description.textRenderingMode(), WTF::move(features), this);
-    platformData.updateSizeWithFontSizeAdjust(description.fontSizeAdjust(), description.computedSize());
+
+    FontPlatformData platformData(WTF::move(typeface), size, computeSyntheticBold(hasWeightVariationAxis, description, fontCreationContext), computeSyntheticItalic(hasSlopeVariationAxis, description, fontCreationContext), description.orientation(), description.widthVariant(), description.textRenderingMode(), WTF::move(features), fontCreationContext.metricsOverrides(), this);
+    platformData.updateSizeWithFontSizeAdjust(description.fontSizeAdjust(), description.usedSize());
     return platformData;
 }
 
@@ -107,11 +107,11 @@ RefPtr<FontCustomPlatformData> FontCustomPlatformData::create(SharedBuffer& buff
     const auto bufferData = buffer.createSkData();
     bool isCollection = spanHasPrefix(buffer.span(), "ttcf"_span);
     if (itemInCollection.isNull() || !isCollection)
-        typeface = FontCache::forCurrentThread()->fontManager().makeFromData(bufferData);
+        typeface = FontCache::forCurrentThread().fontManager().makeFromData(bufferData);
     else {
         size_t index = 0;
         while (true) {
-            typeface = FontCache::forCurrentThread()->fontManager().makeFromData(bufferData, index++);
+            typeface = FontCache::forCurrentThread().fontManager().makeFromData(bufferData, index++);
             if (!typeface)
                 break;
             typeface->getFamilyName(&familyName);
@@ -170,6 +170,40 @@ std::optional<Ref<FontCustomPlatformData>> FontCustomPlatformData::tryMakeFromSe
 FontCustomPlatformSerializedData FontCustomPlatformData::serializedData() const
 {
     return FontCustomPlatformSerializedData { creationData.fontFaceData, creationData.itemInCollection, m_renderingResourceIdentifier };
+}
+
+sk_sp<SkTypeface> FontCustomPlatformData::retrieveOrAddCachedTypeface(const Vector<SkFontArguments::VariationPosition::Coordinate>& variationsToBeApplied)
+{
+    WTF::Hasher variationHasher;
+    for (auto& coordinate : variationsToBeApplied) {
+        WTF::add(variationHasher, coordinate.axis);
+        WTF::add(variationHasher, coordinate.value);
+    }
+    constexpr size_t variationTypefacesCacheMaximumSize = 8;
+    if (m_variationTypefacesCache.size() >= variationTypefacesCacheMaximumSize)
+        m_variationTypefacesCache.remove(m_variationTypefacesCache.random());
+    auto addResult = m_variationTypefacesCache.ensure(variationHasher.hash(), [&]() -> sk_sp<SkTypeface> {
+        SkFontArguments fontArgs;
+        fontArgs.setVariationDesignPosition({ variationsToBeApplied.span().data(), static_cast<int>(variationsToBeApplied.size()) });
+        if (auto variationTypeface = m_typeface->makeClone(fontArgs))
+            return variationTypeface;
+        return m_typeface;
+    });
+    if (addResult.iterator->value)
+        return addResult.iterator->value;
+    return m_typeface;
+}
+
+void FontCustomPlatformData::clearVariationTypefacesCache() const
+{
+    m_variationTypefacesCache.clear();
+}
+
+void FontCustomPlatformData::clearUnusedVariationTypefacesCacheEntries() const
+{
+    m_variationTypefacesCache.removeIf([](const auto& entry) {
+        return entry.value->unique();
+    });
 }
 
 }

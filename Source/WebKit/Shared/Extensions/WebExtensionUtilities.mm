@@ -315,11 +315,16 @@ bool validateObject(NSObject *object, NSString *sourceKey, id expectedValueType,
     return !errorString;
 }
 
-JSObjectRef toJSRejectedPromise(JSContextRef context, NSString *callingAPIName, NSString *sourceKey, NSString *underlyingErrorString)
+static JSObjectRef toJSRejectedPromise(JSContextRef context, NSString *callingAPIName, NSString *sourceKey, NSString *underlyingErrorString)
 {
     auto *error = toJSValue(context, toJSError(context, callingAPIName, sourceKey, underlyingErrorString));
     auto *promise = [JSValue valueWithNewPromiseRejectedWithReason:error inContext:toJSContext(context)];
     return JSValueToObject(context, promise.JSValueRef, nullptr);
+}
+
+JSObjectRef toJSRejectedPromise(JSContextRef context, const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString)
+{
+    return toJSRejectedPromise(context, callingAPIName.createNSString().get(), sourceKey.createNSString().get(), underlyingErrorString.createNSString().get());
 }
 
 NSString *toWebAPI(NSLocale *locale)
@@ -377,8 +382,8 @@ bool anyItemsExceedQuota(NSDictionary *items, size_t quota, NSString **outKeyWit
 
 Markable<WTF::UUID> toDocumentIdentifier(WebFrame& frame)
 {
-    RefPtr coreFrame = frame.coreLocalFrame();
-    RefPtr document = coreFrame ? coreFrame->document() : nullptr;
+    auto* coreFrame = frame.coreLocalFrame();
+    auto* document = coreFrame ? coreFrame->document() : nullptr;
     if (!document)
         return { };
     return document->identifier().object();

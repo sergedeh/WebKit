@@ -29,6 +29,6 @@ WI.RuntimeObserver = class RuntimeObserver extends InspectorBackend.Dispatcher
 
     executionContextCreated(contextPayload)
     {
-        WI.networkManager.executionContextCreated(contextPayload);
+        WI.networkManager.executionContextCreated(this._target, contextPayload);
     }
 };

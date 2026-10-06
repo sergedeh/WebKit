@@ -6,6 +6,36 @@
 if (NOT HAS_RUN_WEBKIT_COMMON)
     set(HAS_RUN_WEBKIT_COMMON TRUE)
 
+    # Preset values are not replayed on auto-reconfigure; if CMake's "compiler
+    # changed" path wipes the cache, these silently revert. Stamp them outside
+    # the cache and refuse to proceed if any go missing.
+    set(WEBKIT_IDENTITY_VARS CMAKE_BUILD_TYPE PORT DEVELOPER_MODE ENABLE_SANITIZERS WEBKIT_SDK_NAME CMAKE_OSX_SYSROOT)
+    set(_config_stamp "${CMAKE_BINARY_DIR}/.webkit-config-stamp")
+    if (EXISTS "${_config_stamp}")
+        file(STRINGS "${_config_stamp}" _stamp_lines)
+        foreach (_line IN LISTS _stamp_lines)
+            if (_line MATCHES "^([^=]+)=(.*)$")
+                set(_var "${CMAKE_MATCH_1}")
+                set(_prev "${CMAKE_MATCH_2}")
+                if (NOT DEFINED CACHE{${_var}})
+                    message(FATAL_ERROR
+                        "${_var} is not in the CMake cache, but this build directory was "
+                        "previously configured with ${_var}='${_prev}'. The cache was "
+                        "probably wiped by an auto-reconfigure (\"You have changed "
+                        "variables that require your cache to be deleted\"). Re-run "
+                        "'cmake --preset <name>' to restore your configuration, or "
+                        "delete the build directory.")
+                elseif (NOT "$CACHE{${_var}}" STREQUAL "${_prev}")
+                    message(FATAL_ERROR
+                        "${_var} changed from '${_prev}' to '$CACHE{${_var}}'. This build "
+                        "directory's identity variables must not change after the first "
+                        "configure. Delete the build directory and reconfigure.")
+                endif ()
+            endif ()
+        endforeach ()
+        unset(_stamp_lines)
+    endif ()
+
     if (NOT CMAKE_BUILD_TYPE)
         message(WARNING "No CMAKE_BUILD_TYPE value specified, defaulting to RelWithDebInfo.")
         set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the type of build." FORCE)
@@ -43,7 +73,9 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     # Determine which port will be built
     # -----------------------------------------------------------------------------
     set(ALL_PORTS
+        Cocoa
         GTK
+        IOS
         JSCOnly
         Mac
         PlayStation
@@ -54,14 +86,43 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
 
     list(FIND ALL_PORTS ${PORT} RET)
     if (${RET} EQUAL -1)
-        if (APPLE)
-            set(PORT "Mac")
+        if (APPLE AND PORT STREQUAL "NOPORT")
+            set(PORT "Cocoa" CACHE STRING "choose which WebKit port to build (one of ${ALL_PORTS})" FORCE)
         else ()
             message(FATAL_ERROR "Please choose which WebKit port to build (one of ${ALL_PORTS})")
         endif ()
     endif ()
 
+    # Mac and IOS are aliases for the Cocoa port; the target platform is selected
+    # by the SDK (CMAKE_OSX_SYSROOT / WEBKIT_SDK_NAME), not by the port name.
+    if (PORT STREQUAL "Mac" OR PORT STREQUAL "IOS")
+        set(PORT "Cocoa" CACHE STRING "choose which WebKit port to build (one of ${ALL_PORTS})" FORCE)
+    endif ()
+
     string(TOLOWER ${PORT} WEBKIT_PORT_DIR)
+
+    # -----------------------------------------------------------------------------
+    # Check the CMake generator.
+    # -----------------------------------------------------------------------------
+    # The GTK and WPE ports only support the Ninja generator.
+    # Ninja has its own dependency graph, used for dependencies between targets
+    if (PORT STREQUAL "GTK" OR PORT STREQUAL "WPE")
+        if (NOT CMAKE_GENERATOR MATCHES "Ninja")
+            message(FATAL_ERROR "The ${PORT} port requires the Ninja generator, but this build "
+                "directory was configured with the \"${CMAKE_GENERATOR}\" generator.\n"
+                "Re-run CMake with -GNinja or export CMAKE_GENERATOR=Ninja\n")
+        endif ()
+    endif ()
+
+    set(_stamp_content "")
+    foreach (_var IN LISTS WEBKIT_IDENTITY_VARS)
+        if (DEFINED CACHE{${_var}})
+            string(APPEND _stamp_content "${_var}=$CACHE{${_var}}\n")
+        endif ()
+    endforeach ()
+    file(WRITE "${_config_stamp}" "${_stamp_content}")
+    unset(_stamp_content)
+    unset(_config_stamp)
 
     # -----------------------------------------------------------------------------
     # Determine the compiler
@@ -71,8 +132,8 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     endif ()
 
     if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
-        if (${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "12.2.0")
-            message(FATAL_ERROR "GCC 12.2 or newer is required to build WebKit. Use a newer GCC version or Clang.")
+        if (${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "13.1.0")
+            message(FATAL_ERROR "GCC 13.1 or newer is required to build WebKit. Use a newer GCC version or Clang.")
         endif ()
     endif ()
 
@@ -94,19 +155,34 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     # -----------------------------------------------------------------------------
     # Use MSVC_CXX_ARCHITECTURE_ID instead of CMAKE_SYSTEM_PROCESSOR when defined,
     # since the later one just resolves to the host processor on Windows.
+    #
+    # Likewise, on Apple platforms CMAKE_SYSTEM_PROCESSOR resolves to the host,
+    # while CMAKE_OSX_ARCHITECTURES selects the target -- these differ when
+    # building x86_64 under Rosetta on an Apple Silicon host. Prefer
+    # CMAKE_OSX_ARCHITECTURES when it names a single architecture so that the
+    # CPU detection below (and everything keyed off WTF_CPU_*, e.g. the
+    # offlineasm backend) matches the code the compiler actually emits. Universal
+    # builds (multiple architectures) fall back to CMAKE_SYSTEM_PROCESSOR.
+    list(LENGTH CMAKE_OSX_ARCHITECTURES _osx_architectures_count)
     if (MSVC_CXX_ARCHITECTURE_ID)
         string(TOLOWER ${MSVC_CXX_ARCHITECTURE_ID} LOWERCASE_CMAKE_SYSTEM_PROCESSOR)
+    elseif (APPLE AND _osx_architectures_count EQUAL 1)
+        string(TOLOWER "${CMAKE_OSX_ARCHITECTURES}" LOWERCASE_CMAKE_SYSTEM_PROCESSOR)
     else ()
         string(TOLOWER ${CMAKE_SYSTEM_PROCESSOR} LOWERCASE_CMAKE_SYSTEM_PROCESSOR)
     endif ()
-    if (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "(^aarch64|^arm64|^cortex-?[am][2-7][2-8])")
-         if (FORCE_32BIT)
+    unset(_osx_architectures_count)
+    if (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch32|cortex-(a(5|7|8|9|1[2-7]|32)|m[0-9]|r[0-9]([^0-9]|$)))"
+            AND NOT LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)")
+        set(WTF_CPU_ARM 1)
+        set(CMAKE_SYSTEM_PROCESSOR "armv7l" CACHE INTERNAL "" FORCE)
+    elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|cortex-(a|x|c))")
+        if (FORCE_32BIT)
             set(WTF_CPU_ARM 1)
+            set(CMAKE_SYSTEM_PROCESSOR "armv7l" CACHE INTERNAL "" FORCE)
         else ()
             set(WTF_CPU_ARM64 1)
         endif ()
-    elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "(^arm|^cortex)")
-        set(WTF_CPU_ARM 1)
     elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "^mips64")
         set(WTF_CPU_MIPS64 1)
     elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "^mips")
@@ -171,7 +247,12 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     set(WebKit_LIBRARY_TYPE SHARED)
     set(WebCoreTestSupport_LIBRARY_TYPE STATIC)
 
-    set(CMAKE_POSITION_INDEPENDENT_CODE True)
+    if (NOT APPLE)
+        # ld on Apple platforms creates position-independent code by default
+        # where it's needed (e.g. main executables), and rejects the linker
+        # flag on other operations such as merging object files.
+        set(CMAKE_POSITION_INDEPENDENT_CODE True)
+    endif ()
 
     # -----------------------------------------------------------------------------
     # Install JavaScript shell
@@ -201,11 +282,38 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     # Set the variable with uppercase name to keep compatibility with code and users expecting it.
     set(PYTHON_EXECUTABLE ${Python_EXECUTABLE} CACHE FILEPATH "Path to the Python interpreter")
 
-    # We cannot check for RUBY_FOUND because it is set only when the full package is installed and
-    # the only thing we need is the interpreter. Unlike Python, cmake does not provide a macro
-    # for finding only the Ruby interpreter.
-    find_package(Ruby 2.5)
-    if (NOT RUBY_EXECUTABLE OR RUBY_VERSION VERSION_LESS 2.5)
+    # We only need the Ruby interpreter (to run .rb generators), not the dev
+    # package, so find the executable and query its version directly instead of
+    # paying find_package(Ruby)'s config probing (a dozen ruby subprocesses).
+    message(CHECK_START "Ruby interpreter executable")
+    # Honor a pinned interpreter passed as -DRUBY_EXECUTABLE=... (the legacy name
+    # find_package(Ruby) accepted; some bots use it to avoid a broken PATH ruby).
+    if (RUBY_EXECUTABLE AND NOT Ruby_EXECUTABLE)
+        set(Ruby_EXECUTABLE "${RUBY_EXECUTABLE}" CACHE FILEPATH "Path to the Ruby interpreter")
+    endif ()
+    find_program(Ruby_EXECUTABLE NAMES ruby)
+    if (Ruby_EXECUTABLE)
+        execute_process(
+            COMMAND "${Ruby_EXECUTABLE}" -e "print RUBY_VERSION"
+            OUTPUT_VARIABLE Ruby_VERSION
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _ruby_version_result)
+        if (NOT _ruby_version_result EQUAL 0)
+            set(Ruby_VERSION "")
+        endif ()
+        unset(_ruby_version_result)
+    endif ()
+    if (Ruby_EXECUTABLE AND Ruby_VERSION)
+        if (Ruby_VERSION VERSION_LESS 2.5)
+            message(CHECK_FAIL "${Ruby_EXECUTABLE} (version: ${Ruby_VERSION}, minimum required 2.5)")
+            set(Ruby_EXECUTABLE NOTFOUND)
+        else ()
+            message(CHECK_PASS "${Ruby_EXECUTABLE} (version: ${Ruby_VERSION})")
+        endif ()
+    else ()
+        message(CHECK_FAIL "not found")
+    endif ()
+    if (NOT Ruby_EXECUTABLE)
         message(FATAL_ERROR "Ruby 2.5 or higher is required.")
     endif ()
 
@@ -229,22 +337,110 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     include(ProcessorCount)
 
     include(WebKitPackaging)
+    include(WebKitHeaderMap)
     include(WebKitMacros)
+    include(WebKitSwiftPrewarm)
     include(WebKitFS)
     include(WebKitCCache)
     include(WebKitCompilerFlags)
     include(WebKitStaticAnalysis)
     include(WebKitFeatures)
-    include(WebKitFindPackage)
+    include(WebKitEntitlements)
+
+    if (USE_APPLE_INTERNAL_SDK)
+        list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/../Internal/WebKit/WebKitAdditions/CMake")
+        include(WebKitAdditions)
+    endif ()
 
     include(OptionsCommon)
     include(Options${PORT})
+
+    # This has to come after Options${PORT} to see any ENABLE_THREAD_SAFETY_WARNING.
+    if (ENABLE_THREAD_SAFETY_WARNING)
+        WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wthread-safety)
+    endif ()
+
+    include(WebKitSwiftFlags)
 
     # Check gperf after including OptionsXXX.cmake since gperf is required only when ENABLE_WEBCORE is true,
     # and ENABLE_WEBCORE is configured in OptionsXXX.cmake.
     if (ENABLE_WEBCORE)
         # TODO Enforce version requirement for gperf
         find_package(Gperf 3.0.1 REQUIRED)
+    endif ()
+
+    # -------------------------------------------------------------------------
+    # PGO (Profile-Guided Optimization) support
+    # -------------------------------------------------------------------------
+    if (ENABLE_LLVM_PROFILE_GENERATION AND NOT COMPILER_IS_CLANG)
+        message(FATAL_ERROR "ENABLE_LLVM_PROFILE_GENERATION requires Clang.")
+    endif ()
+
+    if (USE_PGO_PROFILE AND NOT COMPILER_IS_CLANG)
+        message(FATAL_ERROR "USE_PGO_PROFILE requires Clang.")
+    endif ()
+
+    # Phase 1: Profile Generation - build instrumented binary that writes .profraw files
+    if (ENABLE_LLVM_PROFILE_GENERATION AND COMPILER_IS_CLANG AND NOT MSVC)
+        include(CheckCXXSourceCompiles)
+        cmake_push_check_state()
+        set(CMAKE_REQUIRED_FLAGS "-fprofile-generate")
+        set(CMAKE_REQUIRED_LINK_OPTIONS "-fprofile-generate")
+        check_cxx_source_compiles("int main() { return 0; }" HAVE_CLANG_PROFILE_RUNTIME)
+        cmake_pop_check_state()
+
+        if (NOT HAVE_CLANG_PROFILE_RUNTIME)
+            message(FATAL_ERROR
+                "ENABLE_LLVM_PROFILE_GENERATION requires the Clang profile runtime (libclang_rt.profile).\n"
+                "Install it or disable PGO with: -DENABLE_LLVM_PROFILE_GENERATION=OFF")
+        endif ()
+
+        set(PGO_PROFILE_DIR "" CACHE PATH "Runtime directory for PGO profile output. Leave empty for clang default.")
+
+        if (PGO_PROFILE_DIR)
+            set(PGO_COMPILE_OPTIONS "-fprofile-generate=${PGO_PROFILE_DIR}" CACHE INTERNAL "")
+        else ()
+            set(PGO_COMPILE_OPTIONS "-fprofile-generate" CACHE INTERNAL "")
+        endif ()
+
+        # LTO builds error out on duplicate __llvm_profile_filename definitions.
+        set(PGO_LINK_FLAGS "${PGO_COMPILE_OPTIONS}")
+        if (LD_SUPPORTS_ALLOW_MULTIPLE_DEFINITION)
+            add_link_options("LINKER:--allow-multiple-definition")
+        endif ()
+        string(PREPEND CMAKE_EXE_LINKER_FLAGS "${PGO_LINK_FLAGS} ")
+        string(PREPEND CMAKE_SHARED_LINKER_FLAGS "${PGO_LINK_FLAGS} ")
+        string(PREPEND CMAKE_MODULE_LINKER_FLAGS "${PGO_LINK_FLAGS} ")
+
+        if (PGO_PROFILE_DIR)
+            message(STATUS "PGO profile generation enabled. Profile output: ${PGO_PROFILE_DIR}")
+        else ()
+            message(STATUS "PGO profile generation enabled. Using clang default profile output.")
+        endif ()
+        message(STATUS "  Override at runtime with: LLVM_PROFILE_FILE=/your/path/%p_%m.profraw")
+    endif ()
+
+    # Phase 2: Profile Use - build optimized binary using collected profile data.
+    # This is the generic single-profile path for most ports. On Apple internal SDK
+    # builds, the WebKitAdditions overlay applies per-framework profiles instead,
+    # so skip there.
+    if (USE_PGO_PROFILE AND COMPILER_IS_CLANG AND NOT MSVC AND NOT USE_APPLE_INTERNAL_SDK)
+        set(PGO_PROFILE_PATH "" CACHE FILEPATH "Path to merged .profdata file for PGO")
+        if (NOT PGO_PROFILE_PATH)
+            message(FATAL_ERROR "USE_PGO_PROFILE is ON but PGO_PROFILE_PATH is not set")
+        endif ()
+        if (NOT EXISTS "${PGO_PROFILE_PATH}")
+            message(FATAL_ERROR "PGO_PROFILE_PATH does not exist: ${PGO_PROFILE_PATH}")
+        endif ()
+
+        # profile counter mismatches (e.g., source changed since profiling) trigger backend-plugin warnings,
+        # which would break the build with our usage of -Werror in CI
+        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fprofile-use=${PGO_PROFILE_PATH}" "-Wno-error=backend-plugin")
+        string(PREPEND CMAKE_EXE_LINKER_FLAGS "-fprofile-use=${PGO_PROFILE_PATH} ")
+        string(PREPEND CMAKE_SHARED_LINKER_FLAGS "-fprofile-use=${PGO_PROFILE_PATH} ")
+        string(PREPEND CMAKE_MODULE_LINKER_FLAGS "-fprofile-use=${PGO_PROFILE_PATH} ")
+
+        message(STATUS "PGO profile use enabled with: ${PGO_PROFILE_PATH}")
     endif ()
 
     # -----------------------------------------------------------------------------
@@ -314,15 +510,20 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
             VERBATIM
         )
         # compile_commands.json
-        add_custom_target(UpdateCompileCommandsSymlink
-            ALL
+        set(_compile_commands_symlink_stamp ${CMAKE_BINARY_DIR}/DeveloperTools/compile_commands_symlink.stamp)
+        add_custom_command(
+            OUTPUT ${_compile_commands_symlink_stamp}
             DEPENDS ${CMAKE_BINARY_DIR}/DeveloperTools/compile_commands.json
                     ${CMAKE_SOURCE_DIR}/update-compile-commands-symlink.conf
             COMMAND ${Python_EXECUTABLE}
                     ${TOOLS_DIR}/clangd/update-compile-commands-symlink
                     ${CMAKE_SOURCE_DIR}/compile_commands.json
                     ${CMAKE_SOURCE_DIR}/update-compile-commands-symlink.conf
+            COMMAND ${CMAKE_COMMAND} -E touch ${_compile_commands_symlink_stamp}
             VERBATIM
+        )
+        add_custom_target(UpdateCompileCommandsSymlink ALL
+            DEPENDS ${_compile_commands_symlink_stamp}
         )
         # .clangd
         add_custom_command(
@@ -339,6 +540,101 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
             ALL
             DEPENDS ${CMAKE_SOURCE_DIR}/.clangd
         )
+    endif ()
+
+    # -----------------------------------------------------------------------------
+    # Record the build settings for later commands
+    # -----------------------------------------------------------------------------
+    # run-safari, run-webkit-tests and the apps built above WebKit resolve a build
+    # through the settings in the base product directory, which only build-webkit
+    # and set-webkit-configuration write. A tree configured or built straight from
+    # a preset records them too, so that the build made last is the one those
+    # commands resolve. set-webkit-configuration stays the only writer of the files.
+    execute_process(
+        COMMAND ${PERL_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/Scripts/webkit-build-directory --top-level
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE _base_product_dir
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _base_product_dir_result
+    )
+    if (_base_product_dir_result EQUAL 0)
+        get_filename_component(_base_product_dir "${_base_product_dir}" REALPATH)
+    else ()
+        set(_base_product_dir "")
+    endif ()
+
+    cmake_path(GET CMAKE_BINARY_DIR FILENAME _configuration_directory)
+    cmake_path(GET CMAKE_BINARY_DIR PARENT_PATH _tree_directory)
+    cmake_path(GET _tree_directory PARENT_PATH _tree_base_dir)
+    get_filename_component(_tree_base_dir "${_tree_base_dir}" REALPATH)
+
+    # A sanitizer or a forced optimization level builds into a directory of its
+    # own, whichever configuration it was built in, so there the configuration is
+    # the build type and everywhere else it is the directory, which is what has
+    # to be resolved. A preset describes its build completely, so the settings it
+    # does not use are cleared rather than left at whatever was recorded before.
+    if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(_build_type_configuration --debug)
+    else ()
+        set(_build_type_configuration --release)
+    endif ()
+
+    set(_recorded_settings "")
+    if (_configuration_directory STREQUAL "Release")
+        set(_recorded_settings --release --no-asan --no-tsan --force-opt=none)
+    elseif (_configuration_directory STREQUAL "Debug")
+        set(_recorded_settings --debug --no-asan --no-tsan --force-opt=none)
+    elseif (_configuration_directory STREQUAL "DebugO3")
+        set(_recorded_settings --debug --no-asan --no-tsan --force-opt=O3)
+    elseif (_configuration_directory STREQUAL "ASan")
+        set(_recorded_settings ${_build_type_configuration} --asan --no-tsan --force-opt=none)
+    elseif (_configuration_directory STREQUAL "TSan")
+        set(_recorded_settings ${_build_type_configuration} --tsan --no-asan --force-opt=none)
+    endif ()
+
+    if (NOT _base_product_dir)
+        message(STATUS "Not recording the build settings: the base product directory could not be resolved")
+    elseif (NOT _tree_base_dir STREQUAL _base_product_dir)
+        message(STATUS "Not recording the build settings: ${CMAKE_BINARY_DIR} is not in ${_base_product_dir}")
+    elseif (NOT _recorded_settings)
+        message(STATUS "Not recording the build settings: set-webkit-configuration has no setting for the ${_configuration_directory} configuration")
+    else ()
+        # Write the settings when this tree is configured and when it is built, so
+        # that later commands find the tree built last.
+        #
+        # Best-effort: set-webkit-configuration dies in some legitimate
+        # environments (an OpenSource-only checkout using an internal SDK).
+        # Do not fail the configure, and only add the target when recording
+        # worked, so that the same failure does not just move to the first
+        # build.
+        set(_record_settings_command
+            ${PERL_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/Scripts/set-webkit-configuration
+            --cmake ${_recorded_settings}
+        )
+        execute_process(
+            COMMAND ${_record_settings_command}
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            RESULT_VARIABLE _record_settings_result
+            ERROR_VARIABLE _record_settings_error
+        )
+        if (NOT _record_settings_result EQUAL 0)
+            message(STATUS "Not recording the build settings: set-webkit-configuration failed: ${_record_settings_error}")
+        else ()
+            # Recording a setting, in any tree, makes the directory newer than this stamp.
+            set(_record_settings_stamp ${CMAKE_BINARY_DIR}/CMakeFiles/RecordBuildSettings.stamp)
+            add_custom_command(
+                OUTPUT ${_record_settings_stamp}
+                DEPENDS ${_base_product_dir}
+                COMMAND ${_record_settings_command}
+                COMMAND ${CMAKE_COMMAND} -E touch ${_record_settings_stamp}
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                COMMENT "Recording the build settings for later commands"
+                VERBATIM
+            )
+            add_custom_target(RecordBuildSettings ALL
+                DEPENDS ${_record_settings_stamp}
+            )
+        endif ()
     endif ()
 
     # -----------------------------------------------------------------------------

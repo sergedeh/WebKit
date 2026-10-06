@@ -31,6 +31,7 @@
 #include <WebCore/OrientationNotifier.h>
 #include <WebCore/RealtimeMediaSource.h>
 #include <WebCore/VideoPreset.h>
+#include <wtf/Deque.h>
 #include <wtf/Lock.h>
 #include <wtf/RunLoop.h>
 
@@ -52,6 +53,8 @@ public:
 
     void ensureIntrinsicSizeMaintainsAspectRatio();
 
+    using RealtimeMediaSource::applyConstraints;
+
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
 protected:
@@ -66,13 +69,13 @@ protected:
     void setSupportedPresets(Vector<VideoPresetData>&&);
     virtual const Vector<VideoPreset>& presets();
 
-    bool frameRateRangeIncludesRate(const FrameRateRange&, double);
+    bool NODELETE frameRateRangeIncludesRate(const FrameRateRange&, double);
 
     void updateCapabilities(RealtimeMediaSourceCapabilities&);
 
     void dispatchVideoFrameToObservers(VideoFrame&, VideoFrameTimeMetadata);
 
-    static std::span<const IntSize> standardVideoSizes();
+    static std::span<const IntSize> NODELETE standardVideoSizes();
 
     virtual Ref<TakePhotoNativePromise> takePhotoInternal(PhotoSettings&&);
     bool mutedForPhotoCapture() const { return m_mutedForPhotoCapture; }
@@ -92,14 +95,28 @@ private:
     std::optional<CaptureSizeFrameRateAndZoom> bestSupportedSizeFrameRateAndZoom(const VideoPresetConstraints&, TryPreservingSize = TryPreservingSize::Yes);
     std::optional<CaptureSizeFrameRateAndZoom> bestSupportedSizeFrameRateAndZoomConsideringObservers(const VideoPresetConstraints&);
 
-    bool presetSupportsFrameRate(const VideoPreset&, double);
-    bool presetSupportsZoom(const VideoPreset&, double);
+    bool NODELETE presetSupportsFrameRate(const VideoPreset&, double);
+    bool NODELETE presetSupportsZoom(const VideoPreset&, double);
 
     void setSizeFrameRateAndZoomForPhoto(CaptureSizeFrameRateAndZoom&&);
     Ref<TakePhotoNativePromise> takePhoto(PhotoSettings&&) final;
     bool isPowerEfficient() const final;
 
     void orientationChanged(IntDegrees) override;
+
+    struct PendingPhotoCapture {
+        PhotoSettings settings;
+        UniqueRef<TakePhotoNativePromise::Producer> producer;
+    };
+    struct PendingConstraintApplication {
+        MediaConstraints constraints;
+        ApplyConstraintsHandler handler;
+    };
+    using PendingOperation = Variant<PendingPhotoCapture, PendingConstraintApplication>;
+
+    void dispatchNextOperation();
+    void applyConstraints(const MediaConstraints&, ApplyConstraintsHandler&&) override;
+    void didEnd() override;
 
 #if !RELEASE_LOG_DISABLED
     ASCIILiteral logClassName() const override { return "RealtimeVideoCaptureSource"_s; }
@@ -110,6 +127,8 @@ private:
     Deque<double> m_observedFrameTimeStamps;
     double m_observedFrameRate { 0 };
     bool m_mutedForPhotoCapture { false };
+    Deque<PendingOperation> m_pendingOperations;
+    bool m_captureInFlight { false };
 };
 
 struct SizeFrameRateAndZoom {

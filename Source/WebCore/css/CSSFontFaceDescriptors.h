@@ -61,11 +61,17 @@ public:
     ExceptionOr<void> setFontFeatureSettings(const String&);
     String fontDisplay() const;
     ExceptionOr<void> setFontDisplay(const String&);
+    String ascentOverride() const;
+    ExceptionOr<void> setAscentOverride(const String&);
+    String descentOverride() const;
+    ExceptionOr<void> setDescentOverride(const String&);
+    String lineGapOverride() const;
+    ExceptionOr<void> setLineGapOverride(const String&);
 
 private:
     CSSFontFaceDescriptors(MutableStyleProperties&, CSSFontFaceRule&);
 
-    StyleRuleType ruleType() const final;
+    StyleRuleType NODELETE ruleType() const final;
 };
 
 } // namespace WebCore

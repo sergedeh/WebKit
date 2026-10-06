@@ -51,7 +51,7 @@ public:
 
     virtual ~SocketStreamHandleImpl();
 
-    static void setLegacyTLSEnabled(bool);
+    static void NODELETE setLegacyTLSEnabled(bool);
 
     void platformSend(std::span<const uint8_t> data, Function<void(bool)>&&) final;
     void platformSendHandshake(std::span<const uint8_t> data, const std::optional<CookieRequestHeaderFieldProxy>&, Function<void(bool, bool)>&&) final;
@@ -70,16 +70,16 @@ private:
     void removePACRunLoopSource();
     RetainPtr<CFRunLoopSourceRef> m_pacRunLoopSource;
     static void pacExecutionCallback(void* client, CFArrayRef proxyList, CFErrorRef);
-    static CFStringRef copyPACExecutionDescription(void*);
+    static CFStringRef NODELETE copyPACExecutionDescription(void*);
 
     bool shouldUseSSL() const { return m_url.protocolIs("wss"_s); }
     unsigned short port() const;
 
     void addCONNECTCredentials(CFHTTPMessageRef response);
 
-    static void* retainSocketStreamHandle(void*);
+    static void* NODELETE retainSocketStreamHandle(void*);
     static void releaseSocketStreamHandle(void*);
-    static CFStringRef copyCFStreamDescription(void*);
+    static CFStringRef copyCFStreamDescription(void*) CF_RETURNS_RETAINED;
     static void readStreamCallback(CFReadStreamRef, CFStreamEventType, void*);
     static void writeStreamCallback(CFWriteStreamRef, CFStreamEventType, void*);
     void readStreamCallback(CFStreamEventType);
@@ -97,16 +97,15 @@ private:
     RetainPtr<CFStringRef> m_proxyHost;
     RetainPtr<CFNumberRef> m_proxyPort;
 
-    RetainPtr<CFHTTPMessageRef> m_proxyResponseMessage;
     bool m_sentStoredCredentials;
     bool m_shouldAcceptInsecureCertificates;
     RetainPtr<CFReadStreamRef> m_readStream;
     RetainPtr<CFWriteStreamRef> m_writeStream;
 
-    RetainPtr<CFURLRef> m_httpsURL; // ws(s): replaced with https:
+    const RetainPtr<CFURLRef> m_httpsURL; // ws(s): replaced with https:
     String m_credentialPartition;
     SourceApplicationAuditToken m_auditData;
-    RefPtr<const StorageSessionProvider> m_storageSessionProvider;
+    const RefPtr<const StorageSessionProvider> m_storageSessionProvider;
 
     StreamBuffer<uint8_t, 1024 * 1024> m_buffer;
     static const unsigned maxBufferSize = 100 * 1024 * 1024;

@@ -36,7 +36,7 @@ public:
 
     static Ref<Text> create(Document& document, String&& data)
     {
-        return adoptRef(*new Text(document, WTF::move(data), TEXT_NODE, { }));
+        return adoptRef(*new Text(document, WTF::move(data), NodeType::Text, { }));
     }
     static Ref<Text> createEditingText(Document&, String&&);
 
@@ -49,12 +49,11 @@ public:
     WEBCORE_EXPORT String wholeText() const;
     WEBCORE_EXPORT void replaceWholeText(const String&);
     
-    RenderPtr<RenderText> createTextRenderer(const RenderStyle&);
+    RenderPtr<RenderText> createTextRenderer(const Style::ComputedStyle&);
     
     bool canContainRangeEndPoint() const final { return true; }
 
     RenderText* renderer() const;
-    CheckedPtr<RenderText> checkedRenderer() const;
 
     void updateRendererAfterContentChange(unsigned offsetOfReplacedData, unsigned lengthOfReplacedData);
 

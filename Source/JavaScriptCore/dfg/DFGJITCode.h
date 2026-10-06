@@ -36,6 +36,7 @@
 #include "DFGVariableEventStream.h"
 #include "ExecutionCounter.h"
 #include "JITCode.h"
+#include "JumpTable.h"
 #include <wtf/CompactPointerTuple.h>
 #include <wtf/SegmentedVector.h>
 
@@ -51,21 +52,9 @@ namespace DFG {
 class JITCode;
 class JITCompiler;
 
-struct UnlinkedStructureStubInfo : JSC::UnlinkedStructureStubInfo {
-    CodeOrigin codeOrigin;
-    ScalarRegisterSet usedRegisters;
+struct UnlinkedPropertyInlineCache : JSC::UnlinkedPropertyInlineCache {
     CallSiteIndex callSiteIndex;
-    GPRReg m_baseGPR { InvalidGPRReg };
-    GPRReg m_valueGPR { InvalidGPRReg };
-    GPRReg m_extraGPR { InvalidGPRReg };
-    GPRReg m_extra2GPR { InvalidGPRReg };
-    GPRReg m_stubInfoGPR { InvalidGPRReg };
-#if USE(JSVALUE32_64)
-    GPRReg m_valueTagGPR { InvalidGPRReg };
-    GPRReg m_baseTagGPR { InvalidGPRReg };
-    GPRReg m_extraTagGPR { InvalidGPRReg };
-    GPRReg m_extra2TagGPR { InvalidGPRReg };
-#endif
+    CodeOrigin codeOrigin;
 };
 
 struct UnlinkedCallLinkInfo : JSC::UnlinkedCallLinkInfo {
@@ -100,9 +89,13 @@ public:
         StructureCacheClearedWatchpointSet,
         StringToStringWatchpointSet,
         StringValueOfWatchpointSet,
+        StringSymbolMatchWatchpointSet,
+        StringSymbolSearchWatchpointSet,
         StringSymbolReplaceWatchpointSet,
+        StringSymbolSplitWatchpointSet,
         StringSymbolToPrimitiveWatchpointSet,
         RegExpPrimordialPropertiesWatchpointSet,
+        RegExpSpeciesWatchpointSet,
         PromiseThenWatchpointSet,
         ArraySpeciesWatchpointSet,
         ArrayPrototypeChainIsSaneWatchpointSet,
@@ -153,22 +146,24 @@ private:
     FixedVector<Value> m_constants;
 };
 
-class JITData final : public ButterflyArray<JITData, StructureStubInfo, void*> {
+class JITData final : public ButterflyArray<JITData, HandlerPropertyInlineCache, void*> {
     friend class JSC::LLIntOffsetsExtractor;
 public:
-    using Base = ButterflyArray<JITData, StructureStubInfo, void*>;
-    using ExitVector = FixedVector<MacroAssemblerCodeRef<OSRExitPtrTag>>;
+    using Base = ButterflyArray<JITData, HandlerPropertyInlineCache, void*>;
+    using ExitJumpTable = FixedVector<CodePtr<OSRExitPtrTag>>;
 
-    static constexpr ptrdiff_t offsetOfExits() { return OBJECT_OFFSETOF(JITData, m_exits); }
+    static constexpr ptrdiff_t offsetOfExitJumpTable() { return OBJECT_OFFSETOF(JITData, m_exitJumpTable); }
     static constexpr ptrdiff_t offsetOfIsInvalidated() { return OBJECT_OFFSETOF(JITData, m_isInvalidated); }
 
-    static std::unique_ptr<JITData> tryCreate(VM&, CodeBlock*, const JITCode&, ExitVector&& exits);
+    static std::unique_ptr<JITData> tryCreate(VM&, CodeBlock*, const JITCode&, ExitJumpTable&&);
 
-    void setExitCode(unsigned exitIndex, MacroAssemblerCodeRef<OSRExitPtrTag> code)
+    void appendExitStub(unsigned exitIndex, MacroAssemblerCodeRef<OSRExitPtrTag> code)
     {
-        m_exits[exitIndex] = WTF::move(code);
+        ASSERT(!m_exitStubs.containsIf([&](const OSRExitStub& stub) { return stub.exitIndex == exitIndex; }));
+        m_exitStubs.append({ exitIndex, WTF::move(code) });
     }
-    const MacroAssemblerCodeRef<OSRExitPtrTag>& exitCode(unsigned exitIndex) const { return m_exits[exitIndex]; }
+    void setExitJumpTableEntry(unsigned exitIndex, CodePtr<OSRExitPtrTag> code) { m_exitJumpTable[exitIndex] = code; }
+    const OSRExitStubs& exitStubs() const LIFETIME_BOUND { return m_exitStubs; }
 
     bool isInvalidated() const { return !!m_isInvalidated; }
 
@@ -177,21 +172,21 @@ public:
         m_isInvalidated = 1;
     }
 
-    auto stubInfos() -> decltype(leadingSpan())
+    auto propertyInlineCaches() -> decltype(leadingSpan())
     {
         return leadingSpan();
     }
 
-    StructureStubInfo& stubInfo(unsigned index)
+    HandlerPropertyInlineCache& propertyCache(unsigned index)
     {
-        auto span = stubInfos();
+        auto span = propertyInlineCaches();
         return span[span.size() - index - 1];
     }
 
-    FixedVector<OptimizingCallLinkInfo>& callLinkInfos() { return m_callLinkInfos; }
+    FixedVector<OptimizingCallLinkInfo>& callLinkInfos() LIFETIME_BOUND { return m_callLinkInfos; }
 
-    UpperTierExecutionCounter& tierUpCounter() { return m_tierUpCounter; }
-    const UpperTierExecutionCounter& tierUpCounter() const { return m_tierUpCounter; }
+    UpperTierExecutionCounter& tierUpCounter() LIFETIME_BOUND { return m_tierUpCounter; }
+    const UpperTierExecutionCounter& tierUpCounter() const LIFETIME_BOUND { return m_tierUpCounter; }
 
     uint8_t neverExecutedEntry() const { return m_neverExecutedEntry; }
 
@@ -203,9 +198,9 @@ public:
     static constexpr ptrdiff_t offsetOfTierUpTotalCount() { return OBJECT_OFFSETOF(JITData, m_tierUpCounter) + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_totalCount); }
     static constexpr ptrdiff_t offsetOfNeverExecutedEntry() { return OBJECT_OFFSETOF(JITData, m_neverExecutedEntry); }
 
-    explicit JITData(unsigned stubInfoSize, unsigned poolSize, const JITCode&, ExitVector&&);
+    explicit JITData(unsigned propertyCacheSize, unsigned poolSize, const JITCode&, ExitJumpTable&&);
 
-    void finalizeUnconditionally()
+    void reconcileWeakReferencesAtGCEnd()
     {
         m_dummyArrayProfile.clear();
     }
@@ -220,7 +215,8 @@ private:
     UpperTierExecutionCounter m_tierUpCounter;
     FixedVector<OptimizingCallLinkInfo> m_callLinkInfos;
     FixedVector<CodeBlockJettisoningWatchpoint> m_watchpoints;
-    ExitVector m_exits;
+    ExitJumpTable m_exitJumpTable;
+    OSRExitStubs m_exitStubs;
     uint8_t m_isInvalidated { 0 };
     uint8_t m_neverExecutedEntry { 1 };
 };
@@ -270,9 +266,9 @@ public:
     
     void shrinkToFit() final;
 
-    RegisterSetBuilder liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) final;
+    RegisterSet liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) final;
 #if ENABLE(FTL_JIT)
-    CodeBlock* osrEntryBlock() { return m_osrEntryBlock.get(); }
+    CodeBlock* osrEntryBlock() LIFETIME_BOUND { return m_osrEntryBlock.get(); }
     void setOSREntryBlock(VM&, const JSCell* owner, CodeBlock* osrEntryBlock);
     void clearOSREntryBlockAndResetThresholds(CodeBlock* dfgCodeBlock);
 #endif
@@ -291,11 +287,24 @@ private:
 public:
     CommonData common;
     FixedVector<DFG::OSREntryData> m_osrEntry;
-    FixedVector<DFG::OSRExit> m_osrExit;
+    DFG::OSRExitStream m_osrExits;
+    CodeLocationLabel<JSInternalPtrTag> m_osrExitEntrances;
+
+    CodeLocationLabel<JSInternalPtrTag> osrExitEntrance(unsigned exitIndex)
+    {
+        return m_osrExitEntrances.labelAtOffset(exitIndex * osrExitEntranceSize);
+    }
+
+    unsigned osrExitIndexForReturnPC(void* returnPC) const
+    {
+        size_t offset = reinterpret_cast<uintptr_t>(returnPC) - m_osrExitEntrances.dataLocation<uintptr_t>();
+        ASSERT(offset && !(offset % osrExitEntranceSize));
+        return offset / osrExitEntranceSize - 1;
+    }
     FixedVector<DFG::SpeculationRecovery> m_speculationRecovery;
     FixedVector<SimpleJumpTable> m_switchJumpTables;
     FixedVector<StringJumpTable> m_stringSwitchJumpTables;
-    FixedVector<UnlinkedStructureStubInfo> m_unlinkedStubInfos;
+    FixedVector<UnlinkedPropertyInlineCache> m_unlinkedPropertyInlineCaches;
     FixedVector<UnlinkedCallLinkInfo> m_unlinkedCallLinkInfos;
     DFG::VariableEventStream variableEventStream;
     DFG::MinifiedGraph minifiedDFG;
@@ -329,9 +338,9 @@ public:
 #endif // ENABLE(FTL_JIT)
 };
 
-inline std::unique_ptr<JITData> JITData::tryCreate(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode, ExitVector&& exits)
+inline std::unique_ptr<JITData> JITData::tryCreate(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode, ExitJumpTable&& exitJumpTable)
 {
-    auto result = std::unique_ptr<JITData> { createImpl(jitCode.m_unlinkedStubInfos.size(), jitCode.m_linkerIR.size(), jitCode, WTF::move(exits)) };
+    auto result = std::unique_ptr<JITData> { createImpl(jitCode.m_unlinkedPropertyInlineCaches.size(), jitCode.m_linkerIR.size(), jitCode, WTF::move(exitJumpTable)) };
     if (result->tryInitialize(vm, codeBlock, jitCode))
         return result;
     return nullptr;

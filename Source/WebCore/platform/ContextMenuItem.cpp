@@ -146,7 +146,7 @@ bool ContextMenuItem::enabled() const
     return m_enabled;
 }
 
-static bool isValidContextMenuAction(WebCore::ContextMenuAction action)
+static bool NODELETE isValidContextMenuAction(WebCore::ContextMenuAction action)
 {
     switch (action) {
     case ContextMenuAction::ContextMenuItemTagNoAction:
@@ -253,6 +253,8 @@ static bool isValidContextMenuAction(WebCore::ContextMenuAction action)
     case ContextMenuAction::ContextMenuItemTagMakeLowerCase:
     case ContextMenuAction::ContextMenuItemTagCapitalize:
     case ContextMenuAction::ContextMenuItemTagChangeBack:
+    case ContextMenuAction::ContextMenuItemTagConvertToTraditionalChinese:
+    case ContextMenuAction::ContextMenuItemTagConvertToSimplifiedChinese:
 #endif
     case ContextMenuAction::ContextMenuItemTagOpenMediaInNewWindow:
     case ContextMenuAction::ContextMenuItemTagDownloadMediaToDisk:
@@ -267,7 +269,7 @@ static bool isValidContextMenuAction(WebCore::ContextMenuAction action)
     case ContextMenuAction::ContextMenuItemTagToggleVideoFullscreen:
     case ContextMenuAction::ContextMenuItemTagShareMenu:
     case ContextMenuAction::ContextMenuItemTagToggleVideoViewer:
-    case ContextMenuAction::ContextMenuItemTagToggleVideoEnhancedFullscreen:
+    case ContextMenuAction::ContextMenuItemTagTogglePictureInPicture:
     case ContextMenuAction::ContextMenuItemTagLookUpImage:
     case ContextMenuAction::ContextMenuItemTagTranslate:
     case ContextMenuAction::ContextMenuItemTagWritingTools:
@@ -303,7 +305,7 @@ static bool isValidContextMenuAction(WebCore::ContextMenuAction action)
 
 namespace WTF {
 
-template<> bool isValidEnum<WebCore::ContextMenuAction>(std::underlying_type_t<WebCore::ContextMenuAction> action)
+template<> bool NODELETE isValidEnum<WebCore::ContextMenuAction>(std::underlying_type_t<WebCore::ContextMenuAction> action)
 {
     return WebCore::isValidContextMenuAction(static_cast<WebCore::ContextMenuAction>(action));
 }

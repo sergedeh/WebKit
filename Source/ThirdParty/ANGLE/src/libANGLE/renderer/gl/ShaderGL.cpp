@@ -124,25 +124,20 @@ std::shared_ptr<ShaderTranslateTask> ShaderGL::compile(const gl::Context *contex
 {
     ContextGL *contextGL         = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions = GetFunctionsGL(context);
+    const angle::FeaturesGL &features = GetFeaturesGL(context);
 
     options->initGLPosition = true;
 
-    bool isWebGL = context->isWebGL();
-    if (isWebGL && mState.getShaderType() != gl::ShaderType::Compute)
+    const bool isHardened = context->isHardenedContext();
+    if (isHardened || (features.initFragmentOutputVariables.enabled &&
+                       mState.getShaderType() == gl::ShaderType::Fragment))
     {
         options->initOutputVariables = true;
     }
 
-    if (isWebGL && !context->getState().getEnableFeature(GL_TEXTURE_RECTANGLE_ANGLE))
+    if (isHardened && !context->getState().getEnableFeature(GL_TEXTURE_RECTANGLE_ANGLE))
     {
         options->disableARBTextureRectangle = true;
-    }
-
-    const angle::FeaturesGL &features = GetFeaturesGL(context);
-
-    if (features.initFragmentOutputVariables.enabled)
-    {
-        options->initFragmentOutputVariables = true;
     }
 
     if (features.emulateAbsIntFunction.enabled)
@@ -200,14 +195,13 @@ std::shared_ptr<ShaderTranslateTask> ShaderGL::compile(const gl::Context *contex
         options->preTransformTextureCubeGradDerivatives = true;
     }
 
-    if (contextGL->getMultiviewImplementationType() ==
-        MultiviewImplementationTypeGL::NV_VIEWPORT_ARRAY2)
+    if (features.multiviewViaViewportArray.enabled)
     {
         options->initializeBuiltinsForInstancedMultiview = true;
         options->selectViewInNvGLSLVertexShader          = true;
     }
 
-    if (features.clampArrayAccess.enabled || isWebGL)
+    if (features.clampArrayAccess.enabled || isHardened)
     {
         options->clampIndirectArrayBounds = true;
     }
@@ -230,11 +224,6 @@ std::shared_ptr<ShaderTranslateTask> ShaderGL::compile(const gl::Context *contex
     if (features.preAddTexelFetchOffsets.enabled)
     {
         options->rewriteTexelFetchOffsetToTexelFetch = true;
-    }
-
-    if (features.regenerateStructNames.enabled)
-    {
-        options->regenerateStructNames = true;
     }
 
     if (features.rewriteRowMajorMatrices.enabled)
@@ -262,6 +251,11 @@ std::shared_ptr<ShaderTranslateTask> ShaderGL::compile(const gl::Context *contex
         options->scalarizeVecAndMatConstructorArgs = true;
     }
 
+    if (features.avoidComplexExpressionsInStructConstructor.enabled)
+    {
+        options->avoidComplexExpressionsInStructConstructor = true;
+    }
+
     if (features.explicitFragmentLocations.enabled)
     {
         options->explicitFragmentLocations = true;
@@ -270,6 +264,21 @@ std::shared_ptr<ShaderTranslateTask> ShaderGL::compile(const gl::Context *contex
     if (contextGL->getNativeExtensions().shaderPixelLocalStorageANGLE)
     {
         options->pls = contextGL->getNativePixelLocalStorageOptions();
+    }
+
+    if (features.validateMaxPerStageUniformBlocksAtCompileTime.enabled)
+    {
+        options->validatePerStageMaxUniformBlocks = true;
+    }
+
+    if (features.expandFragmentOutputsToVec4.enabled)
+    {
+        options->expandFragmentOutputsToVec4 = true;
+    }
+
+    if (features.limitOutputVaryingsTo256AtCompileTime.enabled)
+    {
+        options->limitOutputVaryingsTo256 = true;
     }
 
     return std::shared_ptr<ShaderTranslateTask>(

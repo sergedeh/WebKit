@@ -103,9 +103,9 @@ public:
     // Match the character |c| against the character at the input pointer (~lookahead).
     bool match(char c) const { return !isAtEnd() && currentChar() == c; }
     // Scan the character |c|.
-    bool scan(char);
+    bool NODELETE scan(char);
     // Scan the first |charactersCount| characters of the string |characters|.
-    bool scan(std::span<const Latin1Character> characters);
+    bool NODELETE scan(std::span<const Latin1Character> characters);
 
     // Skip (advance the input pointer) as long as the specified
     // |characterPredicate| returns true, and the input pointer is not passed
@@ -129,10 +129,10 @@ public:
 
     // Scan the string |toMatch|, using the specified |run| as the sequence to
     // match against.
-    bool scanRun(const Run&, const String& toMatch);
+    bool NODELETE scanRun(const Run&, const String& toMatch);
 
     // Skip to the end of the specified |run|.
-    void skipRun(const Run&);
+    void NODELETE skipRun(const Run&);
 
     // Return the String made up of the characters in |run|, and advance the
     // input pointer to the end of the run.
@@ -148,11 +148,11 @@ public:
     // Note: Does not handle sign.
     unsigned scanDigits(unsigned& number);
 
-    // Scan a floating point value on one of the forms: \d+\.? \d+\.\d+ \.\d+
-    bool scanFloat(float& number, bool* isNegative = nullptr);
+    // Scan a double of the form: \d+\.\d+ or \d+
+    bool scanDouble(double& number, bool* isNegative = nullptr);
 
 protected:
-    Run createRun(Position start, Position end) const;
+    Run NODELETE createRun(Position start, Position end) const;
     Position position() const
     {
         if (m_is8Bit)

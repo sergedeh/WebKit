@@ -34,6 +34,7 @@
 #include "HTMLNames.h"
 #include "MouseEvent.h"
 #include "SelectionRestorationMode.h"
+#include "Settings.h"
 #include "TypedElementDescendantIteratorInlines.h"
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -99,7 +100,7 @@ RefPtr<HTMLElement> HTMLLabelElement::controlForBindings() const
 HTMLFormElement* HTMLLabelElement::form() const
 {
     if (RefPtr element = control()) {
-        if (RefPtr listedElement = element->asValidatedFormListedElement())
+        if (auto* listedElement = element->asValidatedFormListedElement())
             return listedElement->form();
     }
     return nullptr;
@@ -143,7 +144,12 @@ bool HTMLLabelElement::isEventTargetedAtInteractiveDescendants(Event& event) con
     if (!node)
         return false;
 
-    if (!isShadowIncludingInclusiveAncestorOf(node.get()))
+    // Interactive content (e.g. a <button>) may remove itself while handling the
+    // click, detaching it from the label before the label's default action runs.
+    // The event path was computed before that mutation, so the label still
+    // default-handles the click and must do nothing. Only bail when the target
+    // is still connected but outside the label.
+    if (node->isConnected() && !isShadowIncludingInclusiveAncestorOf(node.get()))
         return false;
 
     for (RefPtr it = node; it && it != this; it = it->parentElementInComposedTree()) {
@@ -180,9 +186,9 @@ void HTMLLabelElement::defaultEventHandler(Event& event)
 
         control->dispatchSimulatedClick(&event);
 
-        protectedDocument()->updateLayoutIgnorePendingStylesheets();
+        protect(document())->updateLayoutIgnorePendingStylesheets();
         if (control->isMouseFocusable())
-            control->focus({ { }, { }, { }, FocusTrigger::Click, { } });
+            control->focus({ { }, { }, { }, { }, { }, FocusTrigger::Click, { } });
 
         event.setDefaultHandled();
     }
@@ -194,6 +200,11 @@ bool HTMLLabelElement::willRespondToMouseClickEventsWithEditability(Editability 
 {
     auto element = control();
     return (element && element->willRespondToMouseClickEventsWithEditability(editability)) || HTMLElement::willRespondToMouseClickEventsWithEditability(editability);
+}
+
+bool HTMLLabelElement::hasActivationBehavior() const
+{
+    return true;
 }
 
 void HTMLLabelElement::focus(const FocusOptions& options)
@@ -211,7 +222,7 @@ void HTMLLabelElement::focus(const FocusOptions& options)
 
     // To match other browsers, always restore previous selection.
     if (auto element = control())
-        element->focus({ SelectionRestorationMode::RestoreOrSelectAll, options.direction });
+        element->focus({ { }, { }, SelectionRestorationMode::RestoreOrSelectAll, options.direction });
 }
 
 bool HTMLLabelElement::accessKeyAction(bool sendMouseEvents)
@@ -222,9 +233,9 @@ bool HTMLLabelElement::accessKeyAction(bool sendMouseEvents)
     return HTMLElement::accessKeyAction(sendMouseEvents);
 }
 
-auto HTMLLabelElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree) -> InsertedIntoAncestorResult
+auto HTMLLabelElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree) -> NeedsPostConnectionSteps
 {
-    auto result = HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    auto result = HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
 
     if (parentOfInsertedTree.isInTreeScope() && insertionType.treeScopeChanged) {
         Ref newScope = parentOfInsertedTree.treeScope();
@@ -249,7 +260,7 @@ void HTMLLabelElement::updateLabel(TreeScope& scope, const AtomString& oldForAtt
         scope.addLabel(newForAttributeValue, *this);
 }
 
-void HTMLLabelElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLLabelElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
     if (oldParentOfRemovedTree.isInTreeScope() && removalType.treeScopeChanged) {
         Ref oldScope = oldParentOfRemovedTree.treeScope();
@@ -257,7 +268,24 @@ void HTMLLabelElement::removedFromAncestor(RemovalType removalType, ContainerNod
             updateLabel(oldScope, attributeWithoutSynchronization(forAttr), nullAtom());
     }
 
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
+}
+
+void HTMLLabelElement::movingSteps(MovingType movingType, ContainerNode& oldParent)
+{
+    HTMLElement::movingSteps(movingType, oldParent);
+
+    const auto& forValue = attributeWithoutSynchronization(forAttr);
+    if (movingType.didRemoveFromOldTreeScope) {
+        Ref oldScope = oldParent.treeScope();
+        if (oldScope->shouldCacheLabelsByForAttribute())
+            updateLabel(oldScope, forValue, nullAtom());
+    }
+    if (movingType.didInsertIntoNewTreeScope) {
+        Ref newScope = treeScope();
+        if (newScope->shouldCacheLabelsByForAttribute())
+            updateLabel(newScope, nullAtom(), forValue);
+    }
 }
 
 } // namespace

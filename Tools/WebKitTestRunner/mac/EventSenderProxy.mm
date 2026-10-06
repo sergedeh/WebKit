@@ -27,10 +27,10 @@
 #import "config.h"
 #import "EventSenderProxy.h"
 
-#import "CoreGraphicsTestSPI.h"
 #import "ModifierKeys.h"
 #import "PlatformWebView.h"
 #import "StringFunctions.h"
+#import "SyntheticNSEvent.h"
 #import "TestController.h"
 #import "TestRunnerWKWebView.h"
 #import "WebKitTestRunnerWindow.h"
@@ -41,9 +41,10 @@
 #import <WebKit/WKWebView.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebViewPrivateForTesting.h>
-#import <pal/spi/cocoa/IOKitSPI.h>
+#import <wtf/BlockPtr.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/darwin/DispatchExtras.h>
 
 @interface NSApplication (Details)
 - (void)_setCurrentEvent:(NSEvent *)event;
@@ -51,202 +52,6 @@
 
 @interface NSEvent (ForTestRunner)
 - (void)_postDelayed;
-- (instancetype)_initWithCGEvent:(CGEventRef)event eventRef:(void *)eventRef;
-@end
-
-@interface EventSenderSyntheticEvent : NSEvent {
-@public
-    NSPoint _eventSender_locationInWindow;
-    NSPoint _eventSender_location;
-    NSInteger _eventSender_stage;
-    float _eventSender_pressure;
-    CGFloat _eventSender_magnification;
-    CGFloat _eventSender_stageTransition;
-    NSEventPhase _eventSender_phase;
-    NSEventPhase _eventSender_momentumPhase;
-    NSTimeInterval _eventSender_timestamp;
-    NSInteger _eventSender_eventNumber;
-    short _eventSender_subtype;
-    NSEventType _eventSender_type;
-    NSWindow *_eventSender_window;
-}
-
-- (id)initPressureEventAtLocation:(NSPoint)location globalLocation:(NSPoint)globalLocation stage:(NSInteger)stage pressure:(float)pressure stageTransition:(float)stageTransition phase:(NSEventPhase)phase time:(NSTimeInterval)time eventNumber:(NSInteger)eventNumber window:(NSWindow *)window;
-- (id)initMagnifyEventAtLocation:(NSPoint)location globalLocation:(NSPoint)globalLocation magnification:(CGFloat)magnification phase:(NSEventPhase)phase time:(NSTimeInterval)time eventNumber:(NSInteger)eventNumber window:(NSWindow *)window;
-- (id)initSmartMagnifyEventAtLocation:(NSPoint)location globalLocation:(NSPoint)globalLocation time:(NSTimeInterval)time eventNumber:(NSInteger)eventNumber window:(NSWindow *)window;
-
-- (NSTimeInterval)timestamp;
-
-@end
-
-static CGSGesturePhase EventSenderCGGesturePhaseFromNSEventPhase(NSEventPhase phase)
-{
-    switch (phase) {
-    case NSEventPhaseMayBegin:
-        return kCGSGesturePhaseMayBegin;
-
-    case NSEventPhaseBegan:
-        return kCGSGesturePhaseBegan;
-
-    case NSEventPhaseChanged:
-        return kCGSGesturePhaseChanged;
-
-    case NSEventPhaseCancelled:
-        return kCGSGesturePhaseCancelled;
-
-    case NSEventPhaseEnded:
-        return kCGSGesturePhaseEnded;
-
-    case NSEventPhaseNone:
-    default:
-        return kCGSGesturePhaseNone;
-    }
-}
-
-@implementation EventSenderSyntheticEvent
-
-- (instancetype)initPressureEventAtLocation:(NSPoint)location globalLocation:(NSPoint)globalLocation stage:(NSInteger)stage pressure:(float)pressure stageTransition:(float)stageTransition phase:(NSEventPhase)phase time:(NSTimeInterval)time eventNumber:(NSInteger)eventNumber window:(NSWindow *)window
-{
-    auto cgEvent = adoptCF(CGEventCreate(nullptr));
-    CGEventSetType(cgEvent.get(), (CGEventType)kCGSEventGesture);
-    CGEventSetIntegerValueField(cgEvent.get(), kCGEventGestureHIDType, kIOHIDEventTypeForce);
-    CGEventSetIntegerValueField(cgEvent.get(), kCGEventGesturePhase, EventSenderCGGesturePhaseFromNSEventPhase(phase));
-    CGEventSetDoubleValueField(cgEvent.get(), kCGEventStagePressure, pressure);
-    CGEventSetDoubleValueField(cgEvent.get(), kCGEventTransitionProgress, pressure);
-    CGEventSetIntegerValueField(cgEvent.get(), kCGEventGestureStage, stageTransition);
-    CGEventSetIntegerValueField(cgEvent.get(), kCGEventGestureBehavior, kCGSGestureBehaviorDeepPress);
-
-    self = [super _initWithCGEvent:cgEvent.get() eventRef:nullptr];
-
-    if (!self)
-        return nil;
-
-    _eventSender_location = location;
-    _eventSender_locationInWindow = globalLocation;
-    _eventSender_stage = stage;
-    _eventSender_pressure = pressure;
-    _eventSender_stageTransition = stageTransition;
-    _eventSender_phase = phase;
-    _eventSender_timestamp = time;
-    _eventSender_eventNumber = eventNumber;
-    _eventSender_window = window;
-    _eventSender_type = NSEventTypePressure;
-
-    return self;
-}
-
-- (id)initMagnifyEventAtLocation:(NSPoint)location globalLocation:(NSPoint)globalLocation magnification:(CGFloat)magnification phase:(NSEventPhase)phase time:(NSTimeInterval)time eventNumber:(NSInteger)eventNumber window:(NSWindow *)window
-{
-    auto cgEvent = adoptCF(CGEventCreate(nullptr));
-    CGEventSetType(cgEvent.get(), (CGEventType)kCGSEventGesture);
-    CGEventSetIntegerValueField(cgEvent.get(), kCGEventGestureHIDType, kIOHIDEventTypeZoom);
-    CGEventSetIntegerValueField(cgEvent.get(), kCGEventGesturePhase, EventSenderCGGesturePhaseFromNSEventPhase(phase));
-    CGEventSetDoubleValueField(cgEvent.get(), kCGEventGestureZoomValue, magnification);
-
-    if (!(self = [super _initWithCGEvent:cgEvent.get() eventRef:nullptr]))
-        return nil;
-
-    _eventSender_location = location;
-    _eventSender_locationInWindow = globalLocation;
-    _eventSender_magnification = magnification;
-    _eventSender_phase = phase;
-    _eventSender_timestamp = time;
-    _eventSender_eventNumber = eventNumber;
-    _eventSender_window = window;
-    _eventSender_type = NSEventTypeMagnify;
-
-    return self;
-}
-
-- (id)initSmartMagnifyEventAtLocation:(NSPoint)location globalLocation:(NSPoint)globalLocation time:(NSTimeInterval)time eventNumber:(NSInteger)eventNumber window:(NSWindow *)window
-{
-    auto cgEvent = adoptCF(CGEventCreate(nullptr));
-    CGEventSetType(cgEvent.get(), (CGEventType)kCGSEventGesture);
-    CGEventSetIntegerValueField(cgEvent.get(), kCGEventGestureHIDType, kIOHIDEventTypeZoomToggle);
-
-    if (!(self = [super _initWithCGEvent:cgEvent.get() eventRef:nullptr]))
-        return nil;
-
-    _eventSender_type = NSEventTypeSmartMagnify;
-    _eventSender_location = location;
-    _eventSender_locationInWindow = globalLocation;
-    _eventSender_timestamp = time;
-    _eventSender_window = window;
-
-    return self;
-}
-
-
-- (CGFloat)stageTransition
-{
-    return _eventSender_stageTransition;
-}
-
-- (NSTimeInterval)timestamp
-{
-    return _eventSender_timestamp;
-}
-
-- (NSEventType)type
-{
-    return _eventSender_type;
-}
-
-- (NSEventSubtype)subtype
-{
-    return (NSEventSubtype)_eventSender_subtype;
-}
-
-- (NSPoint)locationInWindow
-{
-    return _eventSender_location;
-}
-
-- (NSPoint)location
-{
-    return _eventSender_locationInWindow;
-}
-
-- (NSInteger)stage
-{
-    return _eventSender_stage;
-}
-
-- (float)pressure
-{
-    return _eventSender_pressure;
-}
-
-- (CGFloat)magnification
-{
-    return _eventSender_magnification;
-}
-
-- (NSEventPhase)phase
-{
-    return _eventSender_phase;
-}
-
-- (NSEventPhase)momentumPhase
-{
-    return _eventSender_momentumPhase;
-}
-
-- (NSInteger)eventNumber
-{
-    return _eventSender_eventNumber;
-}
-
-- (BOOL)_isTouchesEnded
-{
-    return false;
-}
-
-- (NSWindow *)window
-{
-    return _eventSender_window;
-}
-
 @end
 
 namespace WTR {
@@ -346,7 +151,7 @@ static NSInteger swizzledEventButtonNumber()
     return TestController::singleton().eventSenderProxy()->lastButtonDown();
 }
 
-void EventSenderProxy::mouseDown(unsigned buttonNumber, WKEventModifiers modifiers, WKStringRef pointerType)
+void EventSenderProxy::mouseDown(unsigned buttonNumber, WKEventModifiers modifiers, WKStringRef pointerType, CompletionHandler<void()>&& completionHandler)
 {
     auto button = WebCore::buttonFromShort(static_cast<int16_t>(buttonNumber));
     m_mouseButtonsCurrentlyDown.set(button, true);
@@ -354,63 +159,98 @@ void EventSenderProxy::mouseDown(unsigned buttonNumber, WKEventModifiers modifie
 
     updateClickCountForButton(buttonNumber);
 
-    NSEventType eventType = eventTypeForMouseButtonAndAction(button, MouseAction::Down);
-    NSEvent *event = [NSEvent mouseEventWithType:eventType
-                                        location:NSMakePoint(m_position.x, m_position.y)
-                                   modifierFlags:buildModifierFlags(modifiers)
-                                       timestamp:absoluteTimeForEventTime(currentEventTime())
-                                    windowNumber:[m_testController->mainWebView()->platformWindow() windowNumber]
-                                         context:[NSGraphicsContext currentContext] 
-                                     eventNumber:++m_eventNumber 
-                                      clickCount:m_clickCount 
-                                        pressure:WebCore::ForceAtClick];
+    auto eventType = eventTypeForMouseButtonAndAction(button, MouseAction::Down);
+    RetainPtr event = [NSEvent mouseEventWithType:eventType
+        location:NSMakePoint(m_position.x, m_position.y)
+        modifierFlags:buildModifierFlags(modifiers)
+        timestamp:absoluteTimeForEventTime(currentEventTime())
+        windowNumber:[m_testController->targetView()->platformWindow() windowNumber]
+        context:[NSGraphicsContext currentContext]
+        eventNumber:++m_eventNumber
+        clickCount:m_clickCount
+        pressure:WebCore::ForceAtClick];
 
-    m_targetView = [m_testController->mainWebView()->platformView() hitTest:[event locationInWindow]];
-    if (m_targetView) {
+    RetainPtr targetView = [m_testController->targetView()->platformView() hitTest:[event locationInWindow]];
+    if (!targetView) {
+        if (completionHandler)
+            completionHandler();
+        return;
+    }
+
+    if (button == WebCore::MouseButton::Left)
+        m_leftMouseButtonDown = true;
+
+    auto dispatchMouseDown = [event, targetView] {
         auto eventPressedMouseButtonsSwizzler = makeUnique<ClassMethodSwizzler>([NSEvent class], @selector(pressedMouseButtons), reinterpret_cast<IMP>(swizzledEventPressedMouseButtons));
         auto eventButtonNumberSwizzler = makeUnique<InstanceMethodSwizzler>([NSEvent class], @selector(buttonNumber), reinterpret_cast<IMP>(swizzledEventButtonNumber));
         [NSApp _setCurrentEvent:event];
-        [m_targetView mouseDown:event];
+        [targetView mouseDown:event];
         [NSApp _setCurrentEvent:nil];
-        if (button == WebCore::MouseButton::Left)
-            m_leftMouseButtonDown = true;
+    };
+
+    if (!completionHandler) {
+        dispatchMouseDown();
+        return;
     }
+
+    RetainPtr webView = m_testController->targetView()->platformView();
+    dispatch_async(mainDispatchQueueSingleton(), makeBlockPtr([dispatchMouseDown = WTF::move(dispatchMouseDown), webView, completionHandler = WTF::move(completionHandler)] mutable {
+        dispatchMouseDown();
+        [webView _doAfterProcessingAllPendingMouseEvents:makeBlockPtr([completionHandler = WTF::move(completionHandler)] mutable {
+            completionHandler();
+        }).get()];
+    }).get());
 }
 
-void EventSenderProxy::mouseUp(unsigned buttonNumber, WKEventModifiers modifiers, WKStringRef pointerType)
+void EventSenderProxy::mouseUp(unsigned buttonNumber, WKEventModifiers modifiers, WKStringRef pointerType, CompletionHandler<void()>&& completionHandler)
 {
     auto button = WebCore::buttonFromShort(static_cast<int16_t>(buttonNumber));
     m_mouseButtonsCurrentlyDown.set(button, false);
     m_lastButtonDown = nsEventButtonNumberFromWebCoreMouseButton(button);
 
-    NSEventType eventType = eventTypeForMouseButtonAndAction(button, MouseAction::Up);
-    NSEvent *event = [NSEvent mouseEventWithType:eventType
-                                        location:NSMakePoint(m_position.x, m_position.y)
-                                   modifierFlags:buildModifierFlags(modifiers)
-                                       timestamp:absoluteTimeForEventTime(currentEventTime())
-                                    windowNumber:[m_testController->mainWebView()->platformWindow() windowNumber]
-                                         context:[NSGraphicsContext currentContext] 
-                                     eventNumber:++m_eventNumber 
-                                      clickCount:m_clickCount 
-                                        pressure:0.0];
+    auto eventType = eventTypeForMouseButtonAndAction(button, MouseAction::Up);
+    RetainPtr event = [NSEvent mouseEventWithType:eventType
+        location:NSMakePoint(m_position.x, m_position.y)
+        modifierFlags:buildModifierFlags(modifiers)
+        timestamp:absoluteTimeForEventTime(currentEventTime())
+        windowNumber:[m_testController->targetView()->platformWindow() windowNumber]
+        context:[NSGraphicsContext currentContext]
+        eventNumber:++m_eventNumber
+        clickCount:m_clickCount
+        pressure:0.0];
 
-    m_targetView = [m_testController->mainWebView()->platformView() hitTest:[event locationInWindow]];
     // FIXME: Silly hack to teach WKTR to respect capturing mouse events outside the WKView.
-    // The right solution is just to use NSApplication's built-in event sending methods, 
+    // The right solution is just to use NSApplication's built-in event sending methods,
     // instead of rolling our own algorithm for selecting an event target.
-    if (!m_targetView)
-        m_targetView = m_testController->mainWebView()->platformView();
+    RetainPtr targetView = [m_testController->targetView()->platformView() hitTest:[event locationInWindow]];
+    if (!targetView)
+        targetView = m_testController->targetView()->platformView();
 
-    ASSERT(m_targetView);
-    auto eventPressedMouseButtonsSwizzler = makeUnique<ClassMethodSwizzler>([NSEvent class], @selector(pressedMouseButtons), reinterpret_cast<IMP>(swizzledEventPressedMouseButtons));
-    auto eventButtonNumberSwizzler = makeUnique<InstanceMethodSwizzler>([NSEvent class], @selector(buttonNumber), reinterpret_cast<IMP>(swizzledEventButtonNumber));
-    [NSApp _setCurrentEvent:event];
-    [m_targetView mouseUp:event];
-    [NSApp _setCurrentEvent:nil];
     if (button == WebCore::MouseButton::Left)
         m_leftMouseButtonDown = false;
     m_clickTime = currentEventTime();
     m_clickPosition = m_position;
+
+    auto dispatchMouseUp = [event, targetView] {
+        auto eventPressedMouseButtonsSwizzler = makeUnique<ClassMethodSwizzler>([NSEvent class], @selector(pressedMouseButtons), reinterpret_cast<IMP>(swizzledEventPressedMouseButtons));
+        auto eventButtonNumberSwizzler = makeUnique<InstanceMethodSwizzler>([NSEvent class], @selector(buttonNumber), reinterpret_cast<IMP>(swizzledEventButtonNumber));
+        [NSApp _setCurrentEvent:event];
+        [targetView mouseUp:event];
+        [NSApp _setCurrentEvent:nil];
+    };
+
+    if (!completionHandler) {
+        dispatchMouseUp();
+        return;
+    }
+
+    RetainPtr webView = m_testController->targetView()->platformView();
+    dispatch_async(mainDispatchQueueSingleton(), makeBlockPtr([dispatchMouseUp = WTF::move(dispatchMouseUp), webView, completionHandler = WTF::move(completionHandler)] mutable {
+        dispatchMouseUp();
+        [webView _doAfterProcessingAllPendingMouseEvents:makeBlockPtr([completionHandler = WTF::move(completionHandler)] mutable {
+            completionHandler();
+        }).get()];
+    }).get());
 }
 
 void EventSenderProxy::sendMouseDownToStartPressureEvents()
@@ -440,7 +280,7 @@ static void handleForceEventSynchronously(NSEvent *event)
 
 RetainPtr<NSEvent> EventSenderProxy::beginPressureEvent(int stage)
 {
-    auto event = adoptNS([[EventSenderSyntheticEvent alloc] initPressureEventAtLocation:NSMakePoint(m_position.x, m_position.y)
+    RetainPtr event = adoptNS([[SyntheticNSEvent alloc] initPressureEventAtLocation:NSMakePoint(m_position.x, m_position.y)
         globalLocation:([m_testController->mainWebView()->platformWindow() convertRectToScreen:NSMakeRect(m_position.x, m_position.y, 1, 1)].origin)
         stage:stage
         pressure:0.5
@@ -455,7 +295,7 @@ RetainPtr<NSEvent> EventSenderProxy::beginPressureEvent(int stage)
 
 RetainPtr<NSEvent> EventSenderProxy::pressureChangeEvent(int stage, float pressure, EventSenderProxy::PressureChangeDirection direction)
 {
-    auto event = adoptNS([[EventSenderSyntheticEvent alloc] initPressureEventAtLocation:NSMakePoint(m_position.x, m_position.y)
+    RetainPtr event = adoptNS([[SyntheticNSEvent alloc] initPressureEventAtLocation:NSMakePoint(m_position.x, m_position.y)
         globalLocation:([m_testController->mainWebView()->platformWindow() convertRectToScreen:NSMakeRect(m_position.x, m_position.y, 1, 1)].origin)
         stage:stage
         pressure:pressure
@@ -613,41 +453,59 @@ void EventSenderProxy::mouseForceChanged(float force)
     IGNORE_NULL_CHECK_WARNINGS_END
 }
 
-void EventSenderProxy::mouseMoveTo(double x, double y, WKStringRef pointerType)
+void EventSenderProxy::mouseMoveTo(double x, double y, WKStringRef pointerType, CompletionHandler<void()>&& completionHandler)
 {
-    NSView *view = m_testController->mainWebView()->platformView();
-    NSPoint newMousePosition = [view convertPoint:NSMakePoint(x, y) toView:nil];
-    bool isDrag = m_leftMouseButtonDown;
-    NSEvent *event = [NSEvent mouseEventWithType:(isDrag ? NSEventTypeLeftMouseDragged : NSEventTypeMouseMoved)
-                                        location:newMousePosition
-                                   modifierFlags:0 
-                                       timestamp:absoluteTimeForEventTime(currentEventTime())
-                                    windowNumber:view.window.windowNumber
-                                         context:[NSGraphicsContext currentContext] 
-                                     eventNumber:++m_eventNumber 
-                                      clickCount:(m_leftMouseButtonDown ? m_clickCount : 0) 
-                                        pressure:0];
+    auto *view = m_testController->targetView()->platformView();
+    auto newMousePosition = [view convertPoint:NSMakePoint(x, y) toView:nil];
+    auto isDrag = m_leftMouseButtonDown;
+    RetainPtr event = [NSEvent mouseEventWithType:(isDrag ? NSEventTypeLeftMouseDragged : NSEventTypeMouseMoved)
+        location:newMousePosition
+        modifierFlags:0
+        timestamp:absoluteTimeForEventTime(currentEventTime())
+        windowNumber:view.window.windowNumber
+        context:[NSGraphicsContext currentContext]
+        eventNumber:++m_eventNumber
+        clickCount:(m_leftMouseButtonDown ? m_clickCount : 0)
+        pressure:0];
 
-    CGEventRef cgEvent = event.CGEvent;
+    CGEventRef cgEvent = event.get().CGEvent;
     CGEventSetIntegerValueField(cgEvent, kCGMouseEventDeltaX, newMousePosition.x - m_position.x);
     CGEventSetIntegerValueField(cgEvent, kCGMouseEventDeltaY, -1 * (newMousePosition.y - m_position.y));
     event = [NSEvent eventWithCGEvent:cgEvent];
     m_position.x = newMousePosition.x;
     m_position.y = newMousePosition.y;
 
-    NSPoint windowLocation = event.locationInWindow;
+    m_testController->targetView()->setCursorOverlayPosition(x, y);
+
+    RetainPtr webView = m_testController->targetView()->platformView();
+
     // Always target drags at the WKWebView to allow for drag-scrolling outside the view.
-    m_targetView = isDrag ? m_testController->mainWebView()->platformView() : [m_testController->mainWebView()->platformView() hitTest:windowLocation];
-    if (m_targetView) {
-        auto eventPressedMouseButtonsSwizzler = makeUnique<ClassMethodSwizzler>([NSEvent class], @selector(pressedMouseButtons), reinterpret_cast<IMP>(swizzledEventPressedMouseButtons));
-        [NSApp _setCurrentEvent:event];
-        if (isDrag)
-            [m_targetView mouseDragged:event];
-        else
-            [checked_objc_cast<WKWebView>(m_targetView.get()) _simulateMouseMove:event];
-        [NSApp _setCurrentEvent:nil];
-    } else
-        WTFLogAlways("mouseMoveTo failed to find a target view at %f,%f\n", windowLocation.x, windowLocation.y);
+    // For non-drag moves, _simulateMouseMove: must be called on the WKWebView directly
+    // (not on a hitTest: result, which may not be a WKWebView).
+    auto dispatchMouseMove = [event, webView, isDrag] {
+        if (isDrag) {
+            auto eventPressedMouseButtonsSwizzler = makeUnique<ClassMethodSwizzler>([NSEvent class], @selector(pressedMouseButtons), reinterpret_cast<IMP>(swizzledEventPressedMouseButtons));
+            [NSApp _setCurrentEvent:event];
+            [webView mouseDragged:event];
+            [NSApp _setCurrentEvent:nil];
+        } else {
+            [NSApp _setCurrentEvent:event];
+            [webView _simulateMouseMove:event];
+            [NSApp _setCurrentEvent:nil];
+        }
+    };
+
+    if (!completionHandler) {
+        dispatchMouseMove();
+        return;
+    }
+
+    dispatch_async(mainDispatchQueueSingleton(), makeBlockPtr([dispatchMouseMove = WTF::move(dispatchMouseMove), webView, completionHandler = WTF::move(completionHandler)] mutable {
+        dispatchMouseMove();
+        [webView _doAfterProcessingAllPendingMouseEvents:makeBlockPtr([completionHandler = WTF::move(completionHandler)] mutable {
+            completionHandler();
+        }).get()];
+    }).get());
 }
 
 void EventSenderProxy::leapForward(int milliseconds)
@@ -655,11 +513,11 @@ void EventSenderProxy::leapForward(int milliseconds)
     m_time += milliseconds / 1000.0;
 }
 
-void EventSenderProxy::keyDown(WKStringRef key, WKEventModifiers modifiers, unsigned keyLocation)
+void EventSenderProxy::keyDown(WKStringRef key, WKEventModifiers modifiers, unsigned keyLocation, CompletionHandler<void()>&& completionHandler)
 {
-    RetainPtr<ModifierKeys> modifierKeys = [ModifierKeys modifierKeysWithKey:toWTFString(key).createNSString().get() modifiers:buildModifierFlags(modifiers) keyLocation:keyLocation];
+    RetainPtr modifierKeys = [ModifierKeys modifierKeysWithKey:toWTFString(key).createNSString().get() modifiers:buildModifierFlags(modifiers) keyLocation:keyLocation];
 
-    NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown
+    RetainPtr keyDownEvent = [NSEvent keyEventWithType:NSEventTypeKeyDown
         location:NSMakePoint(5, 5)
         modifierFlags:modifierKeys->modifierFlags
         timestamp:absoluteTimeForEventTime(currentEventTime())
@@ -670,24 +528,43 @@ void EventSenderProxy::keyDown(WKStringRef key, WKEventModifiers modifiers, unsi
         isARepeat:NO
         keyCode:modifierKeys->keyCode];
 
-    [NSApp _setCurrentEvent:event];
-    [[m_testController->mainWebView()->platformWindow() firstResponder] keyDown:event];
-    [NSApp _setCurrentEvent:nil];
+    RetainPtr keyUpEvent = [NSEvent keyEventWithType:NSEventTypeKeyUp
+        location:NSMakePoint(5, 5)
+        modifierFlags:modifierKeys->modifierFlags
+        timestamp:absoluteTimeForEventTime(currentEventTime())
+        windowNumber:[m_testController->mainWebView()->platformWindow() windowNumber]
+        context:[NSGraphicsContext currentContext]
+        characters:modifierKeys->eventCharacter.get()
+        charactersIgnoringModifiers:modifierKeys->charactersIgnoringModifiers.get()
+        isARepeat:NO
+        keyCode:modifierKeys->keyCode];
 
-    event = [NSEvent keyEventWithType:NSEventTypeKeyUp
-                        location:NSMakePoint(5, 5)
-                        modifierFlags:modifierKeys->modifierFlags
-                        timestamp:absoluteTimeForEventTime(currentEventTime())
-                        windowNumber:[m_testController->mainWebView()->platformWindow() windowNumber]
-                        context:[NSGraphicsContext currentContext]
-                        characters:modifierKeys->eventCharacter.get()
-                        charactersIgnoringModifiers:modifierKeys->charactersIgnoringModifiers.get()
-                        isARepeat:NO
-                        keyCode:modifierKeys->keyCode];
+    RetainPtr firstResponder = [m_testController->mainWebView()->platformWindow() firstResponder];
 
-    [NSApp _setCurrentEvent:event];
-    [[m_testController->mainWebView()->platformWindow() firstResponder] keyUp:event];
-    [NSApp _setCurrentEvent:nil];
+    auto dispatchKeyEvents = [keyDownEvent, keyUpEvent, firstResponder] {
+        [NSApp _setCurrentEvent:keyDownEvent];
+        [firstResponder keyDown:keyDownEvent];
+        [NSApp _setCurrentEvent:nil];
+
+        [NSApp _setCurrentEvent:keyUpEvent];
+        [firstResponder keyUp:keyUpEvent];
+        [NSApp _setCurrentEvent:nil];
+    };
+
+    if (!completionHandler) {
+        dispatchKeyEvents();
+        return;
+    }
+
+    RetainPtr webView = m_testController->mainWebView()->platformView();
+
+    dispatch_async(mainDispatchQueueSingleton(), makeBlockPtr([dispatchKeyEvents = WTF::move(dispatchKeyEvents), webView, completionHandler = WTF::move(completionHandler)] mutable {
+        dispatchKeyEvents();
+
+        [webView _doAfterProcessingAllPendingKeyEvents:makeBlockPtr([completionHandler = WTF::move(completionHandler)] mutable {
+            completionHandler();
+        }).get()];
+    }).get());
 }
 
 void EventSenderProxy::rawKeyDown(WKStringRef key, WKEventModifiers modifiers, unsigned keyLocation)
@@ -741,14 +618,9 @@ void EventSenderProxy::mouseScrollBy(int x, int y)
     CGEventSetLocation(cgScrollEvent.get(), lastGlobalMousePosition);
 
     NSEvent *event = [NSEvent eventWithCGEvent:cgScrollEvent.get()];
-    if (NSView *targetView = [m_testController->mainWebView()->platformView() hitTest:[event locationInWindow]]) {
-        [NSApp _setCurrentEvent:event];
-        [targetView scrollWheel:event];
-        [NSApp _setCurrentEvent:nil];
-    } else {
-        NSPoint location = [event locationInWindow];
-        WTFLogAlways("mouseScrollBy failed to find the target view at %f,%f\n", location.x, location.y);
-    }
+    dispatchSyntheticEvent(event, m_testController->mainWebView()->platformView(), @"mouseScrollBy", ^(NSView *targetView, NSEvent *syntheticEvent) {
+        [targetView scrollWheel:syntheticEvent];
+    });
 }
 
 void EventSenderProxy::continuousMouseScrollBy(int x, int y, bool paged)
@@ -776,14 +648,9 @@ void EventSenderProxy::mouseScrollByWithWheelAndMomentumPhases(int x, int y, int
     NSEvent* event = [NSEvent eventWithCGEvent:cgScrollEvent.get()];
 
     // Our event should have the correct settings:
-    if (NSView *targetView = [m_testController->mainWebView()->platformView() hitTest:[event locationInWindow]]) {
-        [NSApp _setCurrentEvent:event];
-        [targetView scrollWheel:event];
-        [NSApp _setCurrentEvent:nil];
-    } else {
-        NSPoint windowLocation = [event locationInWindow];
-        WTFLogAlways("mouseScrollByWithWheelAndMomentumPhases failed to find the target view at %f,%f\n", windowLocation.x, windowLocation.y);
-    }
+    dispatchSyntheticEvent(event, m_testController->mainWebView()->platformView(), @"mouseScrollByWithWheelAndMomentumPhases", ^(NSView *targetView, NSEvent *syntheticEvent) {
+        [targetView scrollWheel:syntheticEvent];
+    });
 }
 
 static CGGesturePhase cgScrollPhaseFromPhase(EventSenderProxy::WheelEventPhase phase)
@@ -853,14 +720,9 @@ void EventSenderProxy::sendWheelEvent(EventTimestamp timestamp, double windowX, 
 
     NSEvent* event = [NSEvent eventWithCGEvent:cgScrollEvent.get()];
     // Our event should have the correct settings:
-    if (NSView *targetView = [m_testController->mainWebView()->platformView() hitTest:[event locationInWindow]]) {
-        [NSApp _setCurrentEvent:event];
-        [targetView scrollWheel:event];
-        [NSApp _setCurrentEvent:nil];
-    } else {
-        NSPoint windowLocation = [event locationInWindow];
-        WTFLogAlways("EventSenderProxy::sendWheelEvent failed to find the target view at %f,%f\n", windowLocation.x, windowLocation.y);
-    }
+    dispatchSyntheticEvent(event, m_testController->mainWebView()->platformView(), @"EventSenderProxy::sendWheelEvent", ^(NSView *targetView, NSEvent *syntheticEvent) {
+        [targetView scrollWheel:syntheticEvent];
+    });
 }
 
 void EventSenderProxy::smartMagnify()
@@ -868,104 +730,48 @@ void EventSenderProxy::smartMagnify()
     auto* mainWebView = m_testController->mainWebView();
     NSView *platformView = mainWebView->platformView();
 
-    auto event = adoptNS([[EventSenderSyntheticEvent alloc] initSmartMagnifyEventAtLocation:NSMakePoint(m_position.x, m_position.y)
+    RetainPtr event = adoptNS([[SyntheticNSEvent alloc] initSmartMagnifyEventAtLocation:NSMakePoint(m_position.x, m_position.y)
         globalLocation:([mainWebView->platformWindow() convertRectToScreen:NSMakeRect(m_position.x, m_position.y, 1, 1)].origin)
         time:absoluteTimeForEventTime(currentEventTime())
         eventNumber:++m_eventNumber
         window:platformView.window]);
 
-    if (NSView *targetView = [platformView hitTest:[event locationInWindow]]) {
-        [NSApp _setCurrentEvent:event.get()];
-        [targetView smartMagnifyWithEvent:event.get()];
-        [NSApp _setCurrentEvent:nil];
-    } else {
-        NSPoint windowLocation = [event locationInWindow];
-        WTFLogAlways("gestureStart failed to find the target view at %f,%f\n", windowLocation.x, windowLocation.y);
-    }
+    dispatchSyntheticEvent(event, platformView, @"smartMagnify", ^(NSView *targetView, NSEvent *syntheticEvent) {
+        [targetView smartMagnifyWithEvent:syntheticEvent];
+    });
 }
 
-#if ENABLE(MAC_GESTURE_EVENTS)
+static void sendMagnifyEvent(TestController& testController, WKPoint position, NSInteger eventNumber, NSTimeInterval time, double scale, NSEventPhase phase, const String& description)
+{
+    auto* mainWebView = testController.mainWebView();
+    RetainPtr platformView = mainWebView->platformView();
+
+    RetainPtr event = adoptNS([[SyntheticNSEvent alloc] initMagnifyEventAtLocation:NSMakePoint(position.x, position.y)
+        globalLocation:([mainWebView->platformWindow() convertRectToScreen:NSMakeRect(position.x, position.y, 1, 1)].origin)
+        magnification:scale
+        phase:phase
+        time:time
+        eventNumber:eventNumber
+        window:[platformView window]]);
+
+    dispatchSyntheticEvent(event, platformView, description.createNSString(), ^(NSView *targetView, NSEvent *syntheticEvent) {
+        [targetView magnifyWithEvent:syntheticEvent];
+    });
+}
 
 void EventSenderProxy::scaleGestureStart(double scale)
 {
-    auto* mainWebView = m_testController->mainWebView();
-    NSView *platformView = mainWebView->platformView();
-
-    auto event = adoptNS([[EventSenderSyntheticEvent alloc] initMagnifyEventAtLocation:NSMakePoint(m_position.x, m_position.y)
-        globalLocation:([mainWebView->platformWindow() convertRectToScreen:NSMakeRect(m_position.x, m_position.y, 1, 1)].origin)
-        magnification:scale
-        phase:NSEventPhaseBegan
-        time:absoluteTimeForEventTime(currentEventTime())
-        eventNumber:++m_eventNumber
-        window:platformView.window]);
-
-    if (NSView *targetView = [platformView hitTest:[event locationInWindow]]) {
-        [NSApp _setCurrentEvent:event.get()];
-        [targetView magnifyWithEvent:event.get()];
-        [NSApp _setCurrentEvent:nil];
-    } else {
-        NSPoint windowLocation = [event locationInWindow];
-        WTFLogAlways("gestureStart failed to find the target view at %f,%f\n", windowLocation.x, windowLocation.y);
-    }
+    sendMagnifyEvent(*m_testController, m_position, ++m_eventNumber, absoluteTimeForEventTime(currentEventTime()), scale, NSEventPhaseBegan, "scaleGestureStart"_s);
 }
 
 void EventSenderProxy::scaleGestureChange(double scale)
 {
-    auto* mainWebView = m_testController->mainWebView();
-    NSView *platformView = mainWebView->platformView();
-
-    auto event = adoptNS([[EventSenderSyntheticEvent alloc] initMagnifyEventAtLocation:NSMakePoint(m_position.x, m_position.y)
-        globalLocation:([mainWebView->platformWindow() convertRectToScreen:NSMakeRect(m_position.x, m_position.y, 1, 1)].origin)
-        magnification:scale
-        phase:NSEventPhaseChanged
-        time:absoluteTimeForEventTime(currentEventTime())
-        eventNumber:++m_eventNumber
-        window:platformView.window]);
-
-    if (NSView *targetView = [platformView hitTest:[event locationInWindow]]) {
-        [NSApp _setCurrentEvent:event.get()];
-        [targetView magnifyWithEvent:event.get()];
-        [NSApp _setCurrentEvent:nil];
-    } else {
-        NSPoint windowLocation = [event locationInWindow];
-        WTFLogAlways("gestureStart failed to find the target view at %f,%f\n", windowLocation.x, windowLocation.y);
-    }
+    sendMagnifyEvent(*m_testController, m_position, ++m_eventNumber, absoluteTimeForEventTime(currentEventTime()), scale, NSEventPhaseChanged, "scaleGestureChange"_s);
 }
 
 void EventSenderProxy::scaleGestureEnd(double scale)
 {
-    auto* mainWebView = m_testController->mainWebView();
-    NSView *platformView = mainWebView->platformView();
-
-    auto event = adoptNS([[EventSenderSyntheticEvent alloc] initMagnifyEventAtLocation:NSMakePoint(m_position.x, m_position.y)
-        globalLocation:([mainWebView->platformWindow() convertRectToScreen:NSMakeRect(m_position.x, m_position.y, 1, 1)].origin)
-        magnification:scale
-        phase:NSEventPhaseEnded
-        time:absoluteTimeForEventTime(currentEventTime())
-        eventNumber:++m_eventNumber
-        window:platformView.window]);
-
-    if (NSView *targetView = [platformView hitTest:[event locationInWindow]]) {
-        [NSApp _setCurrentEvent:event.get()];
-        [targetView magnifyWithEvent:event.get()];
-        [NSApp _setCurrentEvent:nil];
-    } else {
-        NSPoint windowLocation = [event locationInWindow];
-        WTFLogAlways("gestureStart failed to find the target view at %f,%f\n", windowLocation.x, windowLocation.y);
-    }
-}
-
-#endif // ENABLE(MAC_GESTURE_EVENTS)
-
-void EventSenderProxy::waitForPendingMouseEvents()
-{
-    if (RetainPtr targetView = std::exchange(m_targetView, nullptr)) {
-        __block bool doneProcessingMouseEvents = false;
-        [checked_objc_cast<WKWebView>(targetView.get()) _doAfterProcessingAllPendingMouseEvents:^{
-            doneProcessingMouseEvents = true;
-        }];
-        m_testController->runUntil(doneProcessingMouseEvents, 100_ms);
-    }
+    sendMagnifyEvent(*m_testController, m_position, ++m_eventNumber, absoluteTimeForEventTime(currentEventTime()), scale, NSEventPhaseEnded, "scaleGestureEnd"_s);
 }
 
 } // namespace WTR

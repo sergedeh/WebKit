@@ -27,12 +27,12 @@
 
 #include <WebCore/FrameRateAligner.h>
 #include <WebCore/GraphicsLayer.h>
-#include <WebCore/ReducedResolutionSeconds.h>
 #include <WebCore/Timer.h>
 #include <WebCore/WebAnimationTypes.h>
 #include <wtf/CancellableTask.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Markable.h>
+#include <wtf/ReducedResolutionSeconds.h>
 #include <wtf/Seconds.h>
 #include <wtf/WeakHashSet.h>
 
@@ -62,10 +62,11 @@ public:
     void removeTimeline(AnimationTimeline&);
     void detachFromDocument();
     void updateAnimationsAndSendEvents(ReducedResolutionSeconds);
-    void runPostRenderingUpdateTasks();
+    void updateStaleScrollTimelines();
+    bool hasProgressBasedScrollDrivenAnimation() const;
     void addPendingAnimation(WebAnimation&);
 
-    std::optional<Seconds> currentTime(UseCachedCurrentTime = UseCachedCurrentTime::Yes);
+    std::optional<ReducedResolutionSeconds> currentTime(UseCachedCurrentTime = UseCachedCurrentTime::Yes);
     std::optional<FramesPerSecond> maximumAnimationFrameRate() const { return m_frameRateAligner.maximumFrameRate(); }
     std::optional<Seconds> timeUntilNextTickForAnimationsWithFrameRate(FramesPerSecond) const;
 
@@ -74,8 +75,9 @@ public:
     bool animationsAreSuspended() const { return m_isSuspended; }
 
 #if ENABLE(THREADED_ANIMATIONS)
-    AcceleratedEffectStackUpdater* existingAcceleratedEffectStackUpdater() const { return m_acceleratedEffectStackUpdater.get(); }
+    AcceleratedEffectStackUpdater* existingAcceleratedEffectStackUpdater() const LIFETIME_BOUND { return m_acceleratedEffectStackUpdater.get(); }
     void scheduleAcceleratedEffectStackUpdateForTarget(const Styleable&);
+    void runPostRenderingUpdateTasks();
 #endif
 
     WEBCORE_EXPORT Vector<GraphicsLayer::AcceleratedAnimationForTesting> acceleratedAnimationsForElement(const Element&) const;
@@ -84,25 +86,24 @@ private:
 
     ReducedResolutionSeconds liveCurrentTime() const;
     void cacheCurrentTime(ReducedResolutionSeconds);
-    void clearCachedCurrentTime();
+    void NODELETE clearCachedCurrentTime();
     void processPendingAnimations();
     bool isPendingTimelineAttachment(const WebAnimation&) const;
 
-    Ref<Document> protectedDocument() const { return m_document.get(); }
+    Document& document() const { return m_document; }
 
 #if ENABLE(THREADED_ANIMATIONS)
-    std::unique_ptr<AcceleratedEffectStackUpdater> m_acceleratedEffectStackUpdater;
+    const std::unique_ptr<AcceleratedEffectStackUpdater> m_acceleratedEffectStackUpdater;
 #endif
 
     Timer m_cachedCurrentTimeClearanceTimer;
     Vector<Ref<ScrollTimeline>> m_updatedScrollTimelines;
-    HashMap<FramesPerSecond, ReducedResolutionSeconds> m_animationFrameRateToLastTickTimeMap;
     WeakHashSet<AnimationTimeline> m_timelines;
     WeakHashSet<WebAnimation, WeakPtrImplWithEventTargetData> m_pendingAnimations;
     TaskCancellationGroup m_pendingAnimationsProcessingTaskCancellationGroup;
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
     FrameRateAligner m_frameRateAligner;
-    Markable<Seconds> m_cachedCurrentTime;
+    Markable<ReducedResolutionSeconds> m_cachedCurrentTime;
     bool m_isSuspended { false };
 };
 

@@ -41,8 +41,8 @@ public:
     Text& textNode() const { return downcast<Text>(nodeForNonAnonymous()); }
 
     bool characterStartsNewTextChunk(int position) const;
-    SVGTextLayoutAttributes* layoutAttributes() { return &m_layoutAttributes; }
-    const SVGTextLayoutAttributes* layoutAttributes() const { return &m_layoutAttributes; }
+    SVGTextLayoutAttributes* layoutAttributes() LIFETIME_BOUND { return &m_layoutAttributes; }
+    const SVGTextLayoutAttributes* layoutAttributes() const LIFETIME_BOUND { return &m_layoutAttributes; }
 
     // computeScalingFactor() returns the font-size scaling factor, ignoring the text-rendering mode.
     // scalingFactor() takes it into account, and thus returns 1 whenever text-rendering is set to 'geometricPrecision'.
@@ -52,15 +52,15 @@ public:
     float scalingFactor() const { return m_scalingFactor; }
     const FontCascade& scaledFont() const { return m_scaledFont; }
     void updateScaledFont();
-    static bool computeNewScaledFontForStyle(const RenderObject&, const RenderStyle&, float& scalingFactor, FontCascade& scaledFont);
+    static bool computeNewScaledFontForStyle(const RenderObject&, const Style::ComputedStyle&, float& scalingFactor, FontCascade& scaledFont);
 
     // Preserves floating point precision for the use in DRT. It knows how to round and does a better job than enclosingIntRect.
     FloatRect floatLinesBoundingBox() const;
 
     void removeTextBox(LegacyInlineTextBox& box) { m_legacyLineBoxes.remove(box); }
-    LegacyInlineTextBox* createInlineTextBox() { return m_legacyLineBoxes.createAndAppendLineBox(*this); }
+    LegacyInlineTextBox* createInlineTextBox() LIFETIME_BOUND { return m_legacyLineBoxes.createAndAppendLineBox(*this); }
     void deleteLegacyLineBoxes();
-    LegacyInlineTextBox* firstLegacyTextBox() const { return m_legacyLineBoxes.first(); }
+    LegacyInlineTextBox* firstLegacyTextBox() const LIFETIME_BOUND { return m_legacyLineBoxes.first(); }
     void removeAndDestroyLegacyTextBoxes();
     std::unique_ptr<LegacyInlineTextBox> createTextBox();
 
@@ -69,7 +69,7 @@ private:
     ASCIILiteral renderName() const override { return "RenderSVGInlineText"_s; }
 
     String originalText() const override;
-    void styleDidChange(Style::Difference, const RenderStyle*) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle*) override;
 
     FloatRect objectBoundingBox() const override { return floatLinesBoundingBox(); }
 

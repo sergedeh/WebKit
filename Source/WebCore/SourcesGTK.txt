@@ -62,23 +62,26 @@ platform/glib/DragDataGLib.cpp
 platform/glib/PasteboardGLib.cpp
 platform/glib/RunLoopObserverGLib.cpp
 
+platform/graphics/DMABufBuffer.cpp
 platform/graphics/PlatformDisplay.cpp @no-unify
 
 platform/graphics/angle/PlatformDisplayANGLE.cpp @no-unify
 
+platform/graphics/egl/BitmapTexture.cpp @no-unify
+platform/graphics/egl/BitmapTexturePool.cpp @no-unify
 platform/graphics/egl/GLContext.cpp @no-unify
 platform/graphics/egl/GLContextWrapper.cpp @no-unify
 platform/graphics/egl/GLDisplay.cpp @no-unify
 platform/graphics/egl/GLFence.cpp @no-unify
 platform/graphics/egl/GLFenceEGL.cpp @no-unify
 platform/graphics/egl/GLFenceGL.cpp @no-unify
+platform/graphics/egl/GraphicsContextGLEGL.cpp @no-unify
 platform/graphics/egl/PlatformDisplayDefault.cpp @no-unify
 platform/graphics/egl/PlatformDisplaySurfaceless.cpp @no-unify
 
-platform/graphics/gbm/DMABufBuffer.cpp
 platform/graphics/gbm/DRMDeviceManager.cpp
 platform/graphics/gbm/GBMDevice.cpp
-platform/graphics/gbm/GraphicsContextGLTextureMapperGBM.cpp @no-unify
+platform/graphics/gbm/GraphicsContextGLGBM.cpp @no-unify
 platform/graphics/gbm/MemoryMappedGPUBuffer.cpp
 platform/graphics/gbm/PlatformDisplayGBM.cpp @no-unify
 platform/graphics/gbm/VivanteSuperTiledTexture.cpp
@@ -89,15 +92,15 @@ platform/graphics/glib/SystemFontDatabaseGLib.cpp
 
 platform/graphics/opentype/OpenTypeVerticalData.cpp
 
+platform/graphics/vulkan/VulkanTypes.cpp
+platform/graphics/vulkan/VulkanUtilities.cpp
+
 platform/graphics/x11/XErrorTrapper.cpp @no-unify
 
 platform/gtk/LocalizedStringsGtk.cpp
 platform/gtk/PasteboardGtk.cpp
 platform/gtk/PlatformKeyboardEventGtk.cpp
 platform/gtk/PlatformScreenGtk.cpp
-platform/gtk/RenderThemeGadget.cpp
-platform/gtk/RenderThemeScrollbar.cpp
-platform/gtk/ScrollbarThemeGtk.cpp
 
 platform/text/Hyphenation.cpp
 platform/text/LocaleICU.cpp

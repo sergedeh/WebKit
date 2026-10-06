@@ -29,6 +29,7 @@
 #include "JSWebXRView.h"
 
 #include "JSDOMConvertBufferSource.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "WebXRView.h"
 
 namespace WebCore {
@@ -38,18 +39,18 @@ JSC::JSValue JSWebXRView::projectionMatrix(JSC::JSGlobalObject& lexicalGlobalObj
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
     return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().cachedProjectionMatrix(), [&](JSC::ThrowScope& throwScope) {
-        JSC::JSValue matrix = toJS<IDLFloat32Array>(lexicalGlobalObject, *globalObject(), throwScope, wrapped().projectionMatrix());
+        JSC::JSValue matrix = toJS<IDLFloat32Array>(lexicalGlobalObject, *realm(), throwScope, wrapped().projectionMatrix());
         return matrix;
     });
 }
 
 template<typename Visitor>
-void JSWebXRView::visitAdditionalChildren(Visitor& visitor)
+void JSWebXRView::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().cachedProjectionMatrix().visit(visitor);
+    wrapped().cachedProjectionMatrix().visitInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSWebXRView);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSWebXRView);
 
 } // namespace WebCore
 

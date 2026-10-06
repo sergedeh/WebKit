@@ -29,6 +29,7 @@
 
 #include "Element.h"
 #include "ElementData.h"
+#include "SecurityOrigin.h"
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -36,8 +37,28 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DocumentSharedObjectPool);
 
+static HashMap<SecurityOriginData, size_t>& NODELETE peakSizeInPast()
+{
+    static MainThreadNeverDestroyed<HashMap<SecurityOriginData, size_t>> map;
+    return map;
+}
+
+DocumentSharedObjectPool::DocumentSharedObjectPool(const SecurityOrigin& origin)
+    : m_domain(origin.data())
+{
+    m_shareableElementDataCache.reserveInitialCapacity(peakSizeInPast().get(m_domain));
+}
+
+DocumentSharedObjectPool::~DocumentSharedObjectPool()
+{
+    size_t currentSizeRoundedUp = roundUpToPowerOfTwo(m_shareableElementDataCache.size());
+    auto result = peakSizeInPast().add(m_domain, currentSizeRoundedUp);
+    if (!result.isNewEntry && currentSizeRoundedUp > result.iterator->value)
+        result.iterator->value = currentSizeRoundedUp;
+}
+
 struct DocumentSharedObjectPool::ShareableElementDataHash {
-    static unsigned hash(const Ref<ShareableElementData>& data)
+    static unsigned NODELETE hash(const Ref<ShareableElementData>& data)
     {
         return computeHash(data->attributes());
     }
@@ -52,7 +73,7 @@ struct DocumentSharedObjectPool::ShareableElementDataHash {
 };
 
 struct AttributeSpanTranslator {
-    static unsigned hash(std::span<const Attribute> attributes)
+    static unsigned NODELETE hash(std::span<const Attribute> attributes)
     {
         return computeHash(attributes);
     }

@@ -56,7 +56,7 @@ public:
     virtual ~CSSFontFaceSource();
 
     // FontLoadRequestClient.
-    void ref() const final;
+    void NODELETE ref() const final;
     void deref() const final;
 
     //                      => Success
@@ -80,16 +80,16 @@ public:
     FontLoadRequest* fontLoadRequest() const { return m_fontRequest.get(); }
     bool requiresExternalResource() const { return m_fontRequest.get(); }
 
-    bool isSVGFontFaceSource() const;
+    bool NODELETE isSVGFontFaceSource() const;
 
 private:
-    bool shouldIgnoreFontLoadCompletions() const;
+    bool NODELETE shouldIgnoreFontLoadCompletions() const;
 
     void fontLoaded(FontLoadRequest&) override;
 
-    void setStatus(Status);
+    void NODELETE setStatus(Status);
 
-    Ref<CSSFontFace> protectedCSSFontFace() const;
+    CSSFontFace& cssFontFace() const { return m_owningCSSFontFace.get(); }
 
     RefPtr<FontCustomPlatformData> loadCustomFont(SharedBuffer&, DownloadableBinaryFontTrustedTypes);
 
@@ -98,8 +98,8 @@ private:
     WeakPtr<CSSFontSelector> m_fontSelector; // For remote fonts, to orchestrate loading.
     const RefPtr<FontLoadRequest> m_fontRequest; // Also for remote fonts, a pointer to the resource request.
 
-    RefPtr<SharedBuffer> m_generatedOTFBuffer;
-    RefPtr<JSC::ArrayBufferView> m_immediateSource;
+    const RefPtr<SharedBuffer> m_generatedOTFBuffer;
+    const RefPtr<JSC::ArrayBufferView> m_immediateSource;
     RefPtr<FontCustomPlatformData> m_immediateFontCustomPlatformData;
 
     WeakPtr<SVGFontFaceElement, WeakPtrImplWithEventTargetData> m_svgFontFaceElement;

@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 2000 Simon Hausmann <hausmann@kde.org>
  *           (C) 2000 Stefan Schimanski (1Stein@gmx.de)
- * Copyright (C) 2004, 2005, 2006, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * This library is free software; you can redistribute it and/or
@@ -56,9 +56,8 @@ static constexpr auto borderFillColor = SRGBA<uint8_t> { 208, 208, 208 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderFrameSet);
 
-RenderFrameSet::RenderFrameSet(HTMLFrameSetElement& frameSet, RenderStyle&& style)
+RenderFrameSet::RenderFrameSet(HTMLFrameSetElement& frameSet, Style::ComputedStyle&& style)
     : RenderBox(Type::FrameSet, frameSet, WTF::move(style))
-    , m_isResizing(false)
 {
     ASSERT(isRenderFrameSet());
     setInline(false);
@@ -66,14 +65,9 @@ RenderFrameSet::RenderFrameSet(HTMLFrameSetElement& frameSet, RenderStyle&& styl
 
 RenderFrameSet::~RenderFrameSet() = default;
 
-HTMLFrameSetElement& RenderFrameSet::frameSetElement() const
+HTMLFrameSetElement& NODELETE RenderFrameSet::frameSetElement() const
 {
     return downcast<HTMLFrameSetElement>(nodeForNonAnonymous());
-}
-
-RenderFrameSet::GridAxis::GridAxis()
-    : m_splitBeingResized(noSplit)
-{
 }
 
 void RenderFrameSet::paintColumnBorder(const PaintInfo& paintInfo, const IntRect& borderRect)
@@ -90,8 +84,8 @@ void RenderFrameSet::paintColumnBorder(const PaintInfo& paintInfo, const IntRect
     // Now stroke the edges but only if we have enough room to paint both edges with a little
     // bit of the fill color showing through.
     if (borderRect.width() >= 3) {
-        context.fillRect(IntRect(borderRect.location(), IntSize(1, height())), borderStartEdgeColor);
-        context.fillRect(IntRect(IntPoint(borderRect.maxX() - 1, borderRect.y()), IntSize(1, height())), borderEndEdgeColor);
+        context.fillRect(IntRect(borderRect.location(), IntSize(1, borderBoxHeight())), borderStartEdgeColor);
+        context.fillRect(IntRect(IntPoint(borderRect.maxX() - 1, borderRect.y()), IntSize(1, borderBoxHeight())), borderEndEdgeColor);
     }
 }
 
@@ -109,8 +103,8 @@ void RenderFrameSet::paintRowBorder(const PaintInfo& paintInfo, const IntRect& b
     // Now stroke the edges but only if we have enough room to paint both edges with a little
     // bit of the fill color showing through.
     if (borderRect.height() >= 3) {
-        context.fillRect(IntRect(borderRect.location(), IntSize(width(), 1)), borderStartEdgeColor);
-        context.fillRect(IntRect(IntPoint(borderRect.x(), borderRect.maxY() - 1), IntSize(width(), 1)), borderEndEdgeColor);
+        context.fillRect(IntRect(borderRect.location(), IntSize(borderBoxWidth(), 1)), borderStartEdgeColor);
+        context.fillRect(IntRect(IntPoint(borderRect.x(), borderRect.maxY() - 1), IntSize(borderBoxWidth(), 1)), borderEndEdgeColor);
     }
 }
 
@@ -136,7 +130,7 @@ void RenderFrameSet::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
             downcast<RenderElement>(*child).paint(paintInfo, adjustedPaintOffset);
             xPos += m_cols.m_sizes[c];
             if (borderThickness && m_cols.m_allowBorder[c + 1]) {
-                paintColumnBorder(paintInfo, snappedIntRect(LayoutRect(adjustedPaintOffset.x() + xPos, adjustedPaintOffset.y() + yPos, borderThickness, height())));
+                paintColumnBorder(paintInfo, snappedIntRect(LayoutRect(adjustedPaintOffset.x() + xPos, adjustedPaintOffset.y() + yPos, borderThickness, borderBoxHeight())));
                 xPos += borderThickness;
             }
             child = child->nextSibling();
@@ -145,7 +139,7 @@ void RenderFrameSet::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
         }
         yPos += m_rows.m_sizes[r];
         if (borderThickness && m_rows.m_allowBorder[r + 1]) {
-            paintRowBorder(paintInfo, snappedIntRect(LayoutRect(adjustedPaintOffset.x(), adjustedPaintOffset.y() + yPos, width(), borderThickness)));
+            paintRowBorder(paintInfo, snappedIntRect(LayoutRect(adjustedPaintOffset.x(), adjustedPaintOffset.y() + yPos, borderBoxWidth(), borderThickness)));
             yPos += borderThickness;
         }
     }
@@ -365,22 +359,22 @@ void RenderFrameSet::notifyFrameEdgeInfoChanged()
 
 void RenderFrameSet::fillFromEdgeInfo(const FrameEdgeInfo& edgeInfo, int r, int c)
 {
-    if (edgeInfo.allowBorder(LeftFrameEdge))
+    if (edgeInfo.allowBorder(FrameEdge::Left))
         m_cols.m_allowBorder[c] = true;
-    if (edgeInfo.allowBorder(RightFrameEdge))
+    if (edgeInfo.allowBorder(FrameEdge::Right))
         m_cols.m_allowBorder[c + 1] = true;
-    if (edgeInfo.preventResize(LeftFrameEdge))
+    if (edgeInfo.preventResize(FrameEdge::Left))
         m_cols.m_preventResize[c] = true;
-    if (edgeInfo.preventResize(RightFrameEdge))
+    if (edgeInfo.preventResize(FrameEdge::Right))
         m_cols.m_preventResize[c + 1] = true;
-    
-    if (edgeInfo.allowBorder(TopFrameEdge))
+
+    if (edgeInfo.allowBorder(FrameEdge::Top))
         m_rows.m_allowBorder[r] = true;
-    if (edgeInfo.allowBorder(BottomFrameEdge))
+    if (edgeInfo.allowBorder(FrameEdge::Bottom))
         m_rows.m_allowBorder[r + 1] = true;
-    if (edgeInfo.preventResize(TopFrameEdge))
+    if (edgeInfo.preventResize(FrameEdge::Top))
         m_rows.m_preventResize[r] = true;
-    if (edgeInfo.preventResize(BottomFrameEdge))
+    if (edgeInfo.preventResize(FrameEdge::Bottom))
         m_rows.m_preventResize[r + 1] = true;
 }
 
@@ -419,14 +413,14 @@ FrameEdgeInfo RenderFrameSet::edgeInfo() const
     int rows = frameSetElement().totalRows();
     int cols = frameSetElement().totalCols();
     if (rows && cols) {
-        result.setPreventResize(LeftFrameEdge, m_cols.m_preventResize[0]);
-        result.setAllowBorder(LeftFrameEdge, m_cols.m_allowBorder[0]);
-        result.setPreventResize(RightFrameEdge, m_cols.m_preventResize[cols]);
-        result.setAllowBorder(RightFrameEdge, m_cols.m_allowBorder[cols]);
-        result.setPreventResize(TopFrameEdge, m_rows.m_preventResize[0]);
-        result.setAllowBorder(TopFrameEdge, m_rows.m_allowBorder[0]);
-        result.setPreventResize(BottomFrameEdge, m_rows.m_preventResize[rows]);
-        result.setAllowBorder(BottomFrameEdge, m_rows.m_allowBorder[rows]);
+        result.setPreventResize(FrameEdge::Left, m_cols.m_preventResize[0]);
+        result.setAllowBorder(FrameEdge::Left, m_cols.m_allowBorder[0]);
+        result.setPreventResize(FrameEdge::Right, m_cols.m_preventResize[cols]);
+        result.setAllowBorder(FrameEdge::Right, m_cols.m_allowBorder[cols]);
+        result.setPreventResize(FrameEdge::Top, m_rows.m_preventResize[0]);
+        result.setAllowBorder(FrameEdge::Top, m_rows.m_allowBorder[0]);
+        result.setPreventResize(FrameEdge::Bottom, m_rows.m_preventResize[rows]);
+        result.setAllowBorder(FrameEdge::Bottom, m_rows.m_allowBorder[rows]);
     }
     
     return result;
@@ -445,9 +439,9 @@ void RenderFrameSet::layout()
         oldBounds = clippedOverflowRectForRepaint(repaintContainer.get());
     }
 
-    if (!parent()->isRenderFrameSet() && !document().printing()) {
-        setWidth(view().viewWidth());
-        setHeight(view().viewHeight());
+    if (!parent()->isRenderFrameSet() && !protect(document())->printing()) {
+        setBorderBoxWidth(view().viewWidth());
+        setBorderBoxHeight(view().viewHeight());
     }
 
     unsigned cols = frameSetElement().totalCols();
@@ -459,8 +453,8 @@ void RenderFrameSet::layout()
     }
 
     LayoutUnit borderThickness = frameSetElement().border();
-    layOutAxis(m_rows, frameSetElement().rowDimensions(), height() - (rows - 1) * borderThickness);
-    layOutAxis(m_cols, frameSetElement().colDimensions(), width() - (cols - 1) * borderThickness);
+    layOutAxis(m_rows, frameSetElement().rowDimensions(), borderBoxHeight() - (rows - 1) * borderThickness);
+    layOutAxis(m_cols, frameSetElement().colDimensions(), borderBoxWidth() - (cols - 1) * borderThickness);
 
     positionFrames();
 
@@ -486,8 +480,8 @@ static void resetFrameRendererAndDescendants(RenderBox* frameSetChild, RenderFra
         return;
 
     for (auto* descendant = frameSetChild; descendant; descendant = downcast<RenderBox>(RenderObjectTraversal::next(*descendant, &parentFrameSet))) {
-        descendant->setWidth(0);
-        descendant->setHeight(0);
+        descendant->setBorderBoxWidth(0);
+        descendant->setBorderBoxHeight(0);
         descendant->clearNeedsLayout();
     }
 }
@@ -511,11 +505,11 @@ void RenderFrameSet::positionFrames()
             int width = m_cols.m_sizes[c];
 
             // has to be resized and itself resize its contents
-            child->setWidth(width);
-            child->setHeight(height);
+            child->setBorderBoxWidth(width);
+            child->setBorderBoxHeight(height);
 #if PLATFORM(IOS_FAMILY)
             // FIXME: Is this iOS-specific?
-            child->setNeedsLayout(MarkOnlyThis);
+            child->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
 #else
             child->setNeedsLayout();
 #endif
@@ -565,7 +559,7 @@ bool RenderFrameSet::userResize(MouseEvent& event)
         if (needsLayout())
             return false;
         if (event.type() == eventNames().mousedownEvent && event.button() == MouseButton::Left) {
-            FloatPoint localPos = absoluteToLocal(event.absoluteLocation(), UseTransforms);
+            FloatPoint localPos = absoluteToLocal(event.absoluteLocation(), MapCoordinatesMode::UseTransforms);
             startResizing(m_cols, localPos.x());
             startResizing(m_rows, localPos.y());
             if (m_cols.m_splitBeingResized != noSplit || m_rows.m_splitBeingResized != noSplit) {
@@ -575,7 +569,7 @@ bool RenderFrameSet::userResize(MouseEvent& event)
         }
     } else {
         if (event.type() == eventNames().mousemoveEvent || (event.type() == eventNames().mouseupEvent && event.button() == MouseButton::Left)) {
-            FloatPoint localPos = absoluteToLocal(event.absoluteLocation(), UseTransforms);
+            FloatPoint localPos = absoluteToLocal(event.absoluteLocation(), MapCoordinatesMode::UseTransforms);
             continueResizing(m_cols, localPos.x());
             continueResizing(m_rows, localPos.y());
             if (event.type() == eventNames().mouseupEvent && event.button() == MouseButton::Left) {
@@ -645,7 +639,7 @@ int RenderFrameSet::hitTestSplit(const GridAxis& axis, int position) const
     return noSplit;
 }
 
-bool RenderFrameSet::isChildAllowed(const RenderObject& child, const RenderStyle&) const
+bool RenderFrameSet::isChildAllowed(const RenderObject& child, const Style::ComputedStyle&) const
 {
     return child.isRenderFrame() || child.isRenderFrameSet();
 }
@@ -655,11 +649,11 @@ CursorDirective RenderFrameSet::getCursor(const LayoutPoint& point, Cursor& curs
     IntPoint roundedPoint = roundedIntPoint(point);
     if (canResizeRow(roundedPoint)) {
         cursor = rowResizeCursor();
-        return SetCursor;
+        return CursorDirective::SetCursor;
     }
     if (canResizeColumn(roundedPoint)) {
         cursor = columnResizeCursor();
-        return SetCursor;
+        return CursorDirective::SetCursor;
     }
     return RenderBox::getCursor(point, cursor);
 }

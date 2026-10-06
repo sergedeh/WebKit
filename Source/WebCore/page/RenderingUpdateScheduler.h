@@ -25,10 +25,11 @@
 
 #pragma once
 
-#include <WebCore/AnimationFrameRate.h>
-#include <WebCore/DisplayRefreshMonitorClient.h>
+#include "AnimationFrameRate.h"
+#include "DisplayRefreshMonitorClient.h"
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakRef.h>
 
 namespace WebCore {
 
@@ -58,7 +59,7 @@ private:
     void displayRefreshFired() final;
     DisplayRefreshMonitorFactory* displayRefreshMonitorFactory() const final;
 
-    bool isScheduled() const;
+    bool NODELETE isScheduled() const;
     void startTimer(Seconds);
     void clearScheduled();
 

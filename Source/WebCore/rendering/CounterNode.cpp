@@ -44,8 +44,8 @@ CounterNode::~CounterNode()
     // Ideally this would be an assert and this would never be reached. In reality this happens a lot
     // so we need to handle these cases. The node is still connected to the tree so we need to detach it.
     if (m_parent || m_previousSibling || m_nextSibling || m_firstChild || m_lastChild) {
-        RefPtr<CounterNode> oldParent;
-        RefPtr<CounterNode> oldPreviousSibling;
+        CounterNode* oldParent = nullptr;
+        CounterNode* oldPreviousSibling = nullptr;
         // Instead of calling removeChild() we do this safely as the tree is likely broken if we get here.
         if (m_parent) {
             if (m_parent->m_firstChild == this)
@@ -68,9 +68,9 @@ CounterNode::~CounterNode()
         }
         if (m_firstChild) {
             // The node's children are reparented to the old parent.
-            for (RefPtr child = m_firstChild.get(); child; ) {
-                RefPtr nextChild = child->m_nextSibling.get();
-                RefPtr<CounterNode> nextSibling;
+            for (auto* child = m_firstChild.get(); child; ) {
+                auto* nextChild = child->m_nextSibling.get();
+                CounterNode* nextSibling = nullptr;
                 child->m_parent = oldParent;
                 if (oldPreviousSibling) {
                     nextSibling = oldPreviousSibling->m_nextSibling.get();
@@ -102,14 +102,14 @@ CounterNode* CounterNode::nextInPreOrderAfterChildren(const CounterNode* stayWit
     if (this == stayWithin)
         return nullptr;
 
-    RefPtr current = const_cast<CounterNode*>(this);
-    RefPtr<CounterNode> next;
+    auto* current = const_cast<CounterNode*>(this);
+    CounterNode* next = nullptr;
     while (!(next = current->m_nextSibling.get())) {
         current = current->m_parent.get();
         if (!current || current == stayWithin)
             return nullptr;
     }
-    return next.unsafeGet();
+    return next;
 }
 
 CounterNode* CounterNode::nextInPreOrder(const CounterNode* stayWithin) const

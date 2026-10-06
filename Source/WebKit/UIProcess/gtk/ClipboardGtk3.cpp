@@ -36,6 +36,7 @@
 #include <WebCore/SharedBuffer.h>
 #include <gtk/gtk.h>
 #include <wtf/SetForScope.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 
 namespace WebKit {
@@ -81,9 +82,9 @@ void Clipboard::formats(CompletionHandler<void(Vector<String>&&)>&& completionHa
         std::unique_ptr<FormatsAsyncData> data(static_cast<FormatsAsyncData*>(userData));
 
         Vector<String> result;
-        for (int i = 0; i < atomsCount; ++i) {
-            GUniquePtr<char> atom(gdk_atom_name(atoms[i]));
-            result.append(String::fromUTF8(atom.get()));
+        for (auto* atom : unsafeMakeSpan<GdkAtom>(atoms, atomsCount)) {
+            GUniquePtr<char> atomName(gdk_atom_name(atom));
+            result.append(String::fromUTF8(atomName.get()));
         }
         data->completionHandler(WTF::move(result));
     }, new FormatsAsyncData(WTF::move(completionHandler)));
@@ -124,8 +125,8 @@ void Clipboard::readFilePaths(CompletionHandler<void(Vector<String>&&)>&& comple
     gtk_clipboard_request_uris(m_clipboard, [](GtkClipboard*, char** uris, gpointer userData) {
         std::unique_ptr<ReadFilePathsAsyncData> data(static_cast<ReadFilePathsAsyncData*>(userData));
         Vector<String> result;
-        for (unsigned i = 0; uris && uris[i]; ++i) {
-            GUniquePtr<gchar> filename(g_filename_from_uri(uris[i], nullptr, nullptr));
+        for (const auto* uri : span(uris)) {
+            GUniquePtr<gchar> filename(g_filename_from_uri(uri, nullptr, nullptr));
             if (filename)
                 result.append(String::fromUTF8(filename.get()));
         }
@@ -163,13 +164,13 @@ void Clipboard::readURL(CompletionHandler<void(String&& url, String&& title)>&& 
     }, new ReadURLAsyncData(WTF::move(completionHandler)));
 }
 
-void Clipboard::readBuffer(const char* format, CompletionHandler<void(Ref<WebCore::SharedBuffer>&&)>&& completionHandler, ReadMode)
+void Clipboard::readBuffer(UTF8CStringView format, CompletionHandler<void(Ref<WebCore::SharedBuffer>&&)>&& completionHandler, ReadMode)
 {
-    gtk_clipboard_request_contents(m_clipboard, gdk_atom_intern(format, TRUE), [](GtkClipboard*, GtkSelectionData* selection, gpointer userData) {
+    gtk_clipboard_request_contents(m_clipboard, gdk_atom_intern(format.utf8(), TRUE), [](GtkClipboard*, GtkSelectionData* selection, gpointer userData) {
         std::unique_ptr<ReadBufferAsyncData> data(static_cast<ReadBufferAsyncData*>(userData));
         int contentsLength;
         const auto* contents = gtk_selection_data_get_data_with_length(selection, &contentsLength);
-        data->completionHandler(WebCore::SharedBuffer::create(std::span { contents, static_cast<size_t>(std::max(0, contentsLength)) }));
+        data->completionHandler(WebCore::SharedBuffer::create(unsafeMakeSpan(contents, static_cast<size_t>(std::max(0, contentsLength)))));
     }, new ReadBufferAsyncData(WTF::move(completionHandler)));
 }
 
@@ -206,7 +207,7 @@ void Clipboard::write(WebCore::SelectionData&& selectionData, CompletionHandler<
     if (selectionData.hasCustomData())
         gtk_target_list_add(list.get(), gdk_atom_intern_static_string(WebCore::PasteboardCustomData::gtkType().characters()), 0, ClipboardTargetType::Custom);
     for (const auto& type : selectionData.buffers().keys())
-        gtk_target_list_add(list.get(), gdk_atom_intern(type.utf8().data(), FALSE), 0, ClipboardTargetType::Buffer);
+        gtk_target_list_add(list.get(), gdk_atom_intern(type.utf8().legacyCStringPointer(), FALSE), 0, ClipboardTargetType::Buffer);
 
     int numberOfTargets;
     GtkTargetEntry* table = gtk_target_table_new_from_list(list.get(), &numberOfTargets);
@@ -222,12 +223,12 @@ void Clipboard::write(WebCore::SelectionData&& selectionData, CompletionHandler<
             auto& data = *static_cast<WriteAsyncData*>(userData);
             switch (info) {
             case ClipboardTargetType::Markup: {
-                CString markup = data.selectionData.markup().utf8();
+                auto markup = data.selectionData.markup().utf8();
                 gtk_selection_data_set(selection, gdk_atom_intern_static_string("text/html"), 8, reinterpret_cast<const guchar*>(markup.data()), markup.length());
                 break;
             }
             case ClipboardTargetType::Text:
-                gtk_selection_data_set_text(selection, data.selectionData.text().utf8().data(), -1);
+                gtk_selection_data_set_text(selection, data.selectionData.text().utf8().legacyCStringPointer(), -1);
                 break;
             case ClipboardTargetType::Image: {
                 if (data.selectionData.hasImage()) {
@@ -237,7 +238,7 @@ void Clipboard::write(WebCore::SelectionData&& selectionData, CompletionHandler<
                 break;
             }
             case ClipboardTargetType::URIList: {
-                CString uriList = data.selectionData.uriList().utf8();
+                auto uriList = data.selectionData.uriList().utf8();
                 gtk_selection_data_set(selection, gdk_atom_intern_static_string("text/uri-list"), 8, reinterpret_cast<const guchar*>(uriList.data()), uriList.length());
                 break;
             }

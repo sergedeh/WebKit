@@ -77,7 +77,7 @@ struct Effects {
     // having other pinned registers that are mutable, then you can use ArgumentReg. Also note that
     // nobody will stop you from making this get out-of-sync with your clobbered register sets in
     // Patchpoint. It's recommended that you err on the side of being conservative.
-    // FIXME: Explore making these be RegisterSetBuilders. That's mainly hard because it would be awkward to
+    // FIXME: Explore making these be RegisterSets. That's mainly hard because it would be awkward to
     // reconcile with StackmapValue's support for clobbered regs.
     // https://bugs.webkit.org/show_bug.cgi?id=163173
     bool readsPinned : 1 { false };
@@ -87,18 +87,35 @@ struct Effects {
     // if the operation is a memory fence.
     bool fence : 1 { false };
 
+private:
+    // Sentinel for the constant-effects table in B3ValueInlines.h: marks opcodes whose effects are
+    // value-dependent. Never set on Effects describing an actual value. Declared adjacent to the
+    // bitfields above so it packs into the same allocation unit (no size growth).
+    bool m_invalid : 1 { false };
+
+public:
     // WARNING: The B3::hoistLoopInvariantValues() phase thinks that it understands this exhaustively. If you
     // add any new kinds of things that can be read or written, you should check that phase.
 
     HeapRange writes;
     HeapRange reads;
 
-    static Effects none()
+    static constexpr Effects none()
     {
         return Effects();
     }
 
-    static Effects forCall()
+    static constexpr Effects invalid()
+    {
+        Effects result;
+        result.m_invalid = true;
+        return result;
+    }
+
+    constexpr bool isValid() const { return !m_invalid; }
+    constexpr bool isInvalid() const { return m_invalid; }
+
+    static constexpr Effects forCall()
     {
         Effects result;
         result.exitsSideways = true;
@@ -110,8 +127,8 @@ struct Effects {
         result.fence = true;
         return result;
     }
-    
-    static Effects forCheck()
+
+    static constexpr Effects forCheck()
     {
         Effects result;
         result.exitsSideways = true;
@@ -120,14 +137,24 @@ struct Effects {
         return result;
     }
 
-    bool mustExecute() const
+    constexpr bool isWrite() const
     {
-        return terminal || exitsSideways || writesLocalState || writes || writesPinned || fence;
+        return writesLocalState || writes || writesPinned || fence;
+    }
+
+    constexpr bool isTrapBarrier() const
+    {
+        return exitsSideways || isWrite();
+    }
+
+    constexpr bool mustExecute() const
+    {
+        return terminal || isTrapBarrier();
     }
 
     // Returns true if reordering instructions with these respective effects would change program
     // behavior in an observable way.
-    bool interferes(const Effects&) const;
+    bool NODELETE interferes(const Effects&) const;
     
     friend bool operator==(const Effects&, const Effects&) = default;
 

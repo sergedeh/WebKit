@@ -26,29 +26,76 @@
 #include "config.h"
 #include "GradientRendererCG.h"
 
+#include "ColorConversion.h"
 #include "ColorHash.h"
-#include "ColorInterpolation.h"
+#include "ColorSpace.h"
 #include "ColorSpaceCG.h"
 #include "GradientColorStops.h"
+#include "SampledGradientBuilder.h"
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <wtf/HashMap.h>
+#include <wtf/ThreadSpecific.h>
+#include <wtf/TinyLRUCache.h>
+
+namespace WTF {
+using namespace WebCore;
+
+struct SampledGradientCacheKey {
+    ColorInterpolationMethod interpolationMethod;
+    GradientColorStops::StopVector colorStops;
+    std::optional<ColorSpace> destinationColorSpace;
+
+    friend bool operator==(const SampledGradientCacheKey&, const SampledGradientCacheKey&) = default;
+};
+
+template<>
+bool TinyLRUCachePolicy<SampledGradientCacheKey, RetainPtr<CGGradientRef>>::isKeyNull(const SampledGradientCacheKey& key)
+{
+    return key.colorStops.isEmpty();
+}
+
+template<>
+RetainPtr<CGGradientRef> TinyLRUCachePolicy<SampledGradientCacheKey, RetainPtr<CGGradientRef>>::createValueForKey(const SampledGradientCacheKey& params)
+{
+    return WebCore::GradientRendererCG::createGradientBySampling(params.interpolationMethod, params.colorStops, params.destinationColorSpace);
+}
+
+} // namespace WTF
 
 namespace WebCore {
 
-GradientRendererCG::GradientRendererCG(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops, std::optional<DestinationColorSpace> destinationColorSpace)
-    : m_strategy { pickStrategy(colorInterpolationMethod, stops, destinationColorSpace) }
+// MARK: - Constructor.
+
+GradientRendererCG::GradientRendererCG(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops, std::optional<ColorSpace> colorSpace)
+    : m_colorSpace { WTF::move(colorSpace) }
+    , m_gradient { makeGradient(colorInterpolationMethod, stops) }
 {
 }
 
-std::optional<DestinationColorSpace> GradientRendererCG::colorSpace() const
-{
-    if (auto* gradient = std::get_if<Gradient>(&m_strategy))
-        return gradient->colorSpace;
+// MARK: - Gradient options.
 
-    return { };
+static CFDictionaryRef gradientInterpolatesPremultipliedOptionsDictionarySingleton()
+{
+    static CFTypeRef keys[] = { kCGGradientInterpolatesPremultiplied };
+    static CFTypeRef values[] = { kCFBooleanTrue };
+    static NeverDestroyed<RetainPtr<CFDictionaryRef>> options = adoptCF(CFDictionaryCreate(kCFAllocatorDefault, keys, values, std::size(keys), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+    return options.get().get();
 }
 
-// MARK: - Strategy selection.
+static CFDictionaryRef gradientOptionsDictionarySingleton(ColorInterpolationMethod colorInterpolationMethod)
+{
+    switch (colorInterpolationMethod.alphaPremultiplication) {
+    case AlphaPremultiplication::Unpremultiplied:
+        return nullptr;
+    case AlphaPremultiplication::Premultiplied:
+        return gradientInterpolatesPremultipliedOptionsDictionarySingleton();
+    }
+
+    ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
+// MARK: - Direct CGGradient strategy (sRGB only).
 
 static bool anyComponentIsNone(const GradientColorStops& stops)
 {
@@ -56,84 +103,29 @@ static bool anyComponentIsNone(const GradientColorStops& stops)
         if (stop.color.anyComponentIsNone())
             return true;
     }
-    
+
     return false;
 }
 
-GradientRendererCG::Strategy GradientRendererCG::pickStrategy(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops, std::optional<DestinationColorSpace> destinationColorSpace) const
+GradientRendererCG::Gradient GradientRendererCG::makeGradient(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops) const
 {
-    return WTF::switchOn(colorInterpolationMethod.colorSpace,
-        [&] (const ColorInterpolationMethod::SRGB&) -> Strategy {
-            // FIXME: As an optimization we can precompute 'none' replacements and create a transformed stop list rather than falling back on CGShadingRef.
-            if (anyComponentIsNone(stops))
-                return makeShading(colorInterpolationMethod, stops);
-
-            return makeGradient(colorInterpolationMethod, stops, destinationColorSpace);
+    // For non-sRGB color spaces, or sRGB with 'none' components, fall back to sampling.
+    bool needsSampling = WTF::switchOn(colorInterpolationMethod.colorSpace,
+        [&] (const ColorInterpolationMethod::SRGB&) {
+            // FIXME: As an optimization we can precompute 'none' replacements and create a transformed stop list rather than falling back on gradient sampling.
+            return anyComponentIsNone(stops);
         },
-        [&] (const auto&) -> Strategy {
-            return makeShading(colorInterpolationMethod, stops);
+        [&] (const auto&) {
+            return true;
         }
     );
-}
 
-// MARK: - Gradient strategy.
-
-static ColorComponents<float, 4> getResolvedColorComponentsInColorSpace(const Color& color, const DestinationColorSpace& destinationColorSpace)
-{
-    static LazyNeverDestroyed<HashMap<Color, ColorComponents<float, 4>>> colorCache;
-    static LazyNeverDestroyed<DestinationColorSpace> cacheColorSpace;
-    static Lock colorCacheLock;
-
-    auto locker = Locker(colorCacheLock);
-
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [&] {
-        colorCache.construct();
-        cacheColorSpace.construct(destinationColorSpace);
-    });
-
-    if (cacheColorSpace != destinationColorSpace) {
-        colorCache->clear();
-        cacheColorSpace.get() = destinationColorSpace;
-    }
-
-    auto result = colorCache->ensure(color, [&] {
-        return color.toResolvedColorComponentsInColorSpace(destinationColorSpace);
-    }).iterator->value;
-
-    const size_t maxCacheCount = 32;
-    if (colorCache->size() > maxCacheCount) {
-        auto iteratorToRemove = colorCache->random();
-        colorCache->remove(iteratorToRemove);
-    }
-
-    return result;
-}
-
-GradientRendererCG::Strategy GradientRendererCG::makeGradient(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops, std::optional<DestinationColorSpace> destinationColorSpace) const
-{
-    ASSERT_UNUSED(colorInterpolationMethod, std::holds_alternative<ColorInterpolationMethod::SRGB>(colorInterpolationMethod.colorSpace));
-
-    auto gradientInterpolatesPremultipliedOptionsDictionary = [] () -> CFDictionaryRef {
-        static CFTypeRef keys[] = { kCGGradientInterpolatesPremultiplied };
-        static CFTypeRef values[] = { kCFBooleanTrue };
-        static CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, keys, values, std::size(keys), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-
-        return options;
-    };
-
-   auto gradientOptionsDictionary = [&] (auto colorInterpolationMethod) -> CFDictionaryRef {
-        switch (colorInterpolationMethod.alphaPremultiplication) {
-        case AlphaPremultiplication::Unpremultiplied:
-            return nullptr;
-        case AlphaPremultiplication::Premultiplied:
-            return gradientInterpolatesPremultipliedOptionsDictionary();
-        }
-   };
+    if (needsSampling)
+        return makeGradientBySampling(colorInterpolationMethod, stops);
 
     auto hasOnlyBoundedSRGBColorStops = [] (const auto& stops) {
         for (const auto& stop : stops) {
-            if (stop.color.colorSpace() != ColorSpace::SRGB)
+            if (stop.color.colorSpace() != ColorSpaceName::SRGB)
                 return false;
         }
         return true;
@@ -148,30 +140,31 @@ GradientRendererCG::Strategy GradientRendererCG::makeGradient(ColorInterpolation
     Vector<CGFloat, 4 * reservedStops> colorComponents;
     colorComponents.reserveInitialCapacity(numberOfStops * 4);
 
-    RetainPtr cgColorSpace = [&] {
+    RetainPtr cgColorSpace = [&] () -> CGColorSpaceRef {
+        if (m_colorSpace) {
+            for (const auto& stop : stops) {
+                auto components = stop.color.toResolvedColorComponentsInColorSpace(*m_colorSpace);
+                colorComponents.appendList({ components[0], components[1], components[2], components[3] });
+                locations.append(stop.offset);
+            }
+            return m_colorSpace->platformColorSpace();
+        }
+
         // FIXME: Now that we only ever use CGGradientCreateWithColorComponents, we should investigate
         // if there is any real benefit to using sRGB when all the stops are bounded vs just using
         // extended sRGB for all gradients.
         if (hasOnlyBoundedSRGBColorStops(stops)) {
             for (const auto& stop : stops) {
-                if (destinationColorSpace) {
-                    auto [r, g, b, a ] = getResolvedColorComponentsInColorSpace(stop.color, *destinationColorSpace);
-                    colorComponents.appendList({ r, g, b, a });
-                } else {
-                    auto [r, g, b, a] = stop.color.toColorTypeLossy<SRGBA<float>>().resolved();
-                    colorComponents.appendList({ r, g, b, a });
-                }
+                auto [r, g, b, a] = stop.color.toColorTypeLossy<SRGBA<float>>().resolved();
+                colorComponents.appendList({ r, g, b, a });
 
                 locations.append(stop.offset);
             }
 
-            if (destinationColorSpace)
-                return destinationColorSpace->platformColorSpace();
-
             return cachedCGColorSpaceSingleton<ColorSpaceFor<SRGBA<float>>>();
         }
 
-        using OutputSpaceColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpace::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
+        using OutputSpaceColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpaceName::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
         for (const auto& stop : stops) {
             auto [r, g, b, a] = stop.color.toColorTypeLossy<OutputSpaceColorType>().resolved();
             colorComponents.appendList({ r, g, b, a });
@@ -204,206 +197,73 @@ GradientRendererCG::Strategy GradientRendererCG::makeGradient(ColorInterpolation
 
     apply139572277Workaround();
 
-    return Gradient { adoptCF(CGGradientCreateWithColorComponentsAndOptions(cgColorSpace.get(), colorComponents.span().data(), locations.span().data(), numberOfStops, gradientOptionsDictionary(colorInterpolationMethod))), destinationColorSpace };
+    return Gradient { adoptCF(CGGradientCreateWithColorComponentsAndOptions(cgColorSpace.get(), colorComponents.span().data(), locations.span().data(), numberOfStops, gradientOptionsDictionarySingleton(colorInterpolationMethod))) };
 }
 
-// MARK: - Shading strategy.
+// MARK: - Gradient-by-sampling strategy.
 
-template<typename InterpolationSpace, AlphaPremultiplication alphaPremultiplication>
-void GradientRendererCG::Shading::shadingFunction(void* info, const CGFloat* rawIn, CGFloat* rawOut)
+GradientRendererCG::Gradient GradientRendererCG::makeGradientBySampling(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops) const
 {
-    using InterpolationSpaceColorType = typename InterpolationSpace::ColorType;
-    using OutputSpaceColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpace::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
-
-    auto* data = static_cast<GradientRendererCG::Shading::Data*>(info);
-
-    // Compute color at offset 'in[0]' and assign the components to out[0 -> 3].
-    auto in = unsafeMakeSpan(rawIn, 1);
-    auto out = unsafeMakeSpan(rawOut, 4);
-
-    float requestedOffset = in[0];
-
-    // 1. Find stops that bound the requested offset.
-    auto [stop0, stop1] = [&] {
-        for (size_t stop = 1; stop < data->stops().size(); ++stop) {
-            if (requestedOffset <= data->stops()[stop].offset)
-                return std::tie(data->stops()[stop - 1], data->stops()[stop]);
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }();
-
-    // 2. Compute percentage offset between the two stops.
-    float offset = (stop1.offset == stop0.offset) ? 0.0f : (requestedOffset - stop0.offset) / (stop1.offset - stop0.offset);
-
-    // 3. Interpolate the two stops' colors by the computed offset.
-    // Synthetic color stops are added to extend the author-provided gradient out to 0 and 1
-    // with a solid color, if necessary. These need special handling because `longer hue` gradients
-    // would otherwise rotate through 360° of hue in these segments.
-    auto interpolatedColor = [&]() {
-        if (stop0.offset == 0.0f && data->firstStopIsSynthetic())
-            return makeFromComponents<InterpolationSpaceColorType>(stop0.colorComponents);
-
-        if (stop1.offset == 1.0f && data->lastStopIsSynthetic())
-            return makeFromComponents<InterpolationSpaceColorType>(stop1.colorComponents);
-
-        return interpolateColorComponents<alphaPremultiplication>(
-            std::get<InterpolationSpace>(data->colorInterpolationMethod().colorSpace),
-            makeFromComponents<InterpolationSpaceColorType>(stop0.colorComponents), 1.0f - offset,
-            makeFromComponents<InterpolationSpaceColorType>(stop1.colorComponents), offset);
-    }();
-
-    // 4. Convert to the output color space.
-    auto interpolatedColorConvertedToOutputSpace = asColorComponents(convertColor<OutputSpaceColorType>(interpolatedColor).resolved());
-
-    // 5. Write color components to 'out' pointer.
-    for (size_t componentIndex = 0; componentIndex < interpolatedColorConvertedToOutputSpace.size(); ++componentIndex)
-        out[componentIndex] = interpolatedColorConvertedToOutputSpace[componentIndex];
+    auto colorStops = stops.sorted().stops();
+    static NeverDestroyed<ThreadSpecific<TinyLRUCache<WTF::SampledGradientCacheKey, RetainPtr<CGGradientRef>, 8>>> cache;
+    RetainPtr gradient = cache.get()->get({ colorInterpolationMethod, colorStops, m_colorSpace });
+    return Gradient { WTF::move(gradient) };
 }
 
-GradientRendererCG::Strategy GradientRendererCG::makeShading(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops) const
+RetainPtr<CGGradientRef> GradientRendererCG::createGradientBySampling(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops::StopVector& stops, const std::optional<ColorSpace>& destinationColorSpace)
 {
-    using OutputSpaceColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpace::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
+    using OutputSpaceColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpaceName::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
 
-    auto makeData = [&] (auto colorInterpolationMethod, auto& stops) {
-        auto convertColorToColorInterpolationSpace = [&] (const Color& color, auto colorInterpolationMethod) -> ColorComponents<float, 4> {
-            return WTF::switchOn(colorInterpolationMethod.colorSpace,
-                [&]<typename MethodColorSpace>(const MethodColorSpace&) -> ColorComponents<float, 4> {
-                    using ColorType = typename MethodColorSpace::ColorType;
-                    return asColorComponents(color.template toColorTypeLossyCarryingForwardMissing<ColorType>().unresolved());
-                }
-            );
-        };
+    auto sampled = sampleGradientStops<OutputSpaceColorType>(colorInterpolationMethod, stops);
 
-        auto totalNumberOfStops = stops.size();
-        bool hasZero = false;
-        bool hasOne = false;
+    Vector<CGFloat> locations(sampled.locations.size());
+    Vector<CGFloat> components(sampled.colorComponents.size());
+    for (size_t i = 0; i < sampled.locations.size(); ++i)
+        locations[i] = sampled.locations[i];
 
-        for (const auto& stop : stops) {
-            auto offset = stop.offset;
-            ASSERT(offset >= 0);
-            ASSERT(offset <= 1);
-            
-            if (offset == 0)
-                hasZero = true;
-            else if (offset == 1)
-                hasOne = true;
+    RetainPtr<CGColorSpaceRef> cgColorSpace;
+    if (destinationColorSpace) {
+        constexpr auto inputColorSpace = ColorSpaceFor<OutputSpaceColorType>;
+        auto numberOfStops = sampled.locations.size();
+        for (size_t i = 0; i < numberOfStops; ++i) {
+            ColorComponents<float, 4> input {
+                sampled.colorComponents[i * 4],
+                sampled.colorComponents[i * 4 + 1],
+                sampled.colorComponents[i * 4 + 2],
+                sampled.colorComponents[i * 4 + 3]
+            };
+            auto converted = convertAndResolveColorComponents(inputColorSpace, input, *destinationColorSpace);
+            components[i * 4] = converted[0];
+            components[i * 4 + 1] = converted[1];
+            components[i * 4 + 2] = converted[2];
+            components[i * 4 + 3] = converted[3];
         }
+        cgColorSpace = destinationColorSpace->platformColorSpace();
+    } else {
+        for (size_t i = 0; i < sampled.colorComponents.size(); ++i)
+            components[i] = sampled.colorComponents[i];
+        cgColorSpace = cachedCGColorSpaceSingleton<ColorSpaceFor<OutputSpaceColorType>>();
+    }
 
-        if (!hasZero)
-            totalNumberOfStops++;
-        if (!hasOne)
-            totalNumberOfStops++;
-
-        // FIXME: To avoid duplicate work in the shader function, we could precompute a few things:
-        //   - If we have a polar coordinate color space, we can pre-fixup the hues, inserting an extra stop at the same offset if both the fixup on the left and right require different results.
-        //   - If we have 'none' components, we can precompute 'none' replacements, inserting an extra stop at the same offset if the replacements on the left and right are different.
-
-        Vector<ColorConvertedToInterpolationColorSpaceStop> convertedStops;
-        convertedStops.reserveInitialCapacity(totalNumberOfStops);
-
-        if (!hasZero)
-            convertedStops.append({ 0.0f, { 0.0f, 0.0f, 0.0f, 0.0f } });
-
-        convertedStops.appendContainerWithMapping(stops, [&](auto& stop) {
-            return ColorConvertedToInterpolationColorSpaceStop { stop.offset, convertColorToColorInterpolationSpace(stop.color, colorInterpolationMethod) };
-        });
-
-        if (!hasOne)
-            convertedStops.append({ 1.0f, convertedStops.last().colorComponents });
-
-        if (!hasZero)
-            convertedStops[0].colorComponents = convertedStops[1].colorComponents;
-
-        return Shading::Data::create(colorInterpolationMethod, WTF::move(convertedStops), !hasZero, !hasOne);
-    };
-
-    auto makeFunction = [&] (auto colorInterpolationMethod, auto& data) {
-        auto makeEvaluateCallback = [&] (auto colorInterpolationMethod) -> CGFunctionEvaluateCallback {
-            return WTF::switchOn(colorInterpolationMethod.colorSpace,
-                [&]<typename MethodColorSpace> (const MethodColorSpace&) -> CGFunctionEvaluateCallback {
-                    switch (colorInterpolationMethod.alphaPremultiplication) {
-                    case AlphaPremultiplication::Unpremultiplied:
-                        return &Shading::shadingFunction<MethodColorSpace, AlphaPremultiplication::Unpremultiplied>;
-                    case AlphaPremultiplication::Premultiplied:
-                        return &Shading::shadingFunction<MethodColorSpace, AlphaPremultiplication::Premultiplied>;
-                    }
-                }
-            );
-        };
-
-        const CGFunctionCallbacks callbacks = {
-            0,
-            makeEvaluateCallback(colorInterpolationMethod),
-            [] (void* info) {
-                static_cast<GradientRendererCG::Shading::Data*>(info)->deref();
-            }
-        };
-
-        constexpr auto outputSpaceComponentInfo = OutputSpaceColorType::Model::componentInfo;
-
-        static constexpr std::array<CGFloat, 2> domain = { 0, 1 };
-        static constexpr std::array<CGFloat, 8> range = {
-            outputSpaceComponentInfo[0].min, outputSpaceComponentInfo[0].max,
-            outputSpaceComponentInfo[1].min, outputSpaceComponentInfo[1].max,
-            outputSpaceComponentInfo[2].min, outputSpaceComponentInfo[2].max,
-            0, 1
-        };
-
-        Ref dataRefCopy = data;
-        return adoptCF(CGFunctionCreate(&dataRefCopy.leakRef(), domain.size() / 2, domain.data(), range.size() / 2, range.data(), &callbacks));
-    };
-
-    auto data = makeData(colorInterpolationMethod, stops);
-    auto function = makeFunction(colorInterpolationMethod, data);
-
-    // FIXME: Investigate using bounded sRGB when the input stops are all bounded sRGB.
-    auto colorSpace = cachedCGColorSpaceSingleton<ColorSpaceFor<OutputSpaceColorType>>();
-
-    return Shading { WTF::move(data), WTF::move(function), colorSpace };
+    return adoptCF(CGGradientCreateWithColorComponentsAndOptions(cgColorSpace,
+        components.span().data(), locations.span().data(), locations.size(), gradientOptionsDictionarySingleton(colorInterpolationMethod)));
 }
 
 // MARK: - Drawing functions.
 
 void GradientRendererCG::drawLinearGradient(CGContextRef platformContext, CGPoint startPoint, CGPoint endPoint, CGGradientDrawingOptions options)
 {
-    WTF::switchOn(m_strategy,
-        [&] (Gradient& gradient) {
-            CGContextDrawLinearGradient(platformContext, gradient.gradient.get(), startPoint, endPoint, options);
-        },
-        [&] (Shading& shading) {
-            bool startExtend = (options & kCGGradientDrawsBeforeStartLocation) != 0;
-            bool endExtend = (options & kCGGradientDrawsAfterEndLocation) != 0;
-
-            CGContextDrawShading(platformContext, adoptCF(CGShadingCreateAxial(shading.colorSpace.get(), startPoint, endPoint, shading.function.get(), startExtend, endExtend)).get());
-        }
-    );
+    CGContextDrawLinearGradient(platformContext, m_gradient.get(), startPoint, endPoint, options);
 }
 
 void GradientRendererCG::drawRadialGradient(CGContextRef platformContext, CGPoint startCenter, CGFloat startRadius, CGPoint endCenter, CGFloat endRadius, CGGradientDrawingOptions options)
 {
-    WTF::switchOn(m_strategy,
-        [&] (Gradient& gradient) {
-            CGContextDrawRadialGradient(platformContext, gradient.gradient.get(), startCenter, startRadius, endCenter, endRadius, options);
-        },
-        [&] (Shading& shading) {
-            bool startExtend = (options & kCGGradientDrawsBeforeStartLocation) != 0;
-            bool endExtend = (options & kCGGradientDrawsAfterEndLocation) != 0;
-
-            CGContextDrawShading(platformContext, adoptCF(CGShadingCreateRadial(shading.colorSpace.get(), startCenter, startRadius, endCenter, endRadius, shading.function.get(), startExtend, endExtend)).get());
-        }
-    );
+    CGContextDrawRadialGradient(platformContext, m_gradient.get(), startCenter, startRadius, endCenter, endRadius, options);
 }
 
 void GradientRendererCG::drawConicGradient(CGContextRef platformContext, CGPoint center, CGFloat angle)
 {
-    WTF::switchOn(m_strategy,
-        [&] (Gradient& gradient) {
-            CGContextDrawConicGradient(platformContext, gradient.gradient.get(), center, angle);
-        },
-        [&] (Shading& shading) {
-            CGContextDrawShading(platformContext, adoptCF(CGShadingCreateConic(shading.colorSpace.get(), center, angle, shading.function.get())).get());
-        }
-    );
+    CGContextDrawConicGradient(platformContext, m_gradient.get(), center, angle);
 }
 
 }

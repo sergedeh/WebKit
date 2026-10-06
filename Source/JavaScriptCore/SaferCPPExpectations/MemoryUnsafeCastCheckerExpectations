@@ -44,11 +44,9 @@ inspector/JSJavaScriptCallFrame.cpp
 inspector/agents/InspectorDebuggerAgent.cpp
 interpreter/CallFrame.cpp
 interpreter/CallFrame.h
-interpreter/CallFrameInlines.h
 interpreter/Interpreter.cpp
 jit/JITOperations.cpp
 jit/JITThunks.cpp
-jsc.cpp
 parser/ASTBuilder.h
 parser/NodesAnalyzeModule.cpp
 runtime/ArrayStorage.h
@@ -56,7 +54,6 @@ runtime/Butterfly.h
 runtime/CacheableIdentifierInlines.h
 runtime/CachedTypes.cpp
 runtime/CodeCache.cpp
-runtime/DateInstance.h
 runtime/DirectArguments.cpp
 runtime/ErrorInstance.h
 runtime/EvalExecutable.cpp
@@ -83,7 +80,6 @@ runtime/IntlSegmenter.h
 runtime/IntlSegments.h
 runtime/JSArrayBufferView.cpp
 runtime/JSCJSValueInlines.h
-[ iOS ] runtime/JSCell.cpp
 runtime/JSCell.h
 runtime/JSCustomGetterFunction.cpp
 runtime/JSCustomSetterFunction.cpp
@@ -97,8 +93,6 @@ runtime/JSModuleNamespaceObject.cpp
 runtime/JSModuleRecord.cpp
 runtime/JSNativeStdFunction.h
 runtime/JSRemoteFunction.cpp
-runtime/JSScriptFetchParameters.cpp
-runtime/JSScriptFetcher.cpp
 runtime/JSSourceCode.cpp
 runtime/JSString.cpp
 runtime/JSString.h
@@ -129,13 +123,10 @@ runtime/SymbolConstructor.cpp
 runtime/SymbolTable.cpp
 runtime/SyntheticModuleRecord.cpp
 runtime/WeakMapImpl.cpp
-runtime/WriteBarrier.h
 tools/CellProfile.h
 tools/HeapVerifier.cpp
 tools/JSDollarVM.cpp
 tools/VMInspector.cpp
-wasm/WasmCalleeGroup.cpp
-wasm/WasmIPIntSlowPaths.cpp
 wasm/WasmModule.cpp
 wasm/WasmOperations.cpp
 wasm/WasmStreamingCompiler.cpp

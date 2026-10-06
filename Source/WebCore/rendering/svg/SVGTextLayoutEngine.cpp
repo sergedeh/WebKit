@@ -22,10 +22,8 @@
 #include "config.h"
 #include "SVGTextLayoutEngine.h"
 
-#include "PathTraversalState.h"
 #include "RenderElementInlines.h"
 #include "RenderSVGTextPath.h"
-#include "RenderStyle+GettersInlines.h"
 #include "SVGElement.h"
 #include "SVGGeometryElement.h"
 #include "SVGInlineTextBoxInlines.h"
@@ -33,6 +31,9 @@
 #include "SVGTextContentElement.h"
 #include "SVGTextLayoutEngineBaseline.h"
 #include "SVGTextLayoutEngineSpacing.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include <unicode/ubrk.h>
+#include <wtf/text/TextBreakIterator.h>
 
 // Set to a value > 0 to dump the text fragments
 #define DUMP_SVG_TEXT_LAYOUT_FRAGMENTS 0
@@ -156,6 +157,38 @@ bool SVGTextLayoutEngine::parentDefinesTextLength(RenderObject* parent) const
     return false;
 }
 
+float SVGTextLayoutEngine::computeTextPathStartOffset(const RenderSVGTextPath& textPath) const
+{
+    const auto& startOffset = textPath.startOffset();
+
+    // 'pathLength' has no effect on percentage distance-along-a-path calculations.
+    if (startOffset.lengthType() == SVGLengthType::Percentage)
+        return startOffset.valueAsPercentage() * m_textPathLength;
+
+    auto offset = startOffset.valueInSpecifiedUnits();
+
+    // Inline path data has no referenced element, so there is no author-declared
+    // length to measure startOffset against, even when an overridden href has one.
+    if (textPath.usesPathAttribute())
+        return offset;
+
+    RefPtr targetElement = textPath.targetElement();
+    if (!targetElement || !targetElement->hasAttribute(SVGNames::pathLengthAttr))
+        return offset;
+
+    // 'pathLength' restates the path's length in the author's own units, so the offset is
+    // scaled by the measured length over the declared one. A declared zero is a scaling
+    // factor of infinity, but zero scaled infinitely must stay zero, and 0 * infinity is a
+    // NaN. A negative value is an error and is ignored.
+    // https://w3c.github.io/svgwg/svg2-draft/paths.html#PathLengthAttribute
+    auto declaredLength = targetElement->pathLength();
+    if (declaredLength < 0 || !offset)
+        return offset;
+    if (!declaredLength)
+        return offset * std::numeric_limits<float>::infinity();
+    return offset * (m_textPathLength / declaredLength);
+}
+
 void SVGTextLayoutEngine::beginTextPathLayout(const RenderSVGTextPath& textPath, SVGTextLayoutEngine& lineLayout)
 {
     m_inPathLayout = true;
@@ -164,19 +197,11 @@ void SVGTextLayoutEngine::beginTextPathLayout(const RenderSVGTextPath& textPath,
     if (m_textPath.isEmpty())
         return;
 
-    const auto& startOffset = textPath.startOffset();
-    m_textPathLength = m_textPath.length();
-    
-    if (textPath.startOffset().lengthType() == SVGLengthType::Percentage)
-        m_textPathStartOffset = startOffset.valueAsPercentage() * m_textPathLength;
-    else {
-        m_textPathStartOffset = startOffset.valueInSpecifiedUnits();
-        if (RefPtr targetElement = textPath.targetElement()) {
-            // FIXME: A value of zero is valid. Need to differentiate this case from being unspecified.
-            if (float pathLength = targetElement->pathLength())
-                m_textPathStartOffset *= m_textPathLength / pathLength;
-        }
-    }
+    // Precompute the arc-length table once so per-glyph queries are O(log n), not a full re-walk each (webkit.org/b/318396).
+    m_textPathMapper = m_textPath.arcLengthMapper();
+
+    m_textPathLength = m_textPathMapper.totalLength();
+    m_textPathStartOffset = computeTextPathStartOffset(textPath);
 
     lineLayout.m_chunkLayoutBuilder.buildTextChunks(lineLayout.m_lineLayoutBoxes, lineLayout.m_lineLayoutChunkStarts, lineLayout.m_fragmentMap);
 
@@ -222,7 +247,7 @@ void SVGTextLayoutEngine::layoutInlineTextBox(InlineIterator::SVGTextBoxIterator
     ASSERT(text.parent()->element());
     ASSERT(text.parent()->element()->isSVGElement());
 
-    const RenderStyle& style = text.style();
+    const Style::ComputedStyle& style = text.style();
 
     m_isVerticalText = style.writingMode().isVertical();
     layoutTextOnLineOrPath(textBox, text, style);
@@ -254,8 +279,7 @@ static inline void dumpTextBoxes(Vector<InlineIterator::SVGTextBoxIterator>& box
         for (unsigned i = 0; i < fragmentCount; ++i) {
             SVGTextFragment& fragment = fragments.at(i);
             String fragmentString(characters + fragment.characterOffset, fragment.length);
-            fprintf(stderr, "    -> Fragment %d, x=%.2f, y=%.2f, width=%.2f, height=%.2f, characterOffset=%d, length=%d, characters='%s'\n"
-                          , i, fragment.x, fragment.y, fragment.width, fragment.height, fragment.characterOffset, fragment.length, fragmentString.utf8().data());
+            SAFE_FPRINTF(stderr, "    -> Fragment %d, x=%.2f, y=%.2f, width=%.2f, height=%.2f, characterOffset=%d, length=%d, characters='%s'\n", i, fragment.x, fragment.y, fragment.width, fragment.height, fragment.characterOffset, fragment.length, fragmentString.utf8());
         }
     }
 }
@@ -399,15 +423,14 @@ void SVGTextLayoutEngine::advanceToNextVisualCharacter(const SVGTextMetrics& vis
     m_visualCharacterOffset += visualMetrics.length();
 }
 
-void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxIterator textBox, const RenderSVGInlineText& text, const RenderStyle& style)
+void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxIterator textBox, const RenderSVGInlineText& text, const Style::ComputedStyle& style)
 {
     if (m_inPathLayout && m_textPath.isEmpty())
         return;
 
     RenderElement* textParent = text.parent();
     ASSERT(textParent);
-    RefPtr lengthContext = downcast<SVGElement>(textParent->element());
-    
+
     bool definesTextLength = parentDefinesTextLength(textParent);
 
     m_visualMetricsListOffset = 0;
@@ -430,10 +453,13 @@ void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxItera
     float baselineShift = baselineLayout.calculateBaselineShift(style);
     baselineShift -= baselineLayout.calculateAlignmentBaselineShift(m_isVerticalText, text);
 
+    // Grapheme-cluster boundaries, keyed by the same code-unit offset the loop walks (m_visualCharacterOffset).
+    NonSharedCharacterBreakIterator clusterIterator(StringView(text.text()));
+
     // Main layout algorithm.
     while (true) {
         // Find the start of the current text box in this list, respecting ligatures.
-        SVGTextMetrics visualMetrics(SVGTextMetrics::SkippedSpaceMetrics);
+        SVGTextMetrics visualMetrics(SVGTextMetrics::MetricsType::SkippedSpaceMetrics);
         if (!currentVisualCharacterMetrics(*textBox, visualMetricsValues, visualMetrics))
             break;
 
@@ -447,7 +473,7 @@ void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxItera
             break;
 
         ASSERT(logicalAttributes);
-        SVGTextMetrics logicalMetrics(SVGTextMetrics::SkippedSpaceMetrics);
+        SVGTextMetrics logicalMetrics(SVGTextMetrics::MetricsType::SkippedSpaceMetrics);
         if (!currentLogicalCharacterMetrics(logicalAttributes, logicalMetrics))
             break;
 
@@ -519,11 +545,22 @@ void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxItera
                 m_lineLayoutChunkStarts.add(makeKey(*textBox));
         }
 
-        float angle = SVGTextLayoutAttributes::isEmptyValue(data.rotate) ? 0 : data.rotate;
+        // Reduce the supplemental rotation modulo a full turn so an exact
+        // multiple of 360 (e.g. rotate="360") collapses to the identity. A
+        // rotate(360) builds its matrix from sin(2*pi), which evaluates to a
+        // tiny non-zero value (~1e-16, machine-epsilon rounding error) rather
+        // than 0, and getRotationOfChar() then rounds that back up to ~360.
+        float angle = SVGTextLayoutAttributes::isEmptyValue(data.rotate) ? 0 : fmodf(data.rotate, 360);
 
         // Calculate glyph orientation angle.
-        const char16_t* currentCharacter = characters.subspan(m_visualCharacterOffset).data();
-        float orientationAngle = baselineLayout.calculateGlyphOrientationAngle(m_isVerticalText, style, *currentCharacter);
+        auto remainingCharacters = characters.subspan(m_visualCharacterOffset);
+        char32_t currentCodePoint = remainingCharacters[0];
+        if (U16_IS_LEAD(currentCodePoint) && remainingCharacters.size() > 1) {
+            auto trail = remainingCharacters[1];
+            if (U16_IS_TRAIL(trail))
+                currentCodePoint = U16_GET_SUPPLEMENTARY(currentCodePoint, trail);
+        }
+        float orientationAngle = baselineLayout.calculateGlyphOrientationAngle(m_isVerticalText, style, currentCodePoint);
 
         // Calculate glyph advance & x/y orientation shifts.
         float xOrientationShift = 0;
@@ -537,7 +574,7 @@ void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxItera
         updateRelativePositionAdjustmentsIfNeeded(data.dx, data.dy);
 
         // Calculate CSS 'letter-spacing' and 'word-spacing' for next character, if needed.
-        float spacing = spacingLayout.calculateCSSSpacing(currentCharacter ? *currentCharacter : '\0');
+        float spacing = spacingLayout.calculateCSSSpacing(currentCodePoint);
 
         float textPathOffset = 0;
         if (m_inPathLayout) {
@@ -583,14 +620,13 @@ void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxItera
             if (textPathOffset > m_textPathLength)
                 break;
 
-            auto traversalState(m_textPath.traversalStateAtLength(textPathOffset));
-            ASSERT(traversalState.success());
+            auto position = m_textPathMapper.positionAtLength(textPathOffset);
 
-            FloatPoint point = traversalState.current();
-            x = point.x();
-            y = point.y();
+            x = position.point.x();
+            y = position.point.y();
 
-            angle = traversalState.normalAngle();
+            // Compose with rotate attribute per SVG 2 §11.2.1.
+            angle += position.angleInDegrees;
 
             // For vertical text on path, the actual angle has to be rotated 90 degrees anti-clockwise, not the orientation angle!
             if (m_isVerticalText)
@@ -613,9 +649,12 @@ void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxItera
             m_lastChunkHasTextLength = definesTextLength;
         }
 
+        // Only a cluster start may open a new fragment, so a combining mark stays with its base rather than being shaped alone (dotted circle). Bug 266832.
+        bool isClusterStart = ubrk_isBoundary(clusterIterator, m_visualCharacterOffset);
+
         // Determine whether we have to start a new fragment.
-        bool shouldStartNewFragment = hasXOrY || m_dx || m_dy || m_isVerticalText || m_inPathLayout || angle || angle != lastAngle
-            || orientationAngle || applySpacingToNextCharacter || definesTextLength;
+        bool shouldStartNewFragment = isClusterStart && (hasXOrY || m_dx || m_dy || m_isVerticalText || m_inPathLayout || angle || angle != lastAngle
+            || orientationAngle || applySpacingToNextCharacter || definesTextLength);
 
         // If we already started a fragment, close it now.
         if (didStartTextFragment && shouldStartNewFragment) {
@@ -633,6 +672,9 @@ void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxItera
             m_currentTextFragment.metricsListOffset = m_visualMetricsListOffset;
             m_currentTextFragment.x = x;
             m_currentTextFragment.y = y;
+            // Record the baseline shift so query APIs can subtract it to return
+            // the unshifted position (matching Chrome/Firefox behavior).
+            m_currentTextFragment.baselineShift = baselineShift;
 
             // Build fragment transformation.
             if (angle)

@@ -30,11 +30,10 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #include <JavaScriptCore/Handle.h>
-#include <JavaScriptCore/HandleSet.h>
 #include <JavaScriptCore/Heap.h>
-#include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/StrongForward.h>
+#include <JavaScriptCore/StrongSet.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/RefTrackerMixin.h>
 
@@ -42,9 +41,7 @@ namespace JSC {
 
 class VM;
 
-REFTRACKER_DECL(StrongRefTracker, {
-    JSC::initialize();
-});
+REFTRACKER_DECL(StrongRefTracker);
 
 // A strongly referenced handle that prevents the object it points to from being garbage collected.
 template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabLock> class Strong final : public Handle<T> {
@@ -71,7 +68,7 @@ public:
     {
         if (!other.slot())
             return;
-        setSlot(HandleSet::heapFor(other.slot())->allocate());
+        setSlot(StrongSet::setFor(other.slot())->allocate());
         set(other.get());
     }
 
@@ -80,7 +77,7 @@ public:
     {
         if (!other.slot())
             return;
-        setSlot(HandleSet::heapFor(other.slot())->allocate());
+        setSlot(StrongSet::setFor(other.slot())->allocate());
         set(other.get());
     }
 
@@ -100,7 +97,7 @@ public:
     {
     }
 
-    ~Strong() override
+    ~Strong()
     {
         clear();
     }
@@ -116,44 +113,21 @@ public:
 
     ExternalType get() const { return HandleTypes<T>::getFromSlot(this->slot()); }
 
-    inline void set(VM&, ExternalType);
-
-    template <typename U> Strong& operator=(const Strong<U>& other)
-    {
-        if (!other.slot()) {
-            clear();
-            return *this;
-        }
-
-        set(*HandleSet::heapFor(other.slot())->vm(), other.get());
-        return *this;
-    }
-
-    Strong& operator=(const Strong& other)
-    {
-        if (!other.slot()) {
-            clear();
-            return *this;
-        }
-
-        set(HandleSet::heapFor(other.slot())->vm(), other.get());
-        return *this;
-    }
+    inline void set(VM&, ExternalType); // Defined in StrongInlines.h
+    template <typename U> inline Strong& operator=(const Strong<U>& other); // Defined in StrongInlines.h
+    Strong& operator=(const Strong& other); // Defined in StrongInlines.h
 
     void clear()
     {
         if (!slot())
             return;
 
-        auto* heap = HandleSet::heapFor(slot());
-        if (shouldStrongDestructorGrabLock == ShouldStrongDestructorGrabLock::Yes) {
-            JSLockHolder holder(heap->vm());
-            heap->deallocate(slot());
-            setSlot(nullptr);
-        } else {
-            heap->deallocate(slot());
-            setSlot(nullptr);
-        }
+        if constexpr (shouldStrongDestructorGrabLock == ShouldStrongDestructorGrabLock::Yes) {
+            JSLockHolder holder(StrongSet::setFor(slot())->vm());
+            StrongSet::deallocate(slot());
+        } else
+            StrongSet::deallocate(slot());
+        setSlot(nullptr);
     }
 
 private:
@@ -163,9 +137,9 @@ private:
     void set(ExternalType externalType)
     {
         ASSERT(slot());
-        JSValue value = HandleTypes<T>::toJSValue(externalType);
-        HandleSet::heapFor(slot())->template writeBarrier<std::is_base_of_v<JSCell, T>>(slot(), value);
-        *slot() = value;
+        // No write barrier: marking scans every slot, so there is no cell-only
+        // index to keep up to date.
+        *slot() = HandleTypes<T>::toJSValue(externalType);
     }
 
     REFTRACKER_MEMBERS(StrongRefTracker);
@@ -175,6 +149,11 @@ template<class T> inline void swap(Strong<T>& a, Strong<T>& b)
 {
     a.swap(b);
 }
+
+#if !ENABLE(REFTRACKER)
+// Handle has no virtual methods, so a Strong is just its slot pointer.
+static_assert(sizeof(Strong<Unknown>) == sizeof(HandleSlot));
+#endif
 
 } // namespace JSC
 

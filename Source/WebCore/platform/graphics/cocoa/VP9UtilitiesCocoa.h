@@ -30,10 +30,12 @@
 
 #include <WebCore/VP9Utilities.h>
 
+typedef const struct opaqueCMFormatDescription* CMVideoFormatDescriptionRef;
+
 namespace WebCore {
 
-struct MediaCapabilitiesInfo;
-struct VideoConfiguration;
+struct PlatformMediaCapabilitiesInfo;
+struct PlatformMediaCapabilitiesVideoConfiguration;
 class VideoInfo;
 
 WEBCORE_EXPORT bool shouldEnableVP9Decoder();
@@ -43,12 +45,16 @@ WEBCORE_EXPORT void registerSupplementalVP9Decoder();
 bool isVP9DecoderAvailable();
 WEBCORE_EXPORT bool vp9HardwareDecoderAvailable();
 WEBCORE_EXPORT bool vp9HardwareDecoderAvailableInProcess();
-WEBCORE_EXPORT void setVP9HardwareDecoderAvailableInProcess(bool);
+WEBCORE_EXPORT void NODELETE setVP9HardwareDecoderAvailableInProcess(bool);
 bool isVP8DecoderAvailable();
 bool isVPCodecConfigurationRecordSupported(const VPCodecConfigurationRecord&);
-std::optional<MediaCapabilitiesInfo> validateVPParameters(const VPCodecConfigurationRecord&, const VideoConfiguration&);
-std::optional<MediaCapabilitiesInfo> computeVPParameters(const VideoConfiguration&, bool vp9HardwareDecoderAvailable);
-bool isVPSoftwareDecoderSmooth(const VideoConfiguration&);
+std::optional<PlatformMediaCapabilitiesInfo> validateVPParameters(const VPCodecConfigurationRecord&, const PlatformMediaCapabilitiesVideoConfiguration&);
+std::optional<PlatformMediaCapabilitiesInfo> computeVPParameters(const PlatformMediaCapabilitiesVideoConfiguration&, bool vp9HardwareDecoderAvailable);
+bool NODELETE isVPSoftwareDecoderSmooth(const PlatformMediaCapabilitiesVideoConfiguration&);
+RetainPtr<CMVideoFormatDescriptionRef> createVP9FormatDescriptionFromRecord(const VPCodecConfigurationRecord&, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride = std::nullopt);
+WEBCORE_EXPORT Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCodecConfigurationRecord&, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride = std::nullopt);
+// FIXME: createVideoInfoFromVP9Stream should take optional width/height parameters.
+WEBCORE_EXPORT RefPtr<VideoInfo> createVideoInfoFromVP9Stream(std::span<const uint8_t>, uint16_t width, uint16_t height);
 
 struct VP8FrameHeader {
     bool keyframe { false };
@@ -84,11 +90,11 @@ public:
     WEBCORE_EXPORT void setConfigurationChangedCallback(std::function<void(bool)>&&);
     WEBCORE_EXPORT void resetOverridesToDefaultValues();
 
-    WEBCORE_EXPORT void setSWVPDecodersAlwaysEnabled(bool);
+    WEBCORE_EXPORT void NODELETE setSWVPDecodersAlwaysEnabled(bool);
     bool swVPDecodersAlwaysEnabled() const { return m_swVPDecodersAlwaysEnabled; }
 
-    WEBCORE_EXPORT void setShouldEnableVP9Decoder(bool);
-    WEBCORE_EXPORT bool shouldEnableVP9Decoder() const;
+    WEBCORE_EXPORT void NODELETE setShouldEnableVP9Decoder(bool);
+    WEBCORE_EXPORT bool NODELETE shouldEnableVP9Decoder() const;
 
 private:
     std::optional<bool> m_hardwareDecoderDisabled;

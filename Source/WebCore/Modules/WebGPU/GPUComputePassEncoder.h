@@ -25,35 +25,35 @@
 
 #pragma once
 
+#include "EventTarget.h"
 #include "GPUIntegralTypes.h"
 #include "WebGPUComputePassEncoder.h"
 #include <JavaScriptCore/Uint32Array.h>
 #include <optional>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 class GPUBindGroup;
 class GPUBuffer;
+class GPUCommandEncoder;
 class GPUComputePipeline;
+class GPUDevice;
 class GPUQuerySet;
 template<typename> class ExceptionOr;
 
-namespace WebGPU {
-class Device;
-}
-
-class GPUComputePassEncoder : public RefCounted<GPUComputePassEncoder> {
+class GPUComputePassEncoder : public RefCountedAndCanMakeWeakPtr<GPUComputePassEncoder> {
 public:
-    static Ref<GPUComputePassEncoder> create(Ref<WebGPU::ComputePassEncoder>&& backing, WebGPU::Device& device)
+    static Ref<GPUComputePassEncoder> create(Ref<WebGPU::ComputePassEncoder>&& backing, GPUCommandEncoder& commandEncoder)
     {
-        return adoptRef(*new GPUComputePassEncoder(WTF::move(backing), device));
+        return adoptRef(*new GPUComputePassEncoder(WTF::move(backing), commandEncoder));
     }
 
-    String label() const;
+    String NODELETE label() const;
     void setLabel(String&&);
 
     void setPipeline(const GPUComputePipeline&);
@@ -77,13 +77,15 @@ public:
     WebGPU::ComputePassEncoder& backing() { return m_backing; }
     const WebGPU::ComputePassEncoder& backing() const { return m_backing; }
 
-private:
-    GPUComputePassEncoder(Ref<WebGPU::ComputePassEncoder>&&, WebGPU::Device&);
+    GPUDevice* device() const;
 
-    Ref<WebGPU::ComputePassEncoder> protectedBacking() { return m_backing; }
+    bool hasActiveInspectorCanvasCallTracer() const;
+
+private:
+    GPUComputePassEncoder(Ref<WebGPU::ComputePassEncoder>&&, GPUCommandEncoder&);
 
     Ref<WebGPU::ComputePassEncoder> m_backing;
-    WeakPtr<WebGPU::Device> m_device;
+    WeakPtr<GPUDevice, WeakPtrImplWithEventTargetData> m_device;
     std::optional<String> m_overrideLabel;
 };
 

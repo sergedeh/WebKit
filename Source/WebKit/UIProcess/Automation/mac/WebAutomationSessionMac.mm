@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -175,7 +175,23 @@ static WebCore::IntPoint viewportLocationToWindowLocation(WebCore::IntPoint loca
 
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
-static WebMouseEventButton automationMouseButtonToPlatformMouseButton(MouseButton button)
+static unsigned NODELETE nsEventButtonNumberFromAutomationMouseButton(MouseButton button)
+{
+    switch (button) {
+    case MouseButton::Right:
+        return 1;
+    case MouseButton::Middle:
+        return 2;
+    case MouseButton::Back:
+        return 3;
+    case MouseButton::Forward:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+static WebMouseEventButton NODELETE automationMouseButtonToPlatformMouseButton(MouseButton button)
 {
     switch (button) {
     case MouseButton::Left:   return WebMouseEventButton::Left;
@@ -184,6 +200,17 @@ static WebMouseEventButton automationMouseButtonToPlatformMouseButton(MouseButto
     case MouseButton::None:   return WebMouseEventButton::None;
     default: RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+static RetainPtr<NSEvent> simulatedMouseEvent(NSEventType type, WebCore::IntPoint locationInWindow, NSEventModifierFlags modifiers, NSTimeInterval timestamp, NSInteger windowNumber, unsigned clickCount, float pressure, MouseButton button)
+{
+    RetainPtr event = [NSEvent mouseEventWithType:type location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:synthesizedMouseEventMagicEventNumber clickCount:clickCount pressure:pressure];
+    if (type != NSEventTypeOtherMouseDown && type != NSEventTypeOtherMouseUp)
+        return event;
+
+    RetainPtr cgEvent = [event CGEvent];
+    CGEventSetIntegerValueField(cgEvent.get(), kCGMouseEventButtonNumber, nsEventButtonNumberFromAutomationMouseButton(button));
+    return [NSEvent eventWithCGEvent:cgEvent.get()];
 }
 
 void WebAutomationSession::platformSimulateMouseInteraction(WebPageProxy& page, MouseInteraction interaction, MouseButton button, const WebCore::IntPoint& locationInViewport, OptionSet<WebEventModifier> keyModifiers, const String& pointerType)
@@ -225,12 +252,10 @@ void WebAutomationSession::platformSimulateMouseInteraction(WebPageProxy& page, 
 
     auto eventsToBeSent = adoptNS([[NSMutableArray alloc] init]);
 
-    NSInteger eventNumber = synthesizedMouseEventMagicEventNumber;
-
     switch (interaction) {
     case MouseInteraction::Move: {
         ASSERT(dragEventType);
-        RetainPtr event = [NSEvent mouseEventWithType:dragEventType location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:eventNumber clickCount:0 pressure:0.0f];
+        RetainPtr event = simulatedMouseEvent(dragEventType, locationInWindow, modifiers, timestamp, windowNumber, 0, 0, button);
         RetainPtr<CGEventRef> cgEvent = event.get().CGEvent;
         if (!m_lastPosition)
             updateLastPosition(locationInWindow);
@@ -240,36 +265,51 @@ void WebAutomationSession::platformSimulateMouseInteraction(WebPageProxy& page, 
         [eventsToBeSent addObject:event.get()];
         break;
     }
-    case MouseInteraction::Down:
+    case MouseInteraction::Down: {
         ASSERT(downEventType);
         updateClickCount(button, locationInWindow);
         m_mouseButtonsCurrentlyDown.set(button, true);
-        [eventsToBeSent addObject:[NSEvent mouseEventWithType:downEventType location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:eventNumber clickCount:m_clickCount pressure:WebCore::ForceAtClick]];
+        RetainPtr event = simulatedMouseEvent(downEventType, locationInWindow, modifiers, timestamp, windowNumber, m_clickCount, WebCore::ForceAtClick, button);
+        [eventsToBeSent addObject:event.get()];
         break;
-    case MouseInteraction::Up:
+    }
+    case MouseInteraction::Up: {
         ASSERT(upEventType);
         m_mouseButtonsCurrentlyDown.set(button, false);
-        [eventsToBeSent addObject:[NSEvent mouseEventWithType:upEventType location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:eventNumber clickCount:m_clickCount pressure:0.0f]];
+        RetainPtr event = simulatedMouseEvent(upEventType, locationInWindow, modifiers, timestamp, windowNumber, m_clickCount, 0.f, button);
+        [eventsToBeSent addObject:event.get()];
         break;
-    case MouseInteraction::SingleClick:
+    }
+    case MouseInteraction::SingleClick: {
         ASSERT(upEventType);
         ASSERT(downEventType);
 
+        RetainPtr downEvent = simulatedMouseEvent(downEventType, locationInWindow, modifiers, timestamp, windowNumber, 1, WebCore::ForceAtClick, button);
+        RetainPtr upEvent = simulatedMouseEvent(upEventType, locationInWindow, modifiers, timestamp, windowNumber, 1, 0.f, button);
+
         // Send separate down and up events. WebCore will see this as a single-click event.
-        [eventsToBeSent addObject:[NSEvent mouseEventWithType:downEventType location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:eventNumber clickCount:1 pressure:WebCore::ForceAtClick]];
-        [eventsToBeSent addObject:[NSEvent mouseEventWithType:upEventType location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:eventNumber clickCount:1 pressure:0.0f]];
+        [eventsToBeSent addObject:downEvent.get()];
+        [eventsToBeSent addObject:upEvent.get()];
         break;
-    case MouseInteraction::DoubleClick:
+    }
+    case MouseInteraction::DoubleClick: {
         ASSERT(upEventType);
         ASSERT(downEventType);
+
+        RetainPtr downEventOne = simulatedMouseEvent(downEventType, locationInWindow, modifiers, timestamp, windowNumber, 1, WebCore::ForceAtClick, button);
+        RetainPtr upEventOne = simulatedMouseEvent(upEventType, locationInWindow, modifiers, timestamp, windowNumber, 1, 0.f, button);
+        RetainPtr downEventTwo = simulatedMouseEvent(downEventType, locationInWindow, modifiers, timestamp, windowNumber, 2, WebCore::ForceAtClick, button);
+        RetainPtr upEventTwo = simulatedMouseEvent(upEventType, locationInWindow, modifiers, timestamp, windowNumber, 2, 0.f, button);
 
         // Send multiple down and up events with proper click count.
         // WebCore will see this as a single-click event then double-click event.
-        [eventsToBeSent addObject:[NSEvent mouseEventWithType:downEventType location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:eventNumber clickCount:1 pressure:WebCore::ForceAtClick]];
-        [eventsToBeSent addObject:[NSEvent mouseEventWithType:upEventType location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:eventNumber clickCount:1 pressure:0.0f]];
-        [eventsToBeSent addObject:[NSEvent mouseEventWithType:downEventType location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:eventNumber clickCount:2 pressure:WebCore::ForceAtClick]];
-        [eventsToBeSent addObject:[NSEvent mouseEventWithType:upEventType location:locationInWindow modifierFlags:modifiers timestamp:timestamp windowNumber:windowNumber context:nil eventNumber:eventNumber clickCount:2 pressure:0.0f]];
+        [eventsToBeSent addObject:downEventOne.get()];
+        [eventsToBeSent addObject:upEventOne.get()];
+        [eventsToBeSent addObject:downEventTwo.get()];
+        [eventsToBeSent addObject:upEventTwo.get()];
     }
+    }
+
     updateLastPosition(locationInWindow);
 
     sendSynthesizedEventsToPage(page, eventsToBeSent.get());
@@ -283,7 +323,7 @@ OptionSet<WebEventModifier> WebAutomationSession::platformWebModifiersFromRaw(We
 #endif // ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
 #if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
-static bool virtualKeyHasStickyModifier(VirtualKey key)
+static bool NODELETE virtualKeyHasStickyModifier(VirtualKey key)
 {
     // Returns whether the key's modifier flags should affect other events while pressed down.
     switch (key) {
@@ -393,25 +433,38 @@ static int keyCodeForCharKey(CharKey charKey)
     case 'm':
     case 'M':
         return kVK_ANSI_M;
+    // The shifted forms below assume a US layout, consistent with the punctuation pairs that
+    // follow. Pairing them means a character like '@' reports code "Digit2" rather than
+    // "Unidentified".
     case '1':
+    case '!':
         return kVK_ANSI_1;
     case '2':
+    case '@':
         return kVK_ANSI_2;
     case '3':
+    case '#':
         return kVK_ANSI_3;
     case '4':
+    case '$':
         return kVK_ANSI_4;
     case '5':
+    case '%':
         return kVK_ANSI_5;
     case '6':
+    case '^':
         return kVK_ANSI_6;
     case '7':
+    case '&':
         return kVK_ANSI_7;
     case '8':
+    case '*':
         return kVK_ANSI_8;
     case '9':
+    case '(':
         return kVK_ANSI_9;
     case '0':
+    case ')':
         return kVK_ANSI_0;
     case '=':
     case '+':
@@ -446,6 +499,11 @@ static int keyCodeForCharKey(CharKey charKey)
     case '`':
     case '~':
         return kVK_ANSI_Grave;
+    case ' ':
+        // A literal space must produce the same events as the 'space' virtual key (U+E00D).
+        // Without this it falls through to unknownKeyCode and the DOM reports code
+        // "Unidentified" for one and "Space" for the other.
+        return kVK_Space;
     }
 
     return unknownKeyCode;
@@ -482,7 +540,10 @@ static unsigned short keyCodeForVirtualKey(VirtualKey key)
     case VirtualKey::Tab:
         return kVK_Tab;
     case VirtualKey::Clear:
-        return kVK_ANSI_KeypadClear;
+        // The WebDriver 'clear' key has no physical equivalent on Apple keyboards, and is not
+        // the keypad's Clear/NumLock key. Emit no keyCode so the DOM reports an empty 'code'
+        // and DOM_KEY_LOCATION_STANDARD; the DOM 'key' still comes from the characters.
+        return unknownKeyCode;
     case VirtualKey::Enter:
         return kVK_ANSI_KeypadEnter;
     case VirtualKey::Pause:
@@ -494,44 +555,60 @@ static unsigned short keyCodeForVirtualKey(VirtualKey key)
         // According to the internet its functionality is similar to 'Escape'.
     case VirtualKey::Escape:
         return kVK_Escape;
+    // The '*Right' variants are the "right hand" keys from the WebDriver key table, which are the
+    // numeric keypad's navigation keys. They must use the keypad keyCodes so that the DOM reports
+    // code=Numpad* and location=DOM_KEY_LOCATION_NUMPAD, rather than aliasing the primary keys.
     case VirtualKey::PageUp:
-    case VirtualKey::PageUpRight:
         return kVK_PageUp;
+    case VirtualKey::PageUpRight:
+        return kVK_ANSI_Keypad9;
     case VirtualKey::PageDown:
-    case VirtualKey::PageDownRight:
         return kVK_PageDown;
+    case VirtualKey::PageDownRight:
+        return kVK_ANSI_Keypad3;
     case VirtualKey::End:
-    case VirtualKey::EndRight:
         return kVK_End;
+    case VirtualKey::EndRight:
+        return kVK_ANSI_Keypad1;
     case VirtualKey::Home:
-    case VirtualKey::HomeRight:
         return kVK_Home;
+    case VirtualKey::HomeRight:
+        return kVK_ANSI_Keypad7;
     case VirtualKey::LeftArrow:
-    case VirtualKey::LeftArrowRight:
         return kVK_LeftArrow;
+    case VirtualKey::LeftArrowRight:
+        return kVK_ANSI_Keypad4;
     case VirtualKey::UpArrow:
-    case VirtualKey::UpArrowRight:
         return kVK_UpArrow;
+    case VirtualKey::UpArrowRight:
+        return kVK_ANSI_Keypad8;
     case VirtualKey::RightArrow:
-    case VirtualKey::RightArrowRight:
         return kVK_RightArrow;
+    case VirtualKey::RightArrowRight:
+        return kVK_ANSI_Keypad6;
     case VirtualKey::DownArrow:
-    case VirtualKey::DownArrowRight:
         return kVK_DownArrow;
+    case VirtualKey::DownArrowRight:
+        return kVK_ANSI_Keypad2;
     case VirtualKey::Insert:
-    case VirtualKey::InsertRight:
         // The 'insert' key does not exist on Apple keyboards and has no keyCode.
         // The semantics are unclear so just abort and do nothing.
         return unknownKeyCode;
+    case VirtualKey::InsertRight:
+        return kVK_ANSI_Keypad0;
     case VirtualKey::Delete:
-    case VirtualKey::DeleteRight:
         return kVK_ForwardDelete;
+    case VirtualKey::DeleteRight:
+        return kVK_ANSI_KeypadDecimal;
     case VirtualKey::Space:
         return kVK_Space;
     case VirtualKey::Semicolon:
-        return kVK_ANSI_Semicolon;
+        // The WebDriver 'semicolon' key (U+E018) is not the primary keyboard's ';'. It has no
+        // physical equivalent here, so emit no keyCode and let the character supply the DOM 'key'.
+        return unknownKeyCode;
     case VirtualKey::Equals:
-        return kVK_ANSI_Equal;
+        // The WebDriver 'equals' key (U+E019) is the keypad's '=', not the primary keyboard's.
+        return kVK_ANSI_KeypadEquals;
     case VirtualKey::Return:
         return kVK_Return;
     case VirtualKey::NumberPad0:
@@ -561,12 +638,11 @@ static unsigned short keyCodeForVirtualKey(VirtualKey key)
     case VirtualKey::NumberPadSubtract:
         return kVK_ANSI_KeypadMinus;
     case VirtualKey::NumberPadSeparator:
-        // The 'Separator' key is only present on a few international keyboards.
-        // It is usually mapped to the same character as Decimal ('.' or ',').
-        [[fallthrough]];
+        // The 'Separator' key is only present on a few international keyboards. It is distinct
+        // from Decimal: the WebDriver key table expects key ',' and code 'NumpadComma'.
+        return kVK_JIS_KeypadComma;
     case VirtualKey::NumberPadDecimal:
         return kVK_ANSI_KeypadDecimal;
-        // FIXME: this might be locale-dependent. See the above comment.
     case VirtualKey::NumberPadDivide:
         return kVK_ANSI_KeypadDivide;
     case VirtualKey::Function1:
@@ -596,7 +672,7 @@ static unsigned short keyCodeForVirtualKey(VirtualKey key)
     }
 }
 
-static NSEventModifierFlags eventModifierFlagsForVirtualKey(VirtualKey key)
+static NSEventModifierFlags NODELETE eventModifierFlagsForVirtualKey(VirtualKey key)
 {
     // Computes the modifiers changed by the virtual key when it is pressed or released.
     // The mapping from keys to modifiers is specified in the documentation for NSEvent.
@@ -632,12 +708,27 @@ static NSEventModifierFlags eventModifierFlagsForVirtualKey(VirtualKey key)
     case VirtualKey::UpArrow:
     case VirtualKey::RightArrow:
     case VirtualKey::DownArrow:
+        // Real hardware arrow keys set NSEventModifierFlagNumericPad on macOS, but WebCore's
+        // isKeypadEvent() turns that into DOM_KEY_LOCATION_NUMPAD. The primary arrows must report
+        // DOM_KEY_LOCATION_STANDARD, so only the keypad's own navigation keys set the flag below.
+        return NSEventModifierFlagFunction;
+
+    case VirtualKey::PageUpRight:
+    case VirtualKey::PageDownRight:
+    case VirtualKey::EndRight:
+    case VirtualKey::HomeRight:
+    case VirtualKey::LeftArrowRight:
+    case VirtualKey::UpArrowRight:
+    case VirtualKey::RightArrowRight:
+    case VirtualKey::DownArrowRight:
+    case VirtualKey::InsertRight:
+    case VirtualKey::DeleteRight:
         return NSEventModifierFlagNumericPad | NSEventModifierFlagFunction;
 
     case VirtualKey::Delete:
         return NSEventModifierFlagFunction;
 
-    case VirtualKey::Clear:
+    case VirtualKey::Equals:
     case VirtualKey::NumberPad0:
     case VirtualKey::NumberPad1:
     case VirtualKey::NumberPad2:
@@ -760,6 +851,11 @@ void WebAutomationSession::platformSimulateKeyboardInteraction(WebPageProxy& pag
         break;
     }
     }
+
+    // Several WebDriver keys have no equivalent on Apple keyboards, so their DOM 'key' and 'code'
+    // cannot be inferred from the key code above. Where the key table states them, attach them to
+    // the events so the web process reports those values instead of the derived ones.
+    setKeyIdentityForVirtualKeyIfNeeded(eventsToBeSent.get(), key);
 
     sendSynthesizedEventsToPage(page, eventsToBeSent.get());
 }

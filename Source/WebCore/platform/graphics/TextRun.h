@@ -27,7 +27,6 @@
 #include <WebCore/TextFlags.h>
 #include <WebCore/TextSpacing.h>
 #include <WebCore/WritingMode.h>
-#include <wtf/CheckedRef.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringView.h>
 
@@ -133,7 +132,7 @@ public:
     void setHorizontalGlyphStretch(float scale) { m_horizontalGlyphStretch = scale; }
 
     bool allowTabs() const { return m_allowTabs; }
-    const TabSize& tabSize() const { return m_tabSize; }
+    const TabSize& tabSize() const LIFETIME_BOUND { return m_tabSize; }
     void setTabSize(bool, const TabSize&);
 
     float xPos() const { return m_xpos; }
@@ -155,7 +154,7 @@ public:
 
     TextRun isolatedCopy() const;
 
-    const String& textAsString() const { return m_text; }
+    const String& textAsString() const LIFETIME_BOUND { return m_text; }
 
     void setTextSpacingState(TextSpacing::SpacingState spacingState) { m_textSpacingState = spacingState; }
     TextSpacing::SpacingState textSpacingState() const { return m_textSpacingState; }

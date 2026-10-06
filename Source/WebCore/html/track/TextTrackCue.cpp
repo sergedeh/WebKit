@@ -45,7 +45,6 @@
 #include "HTMLDivElement.h"
 #include "HTMLStyleElement.h"
 #include "Logging.h"
-#include "NodeInlines.h"
 #include "NodeTraversal.h"
 #include "ScriptDisallowedScope.h"
 #include "Text.h"
@@ -54,8 +53,10 @@
 #include "UserAgentParts.h"
 #include "VTTCue.h"
 #include "VTTRegionList.h"
+#include "WebCoreOpaqueRootInlines.h"
 #include <limits.h>
 #include <wtf/HexNumber.h>
+#include <wtf/MainThread.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/OptionSet.h>
@@ -80,6 +81,8 @@ TextTrackCueBox::TextTrackCueBox(Document& document, TextTrackCue& cue)
 {
 }
 
+TextTrackCueBox::~TextTrackCueBox() = default;
+
 void TextTrackCueBox::initialize()
 {
     setUserAgentPart(UserAgentParts::webkitMediaTextTrackDisplay());
@@ -90,7 +93,7 @@ TextTrackCue* TextTrackCueBox::getCue() const
     return m_cue.get();
 }
 
-static inline bool isLegalNode(Node& node)
+static inline bool NODELETE isLegalNode(Node& node)
 {
     return node.hasTagName(HTMLNames::bTag)
         || node.hasTagName(HTMLNames::brTag)
@@ -102,7 +105,7 @@ static inline bool isLegalNode(Node& node)
         || node.hasTagName(HTMLNames::rtTag)
         || node.hasTagName(HTMLNames::rubyTag)
         || node.hasTagName(HTMLNames::spanTag)
-        || node.nodeType() == Node::TEXT_NODE;
+        || node.nodeType() == NodeType::Text;
 }
 
 static Exception invalidNodeException(Node& node)
@@ -179,7 +182,7 @@ ExceptionOr<Ref<TextTrackCue>> TextTrackCue::create(Document& document, double s
     if (!cueFragment.firstChild())
         return Exception { ExceptionCode::InvalidNodeTypeError, "Empty cue fragment"_s };
 
-    if (cueFragment.firstChild()->nodeType() == Node::TEXT_NODE)
+    if (cueFragment.firstChild()->nodeType() == NodeType::Text)
         return Exception { ExceptionCode::InvalidNodeTypeError, "Invalid first child"_s };
 
     for (RefPtr node = cueFragment.firstChild(); node; node = node->nextSibling()) {
@@ -228,6 +231,8 @@ TextTrackCue::TextTrackCue(Document& document, const MediaTime& start, const Med
 {
 }
 
+TextTrackCue::~TextTrackCue() = default;
+
 void TextTrackCue::didMoveToNewDocument(Document& newDocument)
 {
     ActiveDOMObject::didMoveToNewDocument(newDocument);
@@ -247,17 +252,12 @@ Document* TextTrackCue::document() const
     return downcast<Document>(scriptExecutionContext());
 }
 
-RefPtr<Document> TextTrackCue::protectedDocument() const
-{
-    return document();
-}
-
 void TextTrackCue::willChange()
 {
     if (++m_processingCueChanges > 1)
         return;
 
-    if (RefPtr track = m_track.get())
+    if (RefPtr track = this->track())
         track->cueWillChange(*this);
 }
 
@@ -269,22 +269,27 @@ void TextTrackCue::didChange(bool affectOrder)
 
     m_displayTreeNeedsUpdate = true;
 
-    if (RefPtr track = m_track.get())
+    if (RefPtr track = this->track())
         track->cueDidChange(*this, affectOrder);
 }
 
 TextTrack* TextTrackCue::track() const
 {
+    assertIsOwnerThread();
     return m_track.get();
 }
 
-RefPtr<TextTrack> TextTrackCue::protectedTrack() const
+bool TextTrackCue::containsTrackAsOpaqueRootInGCThread(JSC::AbstractSlotVisitor& visitor) const
 {
-    return m_track.get();
+    Locker locker { m_trackLockForGC };
+    if (!m_track)
+        return false;
+    SUPPRESS_UNCHECKED_ARG return containsWebCoreOpaqueRoot(visitor, m_track.get());
 }
 
 void TextTrackCue::setTrack(TextTrack* track)
 {
+    Locker locker { m_trackLockForGC };
     m_track = track;
 }
 
@@ -313,12 +318,16 @@ void TextTrackCue::setStartTime(const MediaTime& value)
     didChange(true);
 }
 
-void TextTrackCue::setEndTime(double value)
+ExceptionOr<void> TextTrackCue::setEndTime(double value)
 {
+    if (std::isnan(value) || value == -std::numeric_limits<double>::infinity())
+        return Exception { ExceptionCode::TypeError, "The provided value is NaN or negative Infinity"_s };
+
     if (m_endTime.toDouble() == value)
-        return;
+        return { };
 
     setEndTime(MediaTime::createWithDouble(value));
+    return { };
 }
 
 void TextTrackCue::setEndTime(const MediaTime& value)
@@ -355,10 +364,11 @@ void TextTrackCue::setIsActive(bool active)
 
 unsigned TextTrackCue::cueIndex() const
 {
-    ASSERT(m_track && m_track->cuesInternal());
-    if (!m_track)
+    RefPtr track = this->track();
+    ASSERT(track && track->cuesInternal());
+    if (!track)
         return std::numeric_limits<unsigned>::max();
-    RefPtr cuesInternal = m_track->cuesInternal();
+    RefPtr cuesInternal = track->cuesInternal();
     if (!cuesInternal)
         return std::numeric_limits<unsigned>::max();
 
@@ -396,7 +406,7 @@ bool TextTrackCue::isEqual(const TextTrackCue& other, TextTrackCue::CueMatchRule
 bool TextTrackCue::hasEquivalentStartTime(const TextTrackCue& cue) const
 {
     MediaTime startTimeVariance = MediaTime::zeroTime();
-    if (RefPtr track = m_track.get())
+    if (RefPtr track = this->track())
         startTimeVariance = track->startTimeVariance();
     else if (RefPtr track = cue.track())
         startTimeVariance = track->startTimeVariance();
@@ -538,6 +548,16 @@ void TextTrackCue::rebuildDisplayTree()
 
     m_displayTreeNeedsUpdate = false;
 }
+
+template<typename Visitor>
+void TextTrackCue::visitAdditionalChildrenInGCThread(Visitor& visitor)
+{
+    Locker locker { m_trackLockForGC };
+    if (m_track)
+        SUPPRESS_UNCHECKED_ARG addWebCoreOpaqueRoot(visitor, *m_track);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(TextTrackCue);
 
 } // namespace WebCore
 

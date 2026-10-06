@@ -124,7 +124,7 @@ private:
         return m_contentAnalysis;
     }
 
-    const AtomString& locale() const
+    const AtomString& locale() const LIFETIME_BOUND
     {
         return m_locale;
     }
@@ -144,7 +144,7 @@ private:
     friend class NeverDestroyed<TextBreakIteratorCache>;
     friend class CachedTextBreakIterator;
 
-    WTF_EXPORT_PRIVATE static TextBreakIteratorCache& singleton();
+    WTF_EXPORT_PRIVATE static TextBreakIteratorCache& NODELETE singleton();
 
     TextBreakIteratorCache(const TextBreakIteratorCache&) = delete;
     TextBreakIteratorCache(TextBreakIteratorCache&&) = delete;
@@ -307,7 +307,7 @@ public:
     TextBreakIterator::LineMode::Behavior mode() const { return m_mode; }
     TextBreakIterator::ContentAnalysis contentAnalysis() const { return m_contentAnalysis; }
 
-    CachedTextBreakIterator& get()
+    CachedTextBreakIterator& get() LIFETIME_BOUND
     {
         auto priorContext = m_priorContext.characters();
         if (!m_iterator) {
@@ -330,12 +330,12 @@ public:
         m_contentAnalysis = contentAnalysis;
     }
 
-    const PriorContext& priorContext() const
+    const PriorContext& priorContext() const LIFETIME_BOUND
     {
         return m_priorContext;
     }
 
-    PriorContext& priorContext()
+    PriorContext& priorContext() LIFETIME_BOUND
     {
         return m_priorContext;
     }
@@ -355,6 +355,8 @@ private:
 // version 4.0 only supports "legacy grapheme clusters".
 // Use this for general text processing, e.g. string truncation.
 
+using UBreakIteratorPtr = std::unique_ptr<UBreakIterator, ICUDeleter<ubrk_close>>;
+
 class NonSharedCharacterBreakIterator {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NonSharedCharacterBreakIterator);
     WTF_MAKE_NONCOPYABLE(NonSharedCharacterBreakIterator);
@@ -364,10 +366,10 @@ public:
 
     NonSharedCharacterBreakIterator(NonSharedCharacterBreakIterator&&);
 
-    operator UBreakIterator*() const { return m_iterator; }
+    operator UBreakIterator*() const { return m_iterator.get(); }
 
 private:
-    UBreakIterator* m_iterator;
+    UBreakIteratorPtr m_iterator;
 };
 
 class NonSharedSentenceBreakIterator {
@@ -379,10 +381,10 @@ public:
 
     NonSharedSentenceBreakIterator(NonSharedSentenceBreakIterator&&);
 
-    operator UBreakIterator*() const { return m_iterator; }
+    operator UBreakIterator*() const { return m_iterator.get(); }
 
 private:
-    UBreakIterator* m_iterator;
+    UBreakIteratorPtr m_iterator;
 };
 
 // Counts the number of grapheme clusters. A surrogate pair or a sequence

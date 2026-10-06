@@ -35,6 +35,7 @@
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/ThreadSafeWeakHashSet.h>
 #include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/Threading.h>
 #include <wtf/threads/BinarySemaphore.h>
 
 namespace WTF {
@@ -60,24 +61,22 @@ public:
 
     virtual WorkerDebuggerProxy* workerDebuggerProxy() const = 0;
     virtual WorkerLoaderProxy* workerLoaderProxy() const = 0;
-    virtual CheckedPtr<WorkerLoaderProxy> checkedWorkerLoaderProxy() const;
 
     WorkerOrWorkletGlobalScope* globalScope() const { return m_globalScope.get(); }
-    RefPtr<WorkerOrWorkletGlobalScope> protectedGlobalScope() const;
-    WorkerRunLoop& runLoop() { return m_runLoop; }
+    WorkerRunLoop& runLoop() LIFETIME_BOUND { return m_runLoop; }
 
     void start(Function<void(const String&)>&& evaluateCallback = { });
     void stop(Function<void()>&& terminatedCallback = { });
 
     void startRunningDebuggerTasks();
-    void stopRunningDebuggerTasks();
+    void NODELETE stopRunningDebuggerTasks();
 
     void suspend();
     void resume();
 
-    const String& inspectorIdentifier() const { return m_inspectorIdentifier; }
+    const String& inspectorIdentifier() const LIFETIME_BOUND { return m_inspectorIdentifier; }
 
-    static ThreadSafeWeakHashSet<WorkerOrWorkletThread>& workerOrWorkletThreads();
+    static ThreadSafeWeakHashSet<WorkerOrWorkletThread>& NODELETE workerOrWorkletThreads();
     static void releaseFastMallocFreeMemoryInAllThreads();
 
     void addChildThread(WorkerOrWorkletThread&);
@@ -106,7 +105,7 @@ private:
     String m_inspectorIdentifier;
     Lock m_threadCreationAndGlobalScopeLock;
     RefPtr<WorkerOrWorkletGlobalScope> m_globalScope;
-    RefPtr<Thread> m_thread;
+    const RefPtr<Thread> m_thread;
     const UniqueRef<WorkerRunLoop> m_runLoop;
     Function<void(const String&)> m_evaluateCallback;
     Function<void()> m_stoppedCallback;

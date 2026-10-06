@@ -32,7 +32,7 @@ DECLARE_SYSTEM_HEADER
 
 #if ENABLE(WRITING_TOOLS)
 
-#if USE(APPLE_INTERNAL_SDK) && !__has_feature(modules)
+#if USE(APPLE_INTERNAL_SDK) && (!__has_feature(modules) || HAVE(VALID_WRITING_TOOLS_MODULE))
 #import <WritingTools/WTSession_Private.h>
 #import <WritingTools/WritingTools.h>
 #else
@@ -179,7 +179,7 @@ typedef NS_ENUM(NSInteger, WTTextSuggestionState) {
 
 - (void)proofreadingSessionWithUUID:(NSUUID *)sessionUUID updateState:(WTTextSuggestionState)state forSuggestionWithUUID:(NSUUID *)suggestionUUID;
 
-#if !PLATFORM(MAC) || ENABLE(TOP_LEVEL_WRITING_TOOLS_CONTEXT_MENU_ITEMS)
+#if !PLATFORM(MAC) || HAVE(SUPPORTS_WRITING_TOOLS_ACTION)
 
 - (void)proofreadingSessionWithUUID:(NSUUID *)sessionUUID showDetailsForSuggestionWithUUID:(NSUUID *)suggestionUUID relativeToRect:(CGRect)rect inView:(id)sourceView;
 
@@ -230,7 +230,7 @@ typedef NS_ENUM(NSInteger, WTAction) {
 
 @optional
 
-#if !PLATFORM(MAC) || ENABLE(TOP_LEVEL_WRITING_TOOLS_CONTEXT_MENU_ITEMS)
+#if !PLATFORM(MAC) || HAVE(SUPPORTS_WRITING_TOOLS_ACTION)
 
 - (BOOL)supportsWritingToolsAction:(WTAction)action;
 

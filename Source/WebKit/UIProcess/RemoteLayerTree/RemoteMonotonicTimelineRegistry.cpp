@@ -54,14 +54,11 @@ void RemoteMonotonicTimelineRegistry::update(WebCore::ProcessIdentifier processI
             if (!createdTimelineRepresentation->isMonotonic())
                 continue;
             TimelineID timelineID { createdTimelineRepresentation->identifier(), processIdentifier };
-            // There should not be a pre-existing timeline for this identifier since we're creating it.
-            ASSERT([&] {
-                for (auto& existingTimeline : timelines) {
-                    if (existingTimeline->identifier() == timelineID)
-                        return false;
-                }
-                return true;
-            }());
+            // It is possible we previously created a timeline for this identifier in the case
+            // where the page was resumed from the back-forward cache.
+            timelines.removeIf([timelineID] (auto& existingTimeline) {
+                return existingTimeline->identifier() == timelineID;
+            });
             ASSERT(createdTimelineRepresentation->originTime());
             timelines.add(RemoteMonotonicTimeline::create(timelineID, *createdTimelineRepresentation->originTime(), now));
         }
@@ -90,6 +87,11 @@ void RemoteMonotonicTimelineRegistry::update(WebCore::ProcessIdentifier processI
     removeDestroyedTimelines();
 }
 
+void RemoteMonotonicTimelineRegistry::remove(WebCore::ProcessIdentifier processIdentifier)
+{
+    m_timelines.remove(processIdentifier);
+}
+
 RemoteMonotonicTimeline* RemoteMonotonicTimelineRegistry::get(const TimelineID& timelineID) const
 {
     auto it = m_timelines.find(timelineID.processIdentifier());
@@ -110,6 +112,14 @@ void RemoteMonotonicTimelineRegistry::advanceCurrentTime(MonotonicTime now)
         for (auto& timeline : timelines)
             timeline->updateCurrentTime(now);
     }
+}
+
+HashSet<Ref<RemoteMonotonicTimeline>> RemoteMonotonicTimelineRegistry::timelinesForProcessForTesting(WebCore::ProcessIdentifier processIdentifier) const
+{
+    auto iterator = m_timelines.find(processIdentifier);
+    if (iterator == m_timelines.end())
+        return { };
+    return iterator->value;
 }
 
 } // namespace WebKit

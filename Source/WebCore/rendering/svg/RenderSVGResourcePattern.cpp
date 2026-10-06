@@ -32,13 +32,14 @@
 #include "SVGElementTypeHelpers.h"
 #include "SVGFitToViewBox.h"
 #include "SVGVisitedRendererTracking.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourcePattern);
 
-RenderSVGResourcePattern::RenderSVGResourcePattern(SVGElement& element, RenderStyle&& style)
+RenderSVGResourcePattern::RenderSVGResourcePattern(SVGElement& element, Style::ComputedStyle&& style)
     : RenderSVGResourcePaintServer(Type::SVGResourcePattern, element, WTF::move(style))
 {
 }
@@ -50,30 +51,11 @@ void RenderSVGResourcePattern::collectPatternAttributesIfNeeded()
     if (m_attributes.has_value())
         return;
 
+    Ref patternElement = this->patternElement();
+
     auto attributes = PatternAttributes { };
-
-    RefPtr current = patternElement();
-
-    current->synchronizeAllAttributes();
-
-    while (current) {
-        if (!current->renderer())
-            break;
-        current->collectPatternAttributes(attributes);
-
-        auto target = SVGURIReference::targetElementFromIRIString(current->href(), current->treeScopeForSVGReferences());
-        current = dynamicDowncast<SVGPatternElement>(target.element.get());
-    }
-
-    // If we couldn't determine the pattern content element root, stop here.
-    if (!attributes.patternContentElement())
-        return;
-
-    // An empty viewBox disables rendering.
-    if (attributes.hasViewBox() && attributes.viewBox().isEmpty())
-        return;
-
-    m_attributes = WTF::move(attributes);
+    if (patternElement->collectPatternAttributes(attributes))
+        m_attributes = WTF::move(attributes);
 }
 
 RefPtr<Pattern> RenderSVGResourcePattern::buildPattern(GraphicsContext& context, const RenderLayerModelObject& renderer)
@@ -94,7 +76,7 @@ RefPtr<Pattern> RenderSVGResourcePattern::buildPattern(GraphicsContext& context,
         // Compute all necessary transformations to build the tile image & the pattern.
         FloatRect tileBoundaries;
         AffineTransform tileImageTransform;
-        if (!buildTileImageTransform(renderer, *m_attributes, protectedPatternElement(), tileBoundaries, tileImageTransform))
+        if (!buildTileImageTransform(renderer, *m_attributes, protect(patternElement()), tileBoundaries, tileImageTransform))
             return nullptr;
 
         // Ignore 2D rotation, as it doesn't affect the size of the tile.
@@ -129,25 +111,25 @@ RefPtr<Pattern> RenderSVGResourcePattern::buildPattern(GraphicsContext& context,
     return Pattern::create({ tileImage.releaseNonNull() }, { true, true, m_transformMap.get(renderer) } );
 }
 
-bool RenderSVGResourcePattern::prepareFillOperation(GraphicsContext& context, const RenderLayerModelObject& targetRenderer, const RenderStyle& style)
+bool RenderSVGResourcePattern::prepareFillOperation(GraphicsContext& context, const RenderLayerModelObject& targetRenderer, const Style::ComputedStyle& style)
 {
     auto pattern = buildPattern(context, targetRenderer);
     if (!pattern)
         return false;
 
-    context.setAlpha(style.fillOpacity().value.value);
+    context.setAlpha(Style::evaluate<float>(style.fillOpacity()));
     context.setFillRule(style.fillRule());
     context.setFillPattern(*pattern);
     return true;
 }
 
-bool RenderSVGResourcePattern::prepareStrokeOperation(GraphicsContext& context, const RenderLayerModelObject& targetRenderer, const RenderStyle& style)
+bool RenderSVGResourcePattern::prepareStrokeOperation(GraphicsContext& context, const RenderLayerModelObject& targetRenderer, const Style::ComputedStyle& style)
 {
     auto pattern = buildPattern(context, targetRenderer);
     if (!pattern)
         return false;
 
-    context.setAlpha(style.strokeOpacity().value.value);
+    context.setAlpha(Style::evaluate<float>(style.strokeOpacity()));
     SVGRenderSupport::applyStrokeStyleToContext(context, style, targetRenderer);
     if (style.vectorEffect() == VectorEffect::NonScalingStroke) {
         if (CheckedPtr shape = dynamicDowncast<RenderSVGShape>(targetRenderer))
@@ -197,7 +179,7 @@ RefPtr<ImageBuffer> RenderSVGResourcePattern::createTileImage(GraphicsContext& c
     auto tileSize = roundedUnscaledImageBufferSize(size, scale);
 
     // FIXME: consider color space handling/'color-interpolation'.
-    auto tileImage = context.createScaledImageBuffer(tileSize, scale, DestinationColorSpace::SRGB());
+    auto tileImage = context.createScaledImageBuffer(tileSize, scale, ColorSpace::SRGB());
     if (!tileImage)
         return nullptr;
 
@@ -205,7 +187,7 @@ RefPtr<ImageBuffer> RenderSVGResourcePattern::createTileImage(GraphicsContext& c
     GraphicsContextStateSaver stateSaver(tileImageContext);
 
     // Draw the content into the ImageBuffer.
-    patternRenderer->checkedLayer()->paintSVGResourceLayer(tileImageContext, tileImageTransform);
+    protect(patternRenderer->layer())->paintResourceLayerForSVG(tileImageContext, tileImageTransform);
     return tileImage;
 }
 

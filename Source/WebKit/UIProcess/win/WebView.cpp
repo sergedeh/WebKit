@@ -41,8 +41,8 @@
 #include "WebPageGroup.h"
 #include "WebPageProxy.h"
 #include "WebProcessPool.h"
-#include <Commctrl.h>
 #include <WebCore/Cursor.h>
+#include <WebCore/Document.h>
 #include <WebCore/Editor.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/GDIUtilities.h>
@@ -51,6 +51,8 @@
 #include <WebCore/NotImplemented.h>
 #include <WebCore/Region.h>
 #include <WebCore/WindowMessageBroadcaster.h>
+#include <array>
+#include <commctrl.h>
 #include <wtf/FileSystem.h>
 #include <wtf/SoftLinking.h>
 #include <wtf/text/StringBuffer.h>
@@ -240,7 +242,7 @@ WebView::WebView(RECT rect, const API::PageConfiguration& configuration, HWND pa
     Ref pageConfiguration = configuration.copy();
     pageConfiguration->preferences().setAllowTestOnlyIPC(pageConfiguration->allowTestOnlyIPC());
     WebProcessPool& processPool = pageConfiguration->processPool();
-    m_page = processPool.createWebPage(*m_pageClient, WTF::move(pageConfiguration));
+    lazyInitialize(m_page, processPool.createWebPage(*m_pageClient, WTF::move(pageConfiguration)));
 
     auto& configurationFromPage = m_page->configuration();
     m_page->initializeWebPage(configurationFromPage.openedSite(), configurationFromPage.initialSandboxFlags(), configurationFromPage.initialReferrerPolicy());
@@ -339,7 +341,7 @@ void WebView::windowAncestryDidChange()
 
 LRESULT WebView::onMouseEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, bool& handled)
 {
-    NativeWebMouseEvent mouseEvent = NativeWebMouseEvent(hWnd, message, wParam, lParam, m_wasActivatedByMouseEvent, m_page->intrinsicDeviceScaleFactor());
+    Ref mouseEvent = NativeWebMouseEvent::create(hWnd, message, wParam, lParam, m_wasActivatedByMouseEvent, m_page->intrinsicDeviceScaleFactor());
     setWasActivatedByMouseEvent(false);
 
     switch (message) {
@@ -368,7 +370,7 @@ LRESULT WebView::onMouseEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPa
         ASSERT_NOT_REACHED();
     }
 
-    m_page->handleMouseEvent(mouseEvent);
+    m_page->handleMouseEvent(WTF::move(mouseEvent));
 
     handled = true;
     return 0;
@@ -376,15 +378,15 @@ LRESULT WebView::onMouseEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPa
 
 LRESULT WebView::onWheelEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, bool& handled)
 {
-    NativeWebWheelEvent wheelEvent(hWnd, message, wParam, lParam, m_page->intrinsicDeviceScaleFactor());
-    if (wheelEvent.controlKey()) {
+    Ref wheelEvent = NativeWebWheelEvent::create(hWnd, message, wParam, lParam, m_page->intrinsicDeviceScaleFactor());
+    if (wheelEvent->controlKey()) {
         // We do not want WebKit to handle Control + Wheel, this should be handled by the client application
         // to zoom the page.
         handled = false;
         return 0;
     }
 
-    m_page->handleNativeWheelEvent(wheelEvent);
+    m_page->handleNativeWheelEvent(WTF::move(wheelEvent));
 
     handled = true;
     return 0;
@@ -465,7 +467,7 @@ LRESULT WebView::onKeyEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                 pendingCharEvents.append(msg);
         }
     }
-    m_page->handleKeyboardEvent(NativeWebKeyboardEvent(hWnd, message, wParam, lParam, WTF::move(pendingCharEvents)));
+    m_page->handleKeyboardEvent(NativeWebKeyboardEvent::create(hWnd, message, wParam, lParam, WTF::move(pendingCharEvents)));
 
     // We claim here to always have handled the event. If the event is not in fact handled, we will
     // find out later in didNotHandleKeyEvent.
@@ -767,15 +769,15 @@ bool WebView::shouldInitializeTrackPointHack()
         return shouldCreateScrollbars;
 
     hasRunTrackPointCheck = true;
-    const wchar_t* trackPointKeys[] = {
+    constexpr auto trackPointKeys = WTF::toArray<const wchar_t*>({
         L"Software\\Lenovo\\TrackPoint",
         L"Software\\Lenovo\\UltraNav",
         L"Software\\Alps\\Apoint\\TrackPoint",
         L"Software\\Synaptics\\SynTPEnh\\UltraNavUSB",
         L"Software\\Synaptics\\SynTPEnh\\UltraNavPS2"
-    };
+    });
 
-    for (size_t i = 0; i < std::size(trackPointKeys); ++i) {
+    for (size_t i = 0; i < trackPointKeys.size(); ++i) {
         HKEY trackPointKey;
         int readKeyResult = ::RegOpenKeyExW(HKEY_CURRENT_USER, trackPointKeys[i], 0, KEY_READ, &trackPointKey);
         ::RegCloseKey(trackPointKey);

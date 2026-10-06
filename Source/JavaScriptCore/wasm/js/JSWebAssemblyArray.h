@@ -53,15 +53,16 @@ public:
     DECLARE_INFO;
 
     static inline TypeInfoBlob typeInfoBlob();
-    static inline WebAssemblyGCStructure* createStructure(VM&, JSGlobalObject*, Ref<const Wasm::TypeDefinition>&&, Ref<const Wasm::RTT>&&);
+    static inline WebAssemblyGCStructure* createStructure(VM&, Ref<const Wasm::RTT>&&);
 
     static JSWebAssemblyArray* tryCreate(VM& vm, WebAssemblyGCStructure* structure, unsigned size);
 
     DECLARE_VISIT_CHILDREN;
 
-    static Wasm::FieldType elementType(const WebAssemblyGCStructure* structure) { return structure->typeDefinition().as<Wasm::ArrayType>()->elementType(); }
+    static Wasm::FieldType elementType(const WebAssemblyGCStructure* structure) { return structure->rtt().elementType(); }
     Wasm::FieldType elementType() const { return elementType(gcStructure()); }
-    static bool needsAlignmentCheck(Wasm::StorageType type) { return type.unpacked().isV128(); }
+    // Only v128 needs runtime masking (PreciseAllocation only guarantees 8-byte alignment).
+    static bool needsV128AlignmentMask(Wasm::StorageType type) { return type.unpacked().isV128(); }
     size_t size() const { return m_size; }
     size_t sizeInBytes() const { return size() * elementType().type.elementSize(); }
 
@@ -86,7 +87,7 @@ public:
     inline void set(VM&, uint32_t index, v128_t value);
 
     void fill(VM&, uint32_t, uint64_t, uint32_t);
-    void fill(VM&, uint32_t, v128_t, uint32_t);
+    void NODELETE fill(VM&, uint32_t, v128_t, uint32_t);
     void copy(VM&, JSWebAssemblyArray&, uint32_t, uint32_t, uint32_t);
 
 #if ASSERT_ENABLED
@@ -96,16 +97,34 @@ public:
     void setIsUnpopulated(bool value) { m_isUnpopulated = value; }
 #endif
 
-    // We add 8 bytes for v128 arrays since a non-PreciseAllocation will have the wrong alignment as the base pointer for a PreciseAllocation is shifted by 8.
-    // Note: Technically this isn't needed since the GC/malloc always allocates 16 byte chunks so for non-precise v128 allocations
-    // there will be a 8 spare bytes at the end. This is just a bit more explicit and shouldn't make a difference.
-    static constexpr ptrdiff_t v128AlignmentShift = 8;
+    // Compile-time alignment shift for a given element size.
+    // Valid for elements up to 8 bytes (JSCell is always >= 8-byte aligned).
+    static constexpr ptrdiff_t alignmentShift(size_t elementSize)
+    {
+        return (elementSize - (offsetOfData() % elementSize)) % elementSize;
+    }
+
+    // Offset from object start to aligned data, for elements <= 8 bytes.
+    static constexpr ptrdiff_t alignedOffsetOfData(size_t elementSize)
+    {
+        return offsetOfData() + alignmentShift(elementSize);
+    }
+
+    // Fixed overhead per array allocation: object header plus worst-case alignment padding.
+    // Accounts for PreciseAllocation (cell at 8 mod 16) where v128 (16-byte) elements
+    // need additional padding beyond alignmentShift().
+    static constexpr size_t allocationMetadataSize(size_t elementSize)
+    {
+        ptrdiff_t preciseShift = (elementSize - ((offsetOfData() + PreciseAllocation::halfAlignment) % elementSize)) % elementSize;
+        return sizeof(JSWebAssemblyArray) + std::max(alignmentShift(elementSize), preciseShift);
+    }
+
     static std::optional<unsigned> allocationSizeInBytes(Wasm::FieldType fieldType, unsigned size)
     {
         unsigned elementSize = fieldType.type.elementSize();
         if (productOverflows<uint32_t>(elementSize, size) || elementSize * size > Wasm::maxArraySizeInBytes) [[unlikely]]
             return std::nullopt;
-        return sizeof(JSWebAssemblyArray) + size * elementSize + static_cast<size_t>(needsAlignmentCheck(fieldType.type) * v128AlignmentShift);
+        return allocationMetadataSize(elementSize) + size * elementSize;
     }
 
     static constexpr ptrdiff_t offsetOfSize() { return OBJECT_OFFSETOF(JSWebAssemblyArray, m_size); }
@@ -113,6 +132,7 @@ public:
 
 private:
     friend class LLIntOffsetsExtractor;
+    inline void setWithoutWriteBarrier(uint32_t index, uint64_t value);
     inline std::span<uint8_t> bytes();
 
     // NB: It's *HIGHLY* recommended that you don't use these directly since you'll have to remember to clean up the alignment for v128.
@@ -127,20 +147,26 @@ private:
 
 #if ASSERT_ENABLED
     bool m_isUnpopulated { false };
-#else
-    // FIXME: We shouldn't need this padding but otherwise all the calculations about v128AlignmentShifts are wrong.
-    // (With ASSERT_ENABLED, the necessary padding is added implicitly after 'm_isUnpopulated').
-#if USE(JSVALUE32_64)
-    unsigned m_padding;
 #endif
-#endif
-
 };
 
 static_assert(std::is_final_v<JSWebAssemblyArray>, "JSWebAssemblyArray is a TrailingArray-like object so must know about all members");
-// We still have to check for PreciseAllocations since those are correctly aligned for v128 but this asserts our shifted offset will be correct.
-// FIXME: Fix this check for 32-bit.
-static_assert(isAddress32Bit() || !((JSWebAssemblyArray::offsetOfData() + JSWebAssemblyArray::v128AlignmentShift) % 16), "JSWebAssemblyArray storage needs to be aligned for v128_t");
+// Verify v128 alignment for both MarkedBlock (cell at 0 mod 16) and PreciseAllocation (cell at 8 mod 16).
+static_assert(!((JSWebAssemblyArray::offsetOfData() + JSWebAssemblyArray::alignmentShift(16)) % 16), "JSWebAssemblyArray storage needs to be aligned for v128_t (MarkedBlock)");
+
+#if !ASSERT_ENABLED
+static_assert(JSWebAssemblyArray::alignmentShift(1) == 0);
+static_assert(JSWebAssemblyArray::alignmentShift(2) == 0);
+static_assert(JSWebAssemblyArray::alignmentShift(4) == 0);
+static_assert(JSWebAssemblyArray::alignmentShift(8) == 4);
+static_assert(JSWebAssemblyArray::alignmentShift(16) == 4);
+
+static_assert(JSWebAssemblyArray::allocationMetadataSize(1) == sizeof(JSWebAssemblyArray));
+static_assert(JSWebAssemblyArray::allocationMetadataSize(2) == sizeof(JSWebAssemblyArray));
+static_assert(JSWebAssemblyArray::allocationMetadataSize(4) == sizeof(JSWebAssemblyArray));
+static_assert(JSWebAssemblyArray::allocationMetadataSize(8) == sizeof(JSWebAssemblyArray) + 4);
+static_assert(JSWebAssemblyArray::allocationMetadataSize(16) == sizeof(JSWebAssemblyArray) + 12);
+#endif
 
 } // namespace JSC
 

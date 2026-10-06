@@ -26,7 +26,7 @@
 #include "config.h"
 #include "WebPage.h"
 
-#include "DrawingAreaCoordinatedGraphics.h"
+#include "DrawingAreaCoordinatedGraphicsGLib.h"
 #include "EditorState.h"
 #include "InputMethodState.h"
 #include "MessageSenderInlines.h"
@@ -43,6 +43,7 @@
 #include <WebCore/HTMLTextAreaElement.h>
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
+#include <WebCore/Page.h>
 #include <WebCore/PlatformDisplay.h>
 #include <WebCore/PointerCharacteristics.h>
 #include <WebCore/Range.h>
@@ -62,6 +63,7 @@
 #if USE(GBM)
 #include <WebCore/DRMDeviceManager.h>
 #include <WebCore/GBMDevice.h>
+#include <WebCore/MemoryMappedGPUBuffer.h>
 #include <gbm.h>
 #include <xf86drm.h>
 #endif
@@ -77,7 +79,7 @@ void WebPage::platformInitialize(const WebPageCreationParameters&)
     // process to connect the two worlds through the accessibility
     // object there specifically placed for that purpose (the socket).
     if (RefPtr page = corePage()) {
-        m_accessibilityRootObject = AccessibilityRootAtspi::create(*page);
+        lazyInitialize(m_accessibilityRootObject, AccessibilityRootAtspi::create(*page));
         m_accessibilityRootObject->registerObject([&](const String& plugID) {
             if (!plugID.isEmpty())
                 send(Messages::WebPageProxy::BindAccessibilityTree(plugID));
@@ -181,10 +183,18 @@ static std::optional<InputMethodState> inputMethodStateForElement(Element* eleme
     if (!element || !element->shouldUseInputMethod())
         return std::nullopt;
 
+    if (auto* textControl = dynamicDowncast<HTMLTextFormControlElement>(*element); textControl && textControl->isReadOnly())
+        return std::nullopt;
+
     InputMethodState state;
     if (is<HTMLInputElement>(*element)) {
         auto& inputElement = downcast<HTMLInputElement>(*element);
         state.setPurposeForInputElement(inputElement);
+        // A missing inputmode attribute keeps the purpose derived from the type. A password
+        // field keeps its purpose too, because the state has no way to say "secret" separately.
+        auto inputMode = inputElement.canonicalInputMode();
+        if (inputMode == InputMode::None || (inputMode != InputMode::Unspecified && !inputElement.isPasswordField()))
+            state.setPurposeOrHintForInputMode(inputMode);
 #if ENABLE(AUTOCAPITALIZE)
         state.addHintsForAutocapitalizeType(inputElement.autocapitalizeType());
 #endif
@@ -205,6 +215,10 @@ static std::optional<InputMethodState> inputMethodStateForElement(Element* eleme
 void WebPage::setInputMethodState(Element* element)
 {
     auto state = inputMethodStateForElement(element);
+
+    if (state && !m_userIsInteracting)
+        state->hints.add(InputMethodState::Hint::InhibitOnScreenKeyboard);
+
     if (m_inputMethodState == state)
         return;
 
@@ -292,9 +306,7 @@ void WebPage::getRenderProcessInfo(CompletionHandler<void(RenderProcessInfo&&)>&
         break;
     }
 
-#if USE(SKIA)
     info.msaaSampleCount = display->msaaSampleCount();
-#endif
 
 #if USE(GBM)
     if (info.platform != "WPE"_s) {
@@ -305,6 +317,8 @@ void WebPage::getRenderProcessInfo(CompletionHandler<void(RenderProcessInfo&&)>&
             };
         });
     }
+    info.dmabufExportStrategy = MemoryMappedGPUBuffer::exportStrategyDescription();
+    info.memoryMappedGPUBufferSupported = MemoryMappedGPUBuffer::isSupported();
 #endif // USE(GBM)
 
     static_cast<DrawingAreaCoordinatedGraphics*>(m_drawingArea.get())->fillGLInformation(WTF::move(info), WTF::move(completionHandler));

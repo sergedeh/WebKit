@@ -59,12 +59,12 @@ public:
     ~ExtensionStyleSheets();
 
     CSSStyleSheet* pageUserSheet();
-    const Vector<Ref<CSSStyleSheet>>& documentUserStyleSheets() const { return m_userStyleSheets; }
-    const Vector<Ref<CSSStyleSheet>>& injectedUserStyleSheets() const;
-    const Vector<Ref<CSSStyleSheet>>& injectedAuthorStyleSheets() const;
-    const Vector<Ref<CSSStyleSheet>>& authorStyleSheetsForTesting() const { return m_authorStyleSheetsForTesting; }
+    const Vector<Ref<CSSStyleSheet>>& documentUserStyleSheets() const LIFETIME_BOUND { return m_userStyleSheets; }
+    const Vector<Ref<CSSStyleSheet>>& injectedUserStyleSheets() const LIFETIME_BOUND;
+    const Vector<Ref<CSSStyleSheet>>& injectedAuthorStyleSheets() const LIFETIME_BOUND;
+    const Vector<Ref<CSSStyleSheet>>& authorStyleSheetsForTesting() const LIFETIME_BOUND { return m_authorStyleSheetsForTesting; }
 
-    bool hasCachedInjectedStyleSheets() const;
+    bool NODELETE hasCachedInjectedStyleSheets() const;
 
     void clearPageUserSheet();
     void updatePageUserSheet();
@@ -83,13 +83,11 @@ public:
     void injectPageSpecificUserStyleSheet(const UserStyleSheet&);
     void removePageSpecificUserStyleSheet(const UserStyleSheet&);
 
-    String contentForInjectedStyleSheet(CSSStyleSheet&) const;
+    String NODELETE contentForInjectedStyleSheet(CSSStyleSheet&) const;
 
     void detachFromDocument();
 
 private:
-    Ref<Document> protectedDocument() const;
-
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
 
     RefPtr<CSSStyleSheet> m_pageUserSheet;
@@ -105,7 +103,7 @@ private:
 
 #if ENABLE(CONTENT_EXTENSIONS)
     MemoryCompactRobinHoodHashMap<String, Ref<CSSStyleSheet>> m_contentExtensionSheets;
-    MemoryCompactRobinHoodHashMap<String, RefPtr<ContentExtensions::ContentExtensionStyleSheet>> m_contentExtensionSelectorSheets;
+    MemoryCompactRobinHoodHashMap<String, Ref<ContentExtensions::ContentExtensionStyleSheet>> m_contentExtensionSelectorSheets;
 #endif
 };
 

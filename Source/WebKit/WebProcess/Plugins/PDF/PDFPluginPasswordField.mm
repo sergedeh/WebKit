@@ -28,7 +28,7 @@
 
 #if ENABLE(PDF_PLUGIN)
 
-#import <WebCore/AddEventListenerOptionsInlines.h>
+#import "PDFPluginBase.h"
 #import <WebCore/EnterKeyHint.h>
 #import <WebCore/Event.h>
 #import <WebCore/EventNames.h>
@@ -46,7 +46,7 @@ Ref<PDFPluginPasswordField> PDFPluginPasswordField::create(PDFPluginBase* plugin
 
 PDFPluginPasswordField::~PDFPluginPasswordField()
 {
-    protectedElement()->removeEventListener(eventNames().keyupEvent, *eventListener(), false);
+    protect(element())->removeEventListener(eventNames().keyupEvent, *eventListener(), { .capture = false });
 }
 
 Ref<Element> PDFPluginPasswordField::createAnnotationElement()
@@ -54,7 +54,7 @@ Ref<Element> PDFPluginPasswordField::createAnnotationElement()
     Ref element = PDFPluginTextAnnotation::createAnnotationElement();
     element->setAttribute(typeAttr, "password"_s);
     element->setAttribute(enterkeyhintAttr, AtomString { attributeValueForEnterKeyHint(EnterKeyHint::Go) });
-    element->addEventListener(eventNames().keyupEvent, *eventListener(), false);
+    element->addEventListener(eventNames().keyupEvent, *eventListener());
     return element;
 }
 

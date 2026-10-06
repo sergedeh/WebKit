@@ -37,7 +37,7 @@
 
 namespace WebKit {
 
-static HashMap<WebCore::SharedWorkerIdentifier, WeakRef<WebSharedWorker>>& allWorkers()
+static HashMap<WebCore::SharedWorkerIdentifier, WeakRef<WebSharedWorker>>& NODELETE allWorkers()
 {
     ASSERT(RunLoop::isMain());
     static NeverDestroyed<HashMap<WebCore::SharedWorkerIdentifier, WeakRef<WebSharedWorker>>> allWorkers;
@@ -187,9 +187,10 @@ std::optional<WebCore::ProcessIdentifier> WebSharedWorker::firstSharedWorkerObje
 
 WebSharedWorkerServerToContextConnection* WebSharedWorker::contextConnection() const
 {
-    if (CheckedPtr server = m_server.get())
-        return server->contextConnectionForRegistrableDomain(topRegistrableDomain());
-    return nullptr;
+    CheckedPtr server = m_server.get();
+    if (!server || !didFinishFetching())
+        return nullptr;
+    return server->contextConnectionForRegistrableDomain(topRegistrableDomain(), m_fetchResult.crossOriginEmbedderPolicy.value);
 }
 
 } // namespace WebKit

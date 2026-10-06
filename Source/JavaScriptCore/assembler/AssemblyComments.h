@@ -40,10 +40,10 @@ class AssemblyCommentRegistry {
     WTF_MAKE_TZONE_ALLOCATED(AssemblyCommentRegistry);
     WTF_MAKE_NONCOPYABLE(AssemblyCommentRegistry);
 public:
-    static AssemblyCommentRegistry& singleton();
+    static AssemblyCommentRegistry& NODELETE singleton();
     static void initialize();
 
-    Lock& getLock() WTF_RETURNS_LOCK(m_lock) { return m_lock; }
+    Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
 
     using CommentMap = UncheckedKeyHashMap<uintptr_t, String>;
 

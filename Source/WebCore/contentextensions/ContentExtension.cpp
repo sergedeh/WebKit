@@ -47,6 +47,7 @@ ContentExtension::ContentExtension(const String& identifier, Ref<CompiledContent
     : m_identifier(identifier)
     , m_compiledExtension(WTF::move(compiledExtension))
     , m_extensionBaseURL(WTF::move(extensionBaseURL))
+    , m_urlFiltersInterpreter(m_compiledExtension->urlFiltersBytecode(), DFABytecodeInterpreter::EnableResumeCache::Yes)
 {
     DFABytecodeInterpreter interpreter(m_compiledExtension->urlFiltersBytecode());
     m_universalActions = copyToVector(interpreter.actionsMatchingEverything());
@@ -54,6 +55,11 @@ ContentExtension::ContentExtension(const String& identifier, Ref<CompiledContent
     if (shouldCompileCSS == ShouldCompileCSS::Yes)
         compileGlobalDisplayNoneStyleSheet();
     m_universalActions.shrinkToFit();
+}
+
+DFABytecodeInterpreter::Actions ContentExtension::interpretURLFilters(const String& url, ResourceFlags flags) const
+{
+    return m_urlFiltersInterpreter.interpret(url, flags);
 }
 
 uint32_t ContentExtension::findFirstIgnoreRule() const
@@ -104,10 +110,10 @@ void ContentExtension::compileGlobalDisplayNoneStyleSheet()
     css.append(ContentExtensionsBackend::displayNoneCSSRule());
     css.append('}');
 
-    m_globalDisplayNoneStyleSheet = StyleSheetContents::create(contentExtensionCSSParserContext());
-    m_globalDisplayNoneStyleSheet->setIsUserStyleSheet(true);
-    if (!m_globalDisplayNoneStyleSheet->parseString(css.toString()))
-        m_globalDisplayNoneStyleSheet = nullptr;
+    Ref styleSheet = StyleSheetContents::create(contentExtensionCSSParserContext());
+    styleSheet->setIsUserStyleSheet(true);
+    if (styleSheet->parseString(css.toString()))
+        lazyInitialize(m_globalDisplayNoneStyleSheet, WTF::move(styleSheet));
 
     // These actions don't need to be applied individually any more. They will all be applied to every page as a precompiled style sheet.
     m_universalActions.removeAllMatching(inGlobalDisplayNoneStyleSheet);

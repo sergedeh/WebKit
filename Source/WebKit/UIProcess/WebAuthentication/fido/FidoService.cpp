@@ -79,7 +79,7 @@ void FidoService::continueAfterGetInfo(CtapDriver& inputDriver, Vector<uint8_t>&
     if (response.isEmpty())
         return;
 
-    CTAP_RELEASE_LOG("Got response from getInfo: %s", base64EncodeToString(response).utf8().data());
+    CTAP_RELEASE_LOG("Got response from getInfo: %s", base64EncodeToString(response).utf8());
 
     auto info = readCTAPGetInfoResponse(response);
     if (info && info->versions().find(ProtocolVersion::kCtap2) != info->versions().end()) {
@@ -92,5 +92,7 @@ void FidoService::continueAfterGetInfo(CtapDriver& inputDriver, Vector<uint8_t>&
 }
 
 } // namespace WebKit
+
+#undef CTAP_RELEASE_LOG
 
 #endif // ENABLE(WEB_AUTHN)

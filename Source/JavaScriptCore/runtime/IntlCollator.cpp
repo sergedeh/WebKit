@@ -63,7 +63,7 @@ IntlCollator::IntlCollator(VM& vm, Structure* structure)
 template<typename Visitor>
 void IntlCollator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    IntlCollator* thisObject = jsCast<IntlCollator*>(cell);
+    IntlCollator* thisObject = uncheckedDowncast<IntlCollator>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     Base::visitChildren(thisObject, visitor);
@@ -83,13 +83,13 @@ Vector<String> IntlCollator::sortLocaleData(const String& locale, RelevantExtens
         keyLocaleData.append({ });
 
         UErrorCode status = U_ZERO_ERROR;
-        auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", locale.utf8().data(), false, &status));
+        auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", locale.ascii().data(), false, &status));
         if (U_SUCCESS(status)) {
             const char* pointer;
             int32_t length = 0;
             while ((pointer = uenum_next(enumeration.get(), &length, &status)) && U_SUCCESS(status)) {
                 // 10.2.3 "The values "standard" and "search" must not be used as elements in any [[sortLocaleData]][locale].co and [[searchLocaleData]][locale].co array."
-                String collation(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
+                String collation = String::fromLatin1(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
                 if (collation == "standard"_s || collation == "search"_s)
                     continue;
                 if (auto mapped = mapICUCollationKeywordToBCP47(collation))
@@ -206,20 +206,20 @@ void IntlCollator::initializeCollator(JSGlobalObject* globalObject, JSValue loca
     RETURN_IF_EXCEPTION(scope, void());
 
     // UCollator does not offer an option to configure "usage" via ucol_setAttribute. So we need to pass this option via locale.
-    CString dataLocaleWithExtensions;
+    ASCIICString dataLocaleWithExtensions;
     switch (m_usage) {
     case Usage::Sort:
         if (collation.isNull())
-            dataLocaleWithExtensions = resolved.dataLocale.utf8();
+            dataLocaleWithExtensions = resolved.dataLocale.ascii();
         else
-            dataLocaleWithExtensions = makeString(resolved.dataLocale, "-u-co-"_s, m_collation).utf8();
+            dataLocaleWithExtensions = makeString(resolved.dataLocale, "-u-co-"_s, m_collation).ascii();
         break;
     case Usage::Search:
         // searchLocaleData filters out "co" unicode extension. However, we need to pass "co" to ICU when Usage::Search is specified.
         // So we need to pass "co" unicode extension through locale. Since the other relevant extensions are handled via ucol_setAttribute,
         // we can just use dataLocale
         // Since searchLocaleData filters out "co" unicode extension, "collation" option is just ignored.
-        dataLocaleWithExtensions = makeString(resolved.dataLocale, "-u-co-search"_s).utf8();
+        dataLocaleWithExtensions = makeString(resolved.dataLocale, "-u-co-search"_s).ascii();
         break;
     }
     dataLogLnIf(IntlCollatorInternal::verbose, "locale:(", resolved.locale, "),dataLocaleWithExtensions:(", dataLocaleWithExtensions, ")");
@@ -385,7 +385,7 @@ void IntlCollator::setBoundCompare(VM& vm, JSBoundFunction* format)
 static bool canDoASCIIUCADUCETComparisonWithUCollator(UCollator& collator)
 {
     // Attributes are default ones unless we set. So, non-configured attributes are default ones.
-    static constexpr std::pair<UColAttribute, UColAttributeValue> attributes[] = {
+    static constexpr auto attributes = WTF::toArray<std::pair<UColAttribute, UColAttributeValue>>({
         { UCOL_FRENCH_COLLATION, UCOL_OFF },
         { UCOL_ALTERNATE_HANDLING, UCOL_NON_IGNORABLE },
         { UCOL_STRENGTH, UCOL_TERTIARY },
@@ -393,7 +393,7 @@ static bool canDoASCIIUCADUCETComparisonWithUCollator(UCollator& collator)
         { UCOL_CASE_FIRST, UCOL_OFF },
         { UCOL_NUMERIC_COLLATION, UCOL_OFF },
         // We do not check UCOL_NORMALIZATION_MODE status since FCD normalization does nothing for ASCII strings.
-    };
+    });
 
     for (auto& pair : attributes) {
         UErrorCode status = U_ZERO_ERROR;

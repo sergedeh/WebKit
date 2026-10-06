@@ -33,6 +33,7 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "HTMLMediaElement.h"
+#include "JSDOMConvertNumbers.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSNodeCustom.h"
 #include "Logging.h"
@@ -66,9 +67,10 @@ RemotePlayback::RemotePlayback(HTMLMediaElement& element)
 
 RemotePlayback::~RemotePlayback() = default;
 
-WebCoreOpaqueRoot RemotePlayback::opaqueRootConcurrently() const
+WebCoreOpaqueRoot RemotePlayback::opaqueRoot() const
 {
-    return root(m_mediaElement.get());
+    // Cannot ref m_mediaElement here since this may get called on a GC thread.
+    SUPPRESS_UNCOUNTED_ARG return root(m_mediaElement.get());
 }
 
 Node* RemotePlayback::ownerNode() const
@@ -115,7 +117,7 @@ void RemotePlayback::watchAvailability(Ref<RemotePlaybackAvailabilityCallback>&&
         playback.m_callbackMap.add(callbackId, WTF::move(callback));
 
         // 8. Fulfill promise with the callbackId and run the following steps in parallel:
-        promise->whenSettled([protectedThis = Ref { playback }, callbackId] {
+        promise->whenSettled([protectedThis = protect(playback), callbackId] {
             // 8.1 Queue a task to invoke the callback with the current availability for the media element.
             queueTaskKeepingObjectAlive(protectedThis.get(), TaskSource::MediaElement, [callbackId, available = protectedThis->m_available](auto& playback) {
                 if (playback.isContextStopped())

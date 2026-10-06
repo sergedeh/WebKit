@@ -25,8 +25,7 @@
 
 #pragma once
 
-#include <algorithm>
-#include <limits.h>
+#include <limits>
 #include <wtf/MathExtras.h>
 
 namespace WTF {
@@ -37,7 +36,7 @@ namespace JSC {
 
 #if USE(LARGE_TYPED_ARRAYS)
 static_assert(sizeof(size_t) == sizeof(uint64_t));
-#define MAX_ARRAY_BUFFER_SIZE (1ull << 32)
+#define MAX_ARRAY_BUFFER_SIZE (1ull << 34)
 #else
 static_assert(sizeof(size_t) == sizeof(uint32_t));
 // Because we are using a size_t to store the size in bytes of array buffers, we cannot support 4GB on 32-bit platforms.
@@ -48,21 +47,26 @@ static_assert(sizeof(size_t) == sizeof(uint32_t));
 class PageCount {
 public:
     PageCount()
-        : m_pageCount(UINT_MAX)
-    {
-        static_assert(maxPageCount < UINT_MAX, "We rely on this here.");
-    }
+        : m_pageCount(invalidPageCount)
+    { }
 
-    PageCount(uint32_t pageCount)
+    PageCount(uint64_t pageCount)
         : m_pageCount(pageCount)
     { }
 
     void dump(WTF::PrintStream&) const;
 
-    uint64_t bytes() const { return static_cast<uint64_t>(m_pageCount) * static_cast<uint64_t>(pageSize); }
-    uint32_t pageCount() const { return m_pageCount; }
+    // A page count may be larger than any byte count can express, so saturate rather than wrap: every
+    // byte-based bound (what can be allocated, what a buffer may advertise) must keep rejecting it.
+    uint64_t bytes() const
+    {
+        if (m_pageCount > std::numeric_limits<uint64_t>::max() / pageSize)
+            return std::numeric_limits<uint64_t>::max();
+        return m_pageCount * static_cast<uint64_t>(pageSize);
+    }
+    uint64_t pageCount() const { return m_pageCount; }
 
-    static bool isValid(uint32_t pageCount)
+    static bool isValid(uint64_t pageCount)
     {
         return pageCount <= maxPageCount;
     }
@@ -74,10 +78,15 @@ public:
 
     static PageCount fromBytes(uint64_t bytes)
     {
+        PageCount count = fromBytesUnchecked(bytes);
+        RELEASE_ASSERT(count.isValid());
+        return count;
+    }
+
+    static PageCount fromBytesUnchecked(uint64_t bytes)
+    {
         RELEASE_ASSERT(bytes % pageSize == 0);
-        uint32_t numPages = bytes / pageSize;
-        RELEASE_ASSERT(PageCount::isValid(numPages));
-        return PageCount(numPages);
+        return PageCount(bytes / pageSize);
     }
 
     static PageCount fromBytesWithRoundUp(uint64_t bytes)
@@ -92,31 +101,38 @@ public:
 
     explicit operator bool() const
     {
-        return m_pageCount != UINT_MAX;
+        return m_pageCount != invalidPageCount;
     }
 
     friend auto operator<=>(const PageCount&, const PageCount&) = default;
 
     PageCount operator+(const PageCount& other) const
     {
-        if (sumOverflows<uint32_t>(m_pageCount, other.m_pageCount))
+        if (sumOverflows<uint64_t>(m_pageCount, other.m_pageCount))
             return PageCount();
-        uint32_t newCount = m_pageCount + other.m_pageCount;
+        uint64_t newCount = m_pageCount + other.m_pageCount;
         if (!PageCount::isValid(newCount))
             return PageCount();
         return PageCount(newCount);
     }
 
     static constexpr uint32_t pageSize = 64 * KB;
-private:
-    // The spec requires we are able to instantiate a memory with a *maximum* size of 64K pages.
-    // This does not mean the memory can necessarily grow that big, and where the
-    // MAX_ARRAY_BUFFER_SIZE is smaller (e.g.: on 32-bit platforms), trying to grow the memory
-    // that large will fail, which is acceptable according to the spec. Nevertheless, we should
-    // be able to parse such a memory and instantiate it with a smaller initial size.
-    static constexpr uint32_t maxPageCount = std::max<uint32_t>(64*1024, MAX_ARRAY_BUFFER_SIZE / static_cast<uint64_t>(pageSize));
 
-    uint32_t m_pageCount;
+    // Page counts are declarative: a memory may declare a maximum this process cannot map, and must
+    // still parse and instantiate at its initial size. This is the largest count any memory may
+    // declare, the number of pages spanning an i64 memory's entire address space.
+    static constexpr uint64_t maxPageCount = std::numeric_limits<uint64_t>::max() / pageSize + 1;
+
+    static constexpr uint32_t maxMemory32PageCount = 64 * 1024;
+    static constexpr uint64_t maxMemory32Bytes = static_cast<uint64_t>(maxMemory32PageCount) * pageSize;
+
+private:
+    static constexpr uint64_t invalidPageCount = std::numeric_limits<uint64_t>::max();
+    static_assert(maxPageCount < invalidPageCount);
+    // fromBytes() must accept the byte length of any array buffer.
+    static_assert(MAX_ARRAY_BUFFER_SIZE / pageSize <= maxPageCount);
+
+    uint64_t m_pageCount;
 };
 
 } // namespace JSC

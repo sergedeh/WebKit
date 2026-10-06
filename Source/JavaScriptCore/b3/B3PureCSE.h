@@ -41,6 +41,9 @@ typedef Vector<Value*, 1> Matches;
 
 // This is a reusable utility for doing pure CSE. You can use it to do pure CSE on a program by just
 // proceeding in order and calling process().
+//
+// The map holds raw Value*, so a client that may have deleted values since the last walk has to
+// clear() rather than keep using it.
 class PureCSE {
 public:
     PureCSE();
@@ -48,7 +51,7 @@ public:
 
     void clear();
 
-    Value* findMatch(const ValueKey&, BasicBlock*, Dominators&);
+    Value* NODELETE findMatch(const ValueKey&, BasicBlock*, Dominators&);
 
     bool process(Value*, Dominators&);
     

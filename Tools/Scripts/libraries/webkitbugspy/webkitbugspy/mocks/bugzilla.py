@@ -20,6 +20,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import base64
 import json
 import re
 import time
@@ -29,7 +30,7 @@ from .base import Base
 
 from webkitbugspy import User, Issue
 from webkitbugspy.mocks.radar import Radar as RadarMock
-from webkitcorepy import mocks
+from webkitcorepy import mocks, string_utils
 
 
 class Bugzilla(Base, mocks.Requests):
@@ -157,17 +158,36 @@ class Bugzilla(Base, mocks.Requests):
                 issue['component'] = data['component']
             if data.get('version'):
                 issue['version'] = data['version']
-            issue['related'] = {'blocks': [], 'depends_on': [], 'regressions': [], 'regressed_by': []}
-            if data.get('depends_on'):
-                issue['related']['depends_on'] = data['depends_on']
-            if data.get('blocks'):
-                issue['related']['blocks'] = data['blocks']
-            if data.get('regressed_by'):
-                issue['related']['regressed_by'] = data['regressed_by']
-            if data.get('regressions'):
-                issue['related']['regressions'] = data['regressions']
             if data.get('see_also'):
                 issue['related_links'] = data['see_also']['add']
+
+            # A dependency is one edge, so recording it on this issue also records it on the other
+            INVERSE = {
+                'depends_on': 'blocks',
+                'blocks': 'depends_on',
+                'regressed_by': 'regressions',
+                'regressions': 'regressed_by',
+            }
+
+            def related_for(number, relation):
+                related = self.issues[number].setdefault('related', {key: [] for key in INVERSE})
+                return related.setdefault(relation, [])
+
+            for relation, inverse in INVERSE.items():
+                if not (change := data.get(relation)):
+                    continue
+                for other in change.get('add') or []:
+                    forward, reverse = related_for(id, relation), related_for(other, inverse)
+                    if other not in forward:
+                        forward.append(other)
+                    if id not in reverse:
+                        reverse.append(id)
+                for other in change.get('remove') or []:
+                    forward, reverse = related_for(id, relation), related_for(other, inverse)
+                    if other in forward:
+                        forward.remove(other)
+                    if id in reverse:
+                        reverse.remove(id)
 
             keywords = data.get('keywords', {})
             if keywords:
@@ -265,9 +285,60 @@ class Bugzilla(Base, mocks.Requests):
                 id=id,
                 see_also=[
                     'https://{}/show_bug.cgi?id={}'.format(self.hosts[0], n) for n in issue.get('references', [])
-                ],
+                ] + issue.get('related_links', []),
             )],
         ), url=url)
+
+    def _attachment_records(self):
+        records = []
+        global_id = 0
+        for bug_id in sorted(self.issues.keys()):
+            for attachment in self.issues[bug_id].get('attachments', []):
+                global_id += 1
+                records.append((global_id, bug_id, attachment))
+        return records
+
+    def _attachment_json(self, attachment_id, bug_id, attachment, include_data=True):
+        result = dict(
+            id=attachment_id,
+            bug_id=bug_id,
+            file_name=attachment['fileName'],
+            content_type=attachment.get('content_type', 'text/plain'),
+            is_patch=1 if attachment.get('is_patch') else 0,
+            is_obsolete=1 if attachment.get('is_obsolete') else 0,
+        )
+        if include_data:
+            result['data'] = base64.b64encode(string_utils.encode(attachment.get('data', b''))).decode('ascii')
+        return result
+
+    def _attachments(self, url, id, query=None):
+        if id not in self.issues:
+            return mocks.Response(
+                url=url,
+                headers={'Content-Type': 'text/json'},
+                status_code=404,
+                text=json.dumps(dict(
+                    code=101,
+                    error=True,
+                    message="Bug #{} does not exist.".format(id),
+                )),
+            )
+
+        include_data = 'exclude_fields=data' not in (query or '')
+        return mocks.Response.fromJson(dict(
+            bugs={str(id): [
+                self._attachment_json(attachment_id, bug_id, attachment, include_data=include_data)
+                for attachment_id, bug_id, attachment in self._attachment_records() if bug_id == id
+            ]},
+        ), url=url)
+
+    def _attachment(self, url, attachment_id):
+        for record_id, bug_id, attachment in self._attachment_records():
+            if record_id == attachment_id:
+                return mocks.Response.fromJson(dict(
+                    attachments={str(attachment_id): self._attachment_json(attachment_id, bug_id, attachment)},
+                ), url=url)
+        return mocks.Response.create404(url)
 
     def _comments(self, url, id):
         if id not in self.issues:
@@ -341,7 +412,7 @@ class Bugzilla(Base, mocks.Requests):
                     ) for component, details in product['components'].items()],
                     versions=[dict(
                         name=version,
-                        is_active=True,
+                        is_active=version not in product.get('inactive_versions', []),
                     ) for version in product['versions']],
                 )]), url=url,
             )
@@ -358,7 +429,7 @@ class Bugzilla(Base, mocks.Requests):
                 name='keywords',
                 type=8,
                 display_name='Keywords',
-                values=[dict(name='InRadar')]
+                values=[dict(name='InRadar', description='This bug also has a copy in Apple Radar.')]
             )]), url=url
         )
 
@@ -372,6 +443,29 @@ class Bugzilla(Base, mocks.Requests):
             return mocks.Response(
                 status_code=400,
                 text=json.dumps(dict(message='Failed to create bug')),
+                url=url,
+            )
+
+        if len(data['summary']) > 255:
+            return mocks.Response(
+                status_code=400,
+                text=json.dumps(dict(
+                    error=True,
+                    code=104,
+                    message='The text you entered in the Summary field is too long ({} characters, above the maximum length allowed of 255 characters).'.format(len(data['summary'])),
+                )),
+                url=url,
+            )
+
+        inactive_versions = self.projects.get(data['product'], {}).get('inactive_versions', [])
+        if data['version'] in inactive_versions:
+            return mocks.Response(
+                status_code=400,
+                text=json.dumps(dict(
+                    error=True,
+                    code=106,
+                    message="The version value '{}' is not active.".format(data['version']),
+                )),
                 url=url,
             )
 
@@ -462,6 +556,14 @@ class Bugzilla(Base, mocks.Requests):
             return self._comments(url, int(match.group('id')))
         if match and method == 'POST':
             return self._post_comment(url, int(match.group('id')), match.group('credentials'), json)
+
+        match = re.match(r'{}/rest/bug/attachment/(?P<id>\d+)(?:\?(?P<query>\S*))?$'.format(self.hosts[0]), stripped_url)
+        if match and method == 'GET':
+            return self._attachment(url, int(match.group('id')))
+
+        match = re.match(r'{}/rest/bug/(?P<id>\d+)/attachment(?:\?(?P<query>\S*))?$'.format(self.hosts[0]), stripped_url)
+        if match and method == 'GET':
+            return self._attachments(url, int(match.group('id')), query=match.group('query'))
 
         match = re.match(r'{}/rest/product_enterable(?P<credentials>\?login=\S+\&password=\S+)?$'.format(self.hosts[0]), stripped_url)
         if match and method == 'GET':

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,7 +25,9 @@
 
 #pragma once
 
+#include <WebCore/CSSCalcRandomSharing.h>
 #include <WebCore/CSSCalcType.h>
+#include <WebCore/CSSCustomIdent.h>
 #include <WebCore/CSSPrimitiveNumeric.h>
 #include <WebCore/CSSPrimitiveNumericRange.h>
 #include <WebCore/CSSUnits.h>
@@ -33,7 +35,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
-#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
@@ -50,6 +51,7 @@ struct Sum;
 struct Product;
 struct Negate;
 struct Invert;
+struct Deg2Rad;
 
 // Math Functions.
 struct Min;
@@ -77,6 +79,8 @@ struct Abs;
 struct Sign;
 struct Random;
 struct Progress;
+struct ProgressNoClamp;
+struct CalcMix;
 
 // CSS Anchor Positioning functions.
 struct Anchor;
@@ -202,6 +206,7 @@ using Node = Variant<
     IndirectNode<Product>,
     IndirectNode<Negate>,
     IndirectNode<Invert>,
+    IndirectNode<Deg2Rad>,
     IndirectNode<Min>,
     IndirectNode<Max>,
     IndirectNode<Clamp>,
@@ -227,6 +232,8 @@ using Node = Variant<
     IndirectNode<Sign>,
     IndirectNode<Random>,
     IndirectNode<Progress>,
+    IndirectNode<ProgressNoClamp>,
+    IndirectNode<CalcMix>,
     IndirectNode<Anchor>,
     IndirectNode<AnchorSize>
 >;
@@ -238,9 +245,13 @@ struct Child {
         requires std::constructible_from<Node, T>
     Child(T&&);
 
+    Child(Child&&);
+    Child& operator=(Child&&);
+    ~Child();
+
     FORWARD_VARIANT_FUNCTIONS(Child, value)
 
-    bool operator==(const Child&) const = default;
+    bool operator==(const Child&) const;
 };
 
 struct ChildOrNone {
@@ -263,9 +274,7 @@ struct Children {
 
     Vector<Child> value;
 
-    Children(Children&&);
     Children(Vector<Child>&&);
-    Children& operator=(Children&&);
     Children& operator=(Vector<Child>&&);
 
     iterator begin() LIFETIME_BOUND;
@@ -294,7 +303,7 @@ struct Tree {
     Type type;
     Stage stage;
 
-    // `requiresConversionData` is used both to both indicate whether eager evaluation of the tree (at parse time) is possible or not and to trigger a warning in `CSSCalcValue::doubleValueDeprecated` that the evaluation results will be incorrect.
+    // `requiresConversionData` is used both to both indicate whether eager evaluation of the tree (at parse time) is possible or not and to trigger a warning in `UnevaluatedCalcBase::evaluateDeprecated` that the evaluation results will be incorrect.
     bool requiresConversionData = false;
 
     bool operator==(const Tree&) const = default;
@@ -330,6 +339,15 @@ struct Invert {
     Child a;
 
     bool operator==(const Invert&) const = default;
+};
+
+// Deg2Rad converts its <angle>-typed child (which evaluates in the canonical angle unit of degrees) into radians. It is inserted implicitly at parse time inside Sin, Cos, and Tan when their argument is an <angle>, so that trig evaluation no longer needs to inspect the argument's type. It has no direct CSS-level representation and is transparent during serialization.
+struct Deg2Rad {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Deg2Rad);
+
+    Child angle;
+
+    bool operator==(const Deg2Rad&) const = default;
 };
 
 // Math Functions
@@ -747,27 +765,19 @@ struct Random {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Random);
     static constexpr auto id = CSSValueRandom;
 
-    // <random-value-sharing> = [ [ auto | <dashed-ident> ] || element-shared ] | fixed <number [0,1]>
-    struct SharingOptions {
-        struct Auto {
-            CSSPropertyID property;
-            unsigned index;
-
-            bool operator==(const Auto&) const = default;
-        };
-        Variant<Auto, AtomString> identifier;
-        std::optional<CSS::Keyword::ElementShared> elementShared;
-
-        bool operator==(const SharingOptions&) const = default;
-    };
+    // <random-key> = auto | <random-cache-key> | fixed <number [0,1]>
+    // <random-cache-key> = <dashed-ident> || element-scoped || [ property-scoped | property-index-scoped ]
+    // NOTE: <random-ua-ident> is intentionally not yet supported (follow-up).
+    using SharingAuto = RandomSharingAuto;
+    using Key = RandomSharingKey;
     struct SharingFixed {
         CSS::Number<CSS::ClosedUnitRange> value;
 
         bool operator==(const SharingFixed&) const = default;
     };
-    using Sharing = Variant<SharingOptions, SharingFixed>;
+    using Sharing = Variant<SharingAuto, Key, SharingFixed>;
 
-    // <random()> = random( <random-value-sharing>? , <calc-sum>, <calc-sum>, <calc-sum>? )
+    // <random()> = random( <random-key>? , <calc-sum>, <calc-sum>, <calc-sum>? )
     //     - INPUT: "same" <number>, <dimension>, or <percentage>
     //     - OUTPUT: same type
     static constexpr auto input = AllowedTypes::Any;
@@ -782,7 +792,7 @@ struct Random {
     bool operator==(const Random&) const = default;
 };
 
-// Progress-Related Functions - https://drafts.csswg.org/css-values-5/#progress
+// Progress Function - https://drafts.csswg.org/css-values-5/#progress
 struct Progress {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Progress);
     static constexpr auto id = CSSValueProgress;
@@ -799,6 +809,52 @@ struct Progress {
     Child end;
 
     bool operator==(const Progress&) const = default;
+};
+
+// Progress Function (no-clamp variant) - https://drafts.csswg.org/css-values-5/#progress
+struct ProgressNoClamp {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(ProgressNoClamp);
+    static constexpr auto id = CSSValueProgress;
+
+    // <progress()> = progress( no-clamp <calc-sum>, <calc-sum>, <calc-sum> )
+    //     - INPUT: "consistent" <number>, <dimension>, or <percentage>
+    //     - OUTPUT: <number> "made consistent"
+    static constexpr auto input = AllowedTypes::Any;
+    static constexpr auto merge = MergePolicy::Consistent;
+    static constexpr auto output = OutputTransform::NumberMadeConsistent;
+
+    Child value;
+    Child start;
+    Child end;
+
+    bool operator==(const ProgressNoClamp&) const = default;
+};
+
+// CalcMix Function - https://drafts.csswg.org/css-values-5/#calc-mix
+
+struct CalcMix {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(CalcMix);
+    static constexpr auto id = CSSValueCalcMix;
+
+    struct Item {
+        using Weight = CSS::Percentage<CSS::ClosedPercentageRange>;
+
+        Child value;
+        std::optional<Weight> weight;
+
+        bool operator==(const Item&) const = default;
+    };
+
+    // <calc-mix()> = calc-mix( [ <calc-sum> <percentage [0,100]>? ]# )
+    //     - INPUT: "consistent" <number>, <dimension>, or <percentage> (referring to <calc-sum> arguments)
+    //     - OUTPUT: consistent type
+    static constexpr auto input = AllowedTypes::Any;
+    static constexpr auto merge = MergePolicy::Consistent;
+    static constexpr auto output = OutputTransform::None;
+
+    Vector<Item> children;
+
+    bool operator==(const CalcMix&) const = default;
 };
 
 // Anchor Positioning Related Functions - https://drafts.csswg.org/css-anchor-position-1/
@@ -823,7 +879,7 @@ struct Anchor {
 
     // Can't use Style::ScopedName here, since the scope ordinal is not available at
     // parsing time.
-    AtomString elementName;
+    std::optional<CSS::CustomIdent> elementName;
     AnchorSide side;
     std::optional<Child> fallback;
 
@@ -838,9 +894,7 @@ struct AnchorSize {
     // <anchor-element> = <dashed-ident>
     // <anchor-size> = width | height | block | inline | self-block | self-inline
 
-    // Can't use Style::ScopedName here, since the scope ordinal is not available at
-    // parsing time.
-    AtomString elementName; // <anchor-element>
+    std::optional<CSS::CustomIdent> elementName; // <anchor-element>
     std::optional<Style::AnchorSizeDimension> dimension; // <anchor-size>
     std::optional<Child> fallback;
 
@@ -884,16 +938,16 @@ template<typename T> inline Type getType(const IndirectNode<T>& root)
 }
 
 // Gets the Type representing a CanonicalDimension::Dimension.
-Type getType(CanonicalDimension::Dimension);
+Type NODELETE getType(CanonicalDimension::Dimension);
 
 // Gets the Type of the leaf node.
-Type getType(const Number&);
-Type getType(const Percentage&);
-Type getType(const NonCanonicalDimension&);
-Type getType(const CanonicalDimension&);
-Type getType(const Symbol&);
-Type getType(const SiblingCount&);
-Type getType(const SiblingIndex&);
+Type NODELETE getType(const Number&);
+Type NODELETE getType(const Percentage&);
+Type NODELETE getType(const NonCanonicalDimension&);
+Type NODELETE getType(const CanonicalDimension&);
+Type NODELETE getType(const Symbol&);
+Type NODELETE getType(const SiblingCount&);
+Type NODELETE getType(const SiblingIndex&);
 
 // Gets the Type of the child node.
 Type getType(const Child&);
@@ -903,6 +957,7 @@ std::optional<Type> toType(const Sum&);
 std::optional<Type> toType(const Product&);
 std::optional<Type> toType(const Negate&);
 std::optional<Type> toType(const Invert&);
+std::optional<Type> toType(const Deg2Rad&);
 std::optional<Type> toType(const Min&);
 std::optional<Type> toType(const Max&);
 std::optional<Type> toType(const Clamp&);
@@ -928,6 +983,8 @@ std::optional<Type> toType(const Abs&);
 std::optional<Type> toType(const Sign&);
 std::optional<Type> toType(const Random&);
 std::optional<Type> toType(const Progress&);
+std::optional<Type> toType(const ProgressNoClamp&);
+std::optional<Type> toType(const CalcMix&);
 
 // MARK: CSSUnitType Evaluation
 
@@ -935,79 +992,41 @@ std::optional<Type> toType(const Progress&);
 constexpr CSSUnitType toCSSUnit(const CanonicalDimension::Dimension& dimension)
 {
     switch (dimension) {
-    case CanonicalDimension::Dimension::Length:         return CSSUnitType::CSS_PX;
-    case CanonicalDimension::Dimension::Angle:          return CSSUnitType::CSS_DEG;
-    case CanonicalDimension::Dimension::Time:           return CSSUnitType::CSS_S;
-    case CanonicalDimension::Dimension::Frequency:      return CSSUnitType::CSS_HZ;
-    case CanonicalDimension::Dimension::Resolution:     return CSSUnitType::CSS_DPPX;
-    case CanonicalDimension::Dimension::Flex:           return CSSUnitType::CSS_FR;
+    case CanonicalDimension::Dimension::Length:         return CSSUnitType::Px;
+    case CanonicalDimension::Dimension::Angle:          return CSSUnitType::Deg;
+    case CanonicalDimension::Dimension::Time:           return CSSUnitType::S;
+    case CanonicalDimension::Dimension::Frequency:      return CSSUnitType::Hz;
+    case CanonicalDimension::Dimension::Resolution:     return CSSUnitType::Dppx;
+    case CanonicalDimension::Dimension::Flex:           return CSSUnitType::Fr;
     }
 
     ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-    return CSSUnitType::CSS_PX;
+    return CSSUnitType::Px;
 }
 
 // Maps Numeric type to its CSSUnitType counterpart.
-constexpr CSSUnitType toCSSUnit(const Number&) { return CSSUnitType::CSS_NUMBER; }
-constexpr CSSUnitType toCSSUnit(const Percentage&) { return CSSUnitType::CSS_PERCENTAGE; }
+constexpr CSSUnitType toCSSUnit(const Number&) { return CSSUnitType::Number; }
+constexpr CSSUnitType toCSSUnit(const Percentage&) { return CSSUnitType::Percentage; }
 constexpr CSSUnitType toCSSUnit(const CanonicalDimension& dimension) { return toCSSUnit(dimension.dimension); }
 constexpr CSSUnitType toCSSUnit(const NonCanonicalDimension& dimension) { return dimension.unit; }
 
 // MARK: Predicates
 
-inline bool isNumeric(const Child& root)
-{
-    return WTF::switchOn(root,
-        []<Numeric T>(const T&) { return true; },
-        [](const auto&) { return false; }
-    );
-}
+bool isNumeric(const Child& root);
 
 // Convenience constructors
 
 // Makes the appropriate child type (number, percentage, canonical-dimensions, non-canonical-dimension) based on the CSSUnitType.
 Child makeNumeric(double, CSSUnitType);
 
-inline Sum add(Child&& a, Child&& b)
-{
-    Vector<Child> sumChildren;
-    sumChildren.append(WTF::move(a));
-    sumChildren.append(WTF::move(b));
-    return Sum { .children = WTF::move(sumChildren) };
-}
+Sum add(Child&& a, Child&& b);
+Product multiply(Child&& a, Child&& b);
+Sum subtract(Child&& a, Child&& b);
 
-inline Product multiply(Child&& a, Child&& b)
-{
-    Vector<Child> productChildren;
-    productChildren.append(WTF::move(a));
-    productChildren.append(WTF::move(b));
-    return Product { .children = WTF::move(productChildren) };
-}
-
-inline Sum subtract(Child&& a, Child&& b)
-{
-    return add(WTF::move(a), makeChild(Negate { .a = WTF::move(b) }, getType(b)));
-}
-
-inline Child makeChildWithValueBasedOn(double value, const Number&)
-{
-    return makeChild(Number { .value = value });
-}
-
-inline Child makeChildWithValueBasedOn(double value, const Percentage& a)
-{
-    return makeChild(Percentage { .value = value, .hint = a.hint });
-}
-
-inline Child makeChildWithValueBasedOn(double value, const CanonicalDimension& a)
-{
-    return makeChild(CanonicalDimension { .value = value, .dimension = a.dimension });
-}
-
-inline Child makeChildWithValueBasedOn(double value, const NonCanonicalDimension& a)
-{
-    return makeChild(NonCanonicalDimension { .value = value, .unit = a.unit });
-}
+Child makeChildWithValueBasedOn(double value, const Number&);
+Child makeChildWithValueBasedOn(double value, const Percentage&);
+Child makeChildWithValueBasedOn(double value, const CanonicalDimension&);
+Child makeChildWithValueBasedOn(double value, const NonCanonicalDimension&);
 
 // MARK: Tuple Conformance
 
@@ -1035,6 +1054,12 @@ template<size_t I> const auto& get(const Invert& root)
 {
     static_assert(!I);
     return root.a;
+}
+
+template<size_t I> const auto& get(const Deg2Rad& root)
+{
+    static_assert(!I);
+    return root.angle;
 }
 
 template<size_t I> const auto& get(const Min& root)
@@ -1219,6 +1244,22 @@ template<size_t I> const auto& get(const Progress& root)
         return root.end;
 }
 
+template<size_t I> const auto& get(const ProgressNoClamp& root)
+{
+    if constexpr (!I)
+        return root.value;
+    else if constexpr (I == 1)
+        return root.start;
+    else if constexpr (I == 2)
+        return root.end;
+}
+
+template<size_t I> const auto& get(const CalcMix& root)
+{
+    static_assert(!I);
+    return root.children;
+}
+
 // MARK: Child Definition
 
 template<typename T>
@@ -1227,118 +1268,6 @@ Child::Child(T&& value)
     : value(std::forward<T>(value))
 {
 }
-
-// MARK: ChildOrNone Definition
-
-inline ChildOrNone::ChildOrNone(Child&& child)
-    : value(WTF::move(child))
-{
-}
-
-inline ChildOrNone::ChildOrNone(CSS::Keyword::None none)
-    : value(none)
-{
-}
-
-// MARK: Children Definition
-
-inline Children::Children(Children&& other)
-    : value(WTF::move(other.value))
-{
-}
-
-inline Children::Children(Vector<Child>&& other)
-    : value(WTF::move(other))
-{
-}
-
-inline Children& Children::operator=(Children&& other)
-{
-    value = WTF::move(other.value);
-    return *this;
-}
-
-inline Children& Children::operator=(Vector<Child>&& other)
-{
-    value = WTF::move(other);
-    return *this;
-}
-
-inline Children::iterator Children::begin() LIFETIME_BOUND
-{
-    return value.begin();
-}
-
-inline Children::iterator Children::end() LIFETIME_BOUND
-{
-    return value.end();
-}
-
-inline Children::reverse_iterator Children::rbegin() LIFETIME_BOUND
-{
-    return value.rbegin();
-}
-
-inline Children::reverse_iterator Children::rend() LIFETIME_BOUND
-{
-    return value.rend();
-}
-
-inline Children::const_iterator Children::begin() const LIFETIME_BOUND
-{
-    return value.begin();
-}
-
-inline Children::const_iterator Children::end() const LIFETIME_BOUND
-{
-    return value.end();
-}
-
-inline Children::const_reverse_iterator Children::rbegin() const LIFETIME_BOUND
-{
-    return value.rbegin();
-}
-
-inline Children::const_reverse_iterator Children::rend() const LIFETIME_BOUND
-{
-    return value.rend();
-}
-
-inline bool Children::isEmpty() const
-{
-    return value.isEmpty();
-}
-
-inline size_t Children::size() const
-{
-    return value.size();
-}
-
-inline Child& Children::operator[](size_t i) LIFETIME_BOUND
-{
-    return value[i];
-}
-
-inline const Child& Children::operator[](size_t i) const LIFETIME_BOUND
-{
-    return value[i];
-}
-
-// AnchorSize
-
-inline AnchorSide::AnchorSide(CSSValueID valueID)
-    : value(valueID)
-{
-}
-
-inline AnchorSide::AnchorSide(Child&& child)
-    : value(WTF::move(child))
-{
-}
-
-// MARK: Size assertions
-
-static_assert(sizeof(Child) <= 24, "Child should stay small");
 
 } // namespace CSSCalc
 } // namespace WebCore
@@ -1357,6 +1286,7 @@ OP_TUPLE_LIKE_CONFORMANCE(Sum, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Product, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Negate, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Invert, 1);
+OP_TUPLE_LIKE_CONFORMANCE(Deg2Rad, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Min, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Max, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Clamp, 3);
@@ -1381,7 +1311,9 @@ OP_TUPLE_LIKE_CONFORMANCE(Exp, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Abs, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Sign, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Progress, 3);
+OP_TUPLE_LIKE_CONFORMANCE(ProgressNoClamp, 3);
 OP_TUPLE_LIKE_CONFORMANCE(Random, 4);
+OP_TUPLE_LIKE_CONFORMANCE(CalcMix, 1);
 // FIXME (webkit.org/b/280798): make Anchor and AnchorSize tuple-like
 OP_TUPLE_LIKE_CONFORMANCE(Anchor, 0);
 OP_TUPLE_LIKE_CONFORMANCE(AnchorSize, 0);

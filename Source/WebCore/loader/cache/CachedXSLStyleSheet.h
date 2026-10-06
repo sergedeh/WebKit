@@ -38,7 +38,7 @@ public:
     CachedXSLStyleSheet(CachedResourceRequest&&, PAL::SessionID, const CookieJar*);
     virtual ~CachedXSLStyleSheet();
 
-    const String& sheet() const { return m_sheet; }
+    const String& sheet() const LIFETIME_BOUND { return m_sheet; }
 
 private:
     void checkNotify(const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess = LoadWillContinueInAnotherProcess::No) final;
@@ -47,11 +47,10 @@ private:
     void setEncoding(const String&) final;
     ASCIILiteral encoding() const final;
     const TextResourceDecoder* textResourceDecoder() const final { return m_decoder.get(); }
-    RefPtr<TextResourceDecoder> protectedDecoder() const;
     void finishLoading(const FragmentedSharedBuffer*, const NetworkLoadMetrics&) final;
 
     String m_sheet;
-    RefPtr<TextResourceDecoder> m_decoder;
+    const RefPtr<TextResourceDecoder> m_decoder;
 };
 
 } // namespace WebCore

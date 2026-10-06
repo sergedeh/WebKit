@@ -40,8 +40,8 @@ public:
     JS_EXPORT_PRIVATE TypedArrayController();
     JS_EXPORT_PRIVATE virtual ~TypedArrayController();
     
-    virtual JSArrayBuffer* toJS(JSGlobalObject*, JSGlobalObject*, ArrayBuffer*) = 0;
-    virtual void registerWrapper(JSGlobalObject*, ArrayBuffer*, JSArrayBuffer*) = 0;
+    virtual JSArrayBuffer* toJS(JSGlobalObject*, JSGlobalObject*, ArrayBuffer&) = 0;
+    virtual void registerWrapper(JSGlobalObject*, ArrayBuffer&, JSArrayBuffer&) = 0;
     virtual bool isAtomicsWaitAllowedOnCurrentThread() = 0;
 
     virtual bool isWebCoreTypedArrayController() const { return false; }

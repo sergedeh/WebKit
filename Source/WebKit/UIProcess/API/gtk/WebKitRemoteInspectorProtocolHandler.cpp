@@ -48,14 +48,14 @@ public:
     {
     }
 
-    void didPostMessage(WebPageProxy& page, FrameInfoData&&, API::ContentWorld&, JavaScriptEvaluationResult&& jsMessage, CompletionHandler<void(Expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler) override
+    void didPostMessage(WebPageProxy& page, FrameInfoData&&, API::ContentWorld&, JavaScriptEvaluationResult&& jsMessage, CompletionHandler<void(std::expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler) override
     {
         String message = jsMessage.toString();
         Vector<String> tokens = message.split(':');
         if (tokens.size() != 3)
             return completionHandler(makeUnexpected(String()));
 
-        URL requestURL = URL({ }, page.pageLoadState().url());
+        URL requestURL = page.pageLoadState().url();
         m_inspectorProtocolHandler.inspect(requestURL.hostAndPort(), parseIntegerAllowingTrailingJunk<uint64_t>(tokens[0]).value_or(0), parseIntegerAllowingTrailingJunk<uint64_t>(tokens[1]).value_or(0), tokens[2]);
         return completionHandler(makeUnexpected(String()));
     }
@@ -135,10 +135,10 @@ void RemoteInspectorProtocolHandler::handleRequest(WebKitURISchemeRequest* reque
     }).iterator->value.get();
     webViewResult.iterator->value = client;
 
-    auto* html = client->buildTargetListPage(RemoteInspectorClient::InspectorType::UI);
-    gsize streamLength = html->len;
-    GRefPtr<GInputStream> stream = adoptGRef(g_memory_input_stream_new_from_data(g_string_free(html, FALSE), streamLength, g_free));
-    webkit_uri_scheme_request_finish(request, stream.get(), streamLength, "text/html");
+    auto html = client->buildTargetListPage(RemoteInspectorClient::InspectorType::UI).toString().utf8();
+    GRefPtr bytes = adoptGRef(g_bytes_new(html.span().data(), html.length()));
+    GRefPtr stream = adoptGRef(g_memory_input_stream_new_from_bytes(bytes.get()));
+    webkit_uri_scheme_request_finish(request, stream.get(), html.length(), "text/html");
 }
 
 void RemoteInspectorProtocolHandler::inspect(const String& hostAndPort, uint64_t connectionID, uint64_t tatgetID, const String& targetType)
@@ -153,13 +153,12 @@ void RemoteInspectorProtocolHandler::updateTargetList(WebKitWebView* webView)
     if (!clientForWebView)
         return;
 
-    GString* script = g_string_new("document.getElementById('targetlist').innerHTML='");
-    clientForWebView->appendTargertList(script, RemoteInspectorClient::InspectorType::UI, RemoteInspectorClient::ShouldEscapeSingleQuote::Yes);
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK port
-    g_string_append(script, "';");
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    webkit_web_view_evaluate_javascript(webView, script->str, script->len, nullptr, nullptr, nullptr, nullptr, nullptr);
-    g_string_free(script, TRUE);
+    StringBuilder scriptBuilder;
+    scriptBuilder.append("document.getElementById('targetlist').innerHTML='"_s);
+    clientForWebView->appendTargetList(scriptBuilder, RemoteInspectorClient::InspectorType::UI, RemoteInspectorClient::ShouldEscapeSingleQuote::Yes);
+    scriptBuilder.append("';"_s);
+    auto script = scriptBuilder.toString().utf8();
+    webkit_web_view_evaluate_javascript(webView, script.legacyCStringPointer(), script.length(), nullptr, nullptr, nullptr, nullptr, nullptr);
 }
 
 void RemoteInspectorProtocolHandler::webViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent event, RemoteInspectorProtocolHandler* handler)

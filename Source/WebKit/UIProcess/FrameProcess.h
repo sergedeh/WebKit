@@ -26,6 +26,7 @@
 #pragma once
 
 #include <WebCore/Site.h>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
@@ -43,12 +44,18 @@ class FrameProcess : public RefCountedAndCanMakeWeakPtr<FrameProcess> {
 public:
     ~FrameProcess();
 
-    const std::optional<WebCore::Site>& site() const { return m_site; }
+    const std::optional<WebCore::Site>& site() const LIFETIME_BOUND { return m_site; }
     const WebProcessProxy& process() const { return m_process.get(); }
     WebProcessProxy& process() { return m_process.get(); }
     bool isSharedProcess() const { return !m_site; }
-    const WebCore::Site& sharedProcessMainFrameSite() const { ASSERT(!m_site); return m_mainFrameSite; }
+    const WebCore::Site& sharedProcessMainFrameSite() const LIFETIME_BOUND { ASSERT(!m_site); return m_mainFrameSite; }
     bool isArchiveProcess() const { return m_isArchiveProcess; }
+
+    BrowsingContextGroup* NODELETE browsingContextGroup() const;
+
+    void incrementFrameCount() { m_frameCount++; }
+    void decrementFrameCount() { m_frameCount--; }
+    unsigned frameCount() const { return m_frameCount; }
 
 private:
     friend class BrowsingContextGroup; // FrameProcess should not be created except by BrowsingContextGroup.
@@ -64,6 +71,7 @@ private:
     const std::optional<WebCore::Site> m_site;
     const WebCore::Site m_mainFrameSite;
     bool m_isArchiveProcess;
+    Checked<unsigned> m_frameCount { 0 };
 };
 
 }

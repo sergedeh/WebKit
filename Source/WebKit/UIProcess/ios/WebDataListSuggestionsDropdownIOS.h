@@ -31,6 +31,7 @@
 #import <pal/spi/ios/BrowserEngineKitSPI.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/Vector.h>
+#import <wtf/WeakObjCPtr.h>
 
 OBJC_CLASS WKContentView;
 
@@ -60,11 +61,11 @@ public:
 private:
     WebDataListSuggestionsDropdownIOS(WebPageProxy&, WKContentView *);
 
-    void show(WebCore::DataListSuggestionInformation&&) final;
+    void platformShow(WebCore::DataListSuggestionInformation&&) final;
     void handleKeydownWithIdentifier(const String&) final;
     void close() final;
 
-    WKContentView *m_contentView;
+    WeakObjCPtr<WKContentView> m_contentView;
     RetainPtr<WKDataListSuggestionsControl> m_suggestionsControl;
 };
 

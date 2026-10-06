@@ -28,6 +28,8 @@
 #if USE(CORE_IMAGE)
 
 #import "FilterEffectApplier.h"
+#import "FloatRect.h"
+#import <CoreImage/CIImage.h>
 #import <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -41,7 +43,7 @@ class FECompositeCoreImageApplier final : public FilterEffectConcreteApplier<FEC
 public:
     FECompositeCoreImageApplier(const FEComposite&);
 
-    static bool supportsCoreImageRendering(const FEComposite&);
+    static bool NODELETE supportsCoreImageRendering(const FEComposite&);
 
 private:
     bool apply(const Filter&, std::span<const Ref<FilterImage>>, FilterImage&) const final;

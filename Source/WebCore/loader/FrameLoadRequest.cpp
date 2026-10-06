@@ -50,7 +50,7 @@ FrameLoadRequest::FrameLoadRequest(Ref<Document>&& requester, SecurityOrigin& re
 
 FrameLoadRequest::FrameLoadRequest(LocalFrame& frame, ResourceRequest&& resourceRequest, SubstituteData&& substituteData)
     : m_requester { *frame.document() }
-    , m_requesterSecurityOrigin { frame.document()->securityOrigin() }
+    , m_requesterSecurityOrigin { protect(frame.document())->securityOrigin() }
     , m_resourceRequest { WTF::move(resourceRequest) }
     , m_substituteData { WTF::move(substituteData) }
 {
@@ -63,24 +63,14 @@ FrameLoadRequest& FrameLoadRequest::operator=(const FrameLoadRequest&) = default
 FrameLoadRequest::FrameLoadRequest(FrameLoadRequest&&) = default;
 FrameLoadRequest& FrameLoadRequest::operator=(FrameLoadRequest&&) = default;
 
-Document& FrameLoadRequest::requester()
+Document& FrameLoadRequest::requester() const
 {
     return m_requester.get();
-}
-
-Ref<Document> FrameLoadRequest::protectedRequester() const
-{
-    return m_requester;
 }
 
 const SecurityOrigin& FrameLoadRequest::requesterSecurityOrigin() const
 {
     return m_requesterSecurityOrigin.get();
-}
-
-Ref<SecurityOrigin> FrameLoadRequest::protectedRequesterSecurityOrigin() const
-{
-    return m_requesterSecurityOrigin;
 }
 
 } // namespace WebCore

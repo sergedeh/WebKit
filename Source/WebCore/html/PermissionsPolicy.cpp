@@ -91,6 +91,12 @@ static ASCIILiteral toFeatureNameForLogging(PermissionsPolicy::Feature feature)
         return "PrivateToken"_s;
     case PermissionsPolicy::Feature::StorageAccess:
         return "StorageAccess"_s;
+    case PermissionsPolicy::Feature::LocalNetwork:
+        return "LocalNetwork"_s;
+    case PermissionsPolicy::Feature::LoopbackNetwork:
+        return "LoopbackNetwork"_s;
+    case PermissionsPolicy::Feature::CrossOriginIsolated:
+        return "CrossOriginIsolated"_s;
     case PermissionsPolicy::Feature::Invalid:
         return "Invalid"_s;
     }
@@ -131,6 +137,9 @@ static std::pair<PermissionsPolicy::Feature, StringView> readFeatureIdentifier(S
 #endif
     constexpr auto privateTokenToken { "private-token"_s };
     constexpr auto storageAccessToken { "storage-access"_s };
+    constexpr auto localNetworkToken { "local-network"_s };
+    constexpr auto loopbackNetworkToken { "loopback-network"_s };
+    constexpr auto crossOriginIsolatedToken { "cross-origin-isolated"_s };
 
     if (value.startsWith(cameraToken)) {
         feature = PermissionsPolicy::Feature::Camera;
@@ -195,6 +204,15 @@ static std::pair<PermissionsPolicy::Feature, StringView> readFeatureIdentifier(S
     } else if (value.startsWith(storageAccessToken)) {
         feature = PermissionsPolicy::Feature::StorageAccess;
         remainingValue = value.substring(storageAccessToken.length());
+    } else if (value.startsWith(loopbackNetworkToken)) {
+        feature = PermissionsPolicy::Feature::LoopbackNetwork;
+        remainingValue = value.substring(loopbackNetworkToken.length());
+    } else if (value.startsWith(localNetworkToken)) {
+        feature = PermissionsPolicy::Feature::LocalNetwork;
+        remainingValue = value.substring(localNetworkToken.length());
+    } else if (value.startsWith(crossOriginIsolatedToken)) {
+        feature = PermissionsPolicy::Feature::CrossOriginIsolated;
+        remainingValue = value.substring(crossOriginIsolatedToken.length());
     }
 
     // FIXME: webkit.org/b/274159.
@@ -235,6 +253,9 @@ static ASCIILiteral defaultAllowlistValue(PermissionsPolicy::Feature feature)
     case PermissionsPolicy::Feature::XRSpatialTracking:
 #endif
     case PermissionsPolicy::Feature::PrivateToken:
+    case PermissionsPolicy::Feature::LocalNetwork:
+    case PermissionsPolicy::Feature::LoopbackNetwork:
+    case PermissionsPolicy::Feature::CrossOriginIsolated:
         return "'self'"_s;
     case PermissionsPolicy::Feature::Invalid:
         return "'none'"_s;
@@ -293,7 +314,7 @@ static Ref<SecurityOrigin> declaredOrigin(const HTMLIFrameElement& iframe)
         return document->securityOrigin();
 
     if (iframe.hasAttributeWithoutSynchronization(srcAttr)) {
-        auto url = document->completeURL(iframe.getAttribute(srcAttr));
+        auto url = document->encodingParseURL(iframe.getAttribute(srcAttr));
         if (url.isValid()) {
             if (url.protocolIsInHTTPFamily())
                 return SecurityOrigin::create(url);
@@ -371,7 +392,7 @@ static PermissionsPolicy::PolicyDirective parsePolicyDirective(StringView value,
 PermissionsPolicy::PolicyDirective PermissionsPolicy::processPermissionsPolicyAttribute(const HTMLIFrameElement& iframe)
 {
     auto allowAttributeValue = iframe.attributeWithoutSynchronization(allowAttr);
-    auto policyDirective = parsePolicyDirective(allowAttributeValue, iframe.protectedDocument()->securityOrigin().data(), declaredOrigin(iframe)->data());
+    auto policyDirective = parsePolicyDirective(allowAttributeValue, protect(iframe.document())->securityOrigin().data(), declaredOrigin(iframe)->data());
 
     if (iframe.hasAttributeWithoutSynchronization(allowfullscreenAttr) || iframe.hasAttributeWithoutSynchronization(webkitallowfullscreenAttr))
         policyDirective.add(Feature::Fullscreen, Allowlist::AllowAllOrigins { });
@@ -380,7 +401,7 @@ PermissionsPolicy::PolicyDirective PermissionsPolicy::processPermissionsPolicyAt
 }
 
 // https://w3c.github.io/webappsec-permissions-policy/#algo-get-feature-value-for-origin
-static bool featureValueForOrigin(PermissionsPolicy::Feature feature, const PermissionsPolicy& documentPermissionsPolicy, const SecurityOriginData&)
+static bool NODELETE featureValueForOrigin(PermissionsPolicy::Feature feature, const PermissionsPolicy& documentPermissionsPolicy, const SecurityOriginData&)
 {
     // Declared policy is not implemented yet, so origin is unused.
     return documentPermissionsPolicy.inheritedPolicyValueForFeature(feature);

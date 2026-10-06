@@ -95,7 +95,7 @@ ExceptionOr<void> DedicatedWorkerGlobalScope::postMessage(JSC::JSGlobalObject& s
 {
     Vector<Ref<MessagePort>> ports;
 
-    auto message = SerializedScriptValue::create(state, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    auto message = SerializedScriptValue::create(state, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No);
     if (message.hasException())
         return message.releaseException();
 
@@ -107,6 +107,11 @@ ExceptionOr<void> DedicatedWorkerGlobalScope::postMessage(JSC::JSGlobalObject& s
     if (CheckedPtr workerObjectProxy = thread()->workerObjectProxy())
         workerObjectProxy->postMessageToWorkerObject({ message.releaseReturnValue(), channels.releaseReturnValue() });
     return { };
+}
+
+ExceptionOr<void> DedicatedWorkerGlobalScope::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer)
+{
+    return postMessage(globalObject, messageValue, StructuredSerializeOptions { WTF::move(transfer) });
 }
 
 Ref<DedicatedWorkerThread> DedicatedWorkerGlobalScope::thread()

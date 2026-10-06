@@ -3661,7 +3661,6 @@ const VarianceParams kArrayVariance_neon_dotprod[] = {
   VarianceParams(3, 3, &aom_variance8x8_neon_dotprod),
   VarianceParams(3, 2, &aom_variance8x4_neon_dotprod),
   VarianceParams(2, 3, &aom_variance4x8_neon_dotprod),
-  VarianceParams(2, 2, &aom_variance4x4_neon_dotprod),
 #if !CONFIG_REALTIME_ONLY
   VarianceParams(2, 4, &aom_variance4x16_neon_dotprod),
   VarianceParams(4, 2, &aom_variance16x4_neon_dotprod),
@@ -3674,6 +3673,35 @@ const VarianceParams kArrayVariance_neon_dotprod[] = {
 
 INSTANTIATE_TEST_SUITE_P(NEON_DOTPROD, AvxVarianceTest,
                          ::testing::ValuesIn(kArrayVariance_neon_dotprod));
+
+const SubpelVarianceParams kArraySubpelVariance_neon_dotprod[] = {
+  SubpelVarianceParams(7, 7, &aom_sub_pixel_variance128x128_neon_dotprod, 0),
+  SubpelVarianceParams(7, 6, &aom_sub_pixel_variance128x64_neon_dotprod, 0),
+  SubpelVarianceParams(6, 7, &aom_sub_pixel_variance64x128_neon_dotprod, 0),
+  SubpelVarianceParams(6, 6, &aom_sub_pixel_variance64x64_neon_dotprod, 0),
+  SubpelVarianceParams(6, 5, &aom_sub_pixel_variance64x32_neon_dotprod, 0),
+  SubpelVarianceParams(5, 6, &aom_sub_pixel_variance32x64_neon_dotprod, 0),
+  SubpelVarianceParams(5, 5, &aom_sub_pixel_variance32x32_neon_dotprod, 0),
+  SubpelVarianceParams(5, 4, &aom_sub_pixel_variance32x16_neon_dotprod, 0),
+  SubpelVarianceParams(4, 5, &aom_sub_pixel_variance16x32_neon_dotprod, 0),
+  SubpelVarianceParams(4, 4, &aom_sub_pixel_variance16x16_neon_dotprod, 0),
+  SubpelVarianceParams(4, 3, &aom_sub_pixel_variance16x8_neon_dotprod, 0),
+  SubpelVarianceParams(3, 4, &aom_sub_pixel_variance8x16_neon_dotprod, 0),
+  SubpelVarianceParams(3, 3, &aom_sub_pixel_variance8x8_neon_dotprod, 0),
+  SubpelVarianceParams(3, 2, &aom_sub_pixel_variance8x4_neon_dotprod, 0),
+  SubpelVarianceParams(2, 3, &aom_sub_pixel_variance4x8_neon_dotprod, 0),
+#if !CONFIG_REALTIME_ONLY
+  SubpelVarianceParams(6, 4, &aom_sub_pixel_variance64x16_neon_dotprod, 0),
+  SubpelVarianceParams(4, 6, &aom_sub_pixel_variance16x64_neon_dotprod, 0),
+  SubpelVarianceParams(5, 3, &aom_sub_pixel_variance32x8_neon_dotprod, 0),
+  SubpelVarianceParams(3, 5, &aom_sub_pixel_variance8x32_neon_dotprod, 0),
+  SubpelVarianceParams(4, 2, &aom_sub_pixel_variance16x4_neon_dotprod, 0),
+  SubpelVarianceParams(2, 4, &aom_sub_pixel_variance4x16_neon_dotprod, 0),
+#endif
+};
+INSTANTIATE_TEST_SUITE_P(
+    NEON_DOTPROD, AvxSubpelVarianceTest,
+    ::testing::ValuesIn(kArraySubpelVariance_neon_dotprod));
 
 const GetSseSumParams kArrayGetSseSum8x8Quad_neon_dotprod[] = {
   GetSseSumParams(7, 7, &aom_get_var_sse_sum_8x8_quad_neon_dotprod, 0),
@@ -3783,5 +3811,90 @@ INSTANTIATE_TEST_SUITE_P(SVE, AvxHBDVarianceTest,
 
 #endif  // CONFIG_AV1_HIGHBITDEPTH
 #endif  // HAVE_SVE
+
+#if HAVE_AVX2
+using CalcVarianceStatFunc = int64_t (*)(const uint8_t *src, int stride, int bw,
+                                         int bh);
+
+class CalcVarianceStatTest
+    : public ::testing::TestWithParam<CalcVarianceStatFunc> {
+ protected:
+  void SetUp() override {
+    target_func_ = GetParam();
+    rnd_.Reset(ACMRandom::DeterministicSeed());
+  }
+
+  CalcVarianceStatFunc target_func_;
+  ACMRandom rnd_;
+};
+
+TEST_P(CalcVarianceStatTest, CompareWithC) {
+  static const int kSizes[] = { 4, 8, 16, 32, 64, 128 };
+  DECLARE_ALIGNED(32, uint8_t, src[128 * 128]);
+
+  for (int w : kSizes) {
+    for (int h : kSizes) {
+      SCOPED_TRACE(::testing::Message() << "bw=" << w << " bh=" << h);
+      int stride = 128;
+      for (int iter = 0; iter < 500; ++iter) {
+        for (int r = 0; r < h; ++r) {
+          for (int c = 0; c < w; ++c) {
+            src[r * stride + c] = rnd_.Rand8();
+          }
+        }
+        int64_t res_c = aom_calc_variance_stat_c(src, stride, w, h);
+        int64_t res_target = target_func_(src, stride, w, h);
+        EXPECT_EQ(res_c, res_target) << "iter=" << iter;
+      }
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(AVX2, CalcVarianceStatTest,
+                         ::testing::Values(&aom_calc_variance_stat_avx2));
+
+#if CONFIG_AV1_HIGHBITDEPTH
+using CalcVarianceStatHbdFunc = int64_t (*)(const uint16_t *src, int stride,
+                                            int bw, int bh);
+
+class CalcVarianceStatHbdTest
+    : public ::testing::TestWithParam<CalcVarianceStatHbdFunc> {
+ protected:
+  void SetUp() override {
+    target_func_ = GetParam();
+    rnd_.Reset(ACMRandom::DeterministicSeed());
+  }
+
+  CalcVarianceStatHbdFunc target_func_;
+  ACMRandom rnd_;
+};
+
+TEST_P(CalcVarianceStatHbdTest, CompareWithC) {
+  static const int kSizes[] = { 4, 8, 16, 32, 64, 128 };
+  DECLARE_ALIGNED(32, uint16_t, src[128 * 128]);
+
+  for (int w : kSizes) {
+    for (int h : kSizes) {
+      SCOPED_TRACE(::testing::Message() << "bw=" << w << " bh=" << h);
+      int stride = 128;
+      for (int iter = 0; iter < 500; ++iter) {
+        for (int r = 0; r < h; ++r) {
+          for (int c = 0; c < w; ++c) {
+            src[r * stride + c] = rnd_.Rand16() & 0xfff;  // 12-bit
+          }
+        }
+        int64_t res_c = aom_highbd_calc_variance_stat_c(src, stride, w, h);
+        int64_t res_target = target_func_(src, stride, w, h);
+        EXPECT_EQ(res_c, res_target) << "iter=" << iter;
+      }
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AVX2, CalcVarianceStatHbdTest,
+    ::testing::Values(&aom_highbd_calc_variance_stat_avx2));
+#endif  // CONFIG_AV1_HIGHBITDEPTH
+#endif  // HAVE_AVX2
 
 }  // namespace

@@ -25,15 +25,13 @@
 #include "config.h"
 #include "StyleTextUnderlineOffset.h"
 
-#include "AnimationUtilities.h"
-#include "RenderStyle+GettersInlines.h"
-#include "StyleBuilderState.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 
 namespace WebCore {
 namespace Style {
 
-float TextUnderlineOffset::resolve(const RenderStyle& style, float autoValue) const
+float TextUnderlineOffset::resolve(const Style::ComputedStyle& style, float autoValue) const
 {
     return WTF::switchOn(*this,
         [&](const CSS::Keyword::Auto&) -> float {
@@ -43,32 +41,12 @@ float TextUnderlineOffset::resolve(const RenderStyle& style, float autoValue) co
             return Style::evaluate<float>(fixed, style.usedZoomForLength());
         },
         [&](const Calc& calc) -> float {
-            return Style::evaluate<float>(calc, style.computedFontSize(), style.usedZoomForLength());
+            return Style::evaluate<float>(calc, style.usedFontSize(), style.usedZoomForLength());
         },
         [&](const Percentage& percentage) -> float {
-            return Style::evaluate<float>(percentage, style.computedFontSize());
+            return Style::evaluate<float>(percentage, style.usedFontSize());
         }
     );
-}
-
-// MARK: - Blending
-
-auto Blending<TextUnderlineOffset>::canBlend(const TextUnderlineOffset& a, const TextUnderlineOffset& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
-{
-    if (a.isAuto() || b.isAuto())
-        return false;
-
-    return a.resolve(aStyle) != b.resolve(bStyle);
-}
-
-auto Blending<TextUnderlineOffset>::blend(const TextUnderlineOffset& a, const TextUnderlineOffset& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> TextUnderlineOffset
-{
-    if (context.isDiscrete) {
-        ASSERT(!context.progress || context.progress == 1.0);
-        return context.progress ? b : a;
-    }
-
-    return TextUnderlineOffset { TextUnderlineOffset::Fixed { WebCore::blend(a.resolve(aStyle), b.resolve(bStyle), context) } };
 }
 
 } // namespace Style

@@ -33,6 +33,7 @@
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/DOMWrapperWorld.h>
+#include <WebCore/DiagnosticLoggingClient.h>
 #include <WebCore/ExceptionDetails.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/InspectorFrontendHost.h>
@@ -55,7 +56,7 @@ Ref<WebInspectorUI> WebInspectorUI::create(WebPage& page)
 
 WebInspectorUI::WebInspectorUI(WebPage& page)
     : m_page(page)
-    , m_frontendAPIDispatcher(InspectorFrontendAPIDispatcher::create(*page.protectedCorePage()))
+    , m_frontendAPIDispatcher(InspectorFrontendAPIDispatcher::create(*protect(page.corePage())))
     , m_debuggableInfo(DebuggableInfoData::empty())
 {
 }
@@ -76,7 +77,7 @@ void WebInspectorUI::establishConnection(WebPageProxyIdentifier inspectedPageIde
 
     m_frontendAPIDispatcher->reset();
     m_frontendController = m_page->corePage()->inspectorController();
-    Ref { *m_frontendController }->setInspectorFrontendClient(this);
+    m_frontendController->setInspectorFrontendClient(this);
 
     updateConnection();
 
@@ -107,7 +108,7 @@ void WebInspectorUI::windowObjectCleared()
     if (frontendHost)
         frontendHost->disconnectClient();
 
-    frontendHost = InspectorFrontendHost::create(this, RefPtr { m_page.get() }->protectedCorePage().get());
+    frontendHost = InspectorFrontendHost::create(this, protect(RefPtr { m_page.get() }->corePage()).get());
     m_frontendHost = frontendHost.copyRef();
     frontendHost->addSelfToGlobalObjectInWorld(mainThreadNormalWorldSingleton());
 }
@@ -151,7 +152,7 @@ void WebInspectorUI::closeWindow()
     if (RefPtr backendConnection = std::exchange(m_backendConnection, nullptr))
         backendConnection->invalidate();
 
-    if (RefPtr frontendController = std::exchange(m_frontendController, nullptr).get())
+    if (auto* frontendController = std::exchange(m_frontendController, nullptr).get())
         frontendController->setInspectorFrontendClient(nullptr);
 
     if (RefPtr frontendHost = m_frontendHost)
@@ -337,13 +338,13 @@ double WebInspectorUI::pageZoomFactor() const
 #if ENABLE(INSPECTOR_TELEMETRY)
 bool WebInspectorUI::supportsDiagnosticLogging()
 {
-    RefPtr page = m_page.get();
+    auto* page = &m_page.get();
     return page && page->corePage()->settings().diagnosticLoggingEnabled();
 }
 
 void WebInspectorUI::logDiagnosticEvent(const String& eventName, const DiagnosticLoggingClient::ValueDictionary& dictionary)
 {
-    RefPtr { m_page.get() }->protectedCorePage()->checkedDiagnosticLoggingClient()->logDiagnosticMessageWithValueDictionary(eventName, "Web Inspector Frontend Diagnostics"_s, dictionary, ShouldSample::No);
+    protect(protect(RefPtr { m_page.get() }->corePage())->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary(eventName, "Web Inspector Frontend Diagnostics"_s, dictionary, ShouldSample::No);
 }
 
 void WebInspectorUI::setDiagnosticLoggingAvailable(bool available)
@@ -355,6 +356,11 @@ void WebInspectorUI::setDiagnosticLoggingAvailable(bool available)
     m_frontendAPIDispatcher->dispatchCommandWithResultAsync("setDiagnosticLoggingAvailable"_s, { JSON::Value::create(m_diagnosticLoggingAvailable) });
 }
 #endif // ENABLE(INSPECTOR_TELEMETRY)
+
+void WebInspectorUI::systemAppearanceDidChange()
+{
+    m_frontendAPIDispatcher->dispatchCommandWithResultAsync("systemAppearanceDidChange"_s);
+}
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
 bool WebInspectorUI::supportsWebExtensions()

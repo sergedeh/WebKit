@@ -24,6 +24,7 @@
 #include "NowPlayingManager.h"
 #include "PlatformMediaSessionManager.h"
 #include <wtf/TZoneMalloc.h>
+#include <wtf/TypeCasts.h>
 #include <wtf/glib/GRefPtr.h>
 
 namespace WebCore {
@@ -63,6 +64,8 @@ public:
     void setDBusNotificationsEnabled(bool dbusNotificationsEnabled) { m_dbusNotificationsEnabled = dbusNotificationsEnabled; }
     bool areDBusNotificationsEnabled() const { return m_dbusNotificationsEnabled; }
 
+    bool isMediaSessionManagerGLib() const final { return true; }
+
 protected:
     MediaSessionManagerGLib(GRefPtr<GDBusNodeInfo>&&, PageIdentifier);
 
@@ -73,7 +76,7 @@ protected:
     void addSession(PlatformMediaSessionInterface&) final;
     void setCurrentSession(PlatformMediaSessionInterface&) final;
 
-    void sessionWillBeginPlayback(PlatformMediaSessionInterface&, CompletionHandler<void(bool)>&&) override;
+    void sessionDidCompleteAdmission(PlatformMediaSessionInterface&) override;
     void sessionWillEndPlayback(PlatformMediaSessionInterface&, DelayCallingUpdateNowPlaying) override;
     void sessionStateChanged(PlatformMediaSessionInterface&) override;
     void sessionDidEndRemoteScrubbing(PlatformMediaSessionInterface&) final;
@@ -87,6 +90,7 @@ protected:
     RemoteCommandListener::RemoteCommandsSet supportedCommands() const final;
 
     void resetHaveEverRegisteredAsNowPlayingApplicationForTesting() final { m_haveEverRegisteredAsNowPlayingApplication = false; };
+    void resetToConsistentStateForTesting() final;
 
 private:
 #if !RELEASE_LOG_DISABLED
@@ -116,5 +120,9 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::MediaSessionManagerGLib)
+static bool isType(const WebCore::MediaSessionManagerInterface& manager) { return manager.isMediaSessionManagerGLib(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // USE(GLIB) && ENABLE(MEDIA_SESSION)

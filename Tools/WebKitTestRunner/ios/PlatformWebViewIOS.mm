@@ -58,17 +58,15 @@ static Vector<WebKitTestRunnerWindow *> allWindows;
 @implementation WebKitTestRunnerWindow
 @synthesize platformWebView = _platformWebView;
 
-ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
-- (id)initWithFrame:(CGRect)frame
+- (instancetype)initWithWindowScene:(UIWindowScene *)windowScene
 {
     allWindows.append(self);
 
-    if ((self = [super initWithFrame:frame]))
+    if ((self = [super initWithWindowScene:windowScene]))
         _initialized = YES;
 
     return self;
 }
-ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)becomeKeyWindow
 {
@@ -209,9 +207,21 @@ static CGRect viewRectForWindowRect(CGRect, PlatformWebView::WebViewSizingMode);
 
 namespace WTR {
 
+static UIWindowScene *windowScene()
+{
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if ([scene isKindOfClass:UIWindowScene.class])
+            return (UIWindowScene *)scene;
+    }
+
+    return nil;
+}
+
 static CGRect viewRectForWindowRect(CGRect windowRect, PlatformWebView::WebViewSizingMode mode)
 {
-    CGFloat statusBarBottom = CGRectGetMaxY([[UIApplication sharedApplication] statusBarFrame]);
+    CGFloat statusBarBottom = 0;
+    if (auto *scene = windowScene())
+        statusBarBottom = CGRectGetMaxY(scene.statusBarManager.statusBarFrame);
     return CGRectMake(windowRect.origin.x, windowRect.origin.y + statusBarBottom, windowRect.size.width, windowRect.size.height - (mode == PlatformWebView::WebViewSizingMode::HeightRespectsStatusBar ? statusBarBottom : 0));
 }
 
@@ -221,7 +231,8 @@ PlatformWebView::PlatformWebView(WKPageConfigurationRef configuration, const Tes
 {
     CGRect rect = CGRectMake(0, 0, options.viewWidth(), options.viewHeight());
 
-    m_window = [[WebKitTestRunnerWindow alloc] initWithFrame:rect];
+    m_window = [[WebKitTestRunnerWindow alloc] initWithWindowScene:windowScene()];
+    m_window.frame = rect;
     m_window.backgroundColor = [UIColor lightGrayColor];
     m_window.platformWebView = this;
 
@@ -248,9 +259,9 @@ PlatformWindow PlatformWebView::keyWindow()
 {
     size_t i = allWindows.size();
     while (i) {
+        --i;
         if ([allWindows[i] isKeyWindow])
             return allWindows[i];
-        --i;
     }
 
     return nil;

@@ -53,7 +53,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGAnimationElement);
 
 SVGAnimationElement::SVGAnimationElement(const QualifiedName& tagName, Document& document)
-    : SVGSMILElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGSMILElement(tagName, document, PropertyRegistry::singleton())
     , SVGTests(this)
 {
 }
@@ -79,7 +79,7 @@ static Vector<float> parseKeyTimes(StringView value, bool verifyOrder)
     }
 
     if (verifyOrder && !result.isEmpty() && !result.last()) {
-        ASSERT(!std::accumulate(result.begin(), result.end(), 0));
+        ASSERT(!std::accumulate(result.begin(), result.end(), 0.0f));
         return { };
     }
 
@@ -150,11 +150,11 @@ bool SVGAnimationElement::isSupportedAttribute(const QualifiedName& attrName)
 bool SVGAnimationElement::attributeContainsJavaScriptURL(const Attribute& attribute) const
 {
     if (attribute.name() == SVGNames::fromAttr || attribute.name() == SVGNames::toAttr)
-        return WTF::protocolIsJavaScript(attribute.value());
+        return WTF::isValidJavaScriptURL(attribute.value());
 
     if (attribute.name() == SVGNames::valuesAttr) {
         for (auto innerValue : StringView(attribute.value()).split(';')) {
-            if (WTF::protocolIsJavaScript(innerValue))
+            if (WTF::isValidJavaScriptURL(innerValue))
                 return true;
         }
         return false;
@@ -172,9 +172,13 @@ void SVGAnimationElement::attributeChanged(const QualifiedName& name, const Atom
         // and white space before and after semicolon separators, is allowed and will be ignored.
         // http://www.w3.org/TR/SVG11/animate.html#ValuesAttribute
         m_values.clear();
-        newValue.string().split(';', [this](StringView innerValue) {
+        newValue.string().splitAllowingEmptyEntries(';', [this](StringView innerValue) {
             m_values.append(innerValue.trim(isASCIIWhitespace<char16_t>).toString());
         });
+        // Per the SMIL specification, if the last semicolon separator is followed by
+        // just white space or no more characters, ignore the trailing empty value.
+        if (!m_values.isEmpty() && m_values.last().isEmpty())
+            m_values.removeLast();
         updateAnimationMode();
         break;
     case AttributeNames::keyTimesAttr:
@@ -381,7 +385,7 @@ void SVGAnimationElement::calculateKeyTimesForCalcModePaced()
     m_keyTimesForPaced = WTF::move(keyTimesForPaced);
 }
 
-static inline double solveEpsilon(double duration) { return 1 / (200 * duration); }
+static inline double NODELETE solveEpsilon(double duration) { return 1 / (200 * duration); }
 
 const Vector<float>& SVGAnimationElement::keyTimes() const
 {
@@ -548,7 +552,8 @@ void SVGAnimationElement::startedActiveInterval()
         if (!splinesCount
             || (hasAttributeWithoutSynchronization(SVGNames::keyPointsAttr) && m_keyPoints.size() - 1 != splinesCount)
             || (animationMode == AnimationMode::Values && m_values.size() - 1 != splinesCount)
-            || (hasAttributeWithoutSynchronization(SVGNames::keyTimesAttr) && keyTimes.size() - 1 != splinesCount))
+            || (hasAttributeWithoutSynchronization(SVGNames::keyTimesAttr) && keyTimes.size() - 1 != splinesCount)
+            || (!keyTimes.isEmpty() && keyTimes.last() != 1))
             return;
     }
 
@@ -585,7 +590,7 @@ void SVGAnimationElement::startedActiveInterval()
 }
 
 void SVGAnimationElement::updateAnimation(float percent, unsigned repeatCount)
-{    
+{
     if (!m_animationValid)
         return;
 

@@ -29,7 +29,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTableCaption);
 
-RenderTableCaption::RenderTableCaption(Element& element, RenderStyle&& style)
+RenderTableCaption::RenderTableCaption(Element& element, Style::ComputedStyle&& style)
     : RenderBlockFlow(Type::TableCaption, element, WTF::move(style))
 {
     ASSERT(isRenderTableCaption());
@@ -49,7 +49,7 @@ void RenderTableCaption::willBeRemovedFromTree()
     table()->removeCaption(*this);
 }
 
-RenderTable* RenderTableCaption::table() const
+RenderTable* NODELETE RenderTableCaption::table() const
 {
     return downcast<RenderTable>(parent());
 }

@@ -28,6 +28,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirCode.h"
 #include "CCallHelpers.h"
 #include "MacroAssemblerPrinter.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -43,8 +44,15 @@ PrintSpecial::PrintSpecial(Printer::PrintRecordList* list)
 
 PrintSpecial::~PrintSpecial() = default;
 
-void PrintSpecial::forEachArg(Inst&, const ScopedLambda<Inst::EachArgCallback>&)
+void PrintSpecial::forEachArg(Inst& inst, NOESCAPE const ScopedLambda<Inst::EachArgCallback>& callback)
 {
+    // The printed Tmps must be reported, or liveness ends their ranges before the print and the
+    // register allocator has nothing to hand generate().
+    for (unsigned i = numSpecialArgs; i < inst.args().size(); ++i) {
+        Bank bank = inst.args()[i].bank();
+        Width width = code().usesSIMD() ? conservativeWidth(bank) : conservativeWidthWithoutVectors(bank);
+        callback(inst.args()[i], Arg::Use, bank, width);
+    }
 }
 
 bool PrintSpecial::isValid(Inst&)
@@ -62,19 +70,22 @@ bool PrintSpecial::admitsExtendedOffsetAddr(Inst&, unsigned)
     return false;
 }
 
-void PrintSpecial::reportUsedRegisters(Inst&, const RegisterSetBuilder&)
+void PrintSpecial::reportUsedRegisters(Inst&, const RegisterSet&)
 {
 }
 
 MacroAssembler::Jump PrintSpecial::generate(Inst& inst, CCallHelpers& jit, GenerationContext&)
 {
-    size_t currentArg = 1; // Skip the PrintSpecial arg.
+    size_t currentArg = numSpecialArgs;
     for (auto& term : *m_printRecordList) {
         if (term.printer == Printer::printAirArg) {
-            const Arg& arg = inst.args[currentArg++];
+            const Arg& arg = inst.args()[currentArg++];
             switch (arg.kind()) {
             case Arg::Tmp:
-                term = Printer::Printer<MacroAssembler::RegisterID>(arg.gpr());
+                if (arg.isGP())
+                    term = Printer::Printer<MacroAssembler::RegisterID>(arg.gpr());
+                else
+                    term = Printer::Printer<MacroAssembler::FPRegisterID>(arg.fpr());
                 break;
             case Arg::Addr:
             case Arg::ExtendedOffsetAddr:
@@ -90,12 +101,12 @@ MacroAssembler::Jump PrintSpecial::generate(Inst& inst, CCallHelpers& jit, Gener
     return CCallHelpers::Jump();
 }
 
-RegisterSetBuilder PrintSpecial::extraEarlyClobberedRegs(Inst&)
+RegisterSet PrintSpecial::extraEarlyClobberedRegs(Inst&)
 {
     return { };
 }
 
-RegisterSetBuilder PrintSpecial::extraClobberedRegs(Inst&)
+RegisterSet PrintSpecial::extraClobberedRegs(Inst&)
 {
     return { };
 }

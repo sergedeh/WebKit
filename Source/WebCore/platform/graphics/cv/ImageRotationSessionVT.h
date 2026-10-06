@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,6 +36,8 @@ typedef struct __CVPixelBufferPool* CVPixelBufferPoolRef;
 namespace WebCore {
 
 class VideoFrame;
+class NativeImage;
+struct ImageOrientation;
 
 class ImageRotationSessionVT final {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ImageRotationSessionVT, WEBCORE_EXPORT);
@@ -56,14 +58,19 @@ public:
     ImageRotationSessionVT(const RotationProperties&, FloatSize, IsCGImageCompatible, ShouldUseIOSurface = ShouldUseIOSurface::Yes);
     WEBCORE_EXPORT explicit ImageRotationSessionVT(ShouldUseIOSurface = ShouldUseIOSurface::Yes);
 
-    const std::optional<AffineTransform>& transform() const { return m_transform; }
-    const RotationProperties& rotationProperties() const { return m_rotationProperties; }
-    const FloatSize& size() { return m_size; }
-    const FloatSize& rotatedSize() { return m_rotatedSize; }
+    const std::optional<AffineTransform>& transform() const LIFETIME_BOUND { return m_transform; }
+    const RotationProperties& rotationProperties() const LIFETIME_BOUND { return m_rotationProperties; }
+    const FloatSize& size() LIFETIME_BOUND { return m_size; }
+    const FloatSize& rotatedSize() LIFETIME_BOUND { return m_rotatedSize; }
 
     RetainPtr<CVPixelBufferRef> rotate(CVPixelBufferRef);
-    RefPtr<VideoFrame> applyRotation(VideoFrame&, IsCGImageCompatible = IsCGImageCompatible::No);
+
+    RetainPtr<CVPixelBufferRef> rotate(CVPixelBufferRef, const RotationProperties&, IsCGImageCompatible);
     WEBCORE_EXPORT RetainPtr<CVPixelBufferRef> rotate(VideoFrame&, const RotationProperties&, IsCGImageCompatible);
+    RetainPtr<CVPixelBufferRef> rotate(NativeImage&, const RotationProperties&, IsCGImageCompatible);
+
+    WEBCORE_EXPORT RefPtr<VideoFrame> applyRotation(VideoFrame&, IsCGImageCompatible = IsCGImageCompatible::No);
+    RefPtr<NativeImage> applyRotation(NativeImage&, ImageOrientation, IsCGImageCompatible = IsCGImageCompatible::No);
 
 private:
     void initialize(const RotationProperties&, FloatSize, IsCGImageCompatible);
@@ -79,4 +86,4 @@ private:
     bool m_shouldUseIOSurface { true };
 };
 
-}
+} // namespace WebCore

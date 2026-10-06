@@ -56,6 +56,7 @@
 #include <wtf/RefPtr.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include "FrameDestructionObserverInlines.h"
 
 #if ENABLE(WEB_RTC)
 #include "JSRTCPeerConnection.h"
@@ -81,7 +82,7 @@ CommandLineAPIHost::CommandLineAPIHost()
 
 static InstrumentingAgents* instrumentingAgentsForGlobalObject(JSC::JSGlobalObject& globalObject)
 {
-    auto* domGlobalObject = jsDynamicCast<JSDOMGlobalObject*>(&globalObject);
+    auto* domGlobalObject = dynamicDowncast<JSDOMGlobalObject>(&globalObject);
     if (!domGlobalObject)
         return nullptr;
 
@@ -91,7 +92,7 @@ static InstrumentingAgents* instrumentingAgentsForGlobalObject(JSC::JSGlobalObje
 
     if (executionContext->isDocument()) {
         if (RefPtr frame = downcast<Document>(executionContext)->frame())
-            return &frame->protectedInspectorController()->instrumentingAgents();
+            return &frame->inspectorController().instrumentingAgents();
     } else if (executionContext->isWorkerGlobalScope())
         return &downcast<WorkerGlobalScope>(executionContext)->inspectorController().instrumentingAgents();
 
@@ -164,7 +165,7 @@ CommandLineAPIHost::EventListenersRecord CommandLineAPIHost::getEventListeners(J
 #if ENABLE(WEB_RTC)
 void CommandLineAPIHost::gatherRTCLogs(JSGlobalObject& globalObject, RefPtr<RTCLogsCallback>&& callback)
 {
-    RefPtr document = dynamicDowncast<Document>(jsCast<JSDOMGlobalObject*>(&globalObject)->scriptExecutionContext());
+    RefPtr document = dynamicDowncast<Document>(downcast<JSDOMGlobalObject>(&globalObject)->scriptExecutionContext());
     if (!document)
         return;
 

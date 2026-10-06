@@ -48,13 +48,13 @@ public:
     bool multiThreaded() const final { return false; }
 
     // Note: CompletionTask should not hold a reference to the Plan otherwise there will be a reference cycle.
-    OSREntryPlan(VM&, Ref<Module>&&, Ref<Callee>&&, FunctionCodeIndex functionIndex, uint32_t loopIndex, MemoryMode, CompletionTask&&);
+    OSREntryPlan(VM&, Ref<Module>&&, Ref<BBQCallee>&&, FunctionCodeIndex functionIndex, uint32_t loopIndex, MemoryMode, CompletionTask&&);
 
 private:
     // For some reason friendship doesn't extend to parent classes...
     using Base::m_lock;
 
-    void dumpDisassembly(CompilationContext&, LinkBuffer&, const TypeDefinition&, FunctionSpaceIndex functionIndexSpace);
+    void dumpDisassembly(CompilationContext&, LinkBuffer&, const RTT&, FunctionSpaceIndex functionIndexSpace);
     bool isComplete() const final { return m_completed; }
     void complete() WTF_REQUIRES_LOCK(m_lock) final
     {
@@ -64,7 +64,8 @@ private:
 
     const Ref<Module> m_module;
     const Ref<CalleeGroup> m_calleeGroup;
-    const Ref<Callee> m_callee;
+    // The callee whose loop we are compiling an OSR entry for.
+    const Ref<BBQCallee> m_callee;
     bool m_completed { false };
     FunctionCodeIndex m_functionIndex;
     uint32_t m_loopIndex;

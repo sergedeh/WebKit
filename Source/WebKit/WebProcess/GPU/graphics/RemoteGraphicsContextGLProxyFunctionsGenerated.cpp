@@ -54,7 +54,7 @@ void RemoteGraphicsContextGLProxy::attachShader(PlatformGLObject program, Platfo
     }
 }
 
-void RemoteGraphicsContextGLProxy::bindAttribLocation(PlatformGLObject arg0, GCGLuint index, const CString& name)
+void RemoteGraphicsContextGLProxy::bindAttribLocation(PlatformGLObject arg0, GCGLuint index, const UTF8CString& name)
 {
     if (isContextLost())
         return;
@@ -635,7 +635,7 @@ GCGLint RemoteGraphicsContextGLProxy::getBufferParameteri(GCGLenum target, GCGLe
     return returnValue;
 }
 
-CString RemoteGraphicsContextGLProxy::getString(GCGLenum name)
+UTF8CString RemoteGraphicsContextGLProxy::getString(GCGLenum name)
 {
     if (isContextLost())
         return { };
@@ -752,7 +752,7 @@ GCGLint RemoteGraphicsContextGLProxy::getFramebufferAttachmentParameteri(GCGLenu
     return returnValue;
 }
 
-CString RemoteGraphicsContextGLProxy::getProgramInfoLog(PlatformGLObject arg0)
+UTF8CString RemoteGraphicsContextGLProxy::getProgramInfoLog(PlatformGLObject arg0)
 {
     if (isContextLost())
         return { };
@@ -791,7 +791,7 @@ GCGLint RemoteGraphicsContextGLProxy::getShaderi(PlatformGLObject arg0, GCGLenum
     return returnValue;
 }
 
-CString RemoteGraphicsContextGLProxy::getShaderInfoLog(PlatformGLObject arg0)
+UTF8CString RemoteGraphicsContextGLProxy::getShaderInfoLog(PlatformGLObject arg0)
 {
     if (isContextLost())
         return { };
@@ -1076,7 +1076,7 @@ void RemoteGraphicsContextGLProxy::scissor(GCGLint x, GCGLint y, GCGLsizei width
     }
 }
 
-void RemoteGraphicsContextGLProxy::shaderSource(PlatformGLObject arg0, const CString& arg1)
+void RemoteGraphicsContextGLProxy::shaderSource(PlatformGLObject arg0, const UTF8CString& arg1)
 {
     if (isContextLost())
         return;
@@ -1604,11 +1604,11 @@ void RemoteGraphicsContextGLProxy::texSubImage2D(GCGLenum target, GCGLint level,
     }
 }
 
-void RemoteGraphicsContextGLProxy::compressedTexImage2D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, GCGLsizei imageSize, std::span<const uint8_t> data)
+void RemoteGraphicsContextGLProxy::compressedTexImage2D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLint border, std::span<const uint8_t> data)
 {
     if (isContextLost())
         return;
-    auto sendResult = send(Messages::RemoteGraphicsContextGL::CompressedTexImage2D0(target, level, internalformat, width, height, border, imageSize, data));
+    auto sendResult = send(Messages::RemoteGraphicsContextGL::CompressedTexImage2D0(target, level, internalformat, width, height, border, data));
     if (sendResult != IPC::Error::NoError) {
         markContextLost();
         return;
@@ -1626,11 +1626,11 @@ void RemoteGraphicsContextGLProxy::compressedTexImage2D(GCGLenum target, GCGLint
     }
 }
 
-void RemoteGraphicsContextGLProxy::compressedTexSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLsizei imageSize, std::span<const uint8_t> data)
+void RemoteGraphicsContextGLProxy::compressedTexSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, std::span<const uint8_t> data)
 {
     if (isContextLost())
         return;
-    auto sendResult = send(Messages::RemoteGraphicsContextGL::CompressedTexSubImage2D0(target, level, xoffset, yoffset, width, height, format, imageSize, data));
+    auto sendResult = send(Messages::RemoteGraphicsContextGL::CompressedTexSubImage2D0(target, level, xoffset, yoffset, width, height, format, data));
     if (sendResult != IPC::Error::NoError) {
         markContextLost();
         return;
@@ -1861,11 +1861,11 @@ void RemoteGraphicsContextGLProxy::copyTexSubImage3D(GCGLenum target, GCGLint le
     }
 }
 
-void RemoteGraphicsContextGLProxy::compressedTexImage3D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, GCGLsizei imageSize, std::span<const uint8_t> data)
+void RemoteGraphicsContextGLProxy::compressedTexImage3D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, std::span<const uint8_t> data)
 {
     if (isContextLost())
         return;
-    auto sendResult = send(Messages::RemoteGraphicsContextGL::CompressedTexImage3D0(target, level, internalformat, width, height, depth, border, imageSize, data));
+    auto sendResult = send(Messages::RemoteGraphicsContextGL::CompressedTexImage3D0(target, level, internalformat, width, height, depth, border, data));
     if (sendResult != IPC::Error::NoError) {
         markContextLost();
         return;
@@ -1883,11 +1883,11 @@ void RemoteGraphicsContextGLProxy::compressedTexImage3D(GCGLenum target, GCGLint
     }
 }
 
-void RemoteGraphicsContextGLProxy::compressedTexSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, GCGLsizei imageSize, std::span<const uint8_t> data)
+void RemoteGraphicsContextGLProxy::compressedTexSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, std::span<const uint8_t> data)
 {
     if (isContextLost())
         return;
-    auto sendResult = send(Messages::RemoteGraphicsContextGL::CompressedTexSubImage3D0(target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, data));
+    auto sendResult = send(Messages::RemoteGraphicsContextGL::CompressedTexSubImage3D0(target, level, xoffset, yoffset, zoffset, width, height, depth, format, data));
     if (sendResult != IPC::Error::NoError) {
         markContextLost();
         return;
@@ -1905,7 +1905,7 @@ void RemoteGraphicsContextGLProxy::compressedTexSubImage3D(GCGLenum target, GCGL
     }
 }
 
-GCGLint RemoteGraphicsContextGLProxy::getFragDataLocation(PlatformGLObject program, const CString& name)
+GCGLint RemoteGraphicsContextGLProxy::getFragDataLocation(PlatformGLObject program, const UTF8CString& name)
 {
     if (isContextLost())
         return { };
@@ -2507,7 +2507,7 @@ void RemoteGraphicsContextGLProxy::endTransformFeedback()
     }
 }
 
-void RemoteGraphicsContextGLProxy::transformFeedbackVaryings(PlatformGLObject program, const Vector<CString>& varyings, GCGLenum bufferMode)
+void RemoteGraphicsContextGLProxy::transformFeedbackVaryings(PlatformGLObject program, const Vector<UTF8CString>& varyings, GCGLenum bufferMode)
 {
     if (isContextLost())
         return;
@@ -2575,7 +2575,7 @@ void RemoteGraphicsContextGLProxy::bindBufferRange(GCGLenum target, GCGLuint ind
     }
 }
 
-GCGLuint RemoteGraphicsContextGLProxy::getUniformBlockIndex(PlatformGLObject program, const CString& uniformBlockName)
+GCGLuint RemoteGraphicsContextGLProxy::getUniformBlockIndex(PlatformGLObject program, const UTF8CString& uniformBlockName)
 {
     if (isContextLost())
         return { };
@@ -2588,7 +2588,7 @@ GCGLuint RemoteGraphicsContextGLProxy::getUniformBlockIndex(PlatformGLObject pro
     return returnValue;
 }
 
-CString RemoteGraphicsContextGLProxy::getActiveUniformBlockName(PlatformGLObject program, GCGLuint uniformBlockIndex)
+UTF8CString RemoteGraphicsContextGLProxy::getActiveUniformBlockName(PlatformGLObject program, GCGLuint uniformBlockIndex)
 {
     if (isContextLost())
         return { };
@@ -2625,7 +2625,7 @@ void RemoteGraphicsContextGLProxy::getActiveUniformBlockiv(PlatformGLObject prog
     memcpySpan(params, paramsReply);
 }
 
-CString RemoteGraphicsContextGLProxy::getTranslatedShaderSourceANGLE(PlatformGLObject arg0)
+UTF8CString RemoteGraphicsContextGLProxy::getTranslatedShaderSourceANGLE(PlatformGLObject arg0)
 {
     if (isContextLost())
         return { };

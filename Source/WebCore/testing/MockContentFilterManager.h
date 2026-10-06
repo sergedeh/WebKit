@@ -26,12 +26,13 @@
 #pragma once
 
 #include <WebCore/MockContentFilterSettingsClient.h>
+#include <wtf/RefPtr.h>
 
 namespace WebCore {
 
 class MockContentFilterManager {
 public:
-    WEBCORE_TESTSUPPORT_EXPORT static MockContentFilterManager& singleton();
+    WEBCORE_TESTSUPPORT_EXPORT static MockContentFilterManager& NODELETE singleton();
 
     WEBCORE_TESTSUPPORT_EXPORT void setClient(RefPtr<MockContentFilterSettingsClient>);
     

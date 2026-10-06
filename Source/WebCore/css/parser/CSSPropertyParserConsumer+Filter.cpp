@@ -69,7 +69,7 @@ template<CSSValueID filterFunction> static decltype(auto) consumeNumberOrPercent
     }
 }
 
-static std::optional<CSS::AppleInvertLightnessFunction> consumeFilterAppleInvertLightness(CSSParserTokenRange& range, CSS::PropertyParserState&)
+static std::optional<CSS::AppleInvertLightnessFunction> NODELETE consumeFilterAppleInvertLightness(CSSParserTokenRange& range, CSS::PropertyParserState&)
 {
     // <-apple-invert-lightness()> = -apple-invert-lightness()
     // Non-standard
@@ -137,9 +137,9 @@ static std::optional<CSS::DropShadowFunction> consumeFilterDropShadow(CSSParserT
     auto args = consumeFunction(range);
 
     std::optional<CSS::Color> color;
-    std::optional<CSS::Length<CSS::AllUnzoomed>> x;
-    std::optional<CSS::Length<CSS::AllUnzoomed>> y;
-    std::optional<CSS::Length<CSS::NonnegativeUnzoomed>> stdDeviation;
+    std::optional<CSS::Length<>> x;
+    std::optional<CSS::Length<>> y;
+    std::optional<CSS::Length<CSS::Nonnegative>> stdDeviation;
 
     auto consumeOptionalColor = [&] -> bool {
         if (color)
@@ -154,14 +154,14 @@ static std::optional<CSS::DropShadowFunction> consumeFilterDropShadow(CSSParserT
     auto consumeLengths = [&] -> bool {
         if (x)
             return false;
-        x = MetaConsumer<CSS::Length<CSS::AllUnzoomed>>::consume(args, state);
+        x = MetaConsumer<CSS::Length<>>::consume(args, state);
         if (!x)
             return false;
-        y = MetaConsumer<CSS::Length<CSS::AllUnzoomed>>::consume(args, state);
+        y = MetaConsumer<CSS::Length<>>::consume(args, state);
         if (!y)
             return false;
 
-        stdDeviation = MetaConsumer<CSS::Length<CSS::NonnegativeUnzoomed>>::consume(args, state);
+        stdDeviation = MetaConsumer<CSS::Length<CSS::Nonnegative>>::consume(args, state);
         return true;
     };
 
@@ -455,7 +455,7 @@ RefPtr<CSSValue> consumeAppleColorFilter(CSSParserTokenRange& range, CSS::Proper
     return nullptr;
 }
 
-std::optional<Style::Filter> parseFilterValueListOrNoneRaw(const String& string, const CSSParserContext& context, const Document& document, RenderStyle& style)
+std::optional<Style::Filter> parseFilterValueListOrNoneRaw(StringView string, const CSSParserContext& context, const Document& document, Style::ComputedStyle& style)
 {
     auto tokenizer = CSSTokenizer(string);
     auto range = tokenizer.tokenRange();

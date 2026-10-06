@@ -20,7 +20,6 @@
 #pragma once
 
 #include "SVGElement.h"
-#include <wtf/Forward.h>
 
 namespace WebCore {
 
@@ -30,12 +29,10 @@ class SVGAltGlyphDefElement final : public SVGElement {
 public:
     static Ref<SVGAltGlyphDefElement> create(const QualifiedName&, Document&);
 
-    bool hasValidGlyphElements(Vector<String>& glyphNames) const;
-
 private:
     SVGAltGlyphDefElement(const QualifiedName&, Document&);
 
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) final { return false; }
 };
 
 } // namespace WebCore

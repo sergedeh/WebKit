@@ -10,8 +10,6 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/path/property/d-interpolation-discrete.svg
@@ -24,6 +22,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/path/property/d-none-ref.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/path/property/d-none.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/path/property/getComputedStyle.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/path/property/inheritance.tentative.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/path/property/marker-path-expected.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/path/property/marker-path-ref.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/path/property/marker-path.svg

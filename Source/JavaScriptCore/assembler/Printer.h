@@ -27,6 +27,7 @@
 
 #include <JavaScriptCore/CPU.h>
 
+#include <wtf/EnumTraits.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/Vector.h>
@@ -86,11 +87,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     uintptr_t value;
     const void* pointer;
-#if USE(JSVALUE64)
     UCPURegister buffer[4];
-#elif USE(JSVALUE32_64)
-    UCPURegister buffer[6];
-#endif
 };
 
 struct Context {
@@ -163,7 +160,7 @@ void printIntptr(PrintStream&, Context&);
 void printUintptr(PrintStream&, Context&);
 void printPointer(PrintStream&, Context&);
 
-void setPrinter(PrintRecord&, CString&&);
+void setPrinter(PrintRecord&, UTF8CString&&);
 
 // Specialized printers.
 
@@ -196,6 +193,21 @@ void setPrinter(PrintRecord& record, T value, intptr_t = 0)
         record.printer = printIntptr;
     else
         record.printer = printUintptr;
+}
+
+template<typename T>
+    requires (std::is_enum_v<T>)
+void printEnumValue(PrintStream& out, Context& context)
+{
+    out.print(static_cast<T>(context.data.value));
+}
+
+template<typename T>
+    requires (std::is_enum_v<T>)
+void setPrinter(PrintRecord& record, T value)
+{
+    record.data.value = static_cast<uintptr_t>(value);
+    record.printer = printEnumValue<T>;
 }
 
 template<typename T>

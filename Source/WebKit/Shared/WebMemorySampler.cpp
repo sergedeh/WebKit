@@ -119,11 +119,6 @@ void WebMemorySampler::stop()
     if (RefPtr extension = std::exchange(m_sampleLogSandboxExtension, nullptr))
         extension->revoke();
 }
-
-bool WebMemorySampler::isRunning() const
-{
-    return m_isRunning;
-}
     
 void WebMemorySampler::initializeTempLogFile()
 {
@@ -179,7 +174,7 @@ void WebMemorySampler::appendCurrentMemoryUsageToFile()
     }
     statString.append('\n');
 
-    CString utf8String = statString.toString().utf8();
+    auto utf8String = statString.toString().utf8();
     m_sampleLogFile.write(byteCast<uint8_t>(utf8String.span()));
 }
 

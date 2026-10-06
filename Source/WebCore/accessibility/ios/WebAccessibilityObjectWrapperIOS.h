@@ -26,18 +26,15 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "AXObjectCache.h"
+#import "AXTextMarker.h"
 #import "AccessibilityObject.h"
 #import "WAKView.h"
 #import "WebAccessibilityObjectWrapperBase.h"
+#import <wtf/RetainPtr.h>
 
 namespace WebCore {
 class VisiblePosition;
 }
-
-// NSAttributedStrings support.
-
-static NSString * const UIAccessibilityTextAttributeContext = @"UIAccessibilityTextAttributeContext";
-static NSString * const UIAccessibilityTextualContextSourceCode = @"UIAccessibilityTextualContextSourceCode";
 
 @interface WAKView (iOSAccessibility)
 - (BOOL)accessibilityIsIgnored;
@@ -49,6 +46,9 @@ enum class IsAccessibilityElement : uint8_t { No, Yes, Unknown };
     // Cached data to avoid frequent re-computation.
     IsAccessibilityElement m_isAccessibilityElement;
     uint64_t m_accessibilityTraitsFromAncestor;
+#if ENABLE(SPATIAL_IMAGE_CONTROLS)
+    RetainPtr<id> m_cachedMockImageElement;
+#endif
 }
 
 - (WebCore::AccessibilityObject *)axBackingObject;
@@ -80,7 +80,7 @@ enum class IsAccessibilityElement : uint8_t { No, Yes, Unknown };
 @end
 
 @interface WebAccessibilityTextMarker : NSObject {
-    WebCore::AXObjectCache* _cache;
+    WeakPtr<WebCore::AXObjectCache> _cache;
     WebCore::TextMarkerData _textMarkerData;
 }
 

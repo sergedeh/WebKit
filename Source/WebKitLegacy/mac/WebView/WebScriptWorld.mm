@@ -25,6 +25,7 @@
 #import "WebScriptWorld.h"
 
 #import "WebScriptWorldInternal.h"
+#import <WebCore/DOMWrapperWorld.h>
 #import <WebCore/JSDOMBinding.h>
 #import <WebCore/ScriptController.h>
 #import <JavaScriptCore/APICast.h>
@@ -41,7 +42,7 @@
 @end
 
 using WorldMap = HashMap<SingleThreadWeakRef<WebCore::DOMWrapperWorld>, WebScriptWorld*>;
-static WorldMap& allWorlds()
+static WorldMap& NODELETE allWorlds()
 {
     static WorldMap& map = *new WorldMap;
     return map;
@@ -71,15 +72,16 @@ static WorldMap& allWorlds()
 
 - (void)unregisterWorld
 {
-    _private->world->clearWrappers();
+    protect(_private->world)->clearWrappers();
 }
 
 - (void)dealloc
 {
     ASSERT(allWorlds().contains(*_private->world));
-    allWorlds().remove(*_private->world);
+    allWorlds().remove(protect(*_private->world));
 
-    [_private release];
+    // Retaining the member just to release it would be pointless.
+    SUPPRESS_UNRETAINED_ARG [_private release];
     _private = nil;
     [super dealloc];
 }

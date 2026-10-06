@@ -79,7 +79,7 @@ WebBackForwardListItem* WebBackForwardListItem::itemForID(BackForwardItemIdentif
     return allItems().get(identifier);
 }
 
-static const FrameState* childItemWithTarget(const FrameState& frameState, const String& target)
+static const FrameState* NODELETE childItemWithTarget(const FrameState& frameState, const String& target)
 {
     for (auto& child : frameState.children) {
         if (child->target == target)
@@ -89,19 +89,7 @@ static const FrameState* childItemWithTarget(const FrameState& frameState, const
     return nullptr;
 }
 
-bool WebBackForwardListItem::itemIsInSameDocument(const WebBackForwardListItem& other) const
-{
-    if (m_pageID != other.m_pageID)
-        return false;
-
-    // The following logic must be kept in sync with WebCore::HistoryItem::shouldDoSameDocumentNavigationTo().
-    Ref mainFrameState = this->mainFrameState();
-    Ref otherMainFrameState = other.mainFrameState();
-
-    return mainFrameState->documentSequenceNumber == otherMainFrameState->documentSequenceNumber;
-}
-
-static bool hasSameFrames(const FrameState& a, const FrameState& b)
+static bool NODELETE hasSameFrames(const FrameState& a, const FrameState& b)
 {
     if (a.target != b.target)
         return false;
@@ -124,13 +112,21 @@ bool WebBackForwardListItem::itemIsClone(const WebBackForwardListItem& other)
     if (this == &other)
         return false;
 
-    Ref mainFrameState = this->mainFrameState();
-    Ref otherMainFrameState = other.mainFrameState();
+    Ref mainFrameState = copyMainFrameStateWithChildren();
+    Ref otherMainFrameState = other.copyMainFrameStateWithChildren();
 
     if (mainFrameState->itemSequenceNumber != otherMainFrameState->itemSequenceNumber)
         return false;
 
     return hasSameFrames(mainFrameState, otherMainFrameState);
+}
+
+bool WebBackForwardListItem::hasSameMainFrameHistoryEntry(const WebBackForwardListItem& other) const
+{
+    auto& mainFrameState = this->mainFrameState();
+    auto& otherMainFrameState = other.mainFrameState();
+    return mainFrameState.itemSequenceNumber == otherMainFrameState.itemSequenceNumber
+        && mainFrameState.documentSequenceNumber == otherMainFrameState.documentSequenceNumber;
 }
 
 void WebBackForwardListItem::wasRemovedFromBackForwardList()
@@ -147,14 +143,16 @@ void WebBackForwardListItem::removeFromBackForwardCache()
     ASSERT(!m_backForwardCacheEntry);
 }
 
-RefPtr<WebBackForwardCacheEntry> WebBackForwardListItem::protectedBackForwardCacheEntry() const
-{
-    return m_backForwardCacheEntry;
-}
-
 void WebBackForwardListItem::setBackForwardCacheEntry(RefPtr<WebBackForwardCacheEntry>&& backForwardCacheEntry)
 {
     m_backForwardCacheEntry = WTF::move(backForwardCacheEntry);
+}
+
+WebBackForwardCacheEntry* WebBackForwardListItem::backForwardCacheEntryForProcess(WebCore::ProcessIdentifier processIdentifier) const
+{
+    if (m_backForwardCacheEntry && m_backForwardCacheEntry->processIdentifier() == processIdentifier)
+        return m_backForwardCacheEntry.get();
+    return nullptr;
 }
 
 SuspendedPageProxy* WebBackForwardListItem::suspendedPage() const
@@ -162,34 +160,33 @@ SuspendedPageProxy* WebBackForwardListItem::suspendedPage() const
     return m_backForwardCacheEntry ? m_backForwardCacheEntry->suspendedPage() : nullptr;
 }
 
-Ref<FrameState> WebBackForwardListItem::navigatedFrameState() const
+const FrameState& WebBackForwardListItem::mainFrameState() const
 {
-    return protectedNavigatedFrameItem()->copyFrameStateWithChildren();
+    return m_mainFrameItem->frameState();
 }
 
-Ref<FrameState> WebBackForwardListItem::mainFrameState() const
+Ref<FrameState> WebBackForwardListItem::copyMainFrameState() const
+{
+    return m_mainFrameItem->copyFrameState();
+}
+
+Ref<FrameState> WebBackForwardListItem::copyMainFrameStateWithChildren() const
 {
     return m_mainFrameItem->copyFrameStateWithChildren();
 }
 
 const String& WebBackForwardListItem::originalURL() const
 {
-    if (m_isRemoteFrameNavigation)
-        return emptyString();
     return mainFrameItem().frameState().originalURLString;
 }
 
 const String& WebBackForwardListItem::url() const
 {
-    if (m_isRemoteFrameNavigation)
-        return emptyString();
     return mainFrameItem().frameState().urlString;
 }
 
 const String& WebBackForwardListItem::title() const
 {
-    if (m_isRemoteFrameNavigation)
-        return emptyString();
     return mainFrameItem().frameState().title;
 }
 
@@ -212,17 +209,7 @@ WebBackForwardListFrameItem& WebBackForwardListItem::navigatedFrameItem() const
     return m_mainFrameItem;
 }
 
-Ref<WebBackForwardListFrameItem> WebBackForwardListItem::protectedNavigatedFrameItem() const
-{
-    return navigatedFrameItem();
-}
-
 WebBackForwardListFrameItem& WebBackForwardListItem::mainFrameItem() const
-{
-    return m_mainFrameItem;
-}
-
-Ref<WebBackForwardListFrameItem> WebBackForwardListItem::protectedMainFrameItem() const
 {
     return m_mainFrameItem;
 }
@@ -230,6 +217,14 @@ Ref<WebBackForwardListFrameItem> WebBackForwardListItem::protectedMainFrameItem(
 String WebBackForwardListItem::loggingString()
 {
     return m_mainFrameItem->loggingString();
+}
+
+void WebBackForwardListItem::updateFrameID(FrameIdentifier oldFrameID, FrameIdentifier newFrameID)
+{
+    if (auto* frameItem = m_mainFrameItem->childItemForFrameID(oldFrameID))
+        frameItem->updateFrameID(newFrameID);
+    if (m_navigatedFrameID && *m_navigatedFrameID == oldFrameID)
+        m_navigatedFrameID = newFrameID;
 }
 
 } // namespace WebKit

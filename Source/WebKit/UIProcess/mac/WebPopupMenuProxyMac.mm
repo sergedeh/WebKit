@@ -61,16 +61,17 @@ void WebPopupMenuProxyMac::populate(const Vector<WebPopupItem>& items, NSFont *f
     if (m_popup)
         [m_popup removeAllItems];
     else {
-        m_popup = adoptNS([[NSPopUpButtonCell alloc] initTextCell:@"" pullsDown:NO]);
+        lazyInitialize(m_popup, adoptNS([[NSPopUpButtonCell alloc] initTextCell:@"" pullsDown:NO]));
         [m_popup setUsesItemFromMenu:NO];
         [m_popup setAutoenablesItems:NO];
+        [m_popup setAltersStateOfSelectedItem:NO];
     }
 
     int size = items.size();
 
     for (int i = 0; i < size; i++) {
         if (items[i].m_type == WebPopupItem::Type::Separator)
-            [protectedMenu() addItem:[NSMenuItem separatorItem]];
+            [protect(menu()) addItem:[NSMenuItem separatorItem]];
         else {
             [m_popup addItemWithTitle:@""];
             RetainPtr menuItem = [m_popup lastItem];
@@ -98,6 +99,7 @@ void WebPopupMenuProxyMac::populate(const Vector<WebPopupItem>& items, NSFont *f
             // but typeahead will use the non-attributed string that doesn't contain any leading or trailing whitespace.
             [menuItem setTitle:[retainPtr([string string]) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]];
             [menuItem setEnabled:items[i].m_isEnabled];
+            [menuItem setState:items[i].m_isSelected ? NSControlStateValueOn : NSControlStateValueOff];
             [menuItem setToolTip:items[i].m_toolTip.createNSString().get()];
         }
     }
@@ -222,21 +224,21 @@ void WebPopupMenuProxyMac::showPopupMenu(const IntRect& rect, TextDirection text
 
 void WebPopupMenuProxyMac::hidePopupMenu()
 {
-    [protectedMenu() cancelTracking];
+    [protect(menu()) cancelTracking];
 }
 
 void WebPopupMenuProxyMac::cancelTracking()
 {
-    [protectedMenu() cancelTracking];
+    [protect(menu()) cancelTrackingWithoutAnimation];
     m_wasCanceled = true;
 }
 
-RetainPtr<NSPopUpButtonCell> WebPopupMenuProxyMac::protectedPopup() const
+NSPopUpButtonCell *WebPopupMenuProxyMac::popup() const
 {
-    return m_popup;
+    return m_popup.get();
 }
 
-RetainPtr<NSMenu> WebPopupMenuProxyMac::protectedMenu() const
+NSMenu *WebPopupMenuProxyMac::menu() const
 {
     return [m_popup menu];
 }

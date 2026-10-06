@@ -35,8 +35,16 @@ namespace WebCore {
 
 class ResourceError;
 
-WEBCORE_EXPORT extern const ASCIILiteral errorDomainWebKitInternal; // Used for errors that won't be exposed to clients.
-WEBCORE_EXPORT extern const ASCIILiteral errorDomainWebKitServiceWorker; // Used for errors that happen when loading a resource from a service worker.
+inline constexpr ASCIILiteral errorDomainWebKitInternal { "WebKitInternal"_s }; // Used for errors that won't be exposed to clients.
+inline constexpr ASCIILiteral errorDomainWebKitServiceWorker { "WebKitServiceWorker"_s }; // Used for errors that happen when loading a resource from a service worker.
+
+// Shared with API::Error in the WebKit layer, which cannot be included here.
+#if USE(GLIB)
+inline constexpr ASCIILiteral errorDomainWebKitNetwork { "WebKitNetworkError"_s };
+#else
+inline constexpr ASCIILiteral errorDomainWebKitNetwork { "WebKitErrorDomain"_s };
+#endif
+inline constexpr int errorCodeHTTPSUpgradeRedirectLoop { 304 };
 
 enum class ResourceErrorBaseType : uint8_t {
     Null,
@@ -75,7 +83,7 @@ public:
 
     static bool compare(const ResourceError&, const ResourceError&);
 
-    WEBCORE_EXPORT void setType(Type);
+    WEBCORE_EXPORT void NODELETE setType(Type);
     Type type() const { return m_type; }
 
     bool isSanitized() const { return m_isSanitized == IsSanitized::Yes; }
@@ -110,12 +118,12 @@ protected:
     IsSanitized m_isSanitized { IsSanitized::No };
 
 private:
-    const ResourceError& asResourceError() const;
+    const ResourceError& NODELETE asResourceError() const;
 };
 
 WEBCORE_EXPORT ResourceError internalError(const URL&, std::source_location = std::source_location::current());
 WEBCORE_EXPORT ResourceError badResponseHeadersError(const URL&);
 
-inline bool operator==(const ResourceError& a, const ResourceError& b) { return ResourceErrorBase::compare(a, b); }
+bool operator==(const ResourceError& a, const ResourceError& b);
 
 } // namespace WebCore

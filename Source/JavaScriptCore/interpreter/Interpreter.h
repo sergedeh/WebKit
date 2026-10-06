@@ -32,14 +32,21 @@
 #include <JavaScriptCore/BytecodeIndex.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/MacroAssemblerCodeRef.h>
-#include <JavaScriptCore/NativeFunction.h>
-#include <JavaScriptCore/Opcode.h>
+#include <JavaScriptCore/VMEntryRecord.h>
+#include <span>
 #include <wtf/HashMap.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
 
 
 namespace JSC {
+
+enum OpcodeID : unsigned;
+#if ENABLE(COMPUTED_GOTO_OPCODES)
+using Opcode = void*;
+#else
+using Opcode = OpcodeID;
+#endif
 
 class CallLinkInfo;
 #if ENABLE(WEBASSEMBLY)
@@ -57,6 +64,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
 
     class ArgList;
     class CachedCall;
+    class MicrotaskCall;
     class CodeBlock;
     class EvalExecutable;
     class Exception;
@@ -71,6 +79,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class ProgramExecutable;
     class ModuleProgramExecutable;
     class Register;
+    class JSAsyncFunctionGenerator;
     class JSGenerator;
     class JSObject;
     class JSScope;
@@ -125,6 +134,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class Interpreter {
         WTF_MAKE_TZONE_NON_HEAP_ALLOCATABLE(Interpreter);
         friend class CachedCall;
+        friend class MicrotaskCall;
         friend class LLIntOffsetsExtractor;
         friend class JIT;
         friend class VM;
@@ -157,17 +167,18 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
 
     private:
-        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSGenerator* initialGenerator, size_t maxStackSize);
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);
         enum ExecutionFlag { Normal, InitializeAndReturn };
 
         CodeBlock* prepareForCachedCall(CachedCall&, JSFunction*);
+        CodeBlock* prepareForMicrotaskCall(MicrotaskCall&, JSFunction*);
 
         JSValue executeCachedCall(CachedCall&);
         JSValue executeBoundCall(VM&, JSBoundFunction*, JSCell*, const ArgList&);
         JSValue executeCallImpl(VM&, JSObject*, const CallData&, JSValue, JSCell*, const ArgList&);
 
     public:
-#if CPU(ARM64) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
+#if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
         template<typename... Args> requires (std::is_convertible_v<Args, JSValue> && ...)
         JSValue tryCallWithArguments(CachedCall&, JSValue, Args...);
 #endif
@@ -197,14 +208,16 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
 
     class UnwindFunctorBase {
     protected:
-        UnwindFunctorBase(VM& vm)
-            : m_vm(vm)
-        { }
+        inline UnwindFunctorBase(VM&);
 
         void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor&) const;
         void notifyDebuggerOfUnwinding(JSGlobalObject*, CallFrame*) const;
 
         VM& m_vm;
+#if ENABLE(ASSEMBLER)
+        std::span<const int8_t> m_vmCalleeSaveBufferSlotsByRegIndex;
+        VMEntryRecord* m_vmEntryRecord;
+#endif
     };
 } // namespace JSC
 

@@ -27,13 +27,15 @@
 
 namespace WebCore {
 
+class FontSelector;
 class HTMLInputElement;
+class HostWindow;
 
 class RenderSearchField final : public RenderTextControlSingleLine {
     WTF_MAKE_TZONE_ALLOCATED(RenderSearchField);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSearchField);
 public:
-    RenderSearchField(HTMLInputElement&, RenderStyle&&);
+    RenderSearchField(HTMLInputElement&, Style::ComputedStyle&&);
     virtual ~RenderSearchField();
 
     void updateCancelButtonVisibility() const;
@@ -41,25 +43,27 @@ public:
     bool popupIsVisible() const { return m_searchPopupIsVisible; }
     void showPopup();
     void hidePopup();
-    void popupDidHide();
+    void NODELETE popupDidHide();
     WEBCORE_EXPORT std::span<const RecentSearch> recentSearches();
 
     void updatePopup(const AtomString& name, const Vector<WebCore::RecentSearch>& searchItems);
+#if PLATFORM(WIN)
     int clientInsetRight() const;
     int clientInsetLeft() const;
     LayoutUnit clientPaddingRight() const;
     LayoutUnit clientPaddingLeft() const;
     FontSelector* fontSelector() const;
     HostWindow* hostWindow() const;
+#endif
 
 private:
     void willBeDestroyed() override;
     LayoutUnit computeControlLogicalHeight(LayoutUnit lineHeight, LayoutUnit nonContentHeight) const override;
     void updateFromElement() override;
     Visibility visibilityForCancelButton() const;
-    const AtomString& autosaveName() const;
+    const AtomString& NODELETE autosaveName() const;
 
-    RefPtr<SearchPopupMenu> protectedSearchPopup() const { return m_searchPopup; };
+    SearchPopupMenu* searchPopup() const { return m_searchPopup.get(); }
 
     HTMLElement* resultsButtonElement() const;
     HTMLElement* cancelButtonElement() const;

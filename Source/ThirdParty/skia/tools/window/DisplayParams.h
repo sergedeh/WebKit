@@ -10,7 +10,7 @@
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkSurfaceProps.h"
-#include "src/base/SkMathPriv.h"
+#include "src/core/SkMathPriv.h"
 
 #include <memory>
 
@@ -18,9 +18,11 @@
 #include "include/gpu/ganesh/GrContextOptions.h"
 #endif
 
-namespace skwindow {
+namespace skiatest::graphite{
+    struct TestOptions;
+}
 
-struct GraphiteTestOptions;
+namespace skwindow {
 
 // DisplayParams should be treated as a immutable object once created.
 class DisplayParams {
@@ -66,7 +68,7 @@ public:
     bool disableVsync() const { return fDisableVsync; }
     bool delayDrawableAcquisition() const { return fDelayDrawableAcquisition; }
     bool createProtectedNativeBackend() const { return fCreateProtectedNativeBackend; }
-    virtual const GraphiteTestOptions* graphiteTestOptions() const { return nullptr; }
+    virtual const skiatest::graphite::TestOptions* graphiteTestOptions() const { return nullptr; }
 
 private:
     friend class DisplayParamsBuilder;

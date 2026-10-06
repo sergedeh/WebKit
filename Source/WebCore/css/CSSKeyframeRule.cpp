@@ -27,9 +27,11 @@
 #include "CSSKeyframeRule.h"
 
 #include "CSSKeyframesRule.h"
+#include "CSSPrimitiveNumericTypes+Serialization.h"
 #include "CSSPropertyParserConsumer+Animations.h"
 #include "CSSSerializationContext.h"
 #include "CSSStyleProperties.h"
+#include "CSSStyleSheet.h"
 #include "MutableStyleProperties.h"
 #include "StyleProperties.h"
 #include "StylePropertiesInlines.h"
@@ -38,21 +40,23 @@
 
 namespace WebCore {
 
-void StyleRuleKeyframe::Key::writeToString(StringBuilder& str) const
+void StyleRuleKeyframe::Key::writeToString(StringBuilder& builder) const
 {
     if (rangeName == CSSValueContain)
-        str.append("contain "_s);
+        builder.append("contain "_s);
     else if (rangeName == CSSValueCover)
-        str.append("cover "_s);
+        builder.append("cover "_s);
     else if (rangeName == CSSValueEntry)
-        str.append("entry "_s);
+        builder.append("entry "_s);
     else if (rangeName == CSSValueEntryCrossing)
-        str.append("entry-crossing "_s);
+        builder.append("entry-crossing "_s);
     else if (rangeName == CSSValueExit)
-        str.append("exit "_s);
+        builder.append("exit "_s);
     else if (rangeName == CSSValueExitCrossing)
-        str.append("exit-crossing "_s);
-    str.append(offset * 100, '%');
+        builder.append("exit-crossing "_s);
+    else if (rangeName == CSSValueScroll)
+        builder.append("scroll "_s);
+    CSS::serializationForCSS(builder, CSS::defaultSerializationContext(), offset);
 }
 
 StyleRuleKeyframe::StyleRuleKeyframe(Ref<StyleProperties>&& properties)
@@ -73,7 +77,7 @@ Ref<StyleRuleKeyframe> StyleRuleKeyframe::create(Ref<StyleProperties>&& properti
     return adoptRef(*new StyleRuleKeyframe(WTF::move(properties)));
 }
 
-Ref<StyleRuleKeyframe> StyleRuleKeyframe::create(Vector<std::pair<CSSValueID, double>>&& keys, Ref<StyleProperties>&& properties)
+Ref<StyleRuleKeyframe> StyleRuleKeyframe::create(Vector<std::pair<CSSValueID, CSS::Percentage<>>>&& keys, Ref<StyleProperties>&& properties)
 {
     auto keyStructs = keys.map([](auto& pair) -> Key {
         return { pair.first, pair.second };
@@ -86,7 +90,7 @@ StyleRuleKeyframe::~StyleRuleKeyframe() = default;
 MutableStyleProperties& StyleRuleKeyframe::mutableProperties()
 {
     if (!is<MutableStyleProperties>(m_properties))
-        m_properties = m_properties->mutableCopy();
+        m_properties = protect(m_properties)->mutableCopy();
     return uncheckedDowncast<MutableStyleProperties>(m_properties.get());
 }
 
@@ -115,7 +119,7 @@ bool StyleRuleKeyframe::setKeyText(const String& keyText)
 
 String StyleRuleKeyframe::cssText() const
 {
-    if (auto declarations = m_properties->asText(CSS::defaultSerializationContext()); !declarations.isEmpty())
+    if (auto declarations = protect(m_properties)->asText(CSS::defaultSerializationContext()); !declarations.isEmpty())
         return makeString(keyText(), " { "_s, declarations, " }"_s);
     return makeString(keyText(), " { }"_s);
 }
@@ -136,7 +140,7 @@ CSSKeyframeRule::~CSSKeyframeRule()
 CSSStyleProperties& CSSKeyframeRule::style()
 {
     if (!m_propertiesCSSOMWrapper)
-        m_propertiesCSSOMWrapper = StyleRuleCSSStyleProperties::create(m_keyframe->mutableProperties(), *this);
+        m_propertiesCSSOMWrapper = StyleRuleCSSStyleProperties::create(protect(m_keyframe->mutableProperties()), *this);
     return *m_propertiesCSSOMWrapper;
 }
 
@@ -144,6 +148,13 @@ void CSSKeyframeRule::reattach(StyleRuleBase&)
 {
     // No need to reattach, the underlying data is shareable on mutation.
     ASSERT_NOT_REACHED();
+}
+
+void CSSKeyframeRule::setKeyText(const String& text)
+{
+    CSSStyleSheet::RuleMutationScope mutationScope(this);
+
+    protect(m_keyframe)->setKeyText(text);
 }
 
 } // namespace WebCore

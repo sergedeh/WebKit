@@ -25,9 +25,11 @@
 
 #pragma once
 
+#include <WebCore/DigitalCredentialsMobileDocumentRequestData.h>
 #include <WebCore/MobileDocumentRequest.h>
-#include <WebCore/SecurityOriginData.h>
+#include <WebCore/UnvalidatedDigitalCredentialRequest.h>
 #include <WebCore/ValidatedMobileDocumentRequest.h>
+#include <wtf/Variant.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -35,10 +37,12 @@ namespace WebCore {
 using DigitalCredentialRequestTypes = MobileDocumentRequest;
 using ValidatedDigitalCredentialRequest = ValidatedMobileDocumentRequest;
 
-struct DigitalCredentialsRequestData {
-    Vector<ValidatedMobileDocumentRequest> requests;
-    SecurityOriginData topOrigin;
-    SecurityOriginData documentOrigin;
-};
+using DigitalCredentialsRequestData = Variant<
+    DigitalCredentialsMobileDocumentRequestData
+>;
+
+using DigitalCredentialsRawRequests = Variant<
+    Vector<UnvalidatedDigitalCredentialRequest>
+    >;
 
 } // namespace WebCore

@@ -127,7 +127,7 @@ DragData::DragData(DragDataRef data, const IntPoint& clientPosition, const IntPo
     , m_dragDestinationActionMask(destinationActionMask)
     , m_pageID(pageID)
 #if PLATFORM(MAC)
-    , m_pasteboardName([[m_platformDragData draggingPasteboard] name])
+    , m_pasteboardName([[data draggingPasteboard] name])
 #else
     , m_pasteboardName(Pasteboard::nameOfDragPasteboard())
 #endif
@@ -137,7 +137,6 @@ DragData::DragData(DragDataRef data, const IntPoint& clientPosition, const IntPo
 DragData::DragData(const String& dragStorageName, const IntPoint& clientPosition, const IntPoint& globalPosition, OptionSet<DragOperation> sourceOperationMask, OptionSet<DragApplicationFlags> flags, OptionSet<DragDestinationAction> destinationActionMask, std::optional<PageIdentifier> pageID)
     : m_clientPosition(clientPosition)
     , m_globalPosition(globalPosition)
-    , m_platformDragData(0)
     , m_draggingSourceOperationMask(sourceOperationMask)
     , m_applicationFlags(flags)
     , m_dragDestinationActionMask(destinationActionMask)
@@ -296,16 +295,7 @@ bool DragData::containsCompatibleContent(DraggingPurpose purpose) const
 
 bool DragData::containsPromise() const
 {
-    if (m_disallowFileAccess)
-        return false;
-    auto context = createPasteboardContext();
-    // FIXME: legacyFilesPromisePasteboardTypeSingleton() contains UTIs, not path names. Also, why do we
-    // think promises should only contain one file (or UTI)?
-    Vector<String> files;
-#if PLATFORM(MAC)
-    platformStrategies()->pasteboardStrategy()->getPathnamesForType(files, String(legacyFilesPromisePasteboardTypeSingleton()), m_pasteboardName, context.get());
-#endif
-    return files.size() == 1;
+    return !m_disallowFileAccess && !m_promisedFileMIMETypes.isEmpty();
 }
 
 bool DragData::containsURL(FilenameConversionPolicy) const
@@ -341,7 +331,7 @@ String DragData::asURL(FilenameConversionPolicy, String* title) const
     Vector<String> types;
     platformStrategies()->pasteboardStrategy()->getTypes(types, m_pasteboardName, context.get());
     if (types.contains(String(legacyFilesPromisePasteboardTypeSingleton())) && fileNames().size() == 1)
-        return [URLByCanonicalizingURL([NSURL fileURLWithPath:fileNames()[0].createNSString().get()]) absoluteString];
+        return [protect(URLByCanonicalizingURL([NSURL fileURLWithPath:fileNames()[0].createNSString().get()])) absoluteString];
 #endif
 
     return { };

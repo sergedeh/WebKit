@@ -1,11 +1,12 @@
 /*
- * Copyright 2020 Google Inc.
+ * Copyright 2020 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
 
 #include "modules/skshaper/include/SkShaper.h"
+#include "modules/skshaper/include/SkShaper_coretext.h"
 
 #ifdef SK_BUILD_FOR_MAC
 #import <ApplicationServices/ApplicationServices.h>
@@ -19,9 +20,9 @@
 #endif
 
 #include "include/ports/SkTypeface_mac.h"
-#include "include/private/base/SkTemplates.h"
-#include "src/base/SkUTF.h"
+#include "include/private/SkTemplates.h"
 #include "src/core/SkFontPriv.h"
+#include "src/core/SkUTF.h"
 #include "src/utils/mac/SkCGBase.h"
 #include "src/utils/mac/SkUniqueCFRef.h"
 
@@ -32,7 +33,8 @@ using namespace skia_private;
 
 class SkShaper_CoreText : public SkShaper {
 public:
-    SkShaper_CoreText() {}
+    explicit SkShaper_CoreText(SkShapers::CT::LineBreakMode lbm) : fLineBreakMode(lbm) {}
+
 private:
 #if !defined(SK_DISABLE_LEGACY_SKSHAPER_FUNCTIONS)
     void shape(const char* utf8, size_t utf8Bytes,
@@ -58,26 +60,102 @@ private:
                const Feature*, size_t featureSize,
                SkScalar width,
                RunHandler*) const override;
+
+    void shape(const char* utf8, size_t utf8Bytes,
+               FontRunIterator&,
+               BiDiRunIterator&,
+               ScriptRunIterator&,
+               LanguageRunIterator&,
+               const Feature*, size_t featureSize,
+               SkScalar width,
+               float textTracking,
+               RunHandler*) const override;
+
+    const SkShapers::CT::LineBreakMode fLineBreakMode;
 };
 
 // CTFramesetter/CTFrame can do this, but require version 10.14
 class LineBreakIter {
-    CTTypesetterRef fTypesetter;
-    double          fWidth;
-    CFIndex         fStart;
+    const CTTypesetterRef fTypesetter;
+    const double          fWidth;
+    CFIndex               fStart = 0;
+    const SkUniqueCFRef<CFStringTokenizerRef> fWordTokenizer;
 
-public:
-    LineBreakIter(CTTypesetterRef ts, SkScalar width) : fTypesetter(ts), fWidth(width) {
-        fStart = 0;
-    }
-
-    SkUniqueCFRef<CTLineRef> nextLine() {
-        CFRange stringRange {fStart, CTTypesetterSuggestLineBreak(fTypesetter, fStart, fWidth)};
-        if (stringRange.length == 0) {
+    static SkUniqueCFRef<CFStringTokenizerRef> MakeWordTokenizer(CFStringRef txt,
+                                                                 SkShapers::CT::LineBreakMode lbm) {
+        if (lbm != SkShapers::CT::LineBreakMode::kStrict) {
             return nullptr;
         }
-        fStart += stringRange.length;
-        return SkUniqueCFRef<CTLineRef>(CTTypesetterCreateLine(fTypesetter, stringRange));
+
+        // TODO: plumb a locale arg for more accurate results with complex scripts?
+        SkUniqueCFRef<CFLocaleRef> locale(CFLocaleCopyCurrent());
+
+        CFRange full_range = CFRangeMake(0, CFStringGetLength(txt));
+        SkUniqueCFRef<CFStringTokenizerRef> tokenizer(
+            CFStringTokenizerCreate(kCFAllocatorDefault, txt,
+                                    full_range, kCFStringTokenizerUnitWord, locale.get()));
+
+        // Advance to the first word.
+        CFStringTokenizerAdvanceToNextToken(tokenizer.get());
+
+        return tokenizer;
+    }
+
+    // If the line range happens to break a word, return the range padding needed to include
+    // the full word.  This is only done for LineBreakMode::kStrict.
+    CFIndex computeWordBreakPadding(const CFRange line_range) {
+        if (!fWordTokenizer) {
+            return 0;
+        }
+
+        CFRange word_range = CFStringTokenizerGetCurrentTokenRange(fWordTokenizer.get());
+        if (word_range.location == kCFNotFound) {
+            // No words left.
+            return 0;
+        }
+
+        // Consume words until past current line.
+        const CFIndex line_end = line_range.location + line_range.length;
+        while (word_range.location < line_end) {
+            // Do we have a word break at the end of the current line?
+            const CFIndex word_end = word_range.location + word_range.length;
+            if (word_range.location < line_end && line_end < word_end) {
+                // We should never see a word break for a word starting on the previous line.
+                SkASSERT(word_range.location >= line_range.location);
+
+                // Pad the current line with the rest of this word.
+                return word_end - line_end;
+            }
+
+            if (CFStringTokenizerAdvanceToNextToken(fWordTokenizer.get()) ==
+                kCFStringTokenizerTokenNone) {
+                // all words consumed, this is the end of the string
+                break;
+            }
+            word_range = CFStringTokenizerGetCurrentTokenRange(fWordTokenizer.get());
+        }
+
+        // No word breaks -> no padding.
+        return 0;
+    }
+
+public:
+    LineBreakIter(CFStringRef txt, CTTypesetterRef ts, SkScalar width,
+                  SkShapers::CT::LineBreakMode lbm)
+        : fTypesetter(ts), fWidth(width), fWordTokenizer(MakeWordTokenizer(txt, lbm)) {}
+
+    SkUniqueCFRef<CTLineRef> nextLine() {
+        CFRange line_range {fStart, CTTypesetterSuggestLineBreak(fTypesetter, fStart, fWidth)};
+        // Pad to avoid word breaks if needed.
+        line_range.length += computeWordBreakPadding(line_range);
+
+        if (!line_range.length) {
+            return nullptr;
+        }
+
+        fStart += line_range.length;
+
+        return SkUniqueCFRef<CTLineRef>(CTTypesetterCreateLine(fTypesetter, line_range));
     }
 };
 
@@ -195,12 +273,26 @@ void SkShaper_CoreText::shape(const char* utf8,
 void SkShaper_CoreText::shape(const char* utf8,
                               size_t utf8Bytes,
                               FontRunIterator& fontRuns,
+                              BiDiRunIterator& bidi,
+                              ScriptRunIterator& script,
+                              LanguageRunIterator& lang,
+                              const Feature* features, size_t featuresSize,
+                              SkScalar width,
+                              RunHandler* handler) const {
+    return this->shape(utf8, utf8Bytes, fontRuns, bidi, script, lang, features, featuresSize,
+                       width, /*textTracking=*/0, handler);
+}
+
+void SkShaper_CoreText::shape(const char* utf8,
+                              size_t utf8Bytes,
+                              FontRunIterator& fontRuns,
                               BiDiRunIterator&,
                               ScriptRunIterator&,
                               LanguageRunIterator&,
                               const Feature*,
                               size_t,
                               SkScalar width,
+                              float textTracking,
                               RunHandler* handler) const {
     SkFont font;
     if (!fontRuns.atEnd()) {
@@ -227,6 +319,10 @@ void SkShaper_CoreText::shape(const char* utf8,
                                       &kCFTypeDictionaryKeyCallBacks,
                                       &kCFTypeDictionaryValueCallBacks));
     CFDictionaryAddValue(attr.get(), kCTFontAttributeName, ctfont.get());
+    if (textTracking != 0) {
+        // Tracking is specified in em units, while CoreText expects absolute values.
+        dict_add_double(attr.get(), kCTTracking_AttributeName, textTracking * font.getSize());
+    }
     if ((false)) {
         // trying to see what these affect
         dict_add_double(attr.get(), kCTTracking_AttributeName, 1);
@@ -244,7 +340,7 @@ void SkShaper_CoreText::shape(const char* utf8,
     std::vector<SkFont> fontStorage;
     std::vector<SkShaper::RunHandler::RunInfo> infos;
 
-    LineBreakIter iter(typesetter.get(), width);
+    LineBreakIter iter(textString.get(), typesetter.get(), width, fLineBreakMode);
     while (SkUniqueCFRef<CTLineRef> line = iter.nextLine()) {
         CFArrayRef run_array = CTLineGetGlyphRuns(line.get());
         CFIndex runCount = CFArrayGetCount(run_array);
@@ -325,5 +421,7 @@ void SkShaper_CoreText::shape(const char* utf8,
 }
 
 namespace SkShapers::CT {
-std::unique_ptr<SkShaper> CoreText() { return std::make_unique<SkShaper_CoreText>(); }
+std::unique_ptr<SkShaper> CoreText(LineBreakMode lbm) {
+    return std::make_unique<SkShaper_CoreText>(lbm);
+}
 }  // namespace SkShapers::CT

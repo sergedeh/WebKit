@@ -85,7 +85,7 @@ static void updateQueryIfNecessary(NSMutableDictionary *dictionary)
     [dictionary setObject:@YES forKey:(__bridge id)kSecAttrSynchronizable];
 }
 
-static inline RefPtr<ArrayBuffer> alternateBlobIfNecessary(const WebKit::WebAuthenticationRequestData& requestData)
+static inline RefPtr<ArrayBuffer> NODELETE alternateBlobIfNecessary(const WebKit::WebAuthenticationRequestData& requestData)
 {
 #if HAVE(WEB_AUTHN_PRF_API)
     return nullptr;
@@ -212,7 +212,7 @@ static inline void performEnterpriseAttestation(const WebCore::PublicKeyCredenti
 
 static inline bool emptyTransportsOrContain(const Vector<AuthenticatorTransport>& transports, AuthenticatorTransport target)
 {
-    return transports.isEmpty() ? true : transports.contains(target);
+    return transports.isEmpty() || transports.contains(target);
 }
 
 // A Base64 encoded string of the Credential ID is used as the key of the hash set.
@@ -226,7 +226,7 @@ static inline HashSet<String> produceHashSet(const Vector<PublicKeyCredentialDes
     return result;
 }
 
-static inline uint8_t authDataFlags(ClientDataType type, LocalConnection::UserVerification verification, bool synchronizable, std::optional<MediationRequirement> mediation)
+static inline uint8_t NODELETE authDataFlags(ClientDataType type, LocalConnection::UserVerification verification, bool synchronizable, std::optional<MediationRequirement> mediation)
 {
     auto flags = 0;
     if (type != ClientDataType::Create || mediation != MediationRequirement::Conditional)
@@ -381,8 +381,7 @@ void LocalAuthenticator::makeCredential()
     auto excludeCredentialIds = produceHashSet(creationOptions.excludeCredentials);
     if (!excludeCredentialIds.isEmpty()) {
         if (notFound != m_existingCredentials.findIf([&excludeCredentialIds] (auto& credential) {
-            RefPtr rawId = credential->rawId();
-            ASSERT(rawId);
+            Ref rawId = credential->rawId();
             return excludeCredentialIds.contains(base64EncodeToString(rawId->span()));
         })) {
             receiveException({ ExceptionCode::InvalidStateError, "At least one credential matches an entry of the excludeCredentials list in the platform attached authenticator."_s }, WebAuthenticationStatus::LAExcludeCredentialsMatched);
@@ -473,7 +472,7 @@ std::optional<WebCore::ExceptionData> LocalAuthenticator::processLargeBlobExtens
 
     // Step 4.
     if (largeBlobInput->write) {
-        auto nsCredentialId = toNSData(response->rawId());
+        auto nsCredentialId = toNSData(&response->rawId());
         BOOL useAlternateKeychainAttribute = shouldUseAlternateKeychainAttribute();
         auto fetchQuery = adoptNS([[NSMutableDictionary alloc] init]);
         [fetchQuery setDictionary:@{
@@ -622,7 +621,7 @@ void LocalAuthenticator::continueMakeCredentialAfterUserVerification(SecAccessCo
     // of the key item. Instead we calculate that, and examine its equaity in DEBUG build.
     Vector<uint8_t> credentialId;
     {
-        auto digest = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_1);
+        auto digest = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_1);
         digest->addBytes(span(nsPublicKeyData.get()));
         credentialId = digest->computeHash();
         m_provisionalCredentialId = toNSData(credentialId);
@@ -666,10 +665,8 @@ void LocalAuthenticator::continueMakeCredentialAfterUserVerification(SecAccessCo
     if (creationOptions.attestation == AttestationConveyancePreference::Enterprise) {
         auto callback = [credentialId = WTF::move(credentialId), weakThis = WeakPtr { *this }] (Vector<uint8_t>&& attestationObject, std::optional<ExceptionData> exception) mutable {
             ASSERT(RunLoop::isMain());
-            if (!weakThis)
-                return;
-
-            weakThis->finishMakeCredential(WTF::move(credentialId), WTF::move(attestationObject), std::nullopt);
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->finishMakeCredential(WTF::move(credentialId), WTF::move(attestationObject), std::nullopt);
         };
 
         performEnterpriseAttestation(creationOptions, WTF::move(authData), requestData().hash, WTF::move(callback));
@@ -728,7 +725,7 @@ void LocalAuthenticator::getAssertion()
     auto assertionResponses = WTF::compactMap(m_existingCredentials, [&](auto& credential) -> RefPtr<WebCore::AuthenticatorAssertionResponse> {
         if (allowCredentialIds.isEmpty())
             return credential.copyRef();
-        RefPtr rawId = credential->rawId();
+        Ref rawId = credential->rawId();
         if (allowCredentialIds.contains(base64EncodeToString(rawId->span())))
             return credential.copyRef();
         return nullptr;
@@ -770,7 +767,7 @@ void LocalAuthenticator::continueGetAssertionAfterResponseSelected(Ref<WebCore::
     auto callback = [weakThis = WeakPtr { *this }, response = WTF::move(response)] (LocalConnection::UserVerification verification) mutable {
         ASSERT(RunLoop::isMain());
         if (RefPtr protectedThis = weakThis.get())
-            protectedThis->continueGetAssertionAfterUserVerification(WTF::move(response), verification, response->protectedLAContext().get());
+            protectedThis->continueGetAssertionAfterUserVerification(WTF::move(response), verification, protect(response->laContext()).get());
     };
 
     m_connection->verifyUser(accessControlRef.get(), context.get(), WTF::move(callback));
@@ -792,7 +789,7 @@ void LocalAuthenticator::continueGetAssertionAfterUserVerification(Ref<WebCore::
 
     // Step 11.
     RetainPtr<CFDataRef> signature;
-    auto nsCredentialId = toNSData(response->rawId());
+    auto nsCredentialId = toNSData(&response->rawId());
     {
         BOOL useAlternateKeychainAttribute = shouldUseAlternateKeychainAttribute();
         RetainPtr<NSMutableDictionary> query = adoptNS([@{
@@ -880,7 +877,7 @@ void LocalAuthenticator::continueGetAssertionAfterUserVerification(Ref<WebCore::
 
 void LocalAuthenticator::receiveException(ExceptionData&& exception, WebAuthenticationStatus status) const
 {
-    LOG_ERROR("%s", exception.message.utf8().data());
+    LOG_ERROR("%s", exception.message.utf8());
 
     // Roll back the just created credential.
     if (m_provisionalCredentialId) {
@@ -928,18 +925,18 @@ void LocalAuthenticator::deleteDuplicateCredential() const
         auto query = adoptNS([[NSMutableDictionary alloc] init]);
         [query setDictionary:@{
             (id)kSecClass: (id)kSecClassKey,
-            (id)kSecAttrAlias: toNSData(credential->rawId()).get(),
+            (id)kSecAttrAlias: toNSData(&credential->rawId()).get(),
             (id)kSecAttrSynchronizable: (id)kSecAttrSynchronizableAny,
             (id)kSecUseDataProtectionKeychain: @YES
         }];
 
         CFStringRef credentialIdKey = useAlternateKeychainAttribute ? kSecAttrAlias : kSecAttrApplicationLabel;
-        [query setObject:toNSData(credential->rawId()).get() forKey:(id)credentialIdKey];
+        [query setObject:toNSData(&credential->rawId()).get() forKey:(id)credentialIdKey];
 
         OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query.get());
         if (useAlternateKeychainAttribute && status == errSecItemNotFound) {
             [query removeObjectForKey:(id)kSecAttrAlias];
-            [query setObject:toNSData(credential->rawId()).get() forKey:(id)kSecAttrApplicationLabel];
+            [query setObject:toNSData(&credential->rawId()).get() forKey:(id)kSecAttrApplicationLabel];
             status = SecItemDelete((__bridge CFDictionaryRef)query.get());
         }
 

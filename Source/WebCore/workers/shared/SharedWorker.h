@@ -46,7 +46,7 @@ struct WorkerOptions;
 class SharedWorker final : public AbstractWorker, public ActiveDOMObject, public Identified<SharedWorkerObjectIdentifier> {
     WTF_MAKE_TZONE_ALLOCATED(SharedWorker);
 public:
-    static ExceptionOr<Ref<SharedWorker>> create(Document&, Variant<RefPtr<TrustedScriptURL>, String>&&, std::optional<Variant<String, WorkerOptions>>&&);
+    static ExceptionOr<Ref<SharedWorker>> create(Document&, Variant<Ref<TrustedScriptURL>, String>&&, std::optional<Variant<String, WorkerOptions>>&&);
     ~SharedWorker();
 
     // ContextDestructionObserver.
@@ -54,16 +54,15 @@ public:
     void deref() const final { AbstractWorker::deref(); }
     USING_CAN_MAKE_WEAKPTR(AbstractWorker);
 
-    static SharedWorker* fromIdentifier(SharedWorkerObjectIdentifier);
+    static SharedWorker* NODELETE fromIdentifier(SharedWorkerObjectIdentifier);
     MessagePort& port() const { return m_port.get(); }
 
-    const String& identifierForInspector() const { return m_identifierForInspector; }
+    const String& identifierForInspector() const LIFETIME_BOUND { return m_identifierForInspector; }
 
     void didFinishLoading(const ResourceError&);
 
     // EventTarget.
     ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
 
     void reportNetworkUsage(size_t bytesTransferredOverNetworkDelta);
 

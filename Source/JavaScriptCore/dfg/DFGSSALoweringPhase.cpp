@@ -91,7 +91,9 @@ private:
             break;
         }
 
-        case StringCharCodeAt: {
+        case StringAt:
+        case StringCharCodeAt:
+        case StringCodePointAt: {
             lowerStringBoundsCheck(m_graph.child(m_node, 0), m_graph.child(m_node, 1), m_graph.child(m_node, 2));
             break;
         }
@@ -157,7 +159,7 @@ private:
             break;
         case Array::String:
             // When we need to support this, it will require additional code since base's useKind is KnownStringUse.
-            DFG_CRASH(m_graph, m_node, "Array::String's base.useKind() is KnownStringUse");
+            DFG_CRASH(m_graph, m_node, "Array::String's base.useKind() is KnownStringUse"_s);
             break;
         default:
             break;

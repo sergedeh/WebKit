@@ -31,10 +31,12 @@ namespace JSC {
     /* The CellType value must come before any JSType that is a JSCell. */ \
     macro(CellType, SpecCellOther) \
     macro(StructureType, SpecCellOther) \
+    \
+    /* These JSCells require non-pointer-comparison identity check */ \
+    /* (e.g. String value comparison). Keep in sync with LastValueCompareCellType. */ \
     macro(StringType, SpecString) \
     macro(HeapBigIntType, SpecHeapBigInt) \
-    macro(HeapDoubleType, SpecCellOther) \
-    macro(HeapInt32Type, SpecCellOther) \
+    \
     macro(SymbolType, SpecSymbol) \
     \
     macro(GetterSetterType, SpecCellOther) \
@@ -59,11 +61,18 @@ namespace JSC {
     \
     macro(JSCellButterflyType, SpecCellOther) \
     macro(JSSourceCodeType, SpecCellOther) \
-    macro(JSScriptFetcherType, SpecCellOther) \
-    macro(JSScriptFetchParametersType, SpecCellOther) \
-    macro(JSPromiseReactionType, SpecCellOther) \
+    macro(JSSlimPromiseReactionType, SpecCellOther) \
+    macro(JSFullPromiseReactionType, SpecCellOther) \
     macro(JSPromiseCombinatorsContextType, SpecCellOther) \
     macro(JSPromiseCombinatorsGlobalContextType, SpecCellOther) \
+    macro(JSWebAssemblyStreamingContextType, SpecCellOther) \
+    macro(JSMicrotaskDispatcherType, SpecCellOther) \
+    macro(ModuleRegistryEntryType, SpecCellOther) \
+    macro(ModuleLoadingContextType, SpecCellOther) \
+    macro(ModuleLoaderPayloadType, SpecCellOther) \
+    macro(ModuleGraphLoadingStateType, SpecCellOther) \
+    macro(JSModuleLoaderType, SpecCellOther) \
+    macro(SentinelType, SpecCellOther) \
     \
     /* The ObjectType value must come before any JSType that is a subclass of JSObject. */ \
     macro(ObjectType, SpecObjectOther) \
@@ -127,6 +136,7 @@ namespace JSC {
     macro(JSDateType, SpecDateObject) \
     macro(ProxyObjectType, SpecProxyObject) \
     macro(JSGeneratorType, SpecObjectOther) \
+    macro(JSAsyncFunctionGeneratorType, SpecObjectOther) \
     macro(JSAsyncGeneratorType, SpecObjectOther) \
     macro(JSArrayIteratorType, SpecObjectOther) \
     macro(JSIteratorType, SpecObjectOther) \
@@ -160,7 +170,20 @@ enum JSType : uint8_t {
     MaxJSType = 0b11111111,
 };
 
-static constexpr uint32_t LastMaybeFalsyCellPrimitive = HeapBigIntType;
+// The first and last JSType are inclusive
+struct JSTypeRange {
+    static constexpr JSTypeRange fromRawValue(uint16_t value) { return JSTypeRange { static_cast<JSType>(value & 0xff), static_cast<JSType>(value >> 8) }; }
+
+    bool contains(JSType type) const { return first <= type && type <= last; }
+    constexpr uint16_t rawValue() const { return static_cast<uint16_t>(first) | (static_cast<uint16_t>(last) << 8); }
+
+    JSType first;
+    JSType last;
+};
+
+static constexpr uint8_t EmbedderArrayLikeType = 0b11101101;
+
+static constexpr uint32_t LastValueCompareCellType = HeapBigIntType;
 
 static constexpr uint32_t FirstTypedArrayType = Int8ArrayType;
 static constexpr uint32_t LastTypedArrayType = DataViewType;

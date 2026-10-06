@@ -79,6 +79,10 @@ public:
     bool hasDisconnectedCallback() const { return !!m_disconnectedCallback; }
     void invokeDisconnectedCallback(Element&);
 
+    void setConnectedMoveCallback(JSC::JSObject*);
+    bool hasConnectedMoveCallback() const { return !!m_connectedMoveCallback; }
+    void invokeConnectedMoveCallback(Element&);
+
     void setAdoptedCallback(JSC::JSObject*);
     bool hasAdoptedCallback() const { return !!m_adoptedCallback; }
     void invokeAdoptedCallback(Element&, Document& oldDocument, Document& newDocument);
@@ -112,10 +116,10 @@ public:
     bool hasFormStateRestoreCallback() const { return !!m_formStateRestoreCallback; }
     void invokeFormStateRestoreCallback(Element&, CustomElementFormValue state);
 
-    ScriptExecutionContext* scriptExecutionContext() const;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const;
     JSC::JSObject* constructor() { return m_constructor.get(); }
 
-    const QualifiedName& name() const { return m_name; }
+    const QualifiedName& name() const LIFETIME_BOUND { return m_name; }
 
     bool isUpgradingElement() const { return !m_constructionStack.isEmpty(); }
     Element* lastElementInConstructionStack() const { return m_constructionStack.last().get(); }
@@ -123,7 +127,7 @@ public:
 
     virtual ~JSCustomElementInterface();
 
-    template<typename Visitor> void visitJSFunctions(Visitor&) const;
+    template<typename Visitor> void visitJSFunctionsInGCThread(Visitor&) const;
 private:
     JSCustomElementInterface(const QualifiedName&, JSC::JSObject* callback, JSDOMGlobalObject*);
 
@@ -136,6 +140,7 @@ private:
     JSC::Weak<JSC::JSObject> m_constructor;
     JSC::Weak<JSC::JSObject> m_connectedCallback;
     JSC::Weak<JSC::JSObject> m_disconnectedCallback;
+    JSC::Weak<JSC::JSObject> m_connectedMoveCallback;
     JSC::Weak<JSC::JSObject> m_adoptedCallback;
     JSC::Weak<JSC::JSObject> m_attributeChangedCallback;
     JSC::Weak<JSC::JSObject> m_formAssociatedCallback;

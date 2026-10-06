@@ -41,10 +41,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
-#if PLATFORM(IOS_FAMILY)
-#include "ScriptController.h"
-#endif
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioScheduledSourceNode);
@@ -71,7 +67,7 @@ void AudioScheduledSourceNode::updateSchedulingInfo(size_t quantumFrameSize, Aud
     // quantumEndFrame       : End frame of the current time quantum.
     // startFrame            : Start frame for this source.
     // endFrame              : End frame for this source.
-    size_t quantumStartFrame = context().currentSampleFrame();
+    size_t quantumStartFrame = protect(context())->currentSampleFrame();
     size_t quantumEndFrame = quantumStartFrame + quantumFrameSize;
 
     // Round up if the start time isn't on a frame boundary so we don't start too early.
@@ -157,7 +153,7 @@ ExceptionOr<void> AudioScheduledSourceNode::startLater(double when)
     if (!std::isfinite(when) || when < 0)
         return Exception { ExceptionCode::RangeError, "when value should be positive"_s };
 
-    context().sourceNodeWillBeginPlayback(*this);
+    protect(context())->sourceNodeWillBeginPlayback(*this);
 
     m_startTime = when;
     m_playbackState = SCHEDULED_STATE;

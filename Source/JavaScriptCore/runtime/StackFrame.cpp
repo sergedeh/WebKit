@@ -141,9 +141,9 @@ SourceID StackFrame::sourceID() const
     return noSourceID;
 }
 
-static String processSourceURL(VM& vm, const JSC::StackFrame& frame, const String& sourceURL)
+static String processSourceURL(VM& vm, const JSC::StackFrame& frame, const String& sourceURL, AllowURLOverride allowOverride = AllowURLOverride::Yes)
 {
-    if (vm.clientData && (!protocolIsInHTTPFamily(sourceURL) && !protocolIs(sourceURL, "blob"_s))) {
+    if (allowOverride == AllowURLOverride::Yes && vm.clientData && (!protocolIsInHTTPFamily(sourceURL) && !protocolIs(sourceURL, "blob"_s))) {
         String overrideURL = vm.clientData->overrideSourceURL(frame, sourceURL);
         if (!overrideURL.isNull())
             return overrideURL;
@@ -154,20 +154,20 @@ static String processSourceURL(VM& vm, const JSC::StackFrame& frame, const Strin
     return emptyString();
 }
 
-String StackFrame::sourceURL(VM& vm) const
+String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
 {
     return WTF::switchOn(m_frameData,
-        [&vm, this](const JSFrameData& jsFrame) -> String {
+        [&vm, allowOverride, this](const JSFrameData& jsFrame) -> String {
             if (isAsyncFrameWithoutCodeBlock()) {
                 ASSERT(jsFrame.callee);
                 ASSERT(!jsFrame.codeBlock);
-                JSFunction* calleeFn = jsDynamicCast<JSFunction*>(jsFrame.callee.get());
-                return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURL());
+                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee.get());
+                return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURL(), allowOverride);
             }
 
             if (!jsFrame.codeBlock)
                 return "[native code]"_s;
-            return processSourceURL(vm, *this, jsFrame.codeBlock->ownerExecutable()->sourceURL());
+            return processSourceURL(vm, *this, jsFrame.codeBlock->ownerExecutable()->sourceURL(), allowOverride);
         },
         [](const WasmFrameData& wasmFrame) -> String {
             auto moduleName = wasmFrame.functionIndexOrName.moduleName();
@@ -185,7 +185,7 @@ String StackFrame::sourceURLStripped(VM& vm) const
             if (isAsyncFrameWithoutCodeBlock()) {
                 ASSERT(jsFrame.callee);
                 ASSERT(!jsFrame.codeBlock);
-                JSFunction* calleeFn = jsDynamicCast<JSFunction*>(jsFrame.callee.get());
+                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee.get());
                 return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURLStripped());
             }
 
@@ -220,9 +220,9 @@ String StackFrame::functionName(VM& vm) const
             }
             String name;
             if (jsFrame.callee && jsFrame.callee->isObject())
-                name = getCalculatedDisplayName(vm, jsCast<JSObject*>(jsFrame.callee.get())).impl();
+                name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee.get())).impl();
             else if (jsFrame.codeBlock) {
-                if (auto* executable = jsDynamicCast<FunctionExecutable*>(jsFrame.codeBlock->ownerExecutable()))
+                if (auto* executable = dynamicDowncast<FunctionExecutable>(jsFrame.codeBlock->ownerExecutable()))
                     name = executable->ecmaName().impl();
             }
 
@@ -260,10 +260,33 @@ LineColumn StackFrame::computeLineAndColumn() const
     return { };
 }
 
+// A `data:` URL is the whole script, so one frame can be tens of thousands of characters long.
+// Sentry caps its own stack lines at 1024, so use the same number.
+// FIXME: other schemes, and other places that print a source URL, are not capped.
+// https://bugs.webkit.org/show_bug.cgi?id=323716
+static constexpr unsigned maximumDataURLLengthInStackTrace = 1024;
+
+static StringView truncateLongDataURL(StringView sourceURL)
+{
+    if (sourceURL.length() <= maximumDataURLLengthInStackTrace)
+        return sourceURL;
+    if (!protocolIs(sourceURL, "data"_s))
+        return sourceURL;
+
+    // Don't cut in the middle of a %XX escape, or the URL won't decode.
+    unsigned length = maximumDataURLLengthInStackTrace;
+    size_t lastPercent = sourceURL.reverseFind('%', length - 1);
+    if (lastPercent != notFound && length - lastPercent < 3)
+        length = lastPercent;
+    return sourceURL.left(length);
+}
+
 String StackFrame::toString(VM& vm) const
 {
     String functionName = this->functionName(vm);
-    String sourceURL = this->sourceURLStripped(vm);
+    // sourceURL points into fullSourceURL, so keep fullSourceURL around.
+    String fullSourceURL = this->sourceURLStripped(vm);
+    auto sourceURL = truncateLongDataURL(fullSourceURL);
 
     if (sourceURL.isEmpty() || !hasLineAndColumnInfo())
         return makeString(functionName, '@', sourceURL);

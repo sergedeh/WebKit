@@ -29,14 +29,12 @@
 namespace WebCore {
 namespace Style {
 
-// <'margin-trim'> = none | [ block || inline ] | [ block-start || inline-start || block-end || inline-end ]
+// <'margin-trim'> = none | block | [ block-start || block-end ]
 // https://drafts.csswg.org/css-box/#margin-trim
 
 enum class MarginTrimSide : uint8_t {
     BlockStart,
-    InlineStart,
     BlockEnd,
-    InlineEnd,
 };
 
 using MarginTrimSideEnumSet = SpaceSeparatedEnumSet<MarginTrimSide>;
@@ -65,20 +63,16 @@ struct MarginTrim {
 
     constexpr bool isNone() const { return m_value.isEmpty(); }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
         if (isNone())
             return visitor(CSS::Keyword::None { });
 
-        // Handle "block", "inline" and "block inline" shorthands
-        if (m_value.containsAll({ MarginTrimSide::BlockStart, MarginTrimSide::BlockEnd }) && !m_value.containsAny({ MarginTrimSide::InlineStart, MarginTrimSide::InlineEnd }))
+        // Handle the "block" shorthand
+        if (m_value.containsAll({ MarginTrimSide::BlockStart, MarginTrimSide::BlockEnd }))
             return visitor(CSS::Keyword::Block { });
-        if (m_value.containsAll({ MarginTrimSide::InlineStart, MarginTrimSide::InlineEnd }) && !m_value.containsAny({ MarginTrimSide::BlockStart, MarginTrimSide::BlockEnd }))
-            return visitor(CSS::Keyword::Inline { });
-        if (m_value.containsAll({ MarginTrimSide::BlockStart, MarginTrimSide::BlockEnd, MarginTrimSide::InlineStart, MarginTrimSide::InlineEnd }))
-            return visitor(SpaceSeparatedTuple { CSS::Keyword::Block { }, CSS::Keyword::Inline { } });
 
         return visitor(m_value);
     }

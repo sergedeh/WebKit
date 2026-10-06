@@ -27,6 +27,7 @@
 
 #include "InlineDisplayBoxInlines.h"
 #include "InlineIteratorBoxModernPath.h"
+#include "RenderBoxInlines.h"
 #include "StyleTabSize.h"
 
 namespace WebCore {
@@ -36,16 +37,31 @@ inline bool BoxModernPath::isHorizontal() const { return box().isHorizontal(); }
 
 inline TextRun BoxModernPath::textRun(TextRunMode mode) const
 {
-    auto& style = box().style();
+    CheckedRef style = box().style();
     auto expansion = box().expansion();
     auto logicalLeft = [&] {
-        if (style.writingMode().isBidiLTR())
-            return visualRectIgnoringBlockDirection().x() - (line().lineBoxLeft() + line().contentLogicalLeft());
-        return line().lineBoxRight() - (visualRectIgnoringBlockDirection().maxX() + line().contentLogicalLeft());
+        // Offset from the formatting context's content box, with the text-align offset removed.
+        // text-align shifts the root inline box within the line (contentLogicalLeft), but tab stops
+        // are measured from the containing block's content box edge regardless of alignment.
+        //
+        //   containing block's content box
+        //   |                                                  |
+        //   |               text-align: center                 |
+        //   |               |<- content ->|                    |
+        //   |               |X         X  |                    |
+        //   |                                                  |
+        //   logicalLeft = 0 (not the visual position)
+        CheckedRef root = formattingContextRoot();
+        auto positionRelativeToContentBox = [&] {
+            if (style->writingMode().isBidiLTR())
+                return visualRectIgnoringBlockDirection().x() - root->borderAndPaddingStart();
+            return root->contentBoxWidth() - visualRectIgnoringBlockDirection().maxX();
+        }();
+        return positionRelativeToContentBox - line().contentLogicalLeft();
     };
     auto characterScanForCodePath = isText() && !renderText().canUseSimpleFontCodePath();
-    auto textRun = TextRun { mode == TextRunMode::Editing ? originalText() : box().text().renderedContent(), logicalLeft(), expansion.horizontalExpansion, expansion.behavior, direction(), style.rtlOrdering() == Order::Visual, characterScanForCodePath };
-    textRun.setTabSize(!style.collapseWhiteSpace(), Style::toPlatform(style.tabSize()));
+    auto textRun = TextRun { mode == TextRunMode::Editing ? originalText() : box().text().renderedContent(), logicalLeft(), expansion.horizontalExpansion, expansion.behavior, direction(), style->rtlOrdering() == Order::Visual, characterScanForCodePath };
+    textRun.setTabSize(!style->collapseWhiteSpace(), Style::toPlatform(style->tabSize(), style->usedZoomForLength()));
     return textRun;
 }
 

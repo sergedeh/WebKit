@@ -87,6 +87,31 @@ bool ModelProcessModelPlayer::modelProcessEnabled() const
     return strongPage && strongPage->corePage() && strongPage->corePage()->settings().modelElementEnabled() && strongPage->corePage()->settings().modelProcessEnabled();
 }
 
+ModelProcessModelPlayer::NodeAnimationState& ModelProcessModelPlayer::ensureAnimationState(WebCore::NodeIdentifier nodeID)
+{
+    return m_animationStates.ensure(nodeID, [] {
+        return NodeAnimationState { };
+    }).iterator->value;
+}
+
+const ModelProcessModelPlayer::NodeAnimationState* ModelProcessModelPlayer::animationStateIfExists(WebCore::NodeIdentifier nodeID) const
+{
+    auto it = m_animationStates.find(nodeID);
+    if (it == m_animationStates.end())
+        return nullptr;
+
+    return &it->value;
+}
+
+ModelProcessModelPlayer::NodeAnimationState* ModelProcessModelPlayer::animationStateIfExists(WebCore::NodeIdentifier nodeID)
+{
+    auto it = m_animationStates.find(nodeID);
+    if (it == m_animationStates.end())
+        return nullptr;
+
+    return &it->value;
+}
+
 // MARK: - Messages
 
 void ModelProcessModelPlayer::didCreateLayer(WebCore::LayerHostingContextIdentifier identifier)
@@ -95,10 +120,10 @@ void ModelProcessModelPlayer::didCreateLayer(WebCore::LayerHostingContextIdentif
     RELEASE_ASSERT(modelProcessEnabled());
 
     m_layerHostingContextIdentifier = identifier;
-    protectedClient()->didUpdate(*this);
+    protect(client())->didUpdate(*this);
 }
 
-void ModelProcessModelPlayer::didFinishLoading(const WebCore::FloatPoint3D& boundingBoxCenter, const WebCore::FloatPoint3D& boundingBoxExtents)
+void ModelProcessModelPlayer::didFinishLoading(WebCore::NodeIdentifier nodeID, const WebCore::FloatPoint3D& boundingBoxCenter, const WebCore::FloatPoint3D& boundingBoxExtents)
 {
     RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayer didFinishLoading id=%" PRIu64, this, m_id.toUInt64());
     RELEASE_ASSERT(modelProcessEnabled());
@@ -107,57 +132,86 @@ void ModelProcessModelPlayer::didFinishLoading(const WebCore::FloatPoint3D& boun
     m_boundingBoxExtents = boundingBoxExtents;
 
     RefPtr client = m_client.get();
-    client->didFinishLoading(*this);
-    client->didUpdateBoundingBox(*this, boundingBoxCenter, boundingBoxExtents);
+    client->didFinishLoading(*this, nodeID);
+    client->didUpdateBoundingBox(*this, nodeID, boundingBoxCenter, boundingBoxExtents);
 }
 
-void ModelProcessModelPlayer::didFailLoading()
+void ModelProcessModelPlayer::didConvertModelData(Ref<WebCore::SharedBuffer>&& convertedData, const String& convertedMIMEType)
+{
+    RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayer didConvertModelData mimeType=%s id=%" PRIu64, this, convertedMIMEType.utf8(), m_id.toUInt64());
+    RELEASE_ASSERT(modelProcessEnabled());
+
+    protect(client())->didConvertModelData(*this, WTF::move(convertedData), convertedMIMEType);
+}
+
+void ModelProcessModelPlayer::didFailLoading(WebCore::NodeIdentifier nodeID)
 {
     RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayer didFailLoading id=%" PRIu64, this, m_id.toUInt64());
     RELEASE_ASSERT(modelProcessEnabled());
 
-    protectedClient()->didFailLoading(*this, WebCore::ResourceError { WebCore::errorDomainWebKitInternal, 0, { }, "Failed to load model data"_s });
+    m_animationStates.remove(nodeID);
+
+    protect(client())->didFailLoading(*this, nodeID, WebCore::ResourceError { WebCore::errorDomainWebKitInternal, 0, { }, "Failed to load model data"_s });
 }
 
 /// This comes from Model Process side, so that Web Process has the most up-to-date knowledge about the transform actually applied to the entity.
 /// Not to be confused with setEntityTransform().
-void ModelProcessModelPlayer::didUpdateEntityTransform(const WebCore::TransformationMatrix& transform)
+void ModelProcessModelPlayer::didUpdateEntityTransform(WebCore::NodeIdentifier nodeID, const WebCore::TransformationMatrix& transform)
 {
     RELEASE_ASSERT(modelProcessEnabled());
 
     m_entityTransform = transform;
-    protectedClient()->didUpdateEntityTransform(*this, transform);
+    protect(client())->didUpdateEntityTransform(*this, nodeID, transform);
 }
 
-void ModelProcessModelPlayer::didUpdateAnimationPlaybackState(bool isPaused, double playbackRate, Seconds duration, Seconds currentTime, MonotonicTime clockTimestamp)
+#if ENABLE(SPATIAL_PORTAL)
+
+void ModelProcessModelPlayer::didUpdatePortalTransform(const WebCore::TransformationMatrix& transform)
 {
     RELEASE_ASSERT(modelProcessEnabled());
 
-    m_animationState.setPaused(isPaused);
-    m_animationState.setDuration(duration);
-    m_animationState.setPlaybackRate(playbackRate);
-    m_animationState.setCurrentTime(currentTime, clockTimestamp);
+    protect(client())->didUpdatePortalTransform(*this, transform);
+}
+
+#endif
+
+void ModelProcessModelPlayer::didUpdateAnimationPlaybackState(WebCore::NodeIdentifier nodeID, bool isPaused, double playbackRate, Seconds duration, Seconds currentTime, MonotonicTime clockTimestamp)
+{
+    RELEASE_ASSERT(modelProcessEnabled());
+
+    auto* nodeAnimationState = animationStateIfExists(nodeID);
+    if (!nodeAnimationState)
+        return;
+
+    auto& animationState = nodeAnimationState->playbackState;
+    animationState.setPaused(isPaused);
+    animationState.setDuration(duration);
+    animationState.setPlaybackRate(playbackRate);
+    animationState.setCurrentTime(currentTime, clockTimestamp);
 }
 
 void ModelProcessModelPlayer::didFinishEnvironmentMapLoading(bool succeeded)
 {
     RELEASE_ASSERT(modelProcessEnabled());
 
-    protectedClient()->didFinishEnvironmentMapLoading(*this, succeeded);
+    protect(client())->didFinishEnvironmentMapLoading(*this, succeeded);
 }
 
 // MARK: - WebCore::ModelPlayer
 
-std::optional<WebCore::ModelPlayerAnimationState> ModelProcessModelPlayer::currentAnimationState() const
+std::optional<WebCore::ModelPlayerAnimationState> ModelProcessModelPlayer::currentAnimationState(WebCore::NodeIdentifier nodeID) const
 {
     // Has no current state to return if the model load hasn't returned with its extents.
     if (!m_boundingBoxExtents)
         return std::nullopt;
 
-    return m_animationState;
+    if (auto* nodeAnimationState = animationStateIfExists(nodeID))
+        return nodeAnimationState->playbackState;
+
+    return std::nullopt;
 }
 
-std::optional<std::unique_ptr<WebCore::ModelPlayerTransformState>> ModelProcessModelPlayer::currentTransformState() const
+std::optional<std::unique_ptr<WebCore::ModelPlayerTransformState>> ModelProcessModelPlayer::currentTransformState(WebCore::NodeIdentifier) const
 {
     // Has no current state to return if the model load hasn't returned with its extents.
     if (!m_boundingBoxExtents)
@@ -166,17 +220,25 @@ std::optional<std::unique_ptr<WebCore::ModelPlayerTransformState>> ModelProcessM
     return ModelProcessModelPlayerTransformState::create(m_entityTransform, m_boundingBoxCenter, m_boundingBoxExtents, m_hasPortal, m_stageModeOperation);
 }
 
-void ModelProcessModelPlayer::load(WebCore::Model& model, WebCore::LayoutSize size)
+void ModelProcessModelPlayer::load(WebCore::NodeIdentifier nodeID, WebCore::Model& model, WebCore::LayoutSize size, bool isForImmersive)
 {
     RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayer load model id=%" PRIu64, this, m_id.toUInt64());
 
     if (!WebCore::MIMETypeRegistry::isUSDMIMEType(model.mimeType())) {
-        RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayer::load: Found unexpected model mimetype: %s", this, model.mimeType().utf8().data());
+        RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayer::load: Found unexpected model mimetype: %s", this, model.mimeType().utf8());
         if (RefPtr client = m_client.get())
             client->logWarning(*this, makeString("Unexpected USDZ MIME type \""_s, model.mimeType(), "\" in <model> element. Expected \"model/vnd.usdz+zip\". Some features of <model> may not work properly. The model may fail to render in a future release."_s));
     }
 
-    send(Messages::ModelProcessModelPlayerProxy::LoadModel(model, size));
+    send(Messages::ModelProcessModelPlayerProxy::LoadModel(nodeID, model, size, isForImmersive));
+}
+
+void ModelProcessModelPlayer::unload(WebCore::NodeIdentifier nodeID)
+{
+    RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayer unload model nodeID=%" PRIu64 " id=%" PRIu64, this, nodeID.toUInt64(), m_id.toUInt64());
+
+    m_animationStates.remove(nodeID);
+    send(Messages::ModelProcessModelPlayerProxy::UnloadModel(nodeID));
 }
 
 void ModelProcessModelPlayer::didUnload()
@@ -195,7 +257,7 @@ void ModelProcessModelPlayer::didUnload()
         client->didUnload(*this);
 }
 
-void ModelProcessModelPlayer::reload(WebCore::Model& model, WebCore::LayoutSize size, WebCore::ModelPlayerAnimationState& animationState, std::unique_ptr<WebCore::ModelPlayerTransformState>&& transformState)
+void ModelProcessModelPlayer::reload(WebCore::NodeIdentifier nodeID, WebCore::Model& model, WebCore::LayoutSize size, WebCore::ModelPlayerAnimationState& animationState, std::unique_ptr<WebCore::ModelPlayerTransformState>&& transformState)
 {
     RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayer reload model id=%" PRIu64, this, m_id.toUInt64());
 
@@ -206,8 +268,8 @@ void ModelProcessModelPlayer::reload(WebCore::Model& model, WebCore::LayoutSize 
     m_boundingBoxExtents = transformStateToRestore->boundingBoxExtents();
     setHasPortal(transformStateToRestore->hasPortal());
     setStageMode(transformStateToRestore->stageMode());
-    m_animationState = WebCore::ModelPlayerAnimationState(animationState);
-    send(Messages::ModelProcessModelPlayerProxy::ReloadModel(model, size, transformStateToRestore->entityTransform(), animationState));
+    ensureAnimationState(nodeID).playbackState = WebCore::ModelPlayerAnimationState(animationState);
+    send(Messages::ModelProcessModelPlayerProxy::ReloadModel(nodeID, model, size, transformStateToRestore->entityTransform(), animationState));
 }
 
 void ModelProcessModelPlayer::visibilityStateDidChange()
@@ -224,8 +286,10 @@ void ModelProcessModelPlayer::sizeDidChange(WebCore::LayoutSize size)
 
 void ModelProcessModelPlayer::configureGraphicsLayer(WebCore::GraphicsLayer& graphicsLayer, WebCore::ModelPlayerGraphicsLayerConfiguration&& configuration)
 {
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    if (configuration.detachedForImmersive)
+    // A hosting context can only be hosted in one place, so the page must drop its copy while the content is
+    // hosted elsewhere.
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (configuration.presentationMode != WebCore::ModelPresentationMode::Inline)
         return graphicsLayer.removeModelContents();
 #endif
 
@@ -242,6 +306,7 @@ void ModelProcessModelPlayer::configureGraphicsLayer(WebCore::GraphicsLayer& gra
             *modelLayerIdentifier,
             *layerHostingContextIdentifier,
             configuration.contentSize,
+            configuration.contentOrigin,
             configuration.hasPortal ? WebCore::ModelContextDisablePortal::No : WebCore::ModelContextDisablePortal::Yes,
             configuration.backgroundColor
         ),
@@ -265,26 +330,26 @@ void ModelProcessModelPlayer::enterFullscreen()
 {
 }
 
-std::optional<WebCore::FloatPoint3D> ModelProcessModelPlayer::boundingBoxCenter() const
+std::optional<WebCore::FloatPoint3D> ModelProcessModelPlayer::boundingBoxCenter(WebCore::NodeIdentifier) const
 {
     return m_boundingBoxCenter;
 }
 
-std::optional<WebCore::FloatPoint3D> ModelProcessModelPlayer::boundingBoxExtents() const
+std::optional<WebCore::FloatPoint3D> ModelProcessModelPlayer::boundingBoxExtents(WebCore::NodeIdentifier) const
 {
     return m_boundingBoxExtents;
 }
 
-std::optional<WebCore::TransformationMatrix> ModelProcessModelPlayer::entityTransform() const
+std::optional<WebCore::TransformationMatrix> ModelProcessModelPlayer::entityTransform(WebCore::NodeIdentifier) const
 {
     return m_entityTransform;
 }
 
 /// This comes from JS side, so we need to tell Model Process about it. Not to be confused with didUpdateEntityTransform().
-void ModelProcessModelPlayer::setEntityTransform(WebCore::TransformationMatrix transform)
+void ModelProcessModelPlayer::setEntityTransform(WebCore::NodeIdentifier nodeID, WebCore::TransformationMatrix transform)
 {
     m_entityTransform = transform;
-    send(Messages::ModelProcessModelPlayerProxy::SetEntityTransform(transform));
+    send(Messages::ModelProcessModelPlayerProxy::SetEntityTransform(nodeID, transform));
 }
 
 bool ModelProcessModelPlayer::supportsTransform(WebCore::TransformationMatrix transform)
@@ -302,52 +367,37 @@ void ModelProcessModelPlayer::setCamera(WebCore::HTMLModelElementCamera camera, 
     completionHandler(false);
 }
 
-void ModelProcessModelPlayer::isPlayingAnimation(CompletionHandler<void(std::optional<bool>&&)>&& completionHandler)
+void ModelProcessModelPlayer::isPlayingAnimation(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&& completionHandler)
 {
     completionHandler(false);
 }
 
-void ModelProcessModelPlayer::setAnimationIsPlaying(bool isPlaying, CompletionHandler<void(bool success)>&& completionHandler)
+void ModelProcessModelPlayer::setAnimationIsPlaying(WebCore::NodeIdentifier, bool isPlaying, CompletionHandler<void(bool success)>&& completionHandler)
 {
     completionHandler(false);
 }
 
-void ModelProcessModelPlayer::isLoopingAnimation(CompletionHandler<void(std::optional<bool>&&)>&& completionHandler)
+void ModelProcessModelPlayer::isLoopingAnimation(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&& completionHandler)
 {
     completionHandler(std::nullopt);
 }
 
-void ModelProcessModelPlayer::setIsLoopingAnimation(bool isLooping, CompletionHandler<void(bool success)>&& completionHandler)
+void ModelProcessModelPlayer::setIsLoopingAnimation(WebCore::NodeIdentifier, bool isLooping, CompletionHandler<void(bool success)>&& completionHandler)
 {
     completionHandler(false);
 }
 
-void ModelProcessModelPlayer::animationDuration(CompletionHandler<void(std::optional<Seconds>&&)>&& completionHandler)
+void ModelProcessModelPlayer::animationDuration(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&& completionHandler)
 {
     completionHandler(std::nullopt);
 }
 
-void ModelProcessModelPlayer::animationCurrentTime(CompletionHandler<void(std::optional<Seconds>&&)>&& completionHandler)
+void ModelProcessModelPlayer::animationCurrentTime(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&& completionHandler)
 {
     completionHandler(std::nullopt);
 }
 
-void ModelProcessModelPlayer::setAnimationCurrentTime(Seconds currentTime, CompletionHandler<void(bool success)>&& completionHandler)
-{
-    completionHandler(false);
-}
-
-void ModelProcessModelPlayer::hasAudio(CompletionHandler<void(std::optional<bool>&&)>&& completionHandler)
-{
-    completionHandler(std::nullopt);
-}
-
-void ModelProcessModelPlayer::isMuted(CompletionHandler<void(std::optional<bool>&&)>&& completionHandler)
-{
-    completionHandler(std::nullopt);
-}
-
-void ModelProcessModelPlayer::setIsMuted(bool isMuted, CompletionHandler<void(bool success)>&& completionHandler)
+void ModelProcessModelPlayer::setAnimationCurrentTime(WebCore::NodeIdentifier, Seconds currentTime, CompletionHandler<void(bool success)>&& completionHandler)
 {
     completionHandler(false);
 }
@@ -357,83 +407,127 @@ WebCore::ModelPlayerAccessibilityChildren ModelProcessModelPlayer::accessibility
     return { };
 }
 
-void ModelProcessModelPlayer::setAutoplay(bool autoplay)
+void ModelProcessModelPlayer::setAutoplay(WebCore::NodeIdentifier nodeID, bool autoplay)
 {
-    if (m_animationState.autoplay() == autoplay)
+    auto& animationState = ensureAnimationState(nodeID).playbackState;
+    if (animationState.autoplay() == autoplay)
         return;
 
-    m_animationState.setAutoplay(autoplay);
-    send(Messages::ModelProcessModelPlayerProxy::SetAutoplay(autoplay));
+    animationState.setAutoplay(autoplay);
+    send(Messages::ModelProcessModelPlayerProxy::SetAutoplay(nodeID, autoplay));
 }
 
-void ModelProcessModelPlayer::setLoop(bool loop)
+void ModelProcessModelPlayer::setLoop(WebCore::NodeIdentifier nodeID, bool loop)
 {
-    if (m_animationState.loop() == loop)
+    auto& animationState = ensureAnimationState(nodeID).playbackState;
+    if (animationState.loop() == loop)
         return;
 
-    m_animationState.setLoop(loop);
-    send(Messages::ModelProcessModelPlayerProxy::SetLoop(loop));
+    animationState.setLoop(loop);
+    send(Messages::ModelProcessModelPlayerProxy::SetLoop(nodeID, loop));
 }
 
-void ModelProcessModelPlayer::setPlaybackRate(double playbackRate, CompletionHandler<void(double effectivePlaybackRate)>&& completionHandler)
+void ModelProcessModelPlayer::setPlaybackRate(WebCore::NodeIdentifier nodeID, double playbackRate, CompletionHandler<void(double effectivePlaybackRate)>&& completionHandler)
 {
-    // FIXME (280081): Support negative playback rate
-    m_requestedPlaybackRate = fmax(playbackRate, 0);
-    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::SetPlaybackRate(m_requestedPlaybackRate), WTF::move(completionHandler));
+    ensureAnimationState(nodeID).playbackState.setPlaybackRate(playbackRate);
+    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::SetPlaybackRate(nodeID, playbackRate), WTF::move(completionHandler));
 }
 
-double ModelProcessModelPlayer::duration() const
+double ModelProcessModelPlayer::duration(WebCore::NodeIdentifier nodeID) const
 {
-    return m_animationState.duration().seconds();
+    if (auto* animationState = animationStateIfExists(nodeID))
+        return animationState->playbackState.duration().seconds();
+
+    return 0;
 }
 
-bool ModelProcessModelPlayer::paused() const
+bool ModelProcessModelPlayer::paused(WebCore::NodeIdentifier nodeID) const
 {
-    return m_animationState.paused();
+    if (auto* animationState = animationStateIfExists(nodeID))
+        return animationState->playbackState.paused();
+
+    return true;
 }
 
-void ModelProcessModelPlayer::setPaused(bool paused, CompletionHandler<void(bool succeeded)>&& completionHandler)
+void ModelProcessModelPlayer::setPaused(WebCore::NodeIdentifier nodeID, bool paused, CompletionHandler<void(bool succeeded)>&& completionHandler)
 {
-    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::SetPaused(paused), WTF::move(completionHandler));
+    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::SetPaused(nodeID, paused), WTF::move(completionHandler));
 }
 
-Seconds ModelProcessModelPlayer::currentTime() const
+Seconds ModelProcessModelPlayer::currentTime(WebCore::NodeIdentifier nodeID) const
 {
-    if (m_pendingCurrentTime)
-        return *m_pendingCurrentTime;
+    auto* animationState = animationStateIfExists(nodeID);
+    if (!animationState)
+        return 0_s;
 
-    return m_animationState.currentTime();
+    if (animationState->pendingCurrentTime)
+        return *animationState->pendingCurrentTime;
+
+    return animationState->playbackState.currentTime();
 }
 
-void ModelProcessModelPlayer::setCurrentTime(Seconds currentTime, CompletionHandler<void()>&& completionHandler)
+void ModelProcessModelPlayer::setCurrentTime(WebCore::NodeIdentifier nodeID, Seconds currentTime, CompletionHandler<void()>&& completionHandler)
 {
     ASSERT(RunLoop::isMain());
-    double durationSeconds = duration();
+    auto& animationState = ensureAnimationState(nodeID);
+    double durationSeconds = animationState.playbackState.duration().seconds();
     if (!durationSeconds) {
         completionHandler();
         return;
     }
 
-    m_pendingCurrentTime = Seconds(fmax(fmin(currentTime.seconds(), durationSeconds), 0));
+    animationState.pendingCurrentTime = Seconds(fmax(fmin(currentTime.seconds(), durationSeconds), 0));
     MonotonicTime timestamp = MonotonicTime::now();
-    m_clockTimestampOfLastCurrentTimeSet = timestamp;
+    animationState.clockTimestampOfLastCurrentTimeSet = timestamp;
 
-    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::SetCurrentTime(*m_pendingCurrentTime), [weakThis = WeakPtr { *this }, timestamp, completionHandler = WTF::move(completionHandler)]() mutable {
+    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::SetCurrentTime(nodeID, *animationState.pendingCurrentTime), [weakThis = WeakPtr { *this }, nodeID, timestamp, completionHandler = WTF::move(completionHandler)]() mutable {
         ASSERT(RunLoop::isMain());
         if (RefPtr protectedThis = weakThis.get()) {
-            if (protectedThis->m_clockTimestampOfLastCurrentTimeSet && *(protectedThis->m_clockTimestampOfLastCurrentTimeSet) <= timestamp) {
-                protectedThis->m_pendingCurrentTime = std::nullopt;
-                protectedThis->m_clockTimestampOfLastCurrentTimeSet = std::nullopt;
+            auto it = protectedThis->m_animationStates.find(nodeID);
+            if (it != protectedThis->m_animationStates.end() && it->value.clockTimestampOfLastCurrentTimeSet && *it->value.clockTimestampOfLastCurrentTimeSet <= timestamp) {
+                it->value.pendingCurrentTime = std::nullopt;
+                it->value.clockTimestampOfLastCurrentTimeSet = std::nullopt;
             }
         }
         completionHandler();
     });
 }
 
-void ModelProcessModelPlayer::setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data)
+void ModelProcessModelPlayer::setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data, const URL& sourceURL)
 {
-    send(Messages::ModelProcessModelPlayerProxy::SetEnvironmentMap(WTF::move(data)));
+    m_environmentMapKind = WebCore::EnvironmentMapKind::Custom;
+    m_environmentMapURL = sourceURL;
+    send(Messages::ModelProcessModelPlayerProxy::SetEnvironmentMapData(WTF::move(data)));
 }
+
+String ModelProcessModelPlayer::environmentMapForTesting() const
+{
+    switch (m_environmentMapKind) {
+    case WebCore::EnvironmentMapKind::None:
+        return "none"_s;
+    case WebCore::EnvironmentMapKind::Default:
+        return "auto"_s;
+    case WebCore::EnvironmentMapKind::Custom:
+        return m_environmentMapURL.string();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+#if ENABLE(SPATIAL_PORTAL)
+
+void ModelProcessModelPlayer::disableEnvironmentMap()
+{
+    m_environmentMapKind = WebCore::EnvironmentMapKind::None;
+    send(Messages::ModelProcessModelPlayerProxy::DisableEnvironmentMap());
+}
+
+void ModelProcessModelPlayer::enableSystemEnvironmentMap()
+{
+    m_environmentMapKind = WebCore::EnvironmentMapKind::Default;
+    send(Messages::ModelProcessModelPlayerProxy::EnableSystemEnvironmentMap());
+}
+
+#endif
 
 void ModelProcessModelPlayer::setHasPortal(bool hasPortal)
 {
@@ -443,6 +537,33 @@ void ModelProcessModelPlayer::setHasPortal(bool hasPortal)
     m_hasPortal = hasPortal;
     send(Messages::ModelProcessModelPlayerProxy::SetHasPortal(m_hasPortal));
 }
+
+#if ENABLE(SPATIAL_PORTAL)
+
+void ModelProcessModelPlayer::setPortalTransform(const WebCore::UsedPortalTransform& portalTransform)
+{
+    // Deliberately unconditional. Skipping the send when the value matches the default
+    // would leave a portal whose portal-transform is the initial `auto` indistinguishable
+    // from a standalone <model>.
+    m_portalTransform = portalTransform;
+    send(Messages::ModelProcessModelPlayerProxy::SetPortalTransform(m_portalTransform));
+}
+
+void ModelProcessModelPlayer::setPortalAction(WebCore::PortalActionKind kind)
+{
+    if (m_portalAction == kind)
+        return;
+
+    m_portalAction = kind;
+    send(Messages::ModelProcessModelPlayerProxy::SetPortalAction(m_portalAction));
+}
+
+void ModelProcessModelPlayer::setAnchor(WebCore::NodeIdentifier nodeID, std::optional<WebCore::NodeIdentifier> anchorNode, const String& placement)
+{
+    send(Messages::ModelProcessModelPlayerProxy::SetAnchor(nodeID, anchorNode, placement));
+}
+
+#endif
 
 void ModelProcessModelPlayer::setStageMode(WebCore::StageModeOperation stagemodeOp)
 {
@@ -496,6 +617,30 @@ void ModelProcessModelPlayer::exitImmersivePresentation(CompletionHandler<void()
 }
 
 #endif
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
+void ModelProcessModelPlayer::enterVolumetricPresentation(CompletionHandler<void(std::optional<WebCore::LayerHostingContextIdentifier>)>&& completion)
+{
+    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::EnterVolumetricPresentation(), WTF::move(completion));
+}
+
+void ModelProcessModelPlayer::exitVolumetricPresentation()
+{
+    send(Messages::ModelProcessModelPlayerProxy::ExitVolumetricPresentation());
+}
+
+void ModelProcessModelPlayer::updateVolumetricPresentationSize(const WebCore::FloatSize& volumeSizeInMeters)
+{
+    send(Messages::ModelProcessModelPlayerProxy::UpdateVolumetricPresentationSize(volumeSizeInMeters));
+}
+
+#endif
+
+void ModelProcessModelPlayer::sceneGraphAsTextForTesting(std::optional<WebCore::NodeIdentifier> rootNode, Vector<std::pair<WebCore::NodeIdentifier, String>>&& modelLabels, const WebCore::ModelSceneGraphAsTextOptions& options, CompletionHandler<void(String&&)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::SceneGraphAsTextForTesting(rootNode, modelLabels, options), WTF::move(completionHandler));
+}
 
 }
 

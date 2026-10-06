@@ -26,13 +26,17 @@
 #pragma once
 
 #include <WebCore/AdvancedPrivacyProtections.h>
+#include <WebCore/BackForwardItemIdentifier.h>
 #include <WebCore/Element.h>
 #include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/NavigationHistoryBehavior.h>
 #include <WebCore/ReferrerPolicy.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ShouldTreatAsContinuingLoad.h>
 #include <WebCore/SubstituteData.h>
 #include <wtf/Forward.h>
+#include <wtf/Markable.h>
+#include <wtf/MonotonicTime.h>
 
 namespace WebCore {
 
@@ -59,7 +63,7 @@ public:
     ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy() const { return m_shouldOpenExternalURLsPolicy; }
     void setShouldOpenExternalURLsPolicy(ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy) { m_shouldOpenExternalURLsPolicy = shouldOpenExternalURLsPolicy; }
 
-    const AtomString& downloadAttribute() const { return m_downloadAttribute; }
+    const AtomString& downloadAttribute() const LIFETIME_BOUND { return m_downloadAttribute; }
 
     Element* sourceElement() const { return m_sourceElement.get(); }
     void setSourceElement(Element* sourceElement) { m_sourceElement = sourceElement; }
@@ -69,6 +73,9 @@ public:
     bool isRequestFromClientOrUserInput() const { return m_isRequestFromClientOrUserInput; }
     void setIsRequestFromClientOrUserInput(bool isRequestFromClientOrUserInput) { m_isRequestFromClientOrUserInput = isRequestFromClientOrUserInput; }
 
+    bool hasCrossOriginRedirect() const { return m_hasCrossOriginRedirect; }
+    void setHasCrossOriginRedirect(bool hasCrossOriginRedirect) { m_hasCrossOriginRedirect = hasCrossOriginRedirect; }
+
     bool isInitialFrameSrcLoad() const { return m_isInitialFrameSrcLoad; }
     void setIsInitialFrameSrcLoad(bool isInitialFrameSrcLoad) { m_isInitialFrameSrcLoad = isInitialFrameSrcLoad; }
 
@@ -77,6 +84,9 @@ public:
 
     bool isFromNavigationAPI() const { return m_isFromNavigationAPI; }
     void setIsFromNavigationAPI(bool isFromNavigationAPI) { m_isFromNavigationAPI = isFromNavigationAPI; }
+
+    const std::optional<BackForwardItemIdentifier>& targetBackForwardItemIdentifier() const LIFETIME_BOUND { return m_targetBackForwardItemIdentifier; }
+    void setTargetBackForwardItemIdentifier(BackForwardItemIdentifier itemID) { m_targetBackForwardItemIdentifier = itemID; }
 
 protected:
     FrameLoadRequestBase() = default;
@@ -98,7 +108,9 @@ private:
     AtomString m_downloadAttribute;
     RefPtr<Element> m_sourceElement;
     InitiatedByMainFrame m_initiatedByMainFrame { InitiatedByMainFrame::Unknown };
+    std::optional<BackForwardItemIdentifier> m_targetBackForwardItemIdentifier;
     bool m_isRequestFromClientOrUserInput { false };
+    bool m_hasCrossOriginRedirect { false };
     bool m_isInitialFrameSrcLoad { false };
     bool m_isContentRuleListRedirect { false };
     bool m_isFromNavigationAPI { false };
@@ -118,16 +130,18 @@ public:
 
     bool isEmpty() const { return m_resourceRequest.isEmpty(); }
 
-    WEBCORE_EXPORT Document& requester();
-    Ref<Document> protectedRequester() const;
-    const SecurityOrigin& requesterSecurityOrigin() const;
-    Ref<SecurityOrigin> protectedRequesterSecurityOrigin() const;
+    WEBCORE_EXPORT Document& NODELETE requester() const;
+    const SecurityOrigin& NODELETE requesterSecurityOrigin() const;
 
-    ResourceRequest& resourceRequest() { return m_resourceRequest; }
-    const ResourceRequest& resourceRequest() const { return m_resourceRequest; }
+    ResourceRequest& resourceRequest() LIFETIME_BOUND { return m_resourceRequest; }
+    const ResourceRequest& resourceRequest() const LIFETIME_BOUND { return m_resourceRequest; }
     ResourceRequest takeResourceRequest() { return std::exchange(m_resourceRequest, { }); }
 
-    const AtomString& frameName() const { return m_frameName; }
+    void setOriginalResourceRequest(ResourceRequest originalResourceRequest) { m_originalResourceRequest = originalResourceRequest; }
+    bool hasOriginalResourceRequest() const { return !!m_originalResourceRequest; }
+    ResourceRequest takeOriginalResourceRequest() { return m_originalResourceRequest.value_or(ResourceRequest { }); }
+
+    const AtomString& frameName() const LIFETIME_BOUND { return m_frameName; }
     void setFrameName(const AtomString& frameName) { m_frameName = frameName; }
 
     void setShouldCheckNewWindowPolicy(bool checkPolicy) { m_shouldCheckNewWindowPolicy = checkPolicy; }
@@ -136,13 +150,13 @@ public:
     void setShouldTreatAsContinuingLoad(ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad) { m_shouldTreatAsContinuingLoad = shouldTreatAsContinuingLoad; }
     ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad() const { return m_shouldTreatAsContinuingLoad; }
 
-    const SubstituteData& substituteData() const { return m_substituteData; }
+    const SubstituteData& substituteData() const LIFETIME_BOUND { return m_substituteData; }
     void setSubstituteData(SubstituteData&& data) { m_substituteData = WTF::move(data); }
     bool hasSubstituteData() { return m_substituteData.isValid(); }
     SubstituteData takeSubstituteData() { return std::exchange(m_substituteData, { }); }
 
 
-    const String& clientRedirectSourceForHistory() const { return m_clientRedirectSourceForHistory; }
+    const String& clientRedirectSourceForHistory() const LIFETIME_BOUND { return m_clientRedirectSourceForHistory; }
     void setClientRedirectSourceForHistory(String&& clientRedirectSourceForHistory) { m_clientRedirectSourceForHistory = WTF::move(clientRedirectSourceForHistory); }
 
     ReferrerPolicy referrerPolicy() const { return m_referrerPolicy; }
@@ -170,6 +184,9 @@ public:
     bool skipNavigateEvent() const { return m_skipNavigateEvent; }
     void setSkipNavigateEvent(bool value) { m_skipNavigateEvent = value; }
 
+    MonotonicTime originalNavigationStartTime() const { return m_originalNavigationStartTime; }
+    void setOriginalNavigationStartTime(MonotonicTime time) { m_originalNavigationStartTime = time; }
+
 private:
     Ref<Document> m_requester;
     Ref<SecurityOrigin> m_requesterSecurityOrigin;
@@ -177,6 +194,7 @@ private:
     AtomString m_frameName;
     SubstituteData m_substituteData;
     String m_clientRedirectSourceForHistory;
+    Markable<ResourceRequest> m_originalResourceRequest;
 
     bool m_shouldCheckNewWindowPolicy { false };
     ShouldTreatAsContinuingLoad m_shouldTreatAsContinuingLoad { ShouldTreatAsContinuingLoad::No };
@@ -184,6 +202,7 @@ private:
     AllowNavigationToInvalidURL m_allowNavigationToInvalidURL { AllowNavigationToInvalidURL::Yes };
     std::optional<OptionSet<AdvancedPrivacyProtections>> m_advancedPrivacyProtections;
     NavigationHistoryBehavior m_navigationHistoryBehavior { NavigationHistoryBehavior::Auto };
+    MonotonicTime m_originalNavigationStartTime;
     bool m_isHandledByAboutSchemeHandler { false };
     bool m_skipNavigateEvent { false };
 };

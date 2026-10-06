@@ -26,8 +26,8 @@
 #pragma once
 
 #include "GPUObjectDescriptorBase.h"
-#include "GPUPredefinedColorSpace.h"
 #include "HTMLVideoElement.h"
+#include "PredefinedColorSpace.h"
 #include "WebCodecsVideoFrame.h"
 #include "WebGPUExternalTextureDescriptor.h"
 #include <wtf/RefPtr.h>
@@ -40,9 +40,9 @@ namespace WebCore {
 
 class HTMLVideoElement;
 #if ENABLE(WEB_CODECS)
-using GPUVideoSource = Variant<RefPtr<HTMLVideoElement>, RefPtr<WebCodecsVideoFrame>>;
+using GPUVideoSource = Variant<Ref<HTMLVideoElement>, Ref<WebCodecsVideoFrame>>;
 #else
-using GPUVideoSource = RefPtr<HTMLVideoElement>;
+using GPUVideoSource = Ref<HTMLVideoElement>;
 #endif
 
 struct GPUExternalTextureDescriptor : public GPUObjectDescriptorBase {
@@ -51,31 +51,62 @@ struct GPUExternalTextureDescriptor : public GPUObjectDescriptorBase {
     static WebGPU::VideoSourceIdentifier mediaIdentifierForSource(const GPUVideoSource& videoSource)
     {
 #if ENABLE(WEB_CODECS)
-        return WTF::switchOn(videoSource, [&](const RefPtr<HTMLVideoElement> videoElement) -> WebGPU::VideoSourceIdentifier {
-            if (auto playerIdentifier = videoElement->playerIdentifier())
-                return playerIdentifier;
-            RefPtr<WebCore::VideoFrame> result;
-            if (videoElement->player())
-                result = videoElement->protectedPlayer()->videoFrameForCurrentTime();
-            return result;
-        }
-        , [&](const RefPtr<WebCodecsVideoFrame> videoFrame) -> WebGPU::VideoSourceIdentifier {
-            return videoFrame->internalFrame();
-        });
+        return WTF::switchOn(videoSource,
+            [&](const Ref<HTMLVideoElement>& videoElement) -> WebGPU::VideoSourceIdentifier {
+                RefPtr player = videoElement->player();
+                // Player needs to run in the GPU process to use the accelerated path
+                if (player && player->isHostedInGPUProcess()) {
+                    if (auto playerIdentifier = videoElement->playerIdentifier())
+                        return playerIdentifier;
+                }
+                RefPtr<WebCore::VideoFrame> result;
+                if (player)
+                    result = player->videoFrameForCurrentTime();
+                return result;
+            },
+            [&](const Ref<WebCodecsVideoFrame>& videoFrame) -> WebGPU::VideoSourceIdentifier {
+                return videoFrame->internalFrame();
+            }
+        );
 #else
         return videoSource->playerIdentifier();
+#endif
+    }
+
+    // The size the frame is presented at, which textureDimensions() reports and which the pixel buffer
+    // travelling to the GPU process does not carry: a WebCodecs frame's display size is whatever its
+    // constructor was given, independent of its coded size, and a video element's intrinsic size has
+    // already had its pixel aspect ratio applied.
+    static IntSize visibleSizeForSource(const GPUVideoSource& videoSource)
+    {
+#if ENABLE(WEB_CODECS)
+        return WTF::switchOn(videoSource,
+            [&](const Ref<HTMLVideoElement>& videoElement) {
+                return IntSize { static_cast<int>(videoElement->videoWidth()), static_cast<int>(videoElement->videoHeight()) };
+            },
+            [&](const Ref<WebCodecsVideoFrame>& videoFrame) {
+                return IntSize { static_cast<int>(videoFrame->displayWidth()), static_cast<int>(videoFrame->displayHeight()) };
+            }
+        );
+#else
+        return IntSize { static_cast<int>(videoSource->videoWidth()), static_cast<int>(videoSource->videoHeight()) };
 #endif
     }
 
     std::optional<WebCore::MediaPlayerIdentifier> mediaIdentifier() const
     {
 #if ENABLE(WEB_CODECS)
-        return WTF::switchOn(source, [&](const RefPtr<HTMLVideoElement> videoElement) -> std::optional<WebCore::MediaPlayerIdentifier> {
-            return videoElement->playerIdentifier();
-        }
-        , [&](const RefPtr<WebCodecsVideoFrame>) -> std::optional<WebCore::MediaPlayerIdentifier> {
-            return std::nullopt;
-        });
+        return WTF::switchOn(source,
+            [&](const Ref<HTMLVideoElement>& videoElement) -> std::optional<WebCore::MediaPlayerIdentifier> {
+                RefPtr player = videoElement->player();
+                if (!player || !player->isHostedInGPUProcess())
+                    return std::nullopt;
+                return videoElement->playerIdentifier();
+            },
+            [&](const Ref<WebCodecsVideoFrame>&) -> std::optional<WebCore::MediaPlayerIdentifier> {
+                return std::nullopt;
+            }
+        );
 #else
         return source->playerIdentifier();
 #endif
@@ -91,14 +122,21 @@ struct GPUExternalTextureDescriptor : public GPUObjectDescriptorBase {
 #else
             { },
 #endif
-            WebCore::convertToBacking(colorSpace),
+            colorSpace,
+#if ENABLE(VIDEO)
+            visibleSizeForSource(source),
+#else
+            { },
+#endif
         };
     }
+
+    Ref<JSON::Object> toJSON() const;
 
 #if ENABLE(VIDEO)
     GPUVideoSource source;
 #endif
-    GPUPredefinedColorSpace colorSpace { GPUPredefinedColorSpace::SRGB };
+    PredefinedColorSpace colorSpace { PredefinedColorSpace::SRGB };
 };
 
 }

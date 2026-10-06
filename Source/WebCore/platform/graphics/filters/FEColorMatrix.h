@@ -41,23 +41,24 @@ class FEColorMatrix final : public FilterEffect {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEColorMatrix);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEColorMatrix);
 public:
-    WEBCORE_EXPORT static Ref<FEColorMatrix> create(ColorMatrixType, Vector<float>&&, DestinationColorSpace = DestinationColorSpace::SRGB());
-    static Ref<FEColorMatrix> create(ColorMatrixType, const ColorMatrix<5, 4>&, DestinationColorSpace = DestinationColorSpace::SRGB());
+    WEBCORE_EXPORT static Ref<FEColorMatrix> create(ColorMatrixType, Vector<float>&&, ColorSpace = ColorSpace::SRGB());
+    static Ref<FEColorMatrix> create(ColorMatrixType, const ColorMatrix<5, 4>&, ColorSpace = ColorSpace::SRGB());
 
     bool operator==(const FEColorMatrix&) const;
 
     ColorMatrixType type() const { return m_type; }
-    bool setType(ColorMatrixType);
+    bool NODELETE setType(ColorMatrixType);
 
-    const Vector<float>& values() const { return m_values; }
+    const Vector<float>& values() const LIFETIME_BOUND { return m_values; }
     bool setValues(const Vector<float>&);
 
-    static void calculateSaturateComponents(std::span<float, 9> components, float value);
-    static void calculateHueRotateComponents(std::span<float, 9> components, float value);
+    WEBCORE_EXPORT static bool areValuesValidForType(ColorMatrixType, const Vector<float>& values);
+    static void NODELETE calculateSaturateComponents(std::span<float, 9> components, float value);
+    static void NODELETE calculateHueRotateComponents(std::span<float, 9> components, float value);
     static Vector<float> normalizedFloats(const Vector<float>& values);
 
 private:
-    FEColorMatrix(ColorMatrixType, Vector<float>&&, DestinationColorSpace);
+    FEColorMatrix(ColorMatrixType, Vector<float>&&, ColorSpace);
 
     bool operator==(const FilterEffect& other) const override { return areEqual<FEColorMatrix>(*this, other); }
 

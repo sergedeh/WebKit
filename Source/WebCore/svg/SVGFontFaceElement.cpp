@@ -42,9 +42,9 @@
 #include "SVGGlyphElement.h"
 #include "SVGNames.h"
 #include "SVGPropertyOwnerRegistry.h"
+#include "StyleDocumentScope.h"
 #include "StyleResolver.h"
 #include "StyleRule.h"
-#include "StyleScope.h"
 #include <math.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -55,7 +55,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFontFaceElement);
 using namespace SVGNames;
 
 inline SVGFontFaceElement::SVGFontFaceElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGElement(tagName, document, PropertyRegistry::singleton())
     , m_fontFaceRule(StyleRuleFontFace::create(MutableStyleProperties::create(HTMLStandardMode)))
 {
     LOG(Fonts, "SVGFontFaceElement %p ctor", this);
@@ -72,14 +72,9 @@ Ref<SVGFontFaceElement> SVGFontFaceElement::create(const QualifiedName& tagName,
     return adoptRef(*new SVGFontFaceElement(tagName, document));
 }
 
-Ref<StyleRuleFontFace> SVGFontFaceElement::protectedFontFaceRule() const
-{
-    return m_fontFaceRule;
-}
-
 void SVGFontFaceElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
-    auto propertyId = cssPropertyIdForSVGAttributeName(name, document().settings());
+    auto propertyId = cssPropertyIdForSVGAttributeName(name);
     if (propertyId > 0) {
         Ref fontFaceRule = m_fontFaceRule;
         Ref properties = fontFaceRule->mutableProperties();
@@ -248,7 +243,7 @@ int SVGFontFaceElement::descent() const
 
 String SVGFontFaceElement::fontFamily() const
 {
-    return protectedFontFaceRule()->properties().getPropertyValue(CSSPropertyFontFamily);
+    return protect(protect(fontFaceRule())->properties())->getPropertyValue(CSSPropertyFontFamily);
 }
 
 SVGFontElement* SVGFontFaceElement::associatedFontElement() const
@@ -256,11 +251,6 @@ SVGFontElement* SVGFontFaceElement::associatedFontElement() const
     ASSERT(parentNode() == m_fontElement);
     ASSERT(!parentNode() || is<SVGFontElement>(*parentNode()));
     return m_fontElement.get();
-}
-
-RefPtr<SVGFontElement> SVGFontFaceElement::protectedFontElement() const
-{
-    return associatedFontElement();
 }
 
 void SVGFontFaceElement::rebuildFontFace()
@@ -286,45 +276,46 @@ void SVGFontFaceElement::rebuildFontFace()
         return;
 
     // Parse in-memory CSS rules
-    protectedFontFaceRule()->mutableProperties().addParsedProperty(CSSProperty(CSSPropertySrc, list.releaseNonNull()));
+    Ref fontFaceRule = this->fontFaceRule();
+    protect(fontFaceRule->mutableProperties())->addParsedProperty(CSSProperty(CSSPropertySrc, list.releaseNonNull()));
 
     if (describesParentFont) {
         // Traverse parsed CSS values and associate CSSFontFaceSrcLocalValue elements with ourselves.
-        if (RefPtr srcList = downcast<CSSValueList>(m_fontFaceRule->properties().getPropertyCSSValue(CSSPropertySrc).get())) {
+        if (RefPtr srcList = downcast<CSSValueList>(protect(fontFaceRule->properties())->getPropertyCSSValue(CSSPropertySrc).get())) {
             for (Ref item : *srcList)
                 downcast<CSSFontFaceSrcLocalValue>(const_cast<CSSValue&>(item.get())).setSVGFontFaceElement(*this);
         }
     }
 
-    protectedDocument()->styleScope().didChangeStyleSheetEnvironment();
+    document().styleScope().didChangeStyleSheetEnvironment();
 }
 
-Node::InsertedIntoAncestorResult SVGFontFaceElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps SVGFontFaceElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    auto result = SVGElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    auto result = SVGElement::insertionSteps(insertionType, parentOfInsertedTree);
     if (!insertionType.connectedToDocument) {
         ASSERT(!m_fontElement);
-        return InsertedIntoAncestorResult::Done;
+        return NeedsPostConnectionSteps::No;
     }
-    protectedDocument()->svgExtensions().registerSVGFontFaceElement(*this);
+    protect(protect(document())->svgExtensions())->registerSVGFontFaceElement(*this);
 
     rebuildFontFace();
     return result;
 }
 
-void SVGFontFaceElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void SVGFontFaceElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    SVGElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    SVGElement::removingSteps(removalType, oldParentOfRemovedTree);
 
     if (removalType.disconnectedFromDocument) {
         m_fontElement = nullptr;
         Ref<Document> document = this->document();
-        document->checkedSVGExtensions()->unregisterSVGFontFaceElement(*this);
+        protect(document->svgExtensions())->unregisterSVGFontFaceElement(protect(*this));
         Ref fontFaceSet = document->fontSelector().cssFontFaceSet();
         Ref fontFaceRule = m_fontFaceRule;
         if (RefPtr fontFace = fontFaceSet->lookUpByCSSConnection(fontFaceRule))
             fontFaceSet->remove(*fontFace);
-        fontFaceRule->mutableProperties().clear();
+        protect(fontFaceRule->mutableProperties())->clear();
 
         document->styleScope().didChangeStyleSheetEnvironment();
     } else

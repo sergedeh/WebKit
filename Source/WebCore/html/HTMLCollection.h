@@ -27,6 +27,7 @@
 #include <WebCore/HTMLNames.h>
 #include <WebCore/LiveNodeList.h>
 #include <wtf/HashMap.h>
+#include <wtf/ThreadAssertions.h>
 
 namespace WebCore {
 
@@ -35,7 +36,7 @@ class CollectionNamedElementCache {
 public:
     inline const Vector<WeakRef<Element, WeakPtrImplWithEventTargetData>>* findElementsWithId(const AtomString& id) const;
     inline const Vector<WeakRef<Element, WeakPtrImplWithEventTargetData>>* findElementsWithName(const AtomString& name) const;
-    const Vector<AtomString>& propertyNames() const { return m_propertyNames; }
+    const Vector<AtomString>& propertyNames() const LIFETIME_BOUND { return m_propertyNames; }
     
     inline void appendToIdCache(const AtomString& id, Element&);
     inline void appendToNameCache(const AtomString& name, Element&);
@@ -78,7 +79,6 @@ public:
     inline NodeListInvalidationType invalidationType() const;
     inline CollectionType type() const;
     ContainerNode& ownerNode() const { return m_ownerNode; }
-    Ref<ContainerNode> protectedOwnerNode() const { return m_ownerNode; }
     inline ContainerNode& rootNode() const;
     inline void invalidateCacheForAttribute(const QualifiedName& attributeName);
     WEBCORE_EXPORT virtual void invalidateCacheForDocument(Document&);
@@ -96,12 +96,11 @@ protected:
     inline const CollectionNamedElementCache& namedItemCaches() const;
 
     inline Document& document() const;
-    inline Ref<Document> protectedDocument() const;
 
     void invalidateNamedElementCache(Document&) const;
 
     enum class RootType : bool { AtNode, AtTreeScope };
-    static RootType rootTypeFromCollectionType(CollectionType);
+    static RootType NODELETE rootTypeFromCollectionType(CollectionType);
 
     mutable Lock m_namedElementCacheAssignmentLock;
 
@@ -111,14 +110,19 @@ protected:
 
     const Ref<ContainerNode> m_ownerNode;
 
-    mutable std::unique_ptr<CollectionNamedElementCache> m_namedElementCache;
+    // Only mutated on the main thread while holding m_namedElementCacheAssignmentLock, so
+    // main-thread reads use assertIsOwnerThread() instead of locking; memoryCost() runs on the
+    // GC thread and must lock even to read.
+    mutable std::unique_ptr<CollectionNamedElementCache> m_namedElementCache WTF_GUARDED_BY_LOCK(m_namedElementCacheAssignmentLock);
+    WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_namedElementCacheAssignmentLock, mainThreadLike);
 };
 
 inline size_t CollectionNamedElementCache::memoryCost() const
 {
-    // memoryCost() may be invoked concurrently from a GC thread, and we need to be careful about what data we access here and how.
-    // It is safe to access m_idMap.size(), m_nameMap.size(), and m_propertyNames.size() because they don't chase pointers.
-    return (m_idMap.size() + m_nameMap.size()) * sizeof(Element*) + m_propertyNames.size() * sizeof(AtomString);
+    // memoryCost() may be invoked concurrently from a GC thread. This is safe because
+    // the named element cache is immutable after creation and its lifetime is protected
+    // by m_namedElementCacheAssignmentLock in HTMLCollection::memoryCost().
+    return m_idMap.byteSize() + m_nameMap.byteSize() + m_propertyNames.capacity() * sizeof(AtomString);
 }
 
 inline CollectionType HTMLCollection::type() const
@@ -128,7 +132,7 @@ inline CollectionType HTMLCollection::type() const
 
 } // namespace WebCore
 
-#define SPECIALIZE_TYPE_TRAITS_HTMLCOLLECTION(ClassName, Type) \
+#define SPECIALIZE_TYPE_TRAITS_HTMLCOLLECTION(ClassName) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ClassName) \
-    static bool isType(const WebCore::HTMLCollection& collection) { return collection.type() == WebCore::Type; } \
+    static bool isType(const WebCore::HTMLCollection& collection) { return collection.type() == WebCore::CollectionClassTraits<WebCore::ClassName>::collectionType; } \
 SPECIALIZE_TYPE_TRAITS_END()

@@ -99,10 +99,12 @@ namespace JSC {
         SwitchType switchType;
     };
 
-    enum class AssignmentContext : uint8_t { 
-        DeclarationStatement, 
-        ConstDeclarationStatement, 
-        AssignmentExpression 
+    enum class AssignmentContext : uint8_t {
+        DeclarationStatement,
+        ConstDeclarationStatement,
+        UsingDeclarationStatement,
+        AwaitUsingDeclarationStatement,
+        AssignmentExpression
     };
 
     class ParserArenaFreeable {
@@ -140,7 +142,7 @@ namespace JSC {
         ParserArenaRoot(ParserArena&);
 
     public:
-        ParserArena& parserArena() { return m_arena; }
+        ParserArena& parserArena() LIFETIME_BOUND { return m_arena; }
         virtual ~ParserArenaRoot() { }
 
     protected:
@@ -154,11 +156,9 @@ namespace JSC {
     public:
         virtual ~Node() { }
 
-        int firstLine() const { return m_position.line; }
         int startOffset() const { return m_position.offset; }
         int endOffset() const { return m_endOffset; }
-        int lineStartOffset() const { return m_position.lineStartOffset; }
-        const JSTextPosition& position() const { return m_position; }
+        const JSTextPosition& position() const LIFETIME_BOUND { return m_position; }
         void setEndOffset(int offset) { m_endOffset = offset; }
         void setStartOffset(int offset) { m_position.offset = offset; }
 
@@ -222,16 +222,20 @@ namespace JSC {
 
         virtual void emitBytecodeInConditionContext(BytecodeGenerator&, Label&, Label&, FallThroughMode);
 
-        virtual ExpressionNode* stripUnaryPlus() { return this; }
-
         ResultType resultDescriptor() const { return m_resultType; }
 
         bool isOptionalChainBase() const { return m_isOptionalChainBase; }
         void setIsOptionalChainBase() { m_isOptionalChainBase = true; }
 
+        // Parentheses are otherwise transparent here, but `(x) = f` must not name f "x" the way
+        // `x = f` does: the spec's IsIdentifierRef is false for a parenthesized operand.
+        bool isParenthesized() const { return m_isParenthesized; }
+        void setIsParenthesized() { m_isParenthesized = true; }
+
     private:
         ResultType m_resultType;
         bool m_isOptionalChainBase { false };
+        bool m_isParenthesized { false };
     };
 
     class StatementNode : public Node {
@@ -241,8 +245,6 @@ namespace JSC {
     public:
         virtual void emitBytecode(BytecodeGenerator&, RegisterID* destination = nullptr) = 0;
 
-        void setLoc(unsigned firstLine, unsigned lastLine, int startOffset, int lineStartOffset);
-        unsigned lastLine() const { return m_lastLine; }
 
         StatementNode* next() const { return m_next; }
         void setNext(StatementNode* next) { m_next = next; }
@@ -265,7 +267,6 @@ namespace JSC {
         virtual bool isDefineFieldNode() const { return false; }
 
     protected:
-        int m_lastLine { -1 };
         StatementNode* m_next { nullptr };
     };
 
@@ -278,8 +279,12 @@ namespace JSC {
         VariableEnvironmentNode(VariableEnvironment&& lexicalDeclaredVariables);
         VariableEnvironmentNode(VariableEnvironment&& lexicalDeclaredVariables, FunctionStack&&);
 
-        VariableEnvironment& lexicalVariables() { return m_lexicalVariables; }
-        FunctionStack& functionStack() { return m_functionStack; }
+        VariableEnvironment& lexicalVariables() LIFETIME_BOUND { return m_lexicalVariables; }
+        FunctionStack& functionStack() LIFETIME_BOUND { return m_functionStack; }
+
+        bool hasUsingDeclaration() const { return m_lexicalVariables.hasUsingDeclaration(); }
+        bool hasAwaitUsingDeclaration() const { return m_lexicalVariables.hasAwaitUsingDeclaration(); }
+        unsigned usingDeclarationCount() const { return m_lexicalVariables.usingDeclarationCount(); }
 
     protected:
         VariableEnvironment m_lexicalVariables;
@@ -327,7 +332,7 @@ namespace JSC {
 
     private:
         bool isNumber() const final { return true; }
-        JSValue jsValue(BytecodeGenerator&) const override { return jsNumber(m_value); }
+        JSValue jsValue(BytecodeGenerator&) const override;
 
         double m_value;
     };
@@ -398,15 +403,12 @@ namespace JSC {
             checkConsistency();
         }
 
-        const JSTextPosition& divot() const { return m_divot; }
-        const JSTextPosition& divotStart() const { return m_divotStart; }
-        const JSTextPosition& divotEnd() const { return m_divotEnd; }
+        const JSTextPosition& divot() const LIFETIME_BOUND { return m_divot; }
+        const JSTextPosition& divotStart() const LIFETIME_BOUND { return m_divotStart; }
+        const JSTextPosition& divotEnd() const LIFETIME_BOUND { return m_divotEnd; }
 
         void checkConsistency() const
         {
-            ASSERT(m_divot.offset >= m_divot.lineStartOffset);
-            ASSERT(m_divotStart.offset >= m_divotStart.lineStartOffset);
-            ASSERT(m_divotEnd.offset >= m_divotEnd.lineStartOffset);
             ASSERT(m_divot.offset >= m_divotStart.offset);
             ASSERT(m_divotEnd.offset >= m_divot.offset);
         }
@@ -424,8 +426,6 @@ namespace JSC {
         ThrowableSubExpressionData()
             : m_subexpressionDivotOffset(0)
             , m_subexpressionEndOffset(0)
-            , m_subexpressionLineOffset(0)
-            , m_subexpressionLineStartOffset(0)
         {
         }
 
@@ -433,45 +433,28 @@ namespace JSC {
             : ThrowableExpressionData(divot, divotStart, divotEnd)
             , m_subexpressionDivotOffset(0)
             , m_subexpressionEndOffset(0)
-            , m_subexpressionLineOffset(0)
-            , m_subexpressionLineStartOffset(0)
         {
         }
 
         void setSubexpressionInfo(const JSTextPosition& subexpressionDivot, int subexpressionOffset)
         {
             ASSERT(subexpressionDivot.offset <= divot().offset);
-            // Overflow means we can't do this safely, so just point at the primary divot,
-            // divotLine, or divotLineStart.
+            // Overflow means we can't do this safely, so just point at the primary divot.
             if ((divot() - subexpressionDivot.offset) & ~0xFFFF)
-                return;
-            if ((divot().line - subexpressionDivot.line) & ~0xFFFF)
-                return;
-            if ((divot().lineStartOffset - subexpressionDivot.lineStartOffset) & ~0xFFFF)
                 return;
             if ((divotEnd() - subexpressionOffset) & ~0xFFFF)
                 return;
             m_subexpressionDivotOffset = divot() - subexpressionDivot.offset;
             m_subexpressionEndOffset = divotEnd() - subexpressionOffset;
-            m_subexpressionLineOffset = divot().line - subexpressionDivot.line;
-            m_subexpressionLineStartOffset = divot().lineStartOffset - subexpressionDivot.lineStartOffset;
         }
 
-        JSTextPosition subexpressionDivot()
-        {
-            int newLine = divot().line - m_subexpressionLineOffset;
-            int newOffset = divot().offset - m_subexpressionDivotOffset;
-            int newLineStartOffset = divot().lineStartOffset - m_subexpressionLineStartOffset;
-            return JSTextPosition(newLine, newOffset, newLineStartOffset);
-        }
+        JSTextPosition subexpressionDivot() { return divot() - static_cast<int>(m_subexpressionDivotOffset); }
         JSTextPosition subexpressionStart() { return divotStart(); }
         JSTextPosition subexpressionEnd() { return divotEnd() - static_cast<int>(m_subexpressionEndOffset); }
 
     protected:
         uint16_t m_subexpressionDivotOffset;
         uint16_t m_subexpressionEndOffset;
-        uint16_t m_subexpressionLineOffset;
-        uint16_t m_subexpressionLineStartOffset;
     };
     
     class ThrowablePrefixedSubExpressionData : public ThrowableExpressionData {
@@ -479,8 +462,6 @@ namespace JSC {
         ThrowablePrefixedSubExpressionData()
             : m_subexpressionDivotOffset(0)
             , m_subexpressionStartOffset(0)
-            , m_subexpressionLineOffset(0)
-            , m_subexpressionLineStartOffset(0)
         {
         }
 
@@ -488,45 +469,28 @@ namespace JSC {
             : ThrowableExpressionData(divot, start, end)
             , m_subexpressionDivotOffset(0)
             , m_subexpressionStartOffset(0)
-            , m_subexpressionLineOffset(0)
-            , m_subexpressionLineStartOffset(0)
         {
         }
 
         void setSubexpressionInfo(const JSTextPosition& subexpressionDivot, int subexpressionOffset)
         {
             ASSERT(subexpressionDivot.offset >= divot().offset);
-            // Overflow means we can't do this safely, so just point at the primary divot,
-            // divotLine, or divotLineStart.
+            // Overflow means we can't do this safely, so just point at the primary divot.
             if ((subexpressionDivot.offset - divot()) & ~0xFFFF) 
-                return;
-            if ((subexpressionDivot.line - divot().line) & ~0xFFFF)
-                return;
-            if ((subexpressionDivot.lineStartOffset - divot().lineStartOffset) & ~0xFFFF)
                 return;
             if ((subexpressionOffset - divotStart()) & ~0xFFFF) 
                 return;
             m_subexpressionDivotOffset = subexpressionDivot.offset - divot();
             m_subexpressionStartOffset = subexpressionOffset - divotStart();
-            m_subexpressionLineOffset = subexpressionDivot.line - divot().line;
-            m_subexpressionLineStartOffset = subexpressionDivot.lineStartOffset - divot().lineStartOffset;
         }
 
-        JSTextPosition subexpressionDivot()
-        {
-            int newLine = divot().line + m_subexpressionLineOffset;
-            int newOffset = divot().offset + m_subexpressionDivotOffset;
-            int newLineStartOffset = divot().lineStartOffset + m_subexpressionLineStartOffset;
-            return JSTextPosition(newLine, newOffset, newLineStartOffset);
-        }
+        JSTextPosition subexpressionDivot() { return divot() + static_cast<int>(m_subexpressionDivotOffset); }
         JSTextPosition subexpressionStart() { return divotStart() + static_cast<int>(m_subexpressionStartOffset); }
         JSTextPosition subexpressionEnd() { return divotEnd(); }
 
     protected:
         uint16_t m_subexpressionDivotOffset;
         uint16_t m_subexpressionStartOffset;
-        uint16_t m_subexpressionLineOffset;
-        uint16_t m_subexpressionLineStartOffset;
     };
 
     class TemplateExpressionListNode final : public ParserArenaFreeable {
@@ -628,7 +592,7 @@ namespace JSC {
 
     class ImportNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        ImportNode(const JSTokenLocation&, ExpressionNode*, ExpressionNode*);
+        ImportNode(const JSTokenLocation&, ExpressionNode*, ExpressionNode*, bool deferred);
 
     private:
         bool isImportNode() const final { return true; }
@@ -636,6 +600,7 @@ namespace JSC {
 
         ExpressionNode* m_expr;
         ExpressionNode* m_option;
+        bool m_deferred;
     };
 
     class MetaPropertyNode : public ExpressionNode {
@@ -723,7 +688,7 @@ namespace JSC {
 
         bool isArrayLiteral() const final { return true; }
 
-        ArgumentListNode* toArgumentList(ParserArena&, int, int) const;
+        ArgumentListNode* NODELETE toArgumentList(ParserArena&, int) const;
 
         ElementNode* elements() const { return m_element; }
     private:
@@ -796,7 +761,7 @@ namespace JSC {
         PropertyListNode(const JSTokenLocation&, PropertyNode*);
         PropertyListNode(const JSTokenLocation&, PropertyNode*, PropertyListNode*);
 
-        bool hasStaticallyNamedProperty(const Identifier& propName);
+        bool NODELETE hasStaticallyNamedProperty(const Identifier& propName);
         bool isComputedClassField() const
         {
             return m_node->isComputedClassField();
@@ -805,7 +770,7 @@ namespace JSC {
         {
             return m_node->isInstanceClassField();
         }
-        bool hasInstanceFields() const;
+        bool NODELETE hasInstanceFields() const;
 
         bool isStaticClassField() const
         {
@@ -832,7 +797,7 @@ namespace JSC {
             return m_hasPrivateAccessors;
         }
 
-        static bool shouldCreateLexicalScopeForClass(PropertyListNode*);
+        static bool NODELETE shouldCreateLexicalScopeForClass(PropertyListNode*);
 
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID*, RegisterID*, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>*, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>*);
 
@@ -1124,6 +1089,14 @@ namespace JSC {
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
     };
 
+    class ReflectConstructFunctionCallDotNode final : public FunctionCallDotNode {
+    public:
+        ReflectConstructFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
+
+    private:
+        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+    };
+
     class DeleteResolveNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
         DeleteResolveNode(const JSTokenLocation&, const Identifier&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
@@ -1253,8 +1226,6 @@ namespace JSC {
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
-
-        ExpressionNode* stripUnaryPlus() final { return expr(); }
     };
 
     class NegateNode final : public UnaryOpNode {
@@ -1461,6 +1432,7 @@ namespace JSC {
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        void emitBytecodeInConditionContext(BytecodeGenerator&, Label& trueTarget, Label& falseTarget, FallThroughMode) final;
 
         ExpressionNode* m_expr1;
         ExpressionNode* m_expr2;
@@ -1474,8 +1446,11 @@ namespace JSC {
         void setExpr(ExpressionNode* expr) { m_expr = expr; }
         ExpressionNode* expr() const { return m_expr; }
 
+        void emitCallee(BytecodeGenerator&, RegisterID* function, RegisterID* thisRegister);
+
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        void emitBytecodeInConditionContext(BytecodeGenerator&, Label& trueTarget, Label& falseTarget, FallThroughMode) final;
 
         bool isOptionalChain() const final { return true; }
 
@@ -1490,6 +1465,7 @@ namespace JSC {
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        void emitBytecodeInConditionContext(BytecodeGenerator&, Label& trueTarget, Label& falseTarget, FallThroughMode) final;
 
         ExpressionNode* m_logical;
         ExpressionNode* m_expr1;
@@ -1637,6 +1613,7 @@ namespace JSC {
     private:
         bool isCommaNode() const final { return true; }
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        void emitBytecodeInConditionContext(BytecodeGenerator&, Label& trueTarget, Label& falseTarget, FallThroughMode) final;
 
         ExpressionNode* m_expr;
         CommaNode* m_next { nullptr };
@@ -1648,8 +1625,8 @@ namespace JSC {
 
         void append(StatementNode*);
 
-        StatementNode* singleStatement() const;
-        StatementNode* lastStatement() const;
+        StatementNode* NODELETE singleStatement() const;
+        StatementNode* NODELETE lastStatement() const;
 
         bool hasCompletionValue() const;
         bool hasEarlyBreakOrContinue() const;
@@ -1843,10 +1820,11 @@ namespace JSC {
     class ContinueNode final : public StatementNode, public ThrowableExpressionData {
     public:
         ContinueNode(const JSTokenLocation&, const Identifier&);
-        Label* trivialTarget(BytecodeGenerator&);
-        
+        Label* NODELETE trivialTarget(BytecodeGenerator&);
+
     private:
         bool hasCompletionValue() const final { return false; }
+        bool hasEarlyBreakOrContinue() const final { return true; }
         bool isContinue() const final { return true; }
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
@@ -1856,10 +1834,11 @@ namespace JSC {
     class BreakNode final : public StatementNode, public ThrowableExpressionData {
     public:
         BreakNode(const JSTokenLocation&, const Identifier&);
-        Label* trivialTarget(BytecodeGenerator&);
-        
+        Label* NODELETE trivialTarget(BytecodeGenerator&);
+
     private:
         bool hasCompletionValue() const final { return false; }
+        bool hasEarlyBreakOrContinue() const final { return true; }
         bool isBreak() const final { return true; }
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
@@ -1901,6 +1880,7 @@ namespace JSC {
 
     private:
         bool hasCompletionValue() const final { return m_statement->hasCompletionValue(); }
+        bool hasEarlyBreakOrContinue() const final { return m_statement->hasEarlyBreakOrContinue(); }
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
         const Identifier& m_name;
@@ -1942,12 +1922,10 @@ namespace JSC {
         ScopeNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, LexicallyScopedFeatures);
         ScopeNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, const SourceCode&, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants);
 
-        const SourceCode& source() const { return m_source; }
+        const SourceCode& source() const LIFETIME_BOUND { return m_source; }
         SourceID sourceID() const { return m_source.providerID(); }
 
-        int startLine() const { return m_startLineNumber; }
         int startStartOffset() const { return m_startStartOffset; }
-        int startLineStartOffset() const { return m_startLineStartOffset; }
 
         CodeFeatures features() { return m_features; }
         LexicallyScopedFeatures lexicallyScopedFeatures() { return m_lexicallyScopedFeatures; }
@@ -1981,7 +1959,7 @@ namespace JSC {
             return usesSuperCall() || usesNewTarget();
         }
 
-        VariableEnvironment& varDeclarations() { return m_varDeclarations; }
+        VariableEnvironment& varDeclarations() LIFETIME_BOUND { return m_varDeclarations; }
 
         int neededConstants()
         {
@@ -1992,6 +1970,8 @@ namespace JSC {
 
         StatementNode* singleStatement() const;
 
+        bool isEmptyBody() const { return !m_statements; }
+
         bool hasCompletionValue() const override;
         bool hasEarlyBreakOrContinue() const override;
 
@@ -2000,9 +1980,7 @@ namespace JSC {
         bool analyzeModule(ModuleAnalyzer&);
 
     protected:
-        int m_startLineNumber;
         unsigned m_startStartOffset;
-        unsigned m_startLineStartOffset;
 
     private:
         CodeFeatures m_features;
@@ -2016,40 +1994,28 @@ namespace JSC {
 
     class ProgramNode final : public ScopeNode {
     public:
-        ProgramNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, unsigned startColumn, unsigned endColumn, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
-
-        unsigned startColumn() const { return m_startColumn; }
-        unsigned endColumn() const { return m_endColumn; }
+        ProgramNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
 
         static constexpr bool scopeIsFunction = false;
 
     private:
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
-        unsigned m_startColumn;
-        unsigned m_endColumn;
     };
 
     class EvalNode final : public ScopeNode {
     public:
-        EvalNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, unsigned startColumn, unsigned endColumn, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
-
-        ALWAYS_INLINE unsigned startColumn() const { return 0; }
-        unsigned endColumn() const { return m_endColumn; }
+        EvalNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
 
         static constexpr bool scopeIsFunction = false;
 
     private:
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
-
-        unsigned m_endColumn;
     };
 
     class ModuleProgramNode final : public ScopeNode {
     public:
-        ModuleProgramNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, unsigned startColumn, unsigned endColumn, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
+        ModuleProgramNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
 
-        unsigned startColumn() const { return m_startColumn; }
-        unsigned endColumn() const { return m_endColumn; }
         bool usesAwait() const { return m_usesAwait; }
 
         static constexpr bool scopeIsFunction = false;
@@ -2061,8 +2027,6 @@ namespace JSC {
 
     private:
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
-        unsigned m_startColumn;
-        unsigned m_endColumn;
         bool m_usesAwait;
         const Ref<ModuleScopeData> m_moduleScopeData;
     };
@@ -2094,7 +2058,7 @@ namespace JSC {
     public:
         typedef Vector<ImportSpecifierNode*, 3> Specifiers;
 
-        const Specifiers& specifiers() const { return m_specifiers; }
+        const Specifiers& specifiers() const LIFETIME_BOUND { return m_specifiers; }
         void append(ImportSpecifierNode* specifier)
         {
             m_specifiers.append(specifier);
@@ -2109,7 +2073,7 @@ namespace JSC {
     public:
         using Attributes = Vector<std::tuple<const Identifier*, const Identifier*>, 3>;
 
-        const Attributes& attributes() const { return m_attributes; }
+        const Attributes& attributes() const LIFETIME_BOUND { return m_attributes; }
         void append(const Identifier& key, const Identifier& value)
         {
             m_attributes.append(std::tuple { &key, &value });
@@ -2209,7 +2173,7 @@ namespace JSC {
     public:
         typedef Vector<ExportSpecifierNode*, 3> Specifiers;
 
-        const Specifiers& specifiers() const { return m_specifiers; }
+        const Specifiers& specifiers() const LIFETIME_BOUND { return m_specifiers; }
         void append(ExportSpecifierNode* specifier)
         {
             m_specifiers.append(specifier);
@@ -2240,13 +2204,13 @@ namespace JSC {
     public:
         FunctionMetadataNode(
             ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, 
-            unsigned startColumn, unsigned endColumn, unsigned functionStart,
+            unsigned functionStart,
             int functionNameStart, int parametersStart, ImplementationVisibility, LexicallyScopedFeatures,
             ConstructorKind, SuperBinding, unsigned parameterCount,
             SourceParseMode, bool isArrowFunctionBodyExpression);
         FunctionMetadataNode(
             const JSTokenLocation& start, const JSTokenLocation& end, 
-            unsigned startColumn, unsigned endColumn, unsigned functionStart,
+            unsigned functionStart,
             int functionNameStart, int parametersStart, ImplementationVisibility, LexicallyScopedFeatures,
             ConstructorKind, SuperBinding, unsigned parameterCount,
             SourceParseMode, bool isArrowFunctionBodyExpression);
@@ -2268,15 +2232,11 @@ namespace JSC {
         int functionNameStart() const { return m_functionNameStart; }
         unsigned functionStart() const { return m_functionStart; }
         int parametersStart() const { return m_parametersStart; }
-        unsigned startColumn() const { return m_startColumn; }
-        unsigned endColumn() const { return m_endColumn; }
         unsigned parameterCount() const { return m_parameterCount; }
         SourceParseMode parseMode() const { return m_parseMode; }
 
-        void setEndPosition(JSTextPosition);
-
-        const SourceCode& source() const { return m_source; }
-        const SourceCode& classSource() const { return m_classSource; }
+        const SourceCode& source() const LIFETIME_BOUND { return m_source; }
+        const SourceCode& classSource() const LIFETIME_BOUND { return m_classSource; }
         void setClassSource(const SourceCode& source) { m_classSource = source; }
 
         int startStartOffset() const { return m_startStartOffset; }
@@ -2296,14 +2256,6 @@ namespace JSC {
 
         bool isArrowFunctionBodyExpression() const { return m_isArrowFunctionBodyExpression; }
 
-        void setLoc(unsigned firstLine, unsigned lastLine, int startOffset, int lineStartOffset)
-        {
-            m_lastLine = lastLine;
-            m_position = JSTextPosition(firstLine, startOffset, lineStartOffset);
-            ASSERT(m_position.offset >= m_position.lineStartOffset);
-        }
-        unsigned lastLine() const { return m_lastLine; }
-
         bool operator==(const FunctionMetadataNode&) const;
 
     public:
@@ -2319,8 +2271,6 @@ namespace JSC {
         FunctionMode m_functionMode;
         Identifier m_ident;
         Identifier m_ecmaName;
-        unsigned m_startColumn;
-        unsigned m_endColumn;
         unsigned m_functionStart;
         int m_functionNameStart;
         int m_parametersStart;
@@ -2328,12 +2278,11 @@ namespace JSC {
         SourceCode m_classSource;
         int m_startStartOffset;
         unsigned m_parameterCount;
-        int m_lastLine { 0 };
     };
 
     class FunctionNode final : public ScopeNode {
     public:
-        FunctionNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, unsigned startColumn, unsigned endColumn, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
+        FunctionNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
 
         FunctionParameters* parameters() const { return m_parameters; }
 
@@ -2347,17 +2296,12 @@ namespace JSC {
 
         FunctionMode functionMode() const { return m_functionMode; }
 
-        unsigned startColumn() const { return m_startColumn; }
-        unsigned endColumn() const { return m_endColumn; }
-
         static constexpr bool scopeIsFunction = true;
 
     private:
         Identifier m_ident;
         FunctionMode m_functionMode;
         FunctionParameters* m_parameters;
-        unsigned m_startColumn;
-        unsigned m_endColumn;
     };
 
     class BaseFuncExprNode : public ExpressionNode {
@@ -2573,8 +2517,8 @@ namespace JSC {
         BindingNode(const Identifier& boundProperty, const JSTextPosition& start, const JSTextPosition& end, AssignmentContext);
         const Identifier& boundProperty() const { return m_boundProperty; }
 
-        const JSTextPosition& divotStart() const { return m_divotStart; }
-        const JSTextPosition& divotEnd() const { return m_divotEnd; }
+        const JSTextPosition& divotStart() const LIFETIME_BOUND { return m_divotStart; }
+        const JSTextPosition& divotEnd() const LIFETIME_BOUND { return m_divotEnd; }
 
         bool bindValueCanThrow(BytecodeGenerator&) const final;
         RegisterID* writableDirectBindingIfPossible(BytecodeGenerator&) const final;
@@ -2615,8 +2559,8 @@ namespace JSC {
         AssignmentElementNode(ExpressionNode* assignmentTarget, const JSTextPosition& start, const JSTextPosition& end);
         const ExpressionNode* assignmentTarget() { return m_assignmentTarget; }
 
-        const JSTextPosition& divotStart() const { return m_divotStart; }
-        const JSTextPosition& divotEnd() const { return m_divotEnd; }
+        const JSTextPosition& divotStart() const LIFETIME_BOUND { return m_divotStart; }
+        const JSTextPosition& divotEnd() const LIFETIME_BOUND { return m_divotEnd; }
 
         bool bindValueCanThrow(BytecodeGenerator&) const final;
         RegisterID* writableDirectBindingIfPossible(BytecodeGenerator&) const final;

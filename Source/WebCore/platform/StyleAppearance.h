@@ -36,6 +36,7 @@ enum class StyleAppearance : uint8_t {
     None,
     Auto,
     Base,
+    BaseSelect,
     Checkbox,
     Radio,
     PushButton,
@@ -75,9 +76,7 @@ enum class StyleAppearance : uint8_t {
     SearchFieldCancelButton,
     SliderThumbHorizontal,
     SliderThumbVertical,
-    Switch,
-    SwitchThumb,
-    SwitchTrack
+    Switch
 };
 
 constexpr int appearanceBitWidth = 7;

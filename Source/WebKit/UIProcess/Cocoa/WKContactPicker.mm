@@ -30,6 +30,8 @@
 
 #import "ContactsUISPI.h"
 #import "PickerDismissalReason.h"
+#import "WKWebViewInternal.h"
+#import "WebPageProxy.h"
 #import <Contacts/Contacts.h>
 #import <WebCore/ContactInfo.h>
 #import <WebCore/ContactsRequestData.h>
@@ -81,7 +83,7 @@ SOFT_LINK_CLASS(ContactsUI, CNContactPickerViewController)
 #if HAVE(CNCONTACTPICKERVIEWCONTROLLER)
 - (void)contactPickerDidCancel:(CNContactPickerViewController *)picker
 {
-    [_contactPickerDelegate contactPickerDidCancel:picker];
+    [_contactPickerDelegate.get() contactPickerDidCancel:picker];
 }
 #endif
 
@@ -95,7 +97,7 @@ SOFT_LINK_CLASS(ContactsUI, CNContactPickerViewController)
 #if HAVE(CNCONTACTPICKERVIEWCONTROLLER)
 - (void)contactPicker:(CNContactPickerViewController *)picker didSelectContact:(CNContact *)contact
 {
-    [_contactPickerDelegate contactPicker:picker didSelectContact:contact];
+    [_contactPickerDelegate.get() contactPicker:picker didSelectContact:contact];
 }
 #endif
 
@@ -109,7 +111,7 @@ SOFT_LINK_CLASS(ContactsUI, CNContactPickerViewController)
 #if HAVE(CNCONTACTPICKERVIEWCONTROLLER)
 - (void)contactPicker:(CNContactPickerViewController *)picker didSelectContacts:(NSArray<CNContact*> *)contacts
 {
-    [_contactPickerDelegate contactPicker:picker didSelectContacts:contacts];
+    [_contactPickerDelegate.get() contactPicker:picker didSelectContacts:contacts];
 }
 #endif
 
@@ -168,7 +170,11 @@ SOFT_LINK_CLASS(ContactsUI, CNContactPickerViewController)
     [_contactPickerViewController setDelegate:_contactPickerDelegate.get()];
     [_contactPickerViewController setPrompt:requestData.url.createNSString().get()];
 
-    auto presentationViewController = [_webView _wk_viewControllerForFullScreenPresentation];
+    RetainPtr presentationViewController = [_webView.get() _wk_viewControllerForFullScreenPresentation];
+#if PLATFORM(VISION)
+    if (RetainPtr webView = _webView.get())
+        [webView _page]->dispatchWillPresentModalUI();
+#endif
     [presentationViewController presentViewController:_contactPickerViewController.get() animated:YES completion:[weakSelf = WeakObjCPtr<WKContactPicker>(self)] {
         auto strongSelf = weakSelf.get();
         if (!strongSelf)
@@ -263,12 +269,12 @@ SOFT_LINK_CLASS(ContactsUI, CNContactPickerViewController)
 - (void)dismissWithContacts:(NSArray *)contacts
 {
 #if HAVE(CNCONTACTPICKERVIEWCONTROLLER)
-    [_contactPickerViewController dismissViewControllerAnimated:NO completion:[self, weakSelf = WeakObjCPtr<WKContactPicker>(self), jsContacts = RetainPtr<NSArray>(contacts)] {
+    [_contactPickerViewController dismissViewControllerAnimated:NO completion:[weakSelf = WeakObjCPtr<WKContactPicker>(self), jsContacts = RetainPtr<NSArray>(contacts)] {
         auto strongSelf = weakSelf.get();
         if (!strongSelf)
             return;
 
-        [strongSelf contactPicker:_contactPickerViewController.get() didSelectContacts:[strongSelf _contactsFromJSContacts:jsContacts.get()]];
+        [strongSelf contactPicker:strongSelf->_contactPickerViewController.get() didSelectContacts:[strongSelf _contactsFromJSContacts:jsContacts.get()]];
     }];
 #endif
 }

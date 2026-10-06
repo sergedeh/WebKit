@@ -37,7 +37,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(UIRemoteObjectRegistry);
 RefPtr<ProcessThrottler::BackgroundActivity> UIRemoteObjectRegistry::backgroundActivity(ASCIILiteral name)
 {
     if (RefPtr page = m_page.get())
-        return protect(page->legacyMainFrameProcess())->protectedThrottler()->backgroundActivity(name);
+        return protect(protect(page->legacyMainFrameProcess())->throttler())->backgroundActivity(name);
     return nullptr;
 }
 
@@ -70,7 +70,7 @@ auto UIRemoteObjectRegistry::messageSender() -> std::optional<MessageSender>
 
 std::optional<uint64_t> UIRemoteObjectRegistry::messageDestinationID()
 {
-    if (RefPtr page = m_page.get())
+    if (auto* page = m_page.get())
         return page->webPageIDInMainFrameProcess().toUInt64();
     return std::nullopt;
 }

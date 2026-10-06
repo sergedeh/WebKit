@@ -41,7 +41,6 @@
 #import "WebPageProxy.h"
 #import "WebScriptMessageHandler.h"
 #import "WebUserContentControllerProxy.h"
-#import "_WKJSBufferInternal.h"
 #import "_WKUserContentFilterInternal.h"
 #import "_WKUserContentWorldInternal.h"
 #import "_WKUserStyleSheetInternal.h"
@@ -49,12 +48,10 @@
 #import <WebCore/SecurityOriginData.h>
 #import <WebCore/SerializedScriptValue.h>
 #import <WebCore/WebCoreObjCExtras.h>
+#import <wtf/Scope.h>
 #import <wtf/TZoneMallocInlines.h>
-
-static Ref<WebKit::WebUserContentControllerProxy> protectedUserContentControllerProxy(WKUserContentController *controller)
-{
-    return *controller->_userContentControllerProxy;
-}
+#import <wtf/cocoa/SpanCocoa.h>
+#import <wtf/spi/cocoa/MachVMSPI.h>
 
 @implementation WKUserContentController
 
@@ -104,32 +101,32 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 
 - (void)addUserScript:(WKUserScript *)userScript
 {
-    protectedUserContentControllerProxy(self)->addUserScript(Ref { *userScript->_userScript }, WebKit::InjectUserScriptImmediately::No);
+    protect(*_userContentControllerProxy)->addUserScript(Ref { *userScript->_userScript }, WebKit::InjectUserScriptImmediately::No);
 }
 
 - (void)removeAllUserScripts
 {
-    protectedUserContentControllerProxy(self)->removeAllUserScripts();
+    protect(*_userContentControllerProxy)->removeAllUserScripts();
 }
 
 - (void)addContentRuleList:(WKContentRuleList *)contentRuleList
 {
 #if ENABLE(CONTENT_EXTENSIONS)
-    protectedUserContentControllerProxy(self)->addContentRuleList(Ref { *contentRuleList->_contentRuleList });
+    protect(*_userContentControllerProxy)->addContentRuleList(Ref { *contentRuleList->_contentRuleList });
 #endif
 }
 
 - (void)removeContentRuleList:(WKContentRuleList *)contentRuleList
 {
 #if ENABLE(CONTENT_EXTENSIONS)
-    protectedUserContentControllerProxy(self)->removeContentRuleList(Ref { *contentRuleList->_contentRuleList }->name());
+    protect(*_userContentControllerProxy)->removeContentRuleList(contentRuleList->_contentRuleList->name());
 #endif
 }
 
 - (void)removeAllContentRuleLists
 {
 #if ENABLE(CONTENT_EXTENSIONS)
-    protectedUserContentControllerProxy(self)->removeAllContentRuleLists();
+    protect(*_userContentControllerProxy)->removeAllContentRuleLists();
 #endif
 }
 
@@ -152,7 +149,7 @@ public:
     {
     }
 
-    void didPostMessage(WebKit::WebPageProxy& page, WebKit::FrameInfoData&& frameInfoData, API::ContentWorld& world, WebKit::JavaScriptEvaluationResult&& jsMessage, CompletionHandler<void(Expected<WebKit::JavaScriptEvaluationResult, String>&&)>&& replyHandler) final
+    void didPostMessage(WebKit::WebPageProxy& page, WebKit::FrameInfoData&& frameInfoData, API::ContentWorld& world, WebKit::JavaScriptEvaluationResult&& jsMessage, CompletionHandler<void(std::expected<WebKit::JavaScriptEvaluationResult, String>&&)>&& replyHandler) final
     {
         @autoreleasepool {
             if (!page.cocoaView())
@@ -161,7 +158,7 @@ public:
             RetainPtr message = wrapper(API::ScriptMessage::create(jsMessage.toID(), page, API::FrameInfo::create(WTF::move(frameInfoData)), RetainPtr { m_name }, world));
 
             if (m_supportsAsyncReply) {
-                __block auto handler = CompletionHandlerWithFinalizer<void(Expected<WebKit::JavaScriptEvaluationResult, String>&&)>(WTF::move(replyHandler), [](auto& function) {
+                __block auto handler = CompletionHandlerWithFinalizer<void(std::expected<WebKit::JavaScriptEvaluationResult, String>&&)>(WTF::move(replyHandler), [](auto& function) {
                     function(makeUnexpected("WKWebView API client did not respond to this postMessage"_s));
                 });
                 [(id<WKScriptMessageHandlerWithReply>)m_handler.get() userContentController:m_controller.get() didReceiveScriptMessage:message.get() replyHandler:^(id result, NSString *errorMessage) {
@@ -193,7 +190,7 @@ private:
 
 - (void)_addScriptMessageHandler:(WebKit::WebScriptMessageHandler&)scriptMessageHandler
 {
-    if (!protectedUserContentControllerProxy(self)->addUserScriptMessageHandler(scriptMessageHandler))
+    if (!protect(*_userContentControllerProxy)->addUserScriptMessageHandler(scriptMessageHandler))
         [NSException raise:NSInvalidArgumentException format:@"Attempt to add script message handler with name '%@' when one already exists.", scriptMessageHandler.name().createNSString().get()];
 }
 
@@ -217,22 +214,84 @@ private:
 
 - (void)removeScriptMessageHandlerForName:(NSString *)name
 {
-    protectedUserContentControllerProxy(self)->removeUserMessageHandlerForName(name, API::ContentWorld::pageContentWorldSingleton());
+    protect(*_userContentControllerProxy)->removeUserMessageHandlerForName(name, API::ContentWorld::pageContentWorldSingleton());
 }
 
 - (void)removeScriptMessageHandlerForName:(NSString *)name contentWorld:(WKContentWorld *)contentWorld
 {
-    protectedUserContentControllerProxy(self)->removeUserMessageHandlerForName(name, Ref { *contentWorld->_contentWorld });
+    protect(*_userContentControllerProxy)->removeUserMessageHandlerForName(name, Ref { *contentWorld->_contentWorld });
 }
 
 - (void)removeAllScriptMessageHandlersFromContentWorld:(WKContentWorld *)contentWorld
 {
-    protectedUserContentControllerProxy(self)->removeAllUserMessageHandlers(Ref { *contentWorld->_contentWorld });
+    protect(*_userContentControllerProxy)->removeAllUserMessageHandlers(Ref { *contentWorld->_contentWorld });
 }
 
 - (void)removeAllScriptMessageHandlers
 {
-    protectedUserContentControllerProxy(self)->removeAllUserMessageHandlers();
+    protect(*_userContentControllerProxy)->removeAllUserMessageHandlers();
+}
+
+- (void)_addBuffer:(NSData *)buffer dataSpan:(std::span<const uint8_t>)dataSpan name:(NSString *)name contentWorld:(WKContentWorld *)world
+{
+    auto isInReadOnlyRegion = [] (std::span<const uint8_t> span) {
+        if (span.empty())
+            return false;
+
+        auto addr = reinterpret_cast<mach_vm_address_t>(const_cast<uint8_t*>(span.data()));
+        auto end = addr + span.size();
+        auto regionAddr = addr;
+        mach_vm_size_t regionSize = 0;
+        vm_region_basic_info_data_64_t info { };
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t vmObject = MACH_PORT_NULL;
+        auto scopeExit = makeScopeExit([&] {
+            if (vmObject != MACH_PORT_NULL)
+                mach_port_deallocate(mach_task_self(), vmObject);
+        });
+
+        auto kr = mach_vm_region(mach_task_self(), &regionAddr, &regionSize, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &vmObject);
+        if (kr != KERN_SUCCESS)
+            return false;
+
+        auto regionEnd = regionAddr + regionSize;
+        return (info.protection & VM_PROT_READ) && !(info.protection & VM_PROT_WRITE) && addr >= regionAddr && end <= regionEnd;
+    };
+
+    RefPtr<WebCore::SharedMemory> sharedMemory;
+    if (isInReadOnlyRegion(dataSpan))
+        sharedMemory = WebCore::SharedMemory::wrapMap(dataSpan, WebCore::SharedMemoryProtection::ReadOnly);
+
+    if (!sharedMemory) {
+        // If we have a Data, wrapping it can possibly give us a memory usage win.
+        // Otherwise, it's fine to fallback to the dataSpan version.
+        if (buffer)
+            sharedMemory = WebCore::SharedMemory::copyBuffer(WebCore::SharedBuffer::create(buffer));
+        else
+            sharedMemory = WebCore::SharedMemory::copyBuffer(WebCore::SharedBuffer::create(dataSpan));
+    }
+
+    if (!sharedMemory) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    protect(*_userContentControllerProxy)->addJSBuffer(sharedMemory.releaseNonNull(), Ref { *world->_contentWorld }, name);
+}
+
+- (void)addBuffer:(NSData *)buffer name:(NSString *)name contentWorld:(WKContentWorld *)world
+{
+    [self _addBuffer:buffer dataSpan:span(buffer) name:name contentWorld:world];
+}
+
+- (void)_addDataSpan:(std::span<const uint8_t>)dataSpan name:(NSString *)name contentWorld:(WKContentWorld *)world
+{
+    [self _addBuffer:nil dataSpan:dataSpan name:name contentWorld:world];
+}
+
+- (void)removeBufferWithName:(NSString *)name contentWorld:(WKContentWorld *)world
+{
+    protect(*_userContentControllerProxy)->removeJSBuffer(Ref { *world->_contentWorld }, name);
 }
 
 #pragma mark WKObject protocol implementation
@@ -248,17 +307,17 @@ private:
 
 - (void)_removeUserScript:(WKUserScript *)userScript
 {
-    protectedUserContentControllerProxy(self)->removeUserScript(Ref { *userScript->_userScript });
+    protect(*_userContentControllerProxy)->removeUserScript(Ref { *userScript->_userScript });
 }
 
 - (void)_removeAllUserScriptsAssociatedWithContentWorld:(WKContentWorld *)contentWorld
 {
-    protectedUserContentControllerProxy(self)->removeAllUserScripts(Ref { *contentWorld->_contentWorld });
+    protect(*_userContentControllerProxy)->removeAllUserScripts(Ref { *contentWorld->_contentWorld });
 }
 
 - (void)_addUserScriptImmediately:(WKUserScript *)userScript
 {
-    protectedUserContentControllerProxy(self)->addUserScript(Ref { *userScript->_userScript }, WebKit::InjectUserScriptImmediately::Yes);
+    protect(*_userContentControllerProxy)->addUserScript(Ref { *userScript->_userScript }, WebKit::InjectUserScriptImmediately::Yes);
 }
 
 #pragma clang diagnostic push
@@ -267,28 +326,28 @@ private:
 #pragma clang diagnostic pop
 {
 #if ENABLE(CONTENT_EXTENSIONS)
-    protectedUserContentControllerProxy(self)->addContentRuleList(Ref { *userContentFilter->_contentRuleList->_contentRuleList });
+    protect(*_userContentControllerProxy)->addContentRuleList(Ref { *userContentFilter->_contentRuleList->_contentRuleList });
 #endif
 }
 
 - (void)_addContentRuleList:(WKContentRuleList *)contentRuleList extensionBaseURL:(NSURL *)extensionBaseURL
 {
 #if ENABLE(CONTENT_EXTENSIONS)
-    protectedUserContentControllerProxy(self)->addContentRuleList(Ref { *contentRuleList->_contentRuleList }, extensionBaseURL);
+    protect(*_userContentControllerProxy)->addContentRuleList(Ref { *contentRuleList->_contentRuleList }, extensionBaseURL);
 #endif
 }
 
 - (void)_removeUserContentFilter:(NSString *)userContentFilterName
 {
 #if ENABLE(CONTENT_EXTENSIONS)
-    protectedUserContentControllerProxy(self)->removeContentRuleList(userContentFilterName);
+    protect(*_userContentControllerProxy)->removeContentRuleList(userContentFilterName);
 #endif
 }
 
 - (void)_removeAllUserContentFilters
 {
 #if ENABLE(CONTENT_EXTENSIONS)
-    protectedUserContentControllerProxy(self)->removeAllContentRuleLists();
+    protect(*_userContentControllerProxy)->removeAllContentRuleLists();
 #endif
 }
 
@@ -299,39 +358,29 @@ private:
 
 - (void)_addUserStyleSheet:(_WKUserStyleSheet *)userStyleSheet
 {
-    protectedUserContentControllerProxy(self)->addUserStyleSheet(Ref { *userStyleSheet->_userStyleSheet });
+    protect(*_userContentControllerProxy)->addUserStyleSheet(Ref { *userStyleSheet->_userStyleSheet });
 }
 
 - (void)_removeUserStyleSheet:(_WKUserStyleSheet *)userStyleSheet
 {
-    protectedUserContentControllerProxy(self)->removeUserStyleSheet(Ref { *userStyleSheet->_userStyleSheet });
+    protect(*_userContentControllerProxy)->removeUserStyleSheet(Ref { *userStyleSheet->_userStyleSheet });
 }
 
 - (void)_removeAllUserStyleSheets
 {
-    protectedUserContentControllerProxy(self)->removeAllUserStyleSheets();
+    protect(*_userContentControllerProxy)->removeAllUserStyleSheets();
 }
 
 - (void)_removeAllUserStyleSheetsAssociatedWithContentWorld:(WKContentWorld *)contentWorld
 {
-    protectedUserContentControllerProxy(self)->removeAllUserStyleSheets(Ref { *contentWorld->_contentWorld });
-}
-
-- (void)_addBuffer:(_WKJSBuffer *)buffer contentWorld:(WKContentWorld *)world name:(NSString *)name
-{
-    protectedUserContentControllerProxy(self)->addJSBuffer(Ref { *buffer->_buffer }, Ref { *world->_contentWorld }, name);
-}
-
-- (void)_removeBufferWithName:(NSString *)name contentWorld:(WKContentWorld *)world
-{
-    protectedUserContentControllerProxy(self)->removeJSBuffer(Ref { *world->_contentWorld }, name);
+    protect(*_userContentControllerProxy)->removeAllUserStyleSheets(Ref { *contentWorld->_contentWorld });
 }
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 - (void)_addScriptMessageHandler:(id <WKScriptMessageHandler>)scriptMessageHandler name:(NSString *)name userContentWorld:(_WKUserContentWorld *)userContentWorld
 {
     auto handler = WebKit::WebScriptMessageHandler::create(makeUnique<ScriptMessageHandlerDelegate>(self, scriptMessageHandler, name), name, Ref { *userContentWorld->_contentWorld->_contentWorld });
-    if (!protectedUserContentControllerProxy(self)->addUserScriptMessageHandler(handler.get()))
+    if (!protect(*_userContentControllerProxy)->addUserScriptMessageHandler(handler.get()))
         [NSException raise:NSInvalidArgumentException format:@"Attempt to add script message handler with name '%@' when one already exists.", name];
 }
 
@@ -342,12 +391,12 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 
 - (void)_removeScriptMessageHandlerForName:(NSString *)name userContentWorld:(_WKUserContentWorld *)userContentWorld
 {
-    protectedUserContentControllerProxy(self)->removeUserMessageHandlerForName(name, Ref { *userContentWorld->_contentWorld->_contentWorld });
+    protect(*_userContentControllerProxy)->removeUserMessageHandlerForName(name, Ref { *userContentWorld->_contentWorld->_contentWorld });
 }
 
 - (void)_removeAllScriptMessageHandlersAssociatedWithUserContentWorld:(_WKUserContentWorld *)userContentWorld
 {
-    protectedUserContentControllerProxy(self)->removeAllUserMessageHandlers(Ref { *userContentWorld->_contentWorld->_contentWorld });
+    protect(*_userContentControllerProxy)->removeAllUserMessageHandlers(Ref { *userContentWorld->_contentWorld->_contentWorld });
 }
 ALLOW_DEPRECATED_DECLARATIONS_END
 

@@ -32,6 +32,7 @@
 #include "IPCUtilities.h"
 #include "RemoteSharedResourceCache.h"
 #include <WebCore/ProcessIdentity.h>
+#include <WebCore/SharedMemory.h>
 #include <wtf/MachSendRight.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -60,7 +61,7 @@ void RemoteGraphicsContextGL::copyTextureFromVideoFrame(WebKit::SharedVideoFrame
         return;
     }
     texture = m_objectNames.get(texture);
-    bool result = protectedContext()->copyTextureFromVideoFrame(*videoFrame, texture, target, level, internalFormat, format, type, premultiplyAlpha, flipY);
+    bool result = protect(m_context)->copyTextureFromVideoFrame(*videoFrame, texture, target, level, internalFormat, format, type, premultiplyAlpha, flipY);
     completionHandler(result);
 }
 
@@ -69,7 +70,7 @@ void RemoteGraphicsContextGL::setSharedVideoFrameSemaphore(IPC::Semaphore&& sema
     m_sharedVideoFrameReader.setSemaphore(WTF::move(semaphore));
 }
 
-void RemoteGraphicsContextGL::setSharedVideoFrameMemory(SharedMemory::Handle&& handle)
+void RemoteGraphicsContextGL::setSharedVideoFrameMemory(WebCore::SharedMemory::Handle&& handle)
 {
     m_sharedVideoFrameReader.setSharedMemory(WTF::move(handle));
 }

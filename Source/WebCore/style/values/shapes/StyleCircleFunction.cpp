@@ -25,10 +25,11 @@
 #include "config.h"
 #include "StyleCircleFunction.h"
 
+#include "AcceleratedEffectCircleFunction.h"
 #include "FloatRect.h"
 #include "GeometryUtilities.h"
 #include "Path.h"
-#include "StyleLengthWrapper+Blending.h"
+#include "StylePrimitiveNumericOrKeyword+Blending.h"
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <numbers>
@@ -41,7 +42,7 @@ namespace Style {
 
 struct CirclePathPolicy final : public TinyLRUCachePolicy<FloatRect, WebCore::Path> {
 public:
-    static bool isKeyNull(const FloatRect& rect)
+    static bool NODELETE isKeyNull(const FloatRect& rect)
     {
         return rect.isEmpty();
     }
@@ -62,16 +63,16 @@ static const WebCore::Path& cachedCirclePath(const FloatRect& rect)
 
 // MARK: - Path Generation
 
-FloatPoint resolvePosition(const Circle& value, FloatSize boundingBox)
+FloatPoint resolvePosition(const Circle& value, FloatSize boundingBox, ZoomFactor zoom)
 {
-    return value.position ? evaluate<FloatPoint>(*value.position, boundingBox, Style::ZoomNeeded { }) : FloatPoint { boundingBox.width() / 2, boundingBox.height() / 2 };
+    return value.position ? evaluate<FloatPoint>(*value.position, boundingBox, zoom) : FloatPoint { boundingBox.width() / 2, boundingBox.height() / 2 };
 }
 
-float resolveRadius(const Circle& value, FloatSize boxSize, FloatPoint center)
+float resolveRadius(const Circle& value, FloatSize boxSize, FloatPoint center, ZoomFactor zoom)
 {
     return WTF::switchOn(value.radius,
         [&](const Circle::Length& length) -> float {
-            return evaluate<float>(length, boxSize.diagonalLength() / std::numbers::sqrt2_v<float>, Style::ZoomNeeded { });
+            return evaluate<float>(length, boxSize.diagonalLength() / std::numbers::sqrt2_v<float>, zoom);
         },
         [&](const Circle::Extent& extent) -> float {
             return WTF::switchOn(extent,
@@ -92,9 +93,9 @@ float resolveRadius(const Circle& value, FloatSize boxSize, FloatPoint center)
     );
 }
 
-WebCore::Path pathForCenterCoordinate(const Circle& value, const FloatRect& boundingBox, FloatPoint center)
+WebCore::Path pathForCenterCoordinate(const Circle& value, const FloatRect& boundingBox, FloatPoint center, ZoomFactor zoom)
 {
-    auto radius = resolveRadius(value, boundingBox.size(), center);
+    auto radius = resolveRadius(value, boundingBox.size(), center, zoom);
     auto bounding = FloatRect {
         center.x() - radius + boundingBox.x(),
         center.y() - radius + boundingBox.y(),
@@ -104,9 +105,9 @@ WebCore::Path pathForCenterCoordinate(const Circle& value, const FloatRect& boun
     return cachedCirclePath(bounding);
 }
 
-WebCore::Path PathComputation<Circle>::operator()(const Circle& value, const FloatRect& boundingBox)
+WebCore::Path PathComputation<Circle>::operator()(const Circle& value, const FloatRect& boundingBox, ZoomFactor zoom)
 {
-    return pathForCenterCoordinate(value, boundingBox, resolvePosition(value, boundingBox.size()));
+    return pathForCenterCoordinate(value, boundingBox, resolvePosition(value, boundingBox.size(), zoom), zoom);
 }
 
 // MARK: - Blending
@@ -147,6 +148,47 @@ auto Blending<Circle>::blend(const Circle& a, const Circle& b, const BlendingCon
         .position = WebCore::Style::blend(a.position, b.position, context),
     };
 }
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+template<> struct Evaluation<Circle::RadialSize, AcceleratedEffectCircleFunction::RadialSize> { AcceleratedEffectCircleFunction::RadialSize operator()(const Circle::RadialSize&, FloatSize, ZoomFactor); };
+
+AcceleratedEffectCircleFunction::RadialSize Evaluation<Circle::RadialSize, AcceleratedEffectCircleFunction::RadialSize>::operator()(const Circle::RadialSize& value, FloatSize size, ZoomFactor zoom)
+{
+    return WTF::switchOn(value,
+        [&](const Circle::Length& length) -> AcceleratedEffectCircleFunction::RadialSize {
+            return evaluate<float>(length, size.diagonalLength() / std::numbers::sqrt2_v<float>, zoom);
+        },
+        [&](const Circle::Extent& extent) -> AcceleratedEffectCircleFunction::RadialSize {
+            return WTF::switchOn(extent,
+                [&](CSS::Keyword::ClosestSide) -> AcceleratedEffectCircleFunction::Extent {
+                    return AcceleratedEffectCircleFunction::Extent::ClosestSide;
+                },
+                [&](CSS::Keyword::FarthestSide) -> AcceleratedEffectCircleFunction::Extent {
+                    return AcceleratedEffectCircleFunction::Extent::FarthestSide;
+                },
+                [&](CSS::Keyword::ClosestCorner) -> AcceleratedEffectCircleFunction::Extent {
+                    return AcceleratedEffectCircleFunction::Extent::ClosestCorner;
+                },
+                [&](CSS::Keyword::FarthestCorner) -> AcceleratedEffectCircleFunction::Extent {
+                    return AcceleratedEffectCircleFunction::Extent::FarthestCorner;
+                }
+            );
+        }
+    );
+}
+
+AcceleratedEffectCircleFunction Evaluation<CircleFunction, AcceleratedEffectCircleFunction>::operator()(const CircleFunction& value, const FloatSize& containingBlockSize, ZoomFactor zoom)
+{
+    return {
+        .radius = evaluate<AcceleratedEffectCircleFunction::RadialSize>(value->radius, containingBlockSize, zoom),
+        .position = value->position ? std::optional { evaluate<FloatPoint>(*value->position, containingBlockSize, zoom) } : std::nullopt,
+    };
+}
+
+#endif
 
 } // namespace Style
 } // namespace WebCore

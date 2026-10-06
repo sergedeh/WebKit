@@ -24,7 +24,7 @@
 #include "StyleMaskLayer.h"
 
 #include "CachedImage.h"
-#include "StylePrimitiveKeyword+Logging.h"
+#include "StyleKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 #include <wtf/text/TextStream.h>
 
@@ -56,7 +56,7 @@ MaskLayer::MaskLayer(CSS::Keyword::None keyword)
 {
 }
 
-MaskLayer::MaskLayer(RefPtr<StyleImage>&& image)
+MaskLayer::MaskLayer(RefPtr<Image>&& image)
     : MaskLayer { ImageOrNone { WTF::move(image) } }
 {
 }

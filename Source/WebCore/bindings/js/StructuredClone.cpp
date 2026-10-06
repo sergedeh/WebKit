@@ -30,6 +30,8 @@
 #include "JSDOMBinding.h"
 #include "JSDOMConvertBufferSource.h"
 #include "JSDOMExceptionHandling.h"
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 
 namespace WebCore {
@@ -48,7 +50,7 @@ static EncodedJSValue cloneArrayBufferImpl(JSGlobalObject* lexicalGlobalObject, 
     ASSERT(callFrame->argumentCount());
     ASSERT(callFrame->lexicalGlobalObject(vm) == lexicalGlobalObject);
 
-    auto* buffer = toUnsharedArrayBuffer(vm, callFrame->uncheckedArgument(0));
+    RefPtr buffer = toUnsharedArrayBuffer(vm, callFrame->uncheckedArgument(0));
     if (!buffer) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwDataCloneError(*lexicalGlobalObject, scope);
@@ -92,7 +94,7 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject* globalObject
     };
 
     if (value.inherits<JSArrayBuffer>()) {
-        auto* buffer = toUnsharedArrayBuffer(vm, value);
+        RefPtr buffer = toUnsharedArrayBuffer(vm, value);
         if (!buffer || buffer->isDetached()) [[unlikely]] {
             throwDataCloneError(*globalObject, scope);
             return { };
@@ -104,11 +106,9 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject* globalObject
         return JSValue::encode(JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), result.releaseNonNull()));
     }
 
-    if (value.inherits<JSArrayBufferView>()) {
-        auto* bufferView = jsCast<JSArrayBufferView*>(value);
-        ASSERT(bufferView);
+    if (auto* bufferView = dynamicDowncast<JSArrayBufferView>(value)) {
 
-        auto* buffer = bufferView->unsharedBuffer();
+        RefPtr buffer = bufferView->unsharedBuffer();
         if (!buffer || buffer->isDetached()) [[unlikely]] {
             throwDataCloneError(*globalObject, scope);
             return { };
@@ -128,15 +128,19 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject* globalObject
             length = bufferView->length();
         }
 
+        // FIXME: Can the `wrapper` variables below actually be null here? Or do the checks above ensure `wrappedAs` is successful?
+
         switch (typedArrayType(bufferView->type())) {
 #define CLONE_TYPED_ARRAY(name) \
         case Type##name: { \
-            RELEASE_AND_RETURN(scope, JSValue::encode(toJS(globalObject, globalObject, name##Array::wrappedAs(bufferClone.releaseNonNull(), byteOffset, length).get()))); \
+            RefPtr wrapper = name##Array::wrappedAs(bufferClone.releaseNonNull(), byteOffset, length); \
+            RELEASE_AND_RETURN(scope, JSValue::encode(wrapper ? toJS(globalObject, globalObject, *wrapper) : JSC::jsNull())); \
         }
         FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CLONE_TYPED_ARRAY)
 #undef CLONE_TYPED_ARRAY
         case TypeDataView: {
-            RELEASE_AND_RETURN(scope, JSValue::encode(toJS(globalObject, globalObject, DataView::wrappedAs(bufferClone.releaseNonNull(), byteOffset, length).get())));
+            RefPtr wrapper = DataView::wrappedAs(bufferClone.releaseNonNull(), byteOffset, length);
+            RELEASE_AND_RETURN(scope, JSValue::encode(wrapper ? toJS(globalObject, globalObject, *wrapper) : JSC::jsNull()));
         }
         default:
             RELEASE_ASSERT_NOT_REACHED();

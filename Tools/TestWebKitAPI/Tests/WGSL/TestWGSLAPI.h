@@ -113,6 +113,8 @@ inline Check check(const String& pattern)
     return [&](const String& msl, unsigned offset) -> unsigned {
         JSC::Yarr::RegularExpression test(pattern);
         auto result = test.match(msl, offset);
+        if (result == -1)
+            __builtin_trap();
         EXPECT_NE(result, -1);
         return result;
     };
@@ -120,7 +122,13 @@ inline Check check(const String& pattern)
 
 inline Variant<WGSL::SuccessfulCheck, WGSL::FailedCheck> staticCheck(const String& wgsl)
 {
-    return WGSL::staticCheck(wgsl, std::nullopt, { 8 });
+    return WGSL::staticCheck(wgsl, std::nullopt, {
+        .maxBuffersPlusVertexBuffersForVertexStage = 8,
+        .maxBuffersForFragmentStage = 8,
+        .maxBuffersForComputeStage = 8,
+        .maximumCombinedWorkgroupVariablesSize = 16384,
+        .supportedFeatures = { "shader-f16"_s, "clip-distances"_s, "primitive-index"_s }
+    });
 }
 
 inline Variant<WGSL::PrepareResult, WGSL::Error> prepare(const WGSL::SuccessfulCheck& staticCheckResult)
@@ -132,29 +140,19 @@ inline Variant<WGSL::PrepareResult, WGSL::Error> prepare(const WGSL::SuccessfulC
     return WGSL::prepare(shaderModule, pipelineLayouts);
 }
 
-inline Variant<String, WGSL::Error> generate(const WGSL::SuccessfulCheck& staticCheckResult, WGSL::PrepareResult& prepareResult)
+inline Variant<String, WGSL::Error> generate(const WGSL::SuccessfulCheck& staticCheckResult, WGSL::PrepareResult& prepareResult, WGSL::DeviceState&& deviceState = { })
 {
     auto& shaderModule = staticCheckResult.ast;
     HashMap<String, WGSL::ConstantValue> constantValues;
-    for (auto& entryPoint : shaderModule->callGraph().entrypoints()) {
-        const auto& entryPointInformation = prepareResult.entryPoints.get(entryPoint.originalName);
-        for (const auto& [originalName, constant] : entryPointInformation.specializationConstants) {
-            EXPECT_TRUE(constant.defaultValue);
-            auto defaultValue = WGSL::evaluate(*constant.defaultValue, constantValues);
-            EXPECT_TRUE(defaultValue.has_value());
-            constantValues.add(constant.mangledName, *defaultValue);
-        }
-    }
-
-    return WGSL::generate(shaderModule, prepareResult, constantValues, { });
+    return WGSL::generate(shaderModule, prepareResult, constantValues, WTF::move(deviceState));
 }
 
 #ifdef __OBJC__
-inline Variant<id<MTLLibrary>, NSError *> metalCompile(const String& msl)
+inline Variant<id<MTLLibrary>, NSError *> metalCompile(const String& msl, unsigned appleGPUFamily = 8)
 {
     auto device = MTLCreateSystemDefaultDevice();
     auto options = [MTLCompileOptions new];
-    options.preprocessorMacros = @{ @"__wgslMetalAppleGPUFamily" : [NSString stringWithFormat:@"%u", 8] };
+    options.preprocessorMacros = @{ @"__wgslMetalAppleGPUFamily" : [NSString stringWithFormat:@"%u", appleGPUFamily] };
     NSError *error = nil;
     RetainPtr library = [device newLibraryWithSource:msl.createNSString().get() options:options error:&error];
     if (error != nil)

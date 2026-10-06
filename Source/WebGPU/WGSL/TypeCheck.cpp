@@ -37,6 +37,7 @@
 #include "Types.h"
 #include "WGSLShaderModule.h"
 #include <wtf/DataLog.h>
+#include <wtf/HashSet.h>
 #include <wtf/OptionSet.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SortedArrayMap.h>
@@ -73,12 +74,6 @@ static constexpr bool shouldDumpConstantValues = false;
         return makeUnexpected(__expected.error()); \
 }
 
-enum class Evaluation : uint8_t {
-    Constant = 1,
-    Override = 2,
-    Runtime = 3,
-};
-
 enum class DiscardResult : bool {
     No,
     Yes,
@@ -95,15 +90,13 @@ struct Binding {
     const struct Type* type;
     Evaluation evaluation;
     std::optional<ConstantValue> constantValue;
+    // Set for a declaration in a loop body that follows a continue statement targeting that loop.
+    // A shadowing declaration is a separate binding, so it is left unmarked and stays usable.
+    bool declaredAfterContinue { false };
 };
 
-enum class Behavior : uint8_t {
-    Return = 1 << 0,
-    Break = 1 << 1,
-    Continue = 1 << 2,
-    Next = 1 << 3,
-};
-using Behaviors = OptionSet<Behavior>;
+using Behavior = AST::Behavior;
+using Behaviors = AST::Behaviors;
 
 using BreakTarget = Variant<
     AST::SwitchStatement*,
@@ -237,9 +230,9 @@ private:
     [[nodiscard]] Result<void> introduceFunction(const AST::Identifier&, const Type*);
     [[nodiscard]] Result<void> convertValue(const SourceSpan&, const Type*, std::optional<ConstantValue>&);
 
-    void inferred(const Type*);
+    void NODELETE evaluated(Evaluation);
+    void NODELETE inferred(const Type*);
     [[nodiscard]] bool unify(const Type*, const Type*);
-    [[nodiscard]] bool convertValueImpl(const SourceSpan&, const Type*, ConstantValue&);
 
     [[nodiscard]] Result<void> binaryExpression(const SourceSpan&, AST::Expression*, AST::BinaryOperation, AST::Expression&, AST::Expression&);
 
@@ -247,7 +240,7 @@ private:
     [[nodiscard]] Result<void> allocateSimpleConstructor(ASCIILiteral, TargetConstructor, const Validator&, Arguments&&...);
     [[nodiscard]] Result<void> allocateTextureStorageConstructor(ASCIILiteral, Types::TextureStorage::Kind);
 
-    bool isModuleScope() const;
+    bool NODELETE isModuleScope() const;
 
     [[nodiscard]] Result<AccessMode> accessMode(AST::Expression&);
     [[nodiscard]] Result<TexelFormat> texelFormat(AST::Expression&);
@@ -271,13 +264,26 @@ private:
     ShaderModule& m_shaderModule;
     const Type* m_inferredType { nullptr };
     const Type* m_returnType { nullptr };
-    Evaluation m_evaluation { Evaluation::Runtime };
+    std::optional<Evaluation> m_currentEvaluation { std::nullopt };
+    Evaluation m_maxEvaluation { Evaluation::Runtime };
     DiscardResult m_discardResult { DiscardResult::No };
+    bool m_suppressConstantErrors { false };
+
+    // https://www.w3.org/TR/WGSL/#continue-statement
+    // Source offset of the earliest continue statement targeting the innermost enclosing loop, used
+    // to mark the declarations that a continue would jump over on its way to the continuing clause.
+    unsigned m_earliestContinueOffset { std::numeric_limits<unsigned>::max() };
+    bool m_declaringAfterContinue { false };
+    bool m_inContinuingClause { false };
 
     TypeStore& m_types;
     Vector<BreakTarget> m_breakTargetStack;
-    HashMap<String, OverloadedDeclaration> m_overloadedOperations;
     HashMap<String, AST::IdentifierExpression*> m_arrayCountOverrides;
+
+    // The names declared at module scope, collected before any of them is visited. Module scope has
+    // no declaration order, so a rule about what those names hide cannot be answered by the scope
+    // built up as the declarations are visited one after another.
+    HashSet<String> m_moduleScopeNames;
 };
 
 TypeChecker::TypeChecker(ShaderModule& shaderModule)
@@ -319,11 +325,25 @@ Result<void> TypeChecker::declareBuiltins()
             if (!elementType->isStorable()) [[unlikely]]
                 TYPE_ERROR(type.span(), '\'', *elementType, "' cannot be used as the store type of a pointer"_s);
 
+            // https://www.w3.org/TR/WGSL/#ref-ptr-types
+            // A pointer's address space has to permit its store type. Textures and samplers only ever
+            // live in the handle address space, and that address space cannot be spelled, so no
+            // pointer that can be written down may point at one.
+            if (elementType->isTexture() || elementType->isSampler()) [[unlikely]]
+                TYPE_ERROR(type.span(), '\'', *elementType, "' cannot be used as the store type of a pointer in the <"_s, toString(addressSpace), "> address space"_s);
+
             if (std::holds_alternative<Types::Atomic>(*elementType) && addressSpace != AddressSpace::Storage && addressSpace != AddressSpace::Workgroup) [[unlikely]]
                 TYPE_ERROR(type.span(), '\'', *elementType, "' atomic variables must have <storage> or <workgroup> address space"_s);
 
             if (elementType->containsRuntimeArray() && addressSpace != AddressSpace::Storage) [[unlikely]]
                 TYPE_ERROR(type.span(), "runtime-sized arrays can only be used in the <storage> address space"_s);
+
+            // https://www.w3.org/TR/WGSL/#array-types
+            // An override element count survives only where the array itself could live, and a
+            // 'var<workgroup>' store type is the one such place, so its pointers are the only
+            // pointers that may point at one.
+            if (elementType->containsOverrideArray() && addressSpace != AddressSpace::Workgroup) [[unlikely]]
+                TYPE_ERROR(type.span(), "array with an 'override' element count can only be pointed to in the <workgroup> address space"_s);
 
             AccessMode accessMode;
             if (argumentCount > 2) {
@@ -331,6 +351,9 @@ Result<void> TypeChecker::declareBuiltins()
                     TYPE_ERROR(type.arguments()[2].span(), "only pointers in <storage> address space may specify an access mode"_s);
 
                 UNWRAP_ASSIGN(accessMode, this->accessMode(type.arguments()[2]));
+
+                if (accessMode == AccessMode::Write) [[unlikely]]
+                    TYPE_ERROR(type.arguments()[2].span(), "access mode 'write' is not valid for the <storage> address space"_s);
             } else {
                 switch (addressSpace) {
                 case AddressSpace::Function:
@@ -491,6 +514,11 @@ std::optional<FailedCheck> TypeChecker::check()
 
 Result<void> TypeChecker::visit(ShaderModule& shaderModule)
 {
+    for (auto& declaration : shaderModule.declarations()) {
+        if (!is<AST::ConstAssert>(declaration))
+            m_moduleScopeNames.add(declaration.name().id());
+    }
+
     for (auto& declaration : shaderModule.declarations())
         CHECK(visit(declaration));
     return { };
@@ -517,8 +545,6 @@ Result<void> TypeChecker::visit(AST::Declaration& declaration)
 
 Result<void> TypeChecker::visit(AST::Structure& structure)
 {
-    CHECK(visitAttributes(structure.attributes()));
-
     HashMap<String, const Type*> fields;
     for (unsigned i = 0; i < structure.members().size(); ++i) {
         auto& member = structure.members()[i];
@@ -611,6 +637,7 @@ Result<void> TypeChecker::visit(AST::Variable& variable)
         RELEASE_ASSERT(isModuleScope());
         if (!satisfies(result, Constraints::ConcreteScalar)) [[unlikely]]
             TYPE_ERROR(variable.span(), '\'', *result, "' cannot be used as the type of an 'override'"_s);
+        m_shaderModule.addOverride(variable);
         break;
     case AST::VariableFlavor::Var:
         AddressSpace addressSpace;
@@ -618,6 +645,12 @@ Result<void> TypeChecker::visit(AST::Variable& variable)
         if (auto* maybeQualifier = variable.maybeQualifier()) {
             addressSpace = maybeQualifier->addressSpace();
             accessMode = maybeQualifier->accessMode();
+
+            // https://www.w3.org/TR/WGSL/#access-mode - the access mode is named by a predeclared
+            // enumerant, so a module-scope declaration of that name hides it and leaves the
+            // qualifier naming a value that is not an access mode at all.
+            if (maybeQualifier->hasExplicitAccessMode() && m_moduleScopeNames.contains(String { toString(accessMode) })) [[unlikely]]
+                TYPE_ERROR(maybeQualifier->span(), "cannot use '"_s, toString(accessMode), "' as access mode because it is shadowed by a module-scope declaration"_s);
         } else if (!isModuleScope()) {
             addressSpace = AddressSpace::Function;
             accessMode = AccessMode::ReadWrite;
@@ -734,11 +767,17 @@ Result<void> TypeChecker::visit(AST::ConstAssert& assertion)
 Result<void> TypeChecker::visit(AST::Function& function)
 {
     bool mustUse = false;
+    // AST::Function::stage() is filled in by AttributeValidator, which runs after this pass, so the
+    // stage attribute has to be read off the function directly to know whether it is an entry point.
+    bool isEntryPoint = false;
     for (auto& attribute : function.attributes()) {
         if (is<AST::MustUseAttribute>(attribute)) {
             mustUse = true;
             continue;
         }
+
+        if (is<AST::StageAttribute>(attribute))
+            isEntryPoint = true;
 
         CHECK(visit(attribute));
     }
@@ -776,7 +815,7 @@ Result<void> TypeChecker::visit(AST::Function& function)
         ASSERT(!behaviors.containsAny({ Behavior::Break, Behavior::Continue }));
     }
 
-    const Type* functionType = m_types.functionType(WTF::move(parameters), m_returnType, mustUse);
+    const Type* functionType = m_types.functionType(WTF::move(parameters), m_returnType, mustUse, isEntryPoint);
     CHECK(introduceFunction(function.name(), functionType));
 
     m_returnType = nullptr;
@@ -929,8 +968,10 @@ Result<void> TypeChecker::visit(AST::Statement& statement)
     case AST::NodeKind::WhileStatement:
         return visit(uncheckedDowncast<AST::WhileStatement>(statement));
     case AST::NodeKind::BreakStatement:
-    case AST::NodeKind::ContinueStatement:
     case AST::NodeKind::DiscardStatement:
+        return { };
+    case AST::NodeKind::ContinueStatement:
+        m_earliestContinueOffset = std::min(m_earliestContinueOffset, statement.span().offset);
         return { };
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -980,6 +1021,7 @@ Result<void> TypeChecker::visit(AST::CompoundAssignmentStatement& statement)
 
     // Reset the inferred type since this is a statement
     m_inferredType = nullptr;
+    m_currentEvaluation = std::nullopt;
 
     return { };
 }
@@ -1040,7 +1082,17 @@ Result<void> TypeChecker::visit(AST::IfStatement& statement)
 
 Result<void> TypeChecker::visit(AST::PhonyAssignmentStatement& statement)
 {
-    CHECK(infer(statement.rhs(), Evaluation::Runtime));
+    UNWRAP(type, infer(statement.rhs(), Evaluation::Runtime));
+
+    // https://www.w3.org/TR/WGSL/#phony-assignment-section
+    // Naming a variable loads from it, so its store type has to be one the load rule accepts.
+    // Textures and samplers are exempt: they are handles, and reading one never loads a value.
+    if (auto* reference = std::get_if<Types::Reference>(type)) {
+        auto* element = reference->element;
+        if (!element->isConstructible() && !element->isTexture() && !element->isSampler()) [[unlikely]]
+            TYPE_ERROR(statement.rhs().span(), "cannot assign '"_s, *element, "' to '_' because it is not constructible"_s);
+    }
+
     return { };
 }
 
@@ -1068,6 +1120,8 @@ Result<void> TypeChecker::visit(AST::ReturnStatement& statement)
 Result<void> TypeChecker::visit(AST::ForStatement& statement)
 {
     ContextScope forScope(this);
+    SetForScope earliestContinueOffset(m_earliestContinueOffset, std::numeric_limits<unsigned>::max());
+
     if (auto* initializer = statement.maybeInitializer())
         CHECK(visit(*initializer));
 
@@ -1090,8 +1144,17 @@ Result<void> TypeChecker::visit(AST::LoopStatement& statement)
     ContextScope loopScope(this);
     CHECK(visitAttributes(statement.attributes()));
 
-    for (auto& statement : statement.body())
-        CHECK(visit(statement));
+    // https://www.w3.org/TR/WGSL/#continue-statement
+    // A continue must not jump over the declaration of a value that the continuing clause then
+    // reads, so every declaration following the earliest continue in this body gets marked and the
+    // continuing clause rejects the identifiers that resolve to one of them. The offset is shadowed
+    // here so that a continue inside a nested loop, which targets that loop, does not count.
+    SetForScope earliestContinueOffset(m_earliestContinueOffset, std::numeric_limits<unsigned>::max());
+
+    for (auto& bodyStatement : statement.body()) {
+        SetForScope declaringAfterContinue(m_declaringAfterContinue, is<AST::VariableStatement>(bodyStatement) && bodyStatement.span().offset > m_earliestContinueOffset);
+        CHECK(visit(bodyStatement));
+    }
 
     if (auto& continuing = statement.continuing())
         CHECK(visit(*continuing));
@@ -1101,6 +1164,8 @@ Result<void> TypeChecker::visit(AST::LoopStatement& statement)
 
 Result<void> TypeChecker::visit(AST::WhileStatement& statement)
 {
+    SetForScope earliestContinueOffset(m_earliestContinueOffset, std::numeric_limits<unsigned>::max());
+
     UNWRAP(testType, infer(statement.test(), Evaluation::Runtime));
     if (!unify(m_types.boolType(), testType)) [[unlikely]]
         TYPE_ERROR(statement.test().span(), "while condition must be bool, got "_s, *testType);
@@ -1116,9 +1181,19 @@ Result<void> TypeChecker::visit(AST::SwitchStatement& statement)
     if (!satisfies(valueType, Constraints::ConcreteInteger)) [[unlikely]]
         TYPE_ERROR(statement.value().span(), "switch selector must be of type i32 or u32"_s);
 
+    // https://www.w3.org/TR/WGSL/#switch-statement
+    // No two case selectors in a switch may have the same value. A switch has few enough clauses
+    // that a linear scan is cheaper than building a hash table.
+    Vector<int64_t> selectorValues;
     const auto& visitClause = [&](AST::SwitchClause& clause) -> Result<void> {
         for (auto& selector : clause.selectors) {
             UNWRAP(selectorType, infer(selector, Evaluation::Runtime));
+            if (auto& constantValue = selector.constantValue(); constantValue.has_value()) {
+                auto value = constantValue->integerValue();
+                if (selectorValues.contains(value)) [[unlikely]]
+                    TYPE_ERROR(selector.span(), "the case selector value '"_s, String::number(value), "' appears more than once in the switch statement"_s);
+                selectorValues.append(value);
+            }
             if (unify(valueType, selectorType)) {
                 // If the selectorType can satisfy the value type, we're good to go.
                 // e.g. valueType is i32 or u32 and the selector is a literal of type AbstractInt
@@ -1139,7 +1214,7 @@ Result<void> TypeChecker::visit(AST::SwitchStatement& statement)
         return { };
     };
 
-    CHECK(visitAttributes(statement.valueAttributes()));
+    CHECK(visitAttributes(statement.bodyAttributes()));
     CHECK(visitClause(statement.defaultClause()));
     for (auto& clause : statement.clauses())
         CHECK(visitClause(clause));
@@ -1248,11 +1323,12 @@ Result<void> TypeChecker::visit(AST::FieldAccessExpression& access)
             result = m_types.referenceType(type.addressSpace, result, type.accessMode, isVector);
 
         inferred(result);
+        evaluated(access.base().evaluation());
 
         return { };
     };
 
-    UNWRAP(baseType, infer(access.base(), m_evaluation));
+    UNWRAP(baseType, infer(access.base(), m_maxEvaluation));
     if (const auto* reference = std::get_if<Types::Reference>(baseType))
         return referenceImpl(*reference);
 
@@ -1261,6 +1337,7 @@ Result<void> TypeChecker::visit(AST::FieldAccessExpression& access)
 
     UNWRAP(result, accessImpl(baseType));
     inferred(result);
+    evaluated(access.base().evaluation());
     return { };
 }
 
@@ -1276,12 +1353,12 @@ Result<void> TypeChecker::visit(AST::IndexAccessExpression& access)
         auto size = typeSize.value_or(0);
         if (!size && constantBase)
             size = std::get<T>(*constantBase).upperBound();
-        if (!size)
-            return { };
 
         auto index = constantIndex->integerValue();
-        if (index < 0 || static_cast<size_t>(index) >= size) [[unlikely]]
-            TYPE_ERROR(access.span(), "index "_s, index, " is out of bounds [0.."_s, size - 1, ']');
+        if (index < 0 || (size && static_cast<size_t>(index) >= size)) [[unlikely]] {
+            String bounds = size ?  makeString(" [0.."_s, size - 1, "]"_s) : ""_s;
+            TYPE_ERROR(access.span(), "index "_s, index, " is out of bounds"_s, bounds);
+        }
 
         if (constantBase)
             access.setConstantValue(std::get<T>(*constantBase)[index]);
@@ -1313,11 +1390,12 @@ Result<void> TypeChecker::visit(AST::IndexAccessExpression& access)
             result = concretize(result, m_types);
             RELEASE_ASSERT(result);
         }
+        evaluated(std::max(access.base().evaluation(), access.index().evaluation()));
         return { result };
     };
 
-    UNWRAP(base, infer(access.base(), m_evaluation));
-    UNWRAP(index, infer(access.index(), m_evaluation));
+    UNWRAP(base, infer(access.base(), m_maxEvaluation));
+    UNWRAP(index, infer(access.index(), m_maxEvaluation));
 
     if (!unify(m_types.i32Type(), index) && !unify(m_types.u32Type(), index) && !unify(m_types.abstractIntType(), index)) [[unlikely]]
         TYPE_ERROR(access.span(), "index must be of type 'i32' or 'u32', found: '"_s, *index, '\'');
@@ -1353,6 +1431,30 @@ Result<void> TypeChecker::visit(AST::BinaryExpression& binary)
 
 Result<void> TypeChecker::binaryExpression(const SourceSpan& span, AST::Expression* expression, AST::BinaryOperation operation, AST::Expression& leftExpression, AST::Expression& rightExpression)
 {
+    if (operation == AST::BinaryOperation::ShortCircuitAnd || operation == AST::BinaryOperation::ShortCircuitOr) {
+        UNWRAP(lhsType, infer(leftExpression, m_maxEvaluation));
+        if (lhsType == m_types.boolType()) {
+            if (auto lhsValue = leftExpression.constantValue()) {
+                bool lhsBool = std::get<bool>(*lhsValue);
+                bool shortCircuits = (operation == AST::BinaryOperation::ShortCircuitAnd && !lhsBool)
+                    || (operation == AST::BinaryOperation::ShortCircuitOr && lhsBool);
+                if (shortCircuits) {
+                    auto suppressScope = SetForScope(m_suppressConstantErrors, true);
+                    UNWRAP(rhsType, infer(rightExpression, m_maxEvaluation));
+                    if (auto* reference = std::get_if<Types::Reference>(rhsType))
+                        rhsType = reference->element;
+                    if (rhsType != m_types.boolType())
+                        TYPE_ERROR(span, "no matching overload for operator "_s, toASCIILiteral(operation), '(', *lhsType, ", "_s, *rhsType, ')');
+                    inferred(m_types.boolType());
+                    evaluated(leftExpression.evaluation());
+                    if (expression)
+                        expression->setConstantValue(operation == AST::BinaryOperation::ShortCircuitAnd ? false : true);
+                    return { };
+                }
+            }
+        }
+    }
+
     CHECK(chooseOverload("operator"_s, span, expression, toASCIILiteral(operation), ReferenceWrapperVector<AST::Expression, 2> { leftExpression, rightExpression }, { }));
 
     ASCIILiteral operationName;
@@ -1388,9 +1490,14 @@ Result<void> TypeChecker::visit(AST::IdentifierExpression& identifier)
     if (binding->kind != Binding::Value) [[unlikely]]
         TYPE_ERROR(identifier.span(), "cannot use "_s, bindingKindToString(binding->kind), " '"_s, identifier.identifier(), "' as value"_s);
 
-    if (binding->evaluation > m_evaluation) [[unlikely]]
-        TYPE_ERROR(identifier.span(), "cannot use "_s, evaluationToString(binding->evaluation), " value in "_s, evaluationToString(m_evaluation), " expression"_s);
+    if (binding->evaluation > m_maxEvaluation) [[unlikely]]
+        TYPE_ERROR(identifier.span(), "cannot use "_s, evaluationToString(binding->evaluation), " value in "_s, evaluationToString(m_maxEvaluation), " expression"_s);
 
+    // https://www.w3.org/TR/WGSL/#continue-statement
+    if (m_inContinuingClause && binding->declaredAfterContinue) [[unlikely]]
+        TYPE_ERROR(identifier.span(), "the 'continuing' clause cannot use '"_s, identifier.identifier(), "', which is declared after a 'continue' statement in the loop body"_s);
+
+    evaluated(binding->evaluation);
     inferred(binding->type);
     if (binding->constantValue.has_value())
         CHECK(setConstantValue(identifier, binding->type, *binding->constantValue));
@@ -1442,11 +1549,13 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
 
                 HashMap<String, ConstantValue> constantFields;
                 bool isConstant = true;
+                Evaluation evaluation = Evaluation::Constant;
                 for (unsigned i = 0; i < numberOfArguments; ++i) {
                     auto& argument = call.arguments()[i];
                     auto& member = structType->structure.members()[i];
                     auto* fieldType = structType->fields.get(member.name());
-                    UNWRAP(argumentType, infer(argument, m_evaluation));
+                    UNWRAP(argumentType, infer(argument, m_maxEvaluation));
+                    evaluation = std::max(evaluation, argument.evaluation());
                     if (!unify(fieldType, argumentType)) [[unlikely]]
                         TYPE_ERROR(argument.span(), "type in struct initializer does not match struct member type: expected '"_s, *fieldType, "', found '"_s, *argumentType, '\'');
 
@@ -1466,6 +1575,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
                         CHECK(setConstantValue(call, targetBinding->type, zeroValue(targetBinding->type)));
                 }
                 inferred(targetBinding->type);
+                evaluated(evaluation);
                 return { };
             }
 
@@ -1503,8 +1613,12 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
             auto& functionType = std::get<Types::Function>(*targetBinding->type);
             auto numberOfArguments = call.arguments().size();
             auto numberOfParameters = functionType.parameters.size();
-            if (m_evaluation < Evaluation::Runtime) [[unlikely]]
-                TYPE_ERROR(call.span(), "cannot call function from "_s, evaluationToString(m_evaluation), " context"_s);
+            if (m_maxEvaluation < Evaluation::Runtime) [[unlikely]]
+                TYPE_ERROR(call.span(), "cannot call function from "_s, evaluationToString(m_maxEvaluation), " context"_s);
+
+            // https://www.w3.org/TR/WGSL/#function-restriction
+            if (functionType.isEntryPoint) [[unlikely]]
+                TYPE_ERROR(call.span(), "cannot call entry point '"_s, targetName, '\'');
 
             if (numberOfArguments != numberOfParameters) [[unlikely]] {
                 auto errorKind = numberOfArguments < numberOfParameters ? "few"_s : "many"_s;
@@ -1520,7 +1634,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
             for (unsigned i = 0; i < numberOfArguments; ++i) {
                 auto& argument = call.arguments()[i];
                 auto* parameterType = functionType.parameters[i];
-                UNWRAP(argumentType, infer(argument, m_evaluation));
+                UNWRAP(argumentType, infer(argument, m_maxEvaluation));
                 if (!unify(parameterType, argumentType)) [[unlikely]]
                     TYPE_ERROR(argument.span(), "type in function call does not match parameter type: expected '"_s, *parameterType, "', found '"_s, *argumentType, '\'');
 
@@ -1530,20 +1644,30 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
                     CHECK(convertValue(argument.span(), argument.inferredType(), value));
             }
             inferred(functionType.result);
+            evaluated(Evaluation::Runtime);
             return { };
         } else [[unlikely]]
             TYPE_ERROR(target.span(), "cannot call value of type '"_s, *targetBinding->type, '\'');
     }
 
     if (isNamedType || isParameterizedType) {
+        call.m_resolvedTarget = targetName;
         UNWRAP(result, chooseOverload("initializer"_s, call.span(), &call, targetName, call.arguments(), typeArguments));
         if (result) {
             target.m_inferredType = result;
 
+            // Subgroup and quad built-in functions require the 'subgroups' extension to be enabled.
+            if ((targetName.startsWith("subgroup"_s) || targetName.startsWith("quad"_s)) && !m_shaderModule.enabledExtensions().contains(Extension::Subgroups)) [[unlikely]]
+                TYPE_ERROR(call.span(), "'"_s, targetName, "' requires the 'subgroups' extension to be enabled"_s);
+
             // FIXME: <rdar://150366527> this will go away once we track used intrinsics properly
-            if (targetName == "workgroupUniformLoad"_s)
-                m_shaderModule.setUsesWorkgroupUniformLoad();
-            else if (targetName == "frexp"_s)
+            if (targetName == "workgroupUniformLoad"_s) {
+                auto* argument = call.arguments()[0].inferredType();
+                if (std::holds_alternative<Types::Atomic>(*std::get<Types::Pointer>(*argument).element))
+                    m_shaderModule.setUsesWorkgroupUniformLoadAtomic();
+                else
+                    m_shaderModule.setUsesWorkgroupUniformLoad();
+            } else if (targetName == "frexp"_s)
                 m_shaderModule.setUsesFrexp();
             else if (targetName == "modf"_s)
                 m_shaderModule.setUsesModf();
@@ -1591,7 +1715,9 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
 
                 auto& lastArg = call.arguments().last();
                 auto* vectorType = std::get_if<Types::Vector>(lastArg.inferredType());
-                if (!vectorType || vectorType->size != 2 || vectorType->element != m_types.i32Type())
+                // vec2<i32> for the 2d overloads and vec3<i32> for the 3d ones; for any other last
+                // argument this builtin has no offset to validate.
+                if (!vectorType || (vectorType->size != 2 && vectorType->size != 3) || vectorType->element != m_types.i32Type())
                     return { };
 
                 auto& maybeConstant = lastArg.constantValue();
@@ -1599,7 +1725,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
                     TYPE_ERROR(lastArg.span(), "the offset argument must be a const-expression"_s);
 
                 auto& vector = std::get<ConstantVector>(*maybeConstant);
-                for (unsigned i = 0; i < 2; ++i) {
+                for (unsigned i = 0; i < vectorType->size; ++i) {
                     auto& i32 = std::get<int32_t>(vector.elements[i]);
                     if (i32 < -8 || i32 > 7) [[unlikely]]
                         TYPE_ERROR(lastArg.span(), "each component of the offset argument must be at least -8 and at most 7. offset component "_s, String::number(i), " is "_s, String::number(i32));
@@ -1618,6 +1744,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
     }
 
     RELEASE_ASSERT(isArrayType);
+    call.m_resolvedTarget = "array"_s;
     auto* array = dynamicDowncast<AST::ArrayTypeExpression>(target);
     const Types::Array* arrayType = targetBinding ? std::get_if<Types::Array>(targetBinding->type) : nullptr;
     const Type* elementType = nullptr;
@@ -1633,7 +1760,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
             elementCountType = m_types.u32Type();
         } else {
             UNWRAP_ASSIGN(elementType, resolve(*array->maybeElementType()));
-            UNWRAP_ASSIGN(elementCountType, infer(*array->maybeElementCount(), m_evaluation));
+            UNWRAP_ASSIGN(elementCountType, infer(*array->maybeElementCount(), m_maxEvaluation));
         }
 
 
@@ -1669,7 +1796,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
         }
 
         for (auto& argument : call.arguments()) {
-            UNWRAP(argumentType, infer(argument, m_evaluation));
+            UNWRAP(argumentType, infer(argument, m_maxEvaluation));
             if (!unify(elementType, argumentType)) [[unlikely]]
                 TYPE_ERROR(argument.span(), '\'', *argumentType, "' cannot be used to construct an array of '"_s, *elementType, '\'');
             argument.m_inferredType = elementType;
@@ -1681,7 +1808,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
             TYPE_ERROR(call.span(), "cannot infer array element type from constructor"_s);
 
         for (auto& argument : call.arguments()) {
-            UNWRAP(argumentType, infer(argument, m_evaluation));
+            UNWRAP(argumentType, infer(argument, m_maxEvaluation));
             if (auto* reference = std::get_if<Types::Reference>(argumentType))
                 argumentType = reference->element;
 
@@ -1713,9 +1840,11 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
     unsigned argumentCount = call.arguments().size();
     FixedVector<ConstantValue> arguments(argumentCount);
     bool isConstant = true;
+    Evaluation evaluation = Evaluation::Constant;
     for (unsigned i = 0; i < argumentCount; ++i) {
         auto& argument = call.arguments()[i];
         auto& value = argument.m_constantValue;
+        evaluation = std::max(evaluation, argument.evaluation());
         if (!value.has_value())
             isConstant = false;
         else {
@@ -1723,6 +1852,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
             arguments[i] = *value;
         }
     }
+    evaluated(evaluation);
     if (isConstant) {
         if (argumentCount) {
             // https://www.w3.org/TR/WGSL/#limits
@@ -1750,7 +1880,7 @@ Result<void> TypeChecker::bitcast(AST::CallExpression& call, const Vector<const 
 
     auto& argument = call.arguments()[0];
     auto* destinationType = typeArguments[0];
-    UNWRAP(sourceType, infer(argument, m_evaluation));
+    UNWRAP(sourceType, infer(argument, m_maxEvaluation));
 
     if (auto* reference = std::get_if<Types::Reference>(sourceType))
         sourceType = reference->element;
@@ -1794,6 +1924,7 @@ Result<void> TypeChecker::bitcast(AST::CallExpression& call, const Vector<const 
             else
                 CHECK(setConstantValue(call, destinationType, WTF::move(*result)));
         }
+        evaluated(argument.evaluation());
         inferred(destinationType);
         return { };
     }
@@ -1816,6 +1947,7 @@ Result<void> TypeChecker::visit(AST::UnaryExpression& unary)
         if (reference->isVectorComponent) [[unlikely]]
             TYPE_ERROR(unary.span(), "cannot take the address of a vector component"_s);
 
+        evaluated(Evaluation::Runtime);
         inferred(m_types.pointerType(reference->addressSpace, reference->element, reference->accessMode));
         return { };
     }
@@ -1826,6 +1958,7 @@ Result<void> TypeChecker::visit(AST::UnaryExpression& unary)
         if (!pointer) [[unlikely]]
             TYPE_ERROR(unary.span(), "cannot dereference expression of type '"_s, *type, '\'');
 
+        evaluated(Evaluation::Runtime);
         inferred(m_types.referenceType(pointer->addressSpace, pointer->element, pointer->accessMode));
         return { };
     }
@@ -1837,42 +1970,49 @@ Result<void> TypeChecker::visit(AST::UnaryExpression& unary)
 // Literal Expressions
 void TypeChecker::visit(AST::BoolLiteral& literal)
 {
+    evaluated(Evaluation::Constant);
     inferred(m_types.boolType());
     literal.setConstantValue(literal.value());
 }
 
 void TypeChecker::visit(AST::Signed32Literal& literal)
 {
+    evaluated(Evaluation::Constant);
     inferred(m_types.i32Type());
     literal.setConstantValue(literal.value());
 }
 
 void TypeChecker::visit(AST::Float32Literal& literal)
 {
+    evaluated(Evaluation::Constant);
     inferred(m_types.f32Type());
     literal.setConstantValue(literal.value());
 }
 
 void TypeChecker::visit(AST::Float16Literal& literal)
 {
+    evaluated(Evaluation::Constant);
     inferred(m_types.f16Type());
     literal.setConstantValue(literal.value());
 }
 
 void TypeChecker::visit(AST::Unsigned32Literal& literal)
 {
+    evaluated(Evaluation::Constant);
     inferred(m_types.u32Type());
     literal.setConstantValue(literal.value());
 }
 
 void TypeChecker::visit(AST::AbstractIntegerLiteral& literal)
 {
+    evaluated(Evaluation::Constant);
     inferred(m_types.abstractIntType());
     literal.setConstantValue(literal.value());
 }
 
 void TypeChecker::visit(AST::AbstractFloatLiteral& literal)
 {
+    evaluated(Evaluation::Constant);
     inferred(m_types.abstractFloatType());
     literal.setConstantValue(literal.value());
 }
@@ -1889,7 +2029,7 @@ Result<void> TypeChecker::visit(AST::ArrayTypeExpression& array)
 
     Types::Array::Size size;
     if (array.maybeElementCount()) {
-        UNWRAP(elementCountType, infer(*array.maybeElementCount(), std::min(m_evaluation, Evaluation::Override)));
+        UNWRAP(elementCountType, infer(*array.maybeElementCount(), std::min(m_maxEvaluation, Evaluation::Override)));
         if (!unify(m_types.i32Type(), elementCountType) && !unify(m_types.u32Type(), elementCountType)) [[unlikely]]
             TYPE_ERROR(array.span(), "array count must be an i32 or u32 value, found '"_s, *elementCountType, '\'');
 
@@ -1907,17 +2047,12 @@ Result<void> TypeChecker::visit(AST::ArrayTypeExpression& array)
                 auto result = m_arrayCountOverrides.add(identifier->identifier().id(), identifier);
                 countExpression = result.iterator->value;
             }
-
-            m_shaderModule.addOverrideValidation(*countExpression, [&](const ConstantValue& elementCount) -> std::optional<String> {
-                if (elementCount.integerValue() < 1)
-                    return { "array count must be greater than 0"_s };
-                return std::nullopt;
-            });
             size = { countExpression };
         }
     }
 
     inferred(m_types.arrayType(elementType, size));
+    evaluated(Evaluation::Constant);
     return { };
 }
 
@@ -1960,7 +2095,9 @@ Result<void> TypeChecker::visit(AST::ElaboratedTypeExpression& type)
         TYPE_ERROR(type.span(), "type '"_s, *base, "' does not take template arguments"_s);
 
     UNWRAP(constructedType, constructor->construct(type));
+
     inferred(constructedType);
+    evaluated(Evaluation::Constant);
 
     return { };
 }
@@ -1968,6 +2105,7 @@ Result<void> TypeChecker::visit(AST::ElaboratedTypeExpression& type)
 Result<void> TypeChecker::visit(AST::Continuing& continuing)
 {
     ContextScope continuingScope(this);
+    SetForScope inContinuingClause(m_inContinuingClause, true);
 
     CHECK(visitAttributes(continuing.attributes));
 
@@ -2092,63 +2230,83 @@ Result<const Type*> TypeChecker::vectorFieldAccess(const Types::Vector& vector, 
 template<typename CallArguments>
 Result<const Type*> TypeChecker::chooseOverload(ASCIILiteral kind, const SourceSpan& span, AST::Expression* expression, const String& target, CallArguments&& callArguments, const Vector<const Type*>& typeArguments)
 {
-    auto it = m_overloadedOperations.find(target);
-    if (it == m_overloadedOperations.end())
+    auto* overload = m_shaderModule.lookupOverload(target);
+    if (!overload)
         return { nullptr };
 
     Vector<const Type*> valueArguments;
     valueArguments.reserveInitialCapacity(callArguments.size());
     for (unsigned i = 0; i < callArguments.size(); ++i) {
-        UNWRAP(type, infer(callArguments[i], m_evaluation));
+        UNWRAP(type, infer(callArguments[i], m_maxEvaluation));
         valueArguments.append(type);
     }
 
-    auto overload = resolveOverloads(m_types, it->value.overloads, valueArguments, typeArguments);
-    if (overload.has_value()) {
-        ASSERT(overload->parameters.size() == callArguments.size());
-        if (m_discardResult == DiscardResult::Yes && it->value.mustUse) [[unlikely]]
+    auto selectedOverload = resolveOverloads(m_types, overload->overloads, valueArguments, typeArguments);
+    if (selectedOverload.has_value()) {
+        ASSERT(selectedOverload->parameters.size() == callArguments.size());
+        if (m_discardResult == DiscardResult::Yes && overload->mustUse) [[unlikely]]
             TYPE_ERROR(span, "ignoring return value of builtin '"_s, target, '\'');
 
+        // A builtin that returns nothing, such as a barrier, cannot appear where a value is
+        // expected. This is the same rule already applied to user-declared functions above.
+        if (m_discardResult == DiscardResult::No && isPrimitive(selectedOverload->result, Types::Primitive::Void)) [[unlikely]]
+            TYPE_ERROR(span, "builtin '"_s, target, "' does not return a value"_s);
+
         for (unsigned i = 0; i < callArguments.size(); ++i)
-            callArguments[i].m_inferredType = overload->parameters[i];
-        inferred(overload->result);
+            callArguments[i].m_inferredType = selectedOverload->parameters[i];
+        inferred(selectedOverload->result);
 
         if (expression && is<AST::CallExpression>(*expression)) {
             auto& call = uncheckedDowncast<AST::CallExpression>(*expression);
-            call.m_isConstructor = it->value.kind == OverloadedDeclaration::Constructor;
-            call.m_visibility = it->value.visibility;
+            call.m_isConstructor = overload->kind == OverloadedDeclaration::Constructor;
+            call.m_visibility = overload->visibility;
+            call.m_validationFunction = overload->validationFunction;
 
-            if (call.isFloatToIntConversion(overload->result))
+            if (call.isFloatToIntConversion(selectedOverload->result))
                 m_shaderModule.setUsesFtoi();
         }
 
         unsigned argumentCount = callArguments.size();
         FixedVector<ConstantValue> arguments(argumentCount);
+        FixedVector<std::optional<ConstantValue>> validationArguments(argumentCount);
         bool isConstant = true;
+        Evaluation evaluation = Evaluation::Constant;
         for (unsigned i = 0; i < argumentCount; ++i) {
             auto& argument = callArguments[i];
             auto& value = argument.m_constantValue;
+            evaluation = std::max(evaluation, argument.evaluation());
             if (!value.has_value())
                 isConstant = false;
             else {
                 CHECK(convertValue(argument.span(), argument.inferredType(), value));
                 arguments[i] = *value;
+                validationArguments[i] = { *value };
             }
         }
 
-        auto constantFunction = it->value.constantFunction;
-        if (!constantFunction && m_evaluation < Evaluation::Runtime) [[unlikely]]
-            TYPE_ERROR(span, "cannot call function from "_s, evaluationToString(m_evaluation), " context"_s);
-
-        if (isConstant && constantFunction) {
-            auto result = constantFunction(overload->result, WTF::move(arguments));
-            if (!result) [[unlikely]]
-                TYPE_ERROR(span, result.error());
-            if (expression)
-                CHECK(setConstantValue(*expression, overload->result, WTF::move(*result)));
+        auto constantFunction = overload->constantFunction;
+        if (!constantFunction && m_maxEvaluation < Evaluation::Runtime) [[unlikely]] {
+            if (!m_suppressConstantErrors)
+                TYPE_ERROR(span, "cannot call function from "_s, evaluationToString(m_maxEvaluation), " context"_s);
         }
 
-        return { overload->result };
+        if (!constantFunction)
+            evaluation = Evaluation::Runtime;
+        evaluated(evaluation);
+
+        if (isConstant && constantFunction) {
+            auto result = constantFunction(selectedOverload->result, WTF::move(arguments));
+            if (!result) [[unlikely]] {
+                if (!m_suppressConstantErrors)
+                    TYPE_ERROR(span, result.error());
+            } else if (expression)
+                CHECK(setConstantValue(*expression, selectedOverload->result, WTF::move(*result)));
+        } else if (auto* validate = overload->validationFunction) {
+            if (auto error = validate(WTF::move(validationArguments), selectedOverload->parameters))
+                TYPE_ERROR(span, *error);
+        }
+
+        return { selectedOverload->result };
     }
 
     StringPrintStream valueArgumentsStream;
@@ -2177,15 +2335,17 @@ Result<const Type*> TypeChecker::chooseOverload(ASCIILiteral kind, const SourceS
 
 Result<const Type*> TypeChecker::infer(AST::Expression& expression, Evaluation evaluation, DiscardResult discardResult)
 {
-    if (evaluation > m_evaluation) [[unlikely]]
-        TYPE_ERROR(expression.span(), "cannot use "_s, evaluationToString(evaluation), " value in "_s, evaluationToString(m_evaluation), " expression"_s);
+    if (evaluation > m_maxEvaluation) [[unlikely]]
+        TYPE_ERROR(expression.span(), "cannot use "_s, evaluationToString(evaluation), " value in "_s, evaluationToString(m_maxEvaluation), " expression"_s);
 
     auto discardResultScope = SetForScope(m_discardResult, discardResult);
-    auto evaluationScope = SetForScope(m_evaluation, evaluation);
+    auto evaluationScope = SetForScope(m_maxEvaluation, evaluation);
 
     ASSERT(!m_inferredType);
+    ASSERT(!m_currentEvaluation);
     CHECK(visit(expression));
     ASSERT(m_inferredType);
+    ASSERT(m_currentEvaluation);
 
     if (shouldDumpInferredTypes) [[unlikely]] {
         dataLog("> Type inference [expression]: ");
@@ -2195,14 +2355,17 @@ Result<const Type*> TypeChecker::infer(AST::Expression& expression, Evaluation e
     }
 
     expression.m_inferredType = m_inferredType;
+    expression.m_evaluation = *m_currentEvaluation;
     const Type* inferredType = m_inferredType;
     m_inferredType = nullptr;
+    m_currentEvaluation = std::nullopt;
 
     return inferredType;
 }
 
 Result<Behaviors> TypeChecker::analyze(AST::Statement& statement)
 {
+    Behaviors behaviors;
     switch (statement.kind()) {
     case AST::NodeKind::AssignmentStatement:
     case AST::NodeKind::CallStatement:
@@ -2212,7 +2375,8 @@ Result<Behaviors> TypeChecker::analyze(AST::Statement& statement)
     case AST::NodeKind::DiscardStatement:
     case AST::NodeKind::PhonyAssignmentStatement:
     case AST::NodeKind::VariableStatement:
-        return { Behavior::Next };
+        behaviors = { Behavior::Next };
+        break;
     case AST::NodeKind::BreakStatement:
         if (m_breakTargetStack.isEmpty()) [[unlikely]]
             TYPE_ERROR(statement.span(), "break statement must be in a loop or switch case"_s);
@@ -2220,12 +2384,14 @@ Result<Behaviors> TypeChecker::analyze(AST::Statement& statement)
         if (std::holds_alternative<AST::Continuing*>(m_breakTargetStack.last())) [[unlikely]]
             TYPE_ERROR(statement.span(), "`break` must not be used to exit from a continuing block. Use `break-if` instead"_s);
 
-        return { Behavior::Break };
+        behaviors = { Behavior::Break };
+        break;
     case AST::NodeKind::ReturnStatement:
         if (m_breakTargetStack.containsIf([&](auto& it) { return std::holds_alternative<AST::Continuing*>(it); })) [[unlikely]]
             TYPE_ERROR(statement.span(), "continuing blocks must not contain a return statement"_s);
 
-        return { Behavior::Return };
+        behaviors = { Behavior::Return };
+        break;
     case AST::NodeKind::ContinueStatement: {
         bool hasLoopTarget = false;
         bool hasSwitchTarget = false;
@@ -2265,28 +2431,39 @@ Result<Behaviors> TypeChecker::analyze(AST::Statement& statement)
         if (!hasLoopTarget) [[unlikely]]
             TYPE_ERROR(statement.span(), "continue statement must be in a loop"_s);
 
-        return { Behavior::Continue };
+        behaviors = { Behavior::Continue };
+        break;
     }
     case AST::NodeKind::CompoundStatement:
-        return analyze(uncheckedDowncast<AST::CompoundStatement>(statement));
+        UNWRAP_ASSIGN(behaviors, analyze(uncheckedDowncast<AST::CompoundStatement>(statement)));
+        break;
     case AST::NodeKind::ForStatement:
-        return analyze(uncheckedDowncast<AST::ForStatement>(statement));
+        UNWRAP_ASSIGN(behaviors, analyze(uncheckedDowncast<AST::ForStatement>(statement)));
+        break;
     case AST::NodeKind::IfStatement:
-        return analyze(uncheckedDowncast<AST::IfStatement>(statement));
+        UNWRAP_ASSIGN(behaviors, analyze(uncheckedDowncast<AST::IfStatement>(statement)));
+        break;
     case AST::NodeKind::LoopStatement:
-        return analyze(uncheckedDowncast<AST::LoopStatement>(statement));
+        UNWRAP_ASSIGN(behaviors, analyze(uncheckedDowncast<AST::LoopStatement>(statement)));
+        break;
     case AST::NodeKind::SwitchStatement:
-        return analyze(uncheckedDowncast<AST::SwitchStatement>(statement));
+        UNWRAP_ASSIGN(behaviors, analyze(uncheckedDowncast<AST::SwitchStatement>(statement)));
+        break;
     case AST::NodeKind::WhileStatement:
-        return analyze(uncheckedDowncast<AST::WhileStatement>(statement));
+        UNWRAP_ASSIGN(behaviors, analyze(uncheckedDowncast<AST::WhileStatement>(statement)));
+        break;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
+    statement.setBehaviors(behaviors);
+    return { behaviors };
 }
 
 Result<Behaviors> TypeChecker::analyze(AST::CompoundStatement& statement)
 {
-    return analyzeStatements(statement.statements());
+    UNWRAP(behaviors, analyzeStatements(statement.statements()));
+    statement.setBehaviors(behaviors);
+    return { behaviors };
 }
 
 Result<Behaviors> TypeChecker::analyze(AST::ForStatement& statement)
@@ -2327,6 +2504,7 @@ Result<Behaviors> TypeChecker::analyze(AST::LoopStatement& statement)
 {
     m_breakTargetStack.append(&statement);
     UNWRAP(behaviors, analyzeStatements(statement.body()));
+    statement.setBodyBehaviors(behaviors);
     if (auto& continuing = statement.continuing()) {
         m_breakTargetStack.append(&continuing.value());
         UNWRAP(body, analyzeStatements(continuing->body));
@@ -2403,12 +2581,15 @@ Result<const Type*> TypeChecker::check(AST::Expression& expression, Constraint c
 Result<const Type*> TypeChecker::resolve(AST::Expression& type)
 {
     ASSERT(!m_inferredType);
+    ASSERT(!m_currentEvaluation);
     if (auto* identifierExpression = dynamicDowncast<AST::IdentifierExpression>(type)) {
         UNWRAP(identifierType, lookupType(identifierExpression->identifier()));
         inferred(identifierType);
+        evaluated(Evaluation::Constant);
     } else
         CHECK(visit(type));
     ASSERT(m_inferredType);
+    ASSERT(m_currentEvaluation);
 
     if (std::holds_alternative<Types::TypeConstructor>(*m_inferredType)) [[unlikely]]
         TYPE_ERROR(type.span(), "type '"_s, *m_inferredType, "' requires template arguments"_s);
@@ -2420,11 +2601,19 @@ Result<const Type*> TypeChecker::resolve(AST::Expression& type)
         dataLogLn(*m_inferredType);
     }
 
+    type.m_evaluation = Evaluation::Constant;
     type.m_inferredType = m_inferredType;
     const Type* inferredType = m_inferredType;
     m_inferredType = nullptr;
+    m_currentEvaluation = std::nullopt;
 
     return inferredType;
+}
+
+void TypeChecker::evaluated(Evaluation evaluation)
+{
+    ASSERT(!m_currentEvaluation);
+    m_currentEvaluation = evaluation;
 }
 
 void TypeChecker::inferred(const Type* type)
@@ -2458,7 +2647,17 @@ Result<void> TypeChecker::convertValue(const SourceSpan& span, const Type* type,
     if (!value)
         return { };
 
+    if (shouldDumpConstantValues) [[unlikely]] {
+        StringPrintStream valueString;
+        value->dump(valueString);
+        dataLogLn("converting value ", valueString.toString(), " to '", *type, "'");
+    }
+
     if (!convertValueImpl(span, type, *value)) [[unlikely]] {
+        if (m_suppressConstantErrors) {
+            value = std::nullopt;
+            return { };
+        }
         StringPrintStream valueString;
         value->dump(valueString);
         TYPE_ERROR(span, "value "_s, valueString.toString(), " cannot be represented as '"_s, *type, '\'');
@@ -2467,179 +2666,13 @@ Result<void> TypeChecker::convertValue(const SourceSpan& span, const Type* type,
     return { };
 }
 
-bool TypeChecker::convertValueImpl(const SourceSpan& span, const Type* type, ConstantValue& value)
-{
-    if (shouldDumpConstantValues) [[unlikely]] {
-        StringPrintStream valueString;
-        value.dump(valueString);
-        dataLogLn("converting value ", valueString.toString(), " to '", *type, "'");
-    }
-
-    return WTF::switchOn(*type,
-        [&](const Types::Primitive& primitive) -> bool {
-            switch (primitive.kind) {
-            case Types::Primitive::F32: {
-                std::optional<float> result;
-                if (auto* f32 = std::get_if<float>(&value))
-                    result = convertFloat<float>(*f32);
-                else if (auto* abstractFloat = std::get_if<double>(&value))
-                    result = convertFloat<float>(*abstractFloat);
-                else if (auto* abstractInt = std::get_if<int64_t>(&value))
-                    result = convertFloat<float>(static_cast<double>(*abstractInt));
-
-                if (!result.has_value())
-                    return false;
-                value = { *result };
-                return true;
-            }
-            case Types::Primitive::F16: {
-                std::optional<half> result;
-                if (auto* f16 = std::get_if<half>(&value))
-                    result = convertFloat<half>(*f16);
-                else if (auto* abstractFloat = std::get_if<double>(&value))
-                    result = convertFloat<half>(*abstractFloat);
-                else if (auto* abstractInt = std::get_if<int64_t>(&value))
-                    result = convertFloat<half>(static_cast<double>(*abstractInt));
-
-                if (!result.has_value())
-                    return false;
-                value = { *result };
-                return true;
-            }
-            case Types::Primitive::I32: {
-                if (std::holds_alternative<int32_t>(value))
-                    return true;
-                std::optional<int32_t> result;
-                if (auto* abstractInt = std::get_if<int64_t>(&value))
-                    result = convertInteger<int32_t>(*abstractInt);
-
-                if (!result.has_value())
-                    return false;
-                value = { *result };
-                return true;
-            }
-            case Types::Primitive::U32: {
-                if (std::holds_alternative<uint32_t>(value))
-                    return true;
-                std::optional<uint32_t> result;
-                if (auto* abstractInt = std::get_if<int64_t>(&value))
-                    result = convertInteger<uint32_t>(*abstractInt);
-
-                if (!result.has_value())
-                    return false;
-                value = { *result };
-                return true;
-            }
-            case Types::Primitive::AbstractInt:
-                RELEASE_ASSERT(std::holds_alternative<int64_t>(value));
-                return true;
-            case Types::Primitive::AbstractFloat: {
-                std::optional<double> result;
-                if (auto* abstractFloat = std::get_if<double>(&value))
-                    result = convertFloat<double>(*abstractFloat);
-                else if (auto* abstractInt = std::get_if<int64_t>(&value))
-                    result = convertFloat<double>(static_cast<double>(*abstractInt));
-                else
-                    RELEASE_ASSERT_NOT_REACHED();
-                if (!result.has_value())
-                    return false;
-                value = { *result };
-                return true;
-            }
-            case Types::Primitive::Bool:
-                RELEASE_ASSERT(std::holds_alternative<bool>(value));
-                return true;
-            case Types::Primitive::Void:
-            case Types::Primitive::Sampler:
-            case Types::Primitive::SamplerComparison:
-            case Types::Primitive::TextureExternal:
-            case Types::Primitive::AccessMode:
-            case Types::Primitive::TexelFormat:
-            case Types::Primitive::AddressSpace:
-                return false;
-            }
-        },
-        [&](const Types::Vector& vectorType) -> bool {
-            ASSERT(value.isVector());
-            auto& vector = std::get<ConstantVector>(value);
-            for (auto& element : vector.elements) {
-                if (!convertValueImpl(span, vectorType.element, element))
-                    return false;
-            }
-            return true;
-        },
-        [&](const Types::Matrix& matrixType) -> bool {
-            ASSERT(value.isMatrix());
-            auto& matrix = std::get<ConstantMatrix>(value);
-            for (auto& element : matrix.elements) {
-                if (!convertValueImpl(span, matrixType.element, element))
-                    return false;
-            }
-            return true;
-        },
-        [&](const Types::Array& arrayType) -> bool {
-            ASSERT(value.isArray());
-            auto& array = std::get<ConstantArray>(value);
-            for (auto& element : array.elements) {
-                if (!convertValueImpl(span, arrayType.element, element))
-                    return false;
-            }
-            return true;
-        },
-        [&](const Types::Struct& structType) -> bool {
-            auto& constantStruct = std::get<ConstantStruct>(value);
-            for (auto& [key, type] : structType.fields) {
-                auto it = constantStruct.fields.find(key);
-                RELEASE_ASSERT(it != constantStruct.fields.end());
-                if (!convertValueImpl(span, type, it->value))
-                    return false;
-            }
-            return true;
-        },
-        [&](const Types::PrimitiveStruct& primitiveStruct) -> bool {
-            auto& constantStruct = std::get<ConstantStruct>(value);
-            const auto& keys = Types::PrimitiveStruct::keys[primitiveStruct.kind];
-            for (auto& entry : constantStruct.fields) {
-                auto* key = keys.tryGet(entry.key);
-                RELEASE_ASSERT(key);
-                auto* type = primitiveStruct.values[*key];
-                if (!convertValueImpl(span, type, entry.value))
-                    return false;
-            }
-            return true;
-        },
-        [&](const Types::Function&) -> bool {
-            RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&](const Types::Texture&) -> bool {
-            RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&](const Types::TextureStorage&) -> bool {
-            RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&](const Types::TextureDepth&) -> bool {
-            RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&](const Types::Reference&) -> bool {
-            RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&](const Types::Pointer&) -> bool {
-            RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&](const Types::Atomic&) -> bool {
-            RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&](const Types::TypeConstructor&) -> bool {
-            RELEASE_ASSERT_NOT_REACHED();
-        });
-}
 
 Result<void> TypeChecker::introduceValue(const AST::Identifier& name, const Type* type, Evaluation evaluation, std::optional<ConstantValue> value)
 {
     ASSERT(type);
     if (shouldDumpConstantValues && value.has_value()) [[unlikely]]
         dataLogLn("> Assigning value: ", name, " => ", value);
-    if (!introduceVariable(name, { Binding::Value, type, evaluation, value })) [[unlikely]]
+    if (!introduceVariable(name, { Binding::Value, type, evaluation, value, m_declaringAfterContinue })) [[unlikely]]
         TYPE_ERROR(name.span(), "redeclaration of '"_s, name, '\'');
     return { };
 }
@@ -2757,3 +2790,9 @@ bool TypeChecker::isModuleScope() const
 
 
 } // namespace WGSL
+
+#undef TYPE_ERROR
+#undef UNWRAP
+#undef UNWRAP_ASSIGN
+#undef CHECK
+#undef CHECK_IMPL

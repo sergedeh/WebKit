@@ -42,8 +42,18 @@ CURRENT_HOSTNAME = socket.gethostname().strip()
 
 GITHUB_URL = 'https://github.com/'
 SCAN_BUILD_OUTPUT_DIR = 'scan-build-output'
-LLVM_DIR = 'llvm-project'
 SWIFT_DIR = 'swift-project/swift'
+SCAN_BUILD_PATH = '../swift-project/llvm-project/clang/tools/scan-build/bin/scan-build'
+SWIFT_TOOLCHAIN_NAME = 'swift-webkit'
+SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER = 'org.webkit.swift'
+USER_TOOLCHAINS_DIR = '/Users/buildbot/Library/Developer/Toolchains'
+
+
+def needs_swift_toolchain_setup(step):
+    canonical_swift_tag = step.getProperty('canonical_swift_tag')
+    if not canonical_swift_tag:
+        return False
+    return step.getProperty('current_swift_tag', '') != canonical_swift_tag or not step.getProperty('has_swift_toolchain', False)
 
 
 class ShellMixin(object):
@@ -94,6 +104,7 @@ class SetBuildSummary(buildstep.BuildStep, AddToLogMixin):
     haltOnFailure = False
     flunkOnFailure = False
     FAILURE_MSG_IN_STRESS_MODE = 'Found test failures in stress mode'
+    SUCCESS_MSGS = ('Committed ', '@', 'Passed', 'Ignored pre-existing failure')
 
     def doStepIf(self, step):
         return self.getProperty('build_summary', False)
@@ -104,12 +115,13 @@ class SetBuildSummary(buildstep.BuildStep, AddToLogMixin):
     @defer.inlineCallbacks
     def run(self):
         build_summary = self.getProperty('build_summary', 'build successful')
-        yield self._addToLog('stdio', f'Setting build summary as: {build_summary}')
-        previous_build_summary = self.getProperty('build_summary', '')
-        if self.FAILURE_MSG_IN_STRESS_MODE in previous_build_summary:
+        if self.build.results in (CANCELLED, RETRY):
+            build_summary = f'Build was interrupted ({Results[self.build.results]})'
+        elif self.FAILURE_MSG_IN_STRESS_MODE in build_summary:
             self.build.results = FAILURE
-        elif any(s in previous_build_summary for s in ('Committed ', '@', 'Passed', 'Ignored pre-existing failure')):
+        elif self.getProperty('force_build_success', False) or any(s in build_summary for s in self.SUCCESS_MSGS):
             self.build.results = SUCCESS
+        yield self._addToLog('stdio', f'Setting build summary as: {build_summary}')
         self.build.buildFinished([build_summary], self.build.results)
         return defer.returnValue(SUCCESS)
 
@@ -190,38 +202,6 @@ class InstallNinja(shell.ShellCommand, ShellMixin):
         return {u'step': self.summary}
 
 
-class GetLLVMVersion(shell.ShellCommand, ShellMixin):
-    name = 'get-llvm-version'
-    summary = 'Found LLVM version'
-
-    def __init__(self, **kwargs):
-        super().__init__(logEnviron=False, timeout=60, **kwargs)
-
-    @defer.inlineCallbacks
-    def run(self):
-        self.command = self.shell_command('cat Tools/CISupport/safer-cpp-llvm-version')
-
-        self.log_observer = logobserver.BufferLogObserver()
-        self.addLogObserver('stdio', self.log_observer)
-
-        rc = yield super().run()
-        if rc != SUCCESS:
-            return defer.returnValue(rc)
-
-        log_text = self.log_observer.getStdout().strip()
-        if log_text:
-            self.setProperty('canonical_llvm_revision', log_text)
-            self.summary = f"Canonical LLVM version: {self.getProperty('canonical_llvm_revision')}"
-            return defer.returnValue(SUCCESS)
-
-        return defer.returnValue(FAILURE)
-
-    def getResultSummary(self):
-        if self.results != SUCCESS:
-            self.summary = f'Failed to find canonical LLVM version'
-        return {u'step': self.summary}
-
-
 class PrintSwiftVersion(steps.ShellSequence, ShellMixin):
     name = 'print-swift-version'
     haltOnFailure = False
@@ -239,30 +219,32 @@ class PrintSwiftVersion(steps.ShellSequence, ShellMixin):
         self.log_observer = logobserver.BufferLogObserver(wantStderr=True)
         self.addLogObserver('stdio', self.log_observer)
 
+        toolchain_path = f'{USER_TOOLCHAINS_DIR}/{SWIFT_TOOLCHAIN_NAME}.xctoolchain'
         self.commands = [
-            util.ShellArg(command=self.shell_command('git describe --tags'), logname='stdio', haltOnFailure=True),
-            util.ShellArg(command=self.shell_command(f'../build/Ninja-ReleaseAssert/swift-macosx-arm64/bin/swift --version'), logname='stdio')
+            util.ShellArg(command=self.shell_command('git describe --tags'), logname='stdio', haltOnFailure=False),
+            util.ShellArg(command=self.shell_command(f'test -d {toolchain_path} && echo "Toolchain exists at {toolchain_path}" || echo "Toolchain does not exist"'), logname='stdio'),
+            util.ShellArg(command=self.shell_command(f'{toolchain_path}/usr/bin/swift --version'), logname='stdio', haltOnFailure=False)
         ]
 
-        rc = yield super().runShellSequence(self.commands)
+        rc = yield super().run()
 
-        # First, check for the swift checkout
         log_text = self.log_observer.getStdout() + self.log_observer.getStderr()
         if 'not a git repository' in log_text:
             self.summary = 'Swift repository does not exist'
-            rc = SUCCESS
         else:
-            git_tag = log_text.split()[0]
-            self.setProperty('current_swift_tag', git_tag)
-            self.summary = f'Current Swift tag: {git_tag}'
+            # Extract git tag from first line
+            first_line = log_text.split('\n')[0].strip()
+            if first_line and not first_line.startswith('fatal'):
+                self.setProperty('current_swift_tag', first_line)
+                self.summary = f'Current Swift tag: {first_line}'
 
-        # Then, check if the executable exists - if not, we want to build
-        if 'No such file or directory' in log_text:
-            self.summary = 'Swift executable does not exist'
-            rc = SUCCESS
+        if 'Toolchain exists at' in log_text:
+            self.setProperty('has_swift_toolchain', True)
+            self.summary += ' (toolchain installed)'
         else:
-            self.setProperty('has_swift_executable', True)
-        return defer.returnValue(rc)
+            self.summary = 'Swift toolchain does not exist'
+
+        return defer.returnValue(SUCCESS)
 
     def getResultSummary(self):
         if self.results != SUCCESS:
@@ -290,9 +272,15 @@ class GetSwiftTagName(shell.ShellCommand, ShellMixin):
 
         log_text = self.log_observer.getStdout().strip()
         if log_text:
-            self.setProperty('canonical_swift_tag', log_text)
-            self.summary = f"Canonical Swift tag name: {self.getProperty('canonical_swift_tag')}"
-            return defer.returnValue(SUCCESS)
+            platform = self.getProperty('platform', '').lower()
+            for line in log_text.splitlines():
+                line = line.strip()
+                if ':' in line:
+                    platform_from_safer_cpp_swift_version, tag = line.split(':', 1)
+                    if platform in platform_from_safer_cpp_swift_version.lower():
+                        self.setProperty('canonical_swift_tag', tag.strip())
+                        self.summary = f"Canonical Swift tag name: {self.getProperty('canonical_swift_tag')}"
+                        return defer.returnValue(SUCCESS)
         return defer.returnValue(FAILURE)
 
     def getResultSummary(self):
@@ -332,7 +320,7 @@ class CheckOutSwiftProject(git.Git, AddToLogMixin):
         return SUCCESS
 
     def doStepIf(self, step):
-        return self.getProperty('canonical_swift_tag') and self.getProperty('current_swift_tag', '') != self.getProperty('canonical_swift_tag')
+        return needs_swift_toolchain_setup(self)
 
     def getResultSummary(self):
         if self.results == SKIPPED:
@@ -347,11 +335,10 @@ class UpdateSwiftCheckouts(steps.ShellSequence, ShellMixin):
     name = 'update-swift-checkouts'
     description = 'updating swift checkouts'
     descriptionDone = 'Successfully updated swift checkouts'
-    flunkOnFailure = False
-    warnOnFailure = False
+    flunkOnFailure = True
 
     def __init__(self, **kwargs):
-        super().__init__(logEnviron=False, workdir=SWIFT_DIR, **kwargs)
+        super().__init__(logEnviron=False, workdir=SWIFT_DIR, timeout=60 * 30, **kwargs)
         self.commands = []
         self.summary = ''
 
@@ -363,13 +350,12 @@ class UpdateSwiftCheckouts(steps.ShellSequence, ShellMixin):
 
         swift_tag = self.getProperty('canonical_swift_tag')
         self.commands = [
-            util.ShellArg(command=self.shell_command('utils/update-checkout --clone'), logname='stdio', haltOnFailure=True),
-            util.ShellArg(command=self.shell_command(f'utils/update-checkout --tag {swift_tag}'), logname='stdio')
+            util.ShellArg(command=self.shell_command(f'utils/update-checkout --tag {swift_tag} --clone --skip-repository boringssl'), logname='stdio', haltOnFailure=True),
         ]
 
-        rc = yield super().runShellSequence(self.commands)
+        rc = yield super().run()
         if rc != SUCCESS:
-            if self.getProperty('current_swift_tag', ''):
+            if self.getProperty('current_swift_tag', '') and self.getProperty('has_swift_toolchain', False):
                 self.summary = 'Failed to update swift, using previous checkout'
                 return WARNINGS
             self.summary = 'Failed to update swift checkout'
@@ -380,7 +366,7 @@ class UpdateSwiftCheckouts(steps.ShellSequence, ShellMixin):
         defer.returnValue(rc)
 
     def doStepIf(self, step):
-        return self.getProperty('canonical_swift_tag') and self.getProperty('current_swift_tag', '') != self.getProperty('canonical_swift_tag')
+        return needs_swift_toolchain_setup(self)
 
     def getResultSummary(self):
         if self.results == SKIPPED:
@@ -388,184 +374,92 @@ class UpdateSwiftCheckouts(steps.ShellSequence, ShellMixin):
         return {'step': self.summary}
 
 
-class BuildSwift(shell.ShellCommand):
-    name = 'build-swift'
+class InstallSwiftToolchain(steps.ShellSequence, ShellMixin):
+    name = 'install-swift-toolchain'
+    description = 'installing swift toolchain'
+    descriptionDone = 'Installed swift toolchain'
+    flunkOnFailure = True
 
     def __init__(self, **kwargs):
-        super().__init__(logEnviron=False, workdir=SWIFT_DIR, **kwargs)
-
-    @defer.inlineCallbacks
-    def run(self):
-        # FIXME: Upload logs to S3 before adding this step to a running factory.
-        self.log_observer = logobserver.BufferLogObserver()
-        self.addLogObserver('stdio', self.log_observer)
-        self.command = ['utils/build-script', '--skip-build-benchmarks', '--swift-darwin-supported-archs', self.getProperty('architecture'), '--release', '--no-assertions', '--swift-disable-dead-stripping', '--bootstrapping=hosttools']
-        rc = yield super().run()
-        if rc != SUCCESS:
-            if self.getProperty('current_swift_tag', ''):
-                return WARNINGS
-            self.build.buildFinished(['Failed to set up swift, retrying update'], RETRY)
-
-        return defer.returnValue(rc)
-
-    def getResultSummary(self):
-        if self.results == SKIPPED:
-            return {'step': 'Swift executable already exists'}
-        elif self.results == WARNINGS:
-            return {'step': 'Failed to update swift, using previous checkout'}
-        elif self.results != SUCCESS:
-            return {'step': 'Failed to build Swift'}
-        return {'step': 'Successfully built Swift'}
-
-    def doStepIf(self, step):
-        if not self.getProperty('has_swift_executable'):
-            return True
-        return self.getProperty('canonical_swift_tag') and self.getProperty('current_swift_tag', '') != self.getProperty('canonical_swift_tag')
-
-
-class CheckOutLLVMProject(git.Git, AddToLogMixin):
-    name = 'checkout-llvm-project'
-    directory = 'llvm-project'
-    branch = 'webkit'
-    CHECKOUT_DELAY_AND_MAX_RETRIES_PAIR = (0, 2)
-    GIT_HASH_LENGTH = 40
-    haltOnFailure = False
-
-    def __init__(self, **kwargs):
-        repourl = f'{GITHUB_URL}rniwa/llvm-project.git'
-        super().__init__(
-            repourl=repourl,
-            workdir=self.directory,
-            retry=self.CHECKOUT_DELAY_AND_MAX_RETRIES_PAIR,
-            timeout=5 * 60,
-            branch=self.branch,
-            alwaysUseLatest=False,
-            logEnviron=False,
-            progress=True,
-            **kwargs
-        )
-
-    @defer.inlineCallbacks
-    def run_vc(self, branch, revision, patch):
-        rc = yield super().run_vc(self.branch, self.getProperty('canonical_llvm_revision'), None)
-        return rc
-
-    @defer.inlineCallbacks
-    def parseGotRevision(self, _=None):
-        stdout = yield self._dovccmd(['rev-parse', 'HEAD'], collectStdout=True)
-        revision = stdout.strip()
-        if len(revision) != self.GIT_HASH_LENGTH:
-            raise buildstep.BuildStepFailed()
-        return SUCCESS
-
-    def doStepIf(self, step):
-        return self.getProperty('canonical_llvm_revision') and self.getProperty('current_llvm_revision', '') != self.getProperty('canonical_llvm_revision')
-
-    def getResultSummary(self):
-        if self.results == SKIPPED:
-            return {'step': 'llvm-project is already up to date'}
-        elif self.results != SUCCESS:
-            return {'step': 'Failed to update llvm-project directory'}
-        else:
-            return {'step': 'Cleaned and updated llvm-project directory'}
-
-
-class UpdateClang(steps.ShellSequence, ShellMixin):
-    name = 'update-clang'
-    description = 'updating clang'
-    descriptionDone = 'Successfully updated clang'
-    flunkOnFailure = False
-    warnOnFailure = False
-
-    def __init__(self, **kwargs):
-        super().__init__(logEnviron=True, workdir=LLVM_DIR, **kwargs)
+        super().__init__(logEnviron=False, timeout=60 * 10, **kwargs)
         self.commands = []
         self.summary = ''
 
     @defer.inlineCallbacks
     def run(self):
-        self.env['PATH'] = f"/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/:{self.getProperty('builddir')}"
-        self.commands = [
-            util.ShellArg(command=self.shell_command('rm -r build-new; mkdir build-new'), logname='stdio', flunkOnFailure=False),
-            util.ShellArg(command=self.shell_command('cd build-new; xcrun cmake -DLLVM_ENABLE_PROJECTS=clang -DCMAKE_BUILD_TYPE=Release -G Ninja ../llvm -DCMAKE_MAKE_PROGRAM=$(xcrun --sdk macosx --find ninja)'), logname='stdio', haltOnFailure=True),
-            util.ShellArg(command=self.shell_command('cd build-new; ninja clang'), logname='stdio', haltOnFailure=True),
-            util.ShellArg(command=['rm', '-r', '../build/WebKitBuild'], logname='stdio', flunkOnFailure=False),  # Need a clean build after complier update
+        builddir = self.getProperty('builddir')
+        source_toolchain = f'{builddir}/{SWIFT_DIR}/swift-nightly-install/Library/Developer/Toolchains/{SWIFT_TOOLCHAIN_NAME}.xctoolchain'
+        dest_toolchain = f'{USER_TOOLCHAINS_DIR}/{SWIFT_TOOLCHAIN_NAME}.xctoolchain'
+
+        command_list = [
+            f'rm -rf {USER_TOOLCHAINS_DIR}',
+            f'mkdir -p {USER_TOOLCHAINS_DIR}',
+            f'cp -a {source_toolchain} {dest_toolchain}'
         ]
+        for command in command_list:
+            self.commands.append(util.ShellArg(command=self.shell_command(command), logname='stdio', haltOnFailure=True))
 
-        if not self.getProperty('canonical_llvm_revision'):
-            self.summary = 'Could not find canonical revision, using previous build'
-            return WARNINGS
-
-        rc = yield super().runShellSequence(self.commands)
-        if rc != SUCCESS:
-            if self.getProperty('current_llvm_revision', ''):
-                self.summary = 'Failed to update clang, using previous build'
-                return WARNINGS
-            self.summary = 'Failed to update clang'
-            self.build.buildFinished(['Failed to set up analyzer, retrying build'], RETRY)
-            return defer.returnValue(rc)
-
-        self.summary = 'Successfully updated clang'
-        self.build.addStepsAfterCurrentStep([PrintClangVersionAfterUpdate()])
-        defer.returnValue(rc)
+        rc = yield super().run()
+        return defer.returnValue(rc)
 
     def doStepIf(self, step):
-        return self.getProperty('current_llvm_revision', '') != self.getProperty('canonical_llvm_revision')
+        return self.getProperty('swift_toolchain_rebuilt', False)
 
     def getResultSummary(self):
-        if self.results == SKIPPED:
-            return {'step': 'Clang is already up to date'}
+        if self.results == SUCCESS:
+            self.summary = f'Installed {SWIFT_TOOLCHAIN_NAME} toolchain'
+        elif self.results == SKIPPED:
+            self.summary = 'Swift toolchain installation skipped'
+        else:
+            self.summary = 'Failed to install swift toolchain'
         return {'step': self.summary}
 
 
-class PrintClangVersion(shell.ShellCommand):
-    name = 'print-clang-version'
-    haltOnFailure = False
-    flunkOnFailure = False
-    warnOnFailure = False
-    CLANG_VERSION_RE = '(.*clang version.+) \\((.+?)\\)'
+class InstallMetalToolchain(shell.ShellCommand, ShellMixin):
+    name = 'install-metal-toolchain'
+    flunkOnFailure = True
     summary = ''
 
     def __init__(self, **kwargs):
-        super().__init__(logEnviron=False, workdir=LLVM_DIR, timeout=60, **kwargs)
-        self.command = ['./build/bin/clang', '--version']
+        super().__init__(logEnviron=False, timeout=60 * 10, **kwargs)
 
     @defer.inlineCallbacks
     def run(self):
-        self.log_observer = logobserver.BufferLogObserver(wantStderr=True)
+        toolchain_bin = f'{USER_TOOLCHAINS_DIR}/{SWIFT_TOOLCHAIN_NAME}.xctoolchain/usr/bin'
+
+        check_and_link_metal = f'''
+if [ -L {toolchain_bin}/metal ] && [ -x {toolchain_bin}/metal ]; then
+    echo "Metal symlink already exists and is valid"
+else
+    rm -f {toolchain_bin}/metal
+    xcrun -find metal > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+    ln -s $(xcrun -find metal) {toolchain_bin}/metal
+    echo "Created metal symlink"
+fi
+'''
+        self.command = self.shell_command(check_and_link_metal)
+
+        self.log_observer = logobserver.BufferLogObserver()
         self.addLogObserver('stdio', self.log_observer)
+
         rc = yield super().run()
-        log_text = self.log_observer.getStdout() + self.log_observer.getStderr()
-        match = re.search(self.CLANG_VERSION_RE, log_text)
-        if match:
-            self.setProperty('current_llvm_revision', match.group(2).split()[1])
-            self.summary = match.group(0)
-        elif 'No such file or directory' in log_text:
-            self.summary = 'Clang executable does not exist'
-            rc = SUCCESS
+
+        log_text = self.log_observer.getStdout()
+        if 'already exists and is valid' in log_text:
+            self.summary = 'Metal symlink already exists and is valid'
+        elif 'Created metal symlink' in log_text:
+            self.summary = 'Created metal symlink'
+        elif rc != SUCCESS:
+            self.summary = 'Failed to install metal toolchain'
+        else:
+            self.summary = 'Installed metal toolchain'
+
         return defer.returnValue(rc)
 
     def getResultSummary(self):
-        if self.results != SUCCESS:
-            return {'step': 'Failed to print clang version'}
+        if self.results == SKIPPED:
+            return {'step': 'Metal toolchain installation skipped'}
         return {'step': self.summary}
-
-
-class PrintClangVersionAfterUpdate(PrintClangVersion, ShellMixin):
-    name = 'print-clang-version-after-update'
-    haltOnFailure = True
-
-    @defer.inlineCallbacks
-    def run(self):
-        command = './build-new/bin/clang --version; rm -r build; mv build-new build'
-        self.command = self.shell_command(command)
-        rc = yield super().run()
-        return defer.returnValue(rc)
-
-    def getResultSummary(self):
-        if self.results != SUCCESS:
-            self.build.buildFinished(['Failed to set up analyzer, retrying build'], RETRY)
-        return super().getResultSummary()
 
 
 class PruneCoreSymbolicationdCacheIfTooLarge(shell.ShellCommand):

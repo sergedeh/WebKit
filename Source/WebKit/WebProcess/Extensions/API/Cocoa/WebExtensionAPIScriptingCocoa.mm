@@ -29,6 +29,7 @@
 
 #import "config.h"
 #import "WebExtensionAPIScripting.h"
+#import "WebExtensionAPIKeys.h"
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
@@ -48,39 +49,8 @@
 #import "WebExtensionTabIdentifier.h"
 #import "WebExtensionUtilities.h"
 #import "WebProcess.h"
+#import <WebCore/UserGestureIndicator.h>
 #import <wtf/cocoa/VectorCocoa.h>
-
-static NSString * const allFramesKey = @"allFrames";
-static NSString * const argsKey = @"args";
-static NSString * const argumentsKey = @"arguments";
-static NSString * const cssKey = @"css";
-static NSString * const cssOriginKey = @"cssOrigin";
-static NSString * const documentIDsKey = @"documentIds";
-static NSString * const filesKey = @"files";
-static NSString * const frameIDsKey = @"frameIds";
-static NSString * const funcKey = @"func";
-static NSString * const functionKey = @"function";
-static NSString * const tabIDKey = @"tabId";
-static NSString * const targetKey = @"target";
-static NSString * const worldKey = @"world";
-
-static NSString * const excludeMatchesKey = @"excludeMatches";
-static NSString * const idsKey = @"ids";
-static NSString * const jsKey = @"js";
-static NSString * const matchOriginAsFallbackKey = @"matchOriginAsFallback";
-static NSString * const matchesKey = @"matches";
-static NSString * const persistAcrossSessionsKey = @"persistAcrossSessions";
-static NSString * const runAtKey = @"runAt";
-
-static NSString * const mainWorld = @"main";
-static NSString * const isolatedWorld = @"isolated";
-
-static NSString * const authorValue = @"author";
-static NSString * const userValue = @"user";
-
-static NSString * const documentEnd = @"document_end";
-static NSString * const documentIdle = @"document_idle";
-static NSString * const documentStart = @"document_start";
 
 // FIXME: <https://webkit.org/b/261765> Consider adding support for injectImmediately.
 // FIXME: <https://webkit.org/b/264829> Add support for matchOriginAsFallback.
@@ -180,6 +150,18 @@ String toWebAPI(WebExtension::InjectionTime injectionTime)
     }
 }
 
+SUPPRESS_NODELETE NSDictionary *WebExtensionAPIScripting::executionWorld()
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/scripting/ExecutionWorld
+
+    static NSDictionary *worlds = @{
+        @"ISOLATED": @"ISOLATED",
+        @"MAIN": @"MAIN",
+    };
+
+    return worlds;
+}
+
 void WebExtensionAPIScripting::executeScript(NSDictionary *script, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/scripting/executeScript
@@ -188,7 +170,8 @@ void WebExtensionAPIScripting::executeScript(NSDictionary *script, Ref<WebExtens
     if (!parseScriptInjectionOptions(script, parameters, outExceptionString))
         return;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingExecuteScript(WTF::move(parameters)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<Vector<WebKit::WebExtensionScriptInjectionResultParameters>, WebExtensionError>&& result) {
+    bool userGesture = WebCore::UserGestureIndicator::processingUserGesture();
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingExecuteScript(WTF::move(parameters), userGesture), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<Vector<WebKit::WebExtensionScriptInjectionResultParameters>, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -204,7 +187,7 @@ void WebExtensionAPIScripting::insertCSS(NSDictionary *cssInfo, Ref<WebExtension
     if (!parseCSSInjectionOptions(cssInfo, parameters, outExceptionString))
         return;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingInsertCSS(WTF::move(parameters)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingInsertCSS(WTF::move(parameters)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -220,7 +203,7 @@ void WebExtensionAPIScripting::removeCSS(NSDictionary *cssInfo, Ref<WebExtension
     if (!parseCSSInjectionOptions(cssInfo, parameters, outExceptionString))
         return;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingRemoveCSS(WTF::move(parameters)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingRemoveCSS(WTF::move(parameters)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -236,7 +219,7 @@ void WebExtensionAPIScripting::registerContentScripts(NSArray *scripts, Ref<WebE
     if (!parseRegisteredContentScripts(scripts, FirstTimeRegistration::Yes, parameters, outExceptionString))
         return;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingRegisterContentScripts(WTF::move(parameters)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingRegisterContentScripts(WTF::move(parameters)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -253,7 +236,7 @@ void WebExtensionAPIScripting::getRegisteredContentScripts(NSDictionary *filter,
 
     auto scriptIDs = makeVector<String>(filter[idsKey]);
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingGetRegisteredScripts(WTF::move(scriptIDs)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<Vector<WebExtensionRegisteredScriptParameters>, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingGetRegisteredScripts(WTF::move(scriptIDs)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<Vector<WebExtensionRegisteredScriptParameters>, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -269,7 +252,7 @@ void WebExtensionAPIScripting::updateContentScripts(NSArray *scripts, Ref<WebExt
     if (!parseRegisteredContentScripts(scripts, FirstTimeRegistration::No, parameters, outExceptionString))
         return;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingUpdateRegisteredScripts(WTF::move(parameters)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingUpdateRegisteredScripts(WTF::move(parameters)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -286,7 +269,7 @@ void WebExtensionAPIScripting::unregisterContentScripts(NSDictionary *filter, Re
 
     auto scriptIDs = makeVector<String>(filter[idsKey]);
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingUnregisterContentScripts(WTF::move(scriptIDs)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ScriptingUnregisterContentScripts(WTF::move(scriptIDs)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -371,7 +354,7 @@ bool WebExtensionAPIScripting::parseTargetInjectionOptions(NSDictionary *targetI
     NSNumber *tabID = targetInfo[tabIDKey];
     auto tabIdentifier = toWebExtensionTabIdentifier(tabID.doubleValue);
     if (!tabIdentifier) {
-        *outExceptionString = toErrorString(nullString(), tabIDKey, @"'%@' is not a tab identifier", tabID).createNSString().autorelease();
+        *outExceptionString = toErrorString(nullString(), tabIDKey, makeString("'"_s, String([tabID description]), "' is not a tab identifier"_s)).createNSString().autorelease();
         return false;
     }
 
@@ -382,7 +365,7 @@ bool WebExtensionAPIScripting::parseTargetInjectionOptions(NSDictionary *targetI
         for (NSString *documentIdentifier in documentIdentifiers) {
             auto parsedUUID = WTF::UUID::parse(String(documentIdentifier));
             if (!parsedUUID) {
-                *outExceptionString = toErrorString(nullString(), documentIDsKey, @"'%@' is not a document identifier", documentIdentifier).createNSString().autorelease();
+                *outExceptionString = toErrorString(nullString(), documentIDsKey, makeString("'"_s, String(documentIdentifier), "' is not a document identifier"_s)).createNSString().autorelease();
                 return false;
             }
 
@@ -397,7 +380,7 @@ bool WebExtensionAPIScripting::parseTargetInjectionOptions(NSDictionary *targetI
         for (NSNumber *frameID in frameIDs) {
             auto frameIdentifier = toWebExtensionFrameIdentifier(frameID.doubleValue);
             if (!isValid(frameIdentifier)) {
-                *outExceptionString = toErrorString(nullString(), frameIDsKey, @"'%@' is not a frame identifier", frameID).createNSString().autorelease();
+                *outExceptionString = toErrorString(nullString(), frameIDsKey, makeString("'"_s, String([frameID description]), "' is not a frame identifier"_s)).createNSString().autorelease();
                 return false;
             }
 
@@ -587,7 +570,7 @@ bool WebExtensionAPIScripting::parseRegisteredContentScripts(NSArray *scripts, F
 
         NSArray *matchPatterns = script[matchesKey];
         if (firstTimeRegistration == FirstTimeRegistration::Yes && !matchPatterns.count) {
-            *outExceptionString = toErrorString(nullString(), matchesKey, @"it must specify at least one match pattern for script with ID '%@'", script[@"id"]).createNSString().autorelease();
+            *outExceptionString = toErrorString(nullString(), matchesKey, makeString("it must specify at least one match pattern for script with ID '"_s, String(script[@"id"]), "'"_s)).createNSString().autorelease();
             return false;
         }
 

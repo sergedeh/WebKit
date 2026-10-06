@@ -67,12 +67,11 @@
 #if defined(PAS_USE_OPENSOURCE_MTE) && PAS_USE_OPENSOURCE_MTE
 #if PAS_ENABLE_MTE
 
-#define PAS_USE_MTE (PAS_RUNTIME_CONFIG_PTR->enabled)
+#define PAS_USE_MTE (PAS_RUNTIME_CONFIG_PTR->mte_state == pas_mte_state_enabled)
 #ifndef PAS_USE_MTE_IN_WEBCONTENT
 #define PAS_USE_MTE_IN_WEBCONTENT 1
 #endif
 
-#define PAS_MTE_MEDIUM_TAGGING_ENABLED (PAS_RUNTIME_CONFIG_PTR->medium_tagging_enabled)
 #define PAS_MTE_IS_LOCKDOWN_MODE (PAS_RUNTIME_CONFIG_PTR->is_lockdown_mode)
 #define PAS_MTE_IS_HARDENED (PAS_RUNTIME_CONFIG_PTR->is_hardened)
 #define PAS_MTE_USE_LARGE_OBJECT_DELEGATION (PAS_USE_MTE && PAS_MTE_IS_HARDENED)
@@ -82,28 +81,38 @@
 
 #define PAS_MTE_SHOULD_STORE_TAG 1
 
-#ifndef PAS_USE_COMPACT_ONLY_HEAP
 /*
- * The reason we make TZone compact-only heaps reliant on runtime PAS_MTE
- * enablement, and not the general compact-only heap, is that lumping all
- * non-compact objects into the same heap is a security regression for TZone,
- * but not a security regression for the general bmalloc heap where we already
- * expect all allocations to come out of the same singular intrinsic heap.
- * By avoiding checking PAS_USE_MTE, we save an additional check in the malloc
- * fast path for ordinary allocations, while the corresponding check for TZone
- * heaps only occurs during heap selection - it's not as significant.
+ * This setting would force all non-compact TZone allocations into a single bucket.
+ * Normally this would be a security regression, as it effectively bypasses the
+ * iso-heap mechanism that TZone relies on for its security guarantees.
+ * Normally, this would be a security regression, as it effectively removes the
+ * randomness at the heart of the TZone security feature by putting all classes
+ * from the same TZone into a single iso-heap.
+
+ * However, MTE provides the same security benefits as TZone, and as such it's
+ * OK to bypass TZone for objects we know will be MTE-tagged.
+ * Presently, the main reason for doing so would be performance, but as MTE
+ * is currently (c. 2026) only enabled in non-performant processes, there's no
+ * reason to have it on. If it is re-enabled it should be set to PAS_USE_MTE
+ * so as to preserve the security properties of non-MTE processes.
+ *
+ * Astute observers may notice that in bmalloc we do the converse, i.e. allocating
+ * always-compact objects from a single heap-ref. This is OK since in that heap,
+ * we already expect all allocations to come out of the same singular intrinsic
+ * heap.
  */
-#define PAS_USE_COMPACT_ONLY_HEAP 1
-#define PAS_USE_COMPACT_ONLY_TZONE_HEAP PAS_USE_MTE
-#endif
+#define PAS_BYPASS_TZONE_FOR_NONCOMPACT_OBJECTS 0
 
 #define PAS_MTE_FEATURE_RETAG_ON_SCAVENGE 0
 #define PAS_MTE_FEATURE_LOG_ON_TAG 1
 #define PAS_MTE_FEATURE_LOG_ON_PURIFY 2
 #define PAS_MTE_FEATURE_LOG_PAGE_ALLOC 3
 #define PAS_MTE_FEATURE_ZERO_TAG_ALL 4
+// ATE and PTE are always enabled together
 #define PAS_MTE_FEATURE_ADJACENT_TAG_EXCLUSION 5
+#define PAS_MTE_FEATURE_PREVIOUS_TAG_EXCLUSION PAS_MTE_FEATURE_ADJACENT_TAG_EXCLUSION
 #define PAS_MTE_FEATURE_ASSERT_ADJACENT_TAGS_ARE_DISJOINT 6
+#define PAS_MTE_FEATURE_CHECK_TAG_ON_DEALLOC 7
 
 // Helper to access feature bits by index (for dynamic feature checking)
 #define PAS_MTE_FEATURE_BIT(feature) ( \
@@ -114,11 +123,12 @@
     (feature) == PAS_MTE_FEATURE_ZERO_TAG_ALL ? PAS_RUNTIME_CONFIG_PTR->mode_bits.zero_tag_all : \
     (feature) == PAS_MTE_FEATURE_ADJACENT_TAG_EXCLUSION ? PAS_RUNTIME_CONFIG_PTR->mode_bits.adjacent_tag_exclusion : \
     (feature) == PAS_MTE_FEATURE_ASSERT_ADJACENT_TAGS_ARE_DISJOINT ? PAS_RUNTIME_CONFIG_PTR->mode_bits.assert_adjacent_tags_are_disjoint : \
+    (feature) == PAS_MTE_FEATURE_CHECK_TAG_ON_DEALLOC ? PAS_RUNTIME_CONFIG_PTR->mode_bits.check_tag_on_dealloc : \
     0)
 
 #define PAS_MTE_FEATURE_FORCED(feature) (0)
 #define PAS_MTE_FEATURE_HARDENED_FORCED(feature) (feature == PAS_MTE_FEATURE_ADJACENT_TAG_EXCLUSION || feature == PAS_MTE_FEATURE_RETAG_ON_SCAVENGE)
-#define PAS_MTE_FEATURE_DEBUG_FORCED(feature) (feature == PAS_MTE_FEATURE_ASSERT_ADJACENT_TAGS_ARE_DISJOINT)
+#define PAS_MTE_FEATURE_DEBUG_FORCED(feature) (feature == PAS_MTE_FEATURE_ASSERT_ADJACENT_TAGS_ARE_DISJOINT || feature == PAS_MTE_FEATURE_RETAG_ON_SCAVENGE)
 
 #define PAS_MTE_FEATURE_FORCED_IN_RELEASE_BUILD(feature) \
     (PAS_MTE_FEATURE_FORCED(feature) || \
@@ -134,6 +144,9 @@
 #else
 #define PAS_MTE_FEATURE_ENABLED(feature) (PAS_USE_MTE && PAS_MTE_FEATURE_FORCED_IN_RELEASE_BUILD(feature))
 #endif
+
+// FIXME: rdar://171662605
+#define PAS_WORKAROUND_RDAR_171662605_UNCONDITIONAL_TAG_ON_ALLOC (1)
 
 /*
  * These are defined here rather than in pas_mte.h because they are needed by
@@ -179,13 +192,41 @@
 #define PAS_MTE_CHECK_TAG_AND_SET_TCO(ptr) do { (void)ptr; } while (0)
 #define PAS_MTE_SET_TCO_UNCHECKED do { } while (0)
 #define PAS_MTE_CLEAR_TCO do { } while (0)
+#define PAS_BYPASS_TZONE_FOR_NONCOMPACT_OBJECTS 0
 #endif // PAS_ENABLE_MTE
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+bool pas_mte_is_mte_enabled_slow(void);
+
+#if PAS_ENABLE_MTE
+/* mte_state is safe to read with a relaxed load because in the case that a
+   stale value is observed, it would necessarily be a value of 0 (from the
+   original static initialization) as it will only ever be changed once,
+   inside the first call to pas_mte_is_mte_enabled_slow(); and the result of
+   such a stale read is to fall through to pas_mte_is_mte_enabled_slow(),
+   which ensures single initialization. */
+static inline __attribute__((__always_inline__)) bool pas_mte_is_mte_enabled(void)
+{
+    uint8_t state = PAS_RUNTIME_CONFIG_PTR->mte_state;
+    if (state == pas_mte_state_disabled)
+        return false;
+    if (state == pas_mte_state_enabled)
+        return true;
+    return pas_mte_is_mte_enabled_slow();
+}
+#else /* !PAS_ENABLE_MTE */
+static inline __attribute__((__always_inline__)) bool pas_mte_is_mte_enabled(void)
+{
+    return false;
+}
+#endif /* PAS_ENABLE_MTE */
+
 void pas_mte_ensure_initialized(void);
 void pas_mte_force_nontaggable_user_allocations_into_large_heap(void);
+void pas_bmalloc_force_allocations_into_bitfit_heaps_where_available(void);
 #ifdef __cplusplus
 }
 #endif

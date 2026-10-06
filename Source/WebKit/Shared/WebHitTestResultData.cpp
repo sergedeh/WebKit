@@ -30,9 +30,11 @@
 #include <WebCore/HitTestResult.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/LocalFrameView.h>
+#include <WebCore/MIMETypeRegistry.h>
 #include <WebCore/NavigationAction.h>
 #include <WebCore/Node.h>
 #include <WebCore/RenderImage.h>
+#include <WebCore/ResourceResponse.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/Text.h>
 #include <wtf/URL.h>
@@ -51,7 +53,7 @@ static WebHitTestResultData::ElementType elementTypeFromHitTestResult(const HitT
 
 static RefPtr<WebFrame> webFrameFromHitTestResult(const HitTestResult& hitTestResult)
 {
-    RefPtr coreFrame = hitTestResult.frame();
+    auto* coreFrame = hitTestResult.frame();
     if (!coreFrame)
         return nullptr;
 
@@ -79,7 +81,10 @@ static String imageSuggestedFilenameFromHitTestResult(const HitTestResult& hitTe
     if (!webFrame)
         return nullString();
 
-    return webFrame->suggestedFilenameForResourceWithURL(hitTestResult.absoluteImageURL());
+    auto url = hitTestResult.absoluteImageURL();
+    auto filename = webFrame->suggestedFilenameForResourceWithURL(url, WebFrame::ResourceType::Image);
+    auto mimeType = webFrame->mimeTypeForResourceWithURL(url, WebFrame::ResourceType::Image);
+    return MIMETypeRegistry::correctExtensionForMIMEType(filename, mimeType);
 }
 
 WebHitTestResultData::WebHitTestResultData() = default;
@@ -89,12 +94,13 @@ WebHitTestResultData::WebHitTestResultData(const HitTestResult& hitTestResult, c
     , absolutePDFURL(hitTestResult.absolutePDFURL().string())
     , absoluteLinkURL(hitTestResult.absoluteLinkURL().string())
     , absoluteMediaURL(hitTestResult.absoluteMediaURL().string())
+    , absoluteModelURL(hitTestResult.absoluteModelURL().string())
     , linkLabel(hitTestResult.textContent())
     , linkTitle(hitTestResult.titleDisplayString())
     , linkSuggestedFilename(hitTestResult.linkSuggestedFilename())
     , imageSuggestedFilename(imageSuggestedFilenameFromHitTestResult(hitTestResult))
     , isContentEditable(hitTestResult.isContentEditable())
-    , elementBoundingBox(elementBoundingBoxInWindowCoordinates(hitTestResult))
+    , elementBoundingBox(elementBoundingBoxInMainFrameViewCoordinates(hitTestResult))
     , isScrollbar(IsScrollbar::No)
     , isSelected(hitTestResult.isSelected())
     , isTextNode(is<Text>(hitTestResult.innerNode()))
@@ -125,13 +131,13 @@ WebHitTestResultData::WebHitTestResultData(const HitTestResult& hitTestResult, c
     if (RefPtr target = hitTestResult.innerNonSharedNode()) {
         if (CheckedPtr renderer = dynamicDowncast<RenderImage>(target->renderer())) {
             imageBitmap = createShareableBitmap(*renderer);
-            if (auto* cachedImage = renderer->cachedImage()) {
+            if (RefPtr cachedImage = renderer->cachedImage()) {
                 if (RefPtr image = cachedImage->image())
                     sourceImageMIMEType = image->mimeType();
             }
 
             imageText = [&]() -> String {
-                if (RefPtr element = dynamicDowncast<Element>(target.get())) {
+                if (auto* element = dynamicDowncast<Element>(target.get())) {
                     auto& title = element->attributeWithoutSynchronization(HTMLNames::titleAttr);
                     if (!title.isEmpty())
                         return title;
@@ -149,7 +155,7 @@ WebHitTestResultData::WebHitTestResultData(const HitTestResult& hitTestResult, c
 WebHitTestResultData::WebHitTestResultData(const HitTestResult& hitTestResult, bool includeImage)
     : WebHitTestResultData(hitTestResult, String(), includeImage) { }
 
-WebHitTestResultData::WebHitTestResultData(const String& absoluteImageURL, const String& absolutePDFURL, const String& absoluteLinkURL, const String& absoluteMediaURL, const String& linkLabel, const String& linkTitle, const String& linkSuggestedFilename, const String& imageSuggestedFilename, bool isContentEditable, const WebCore::IntRect& elementBoundingBox, const WebKit::WebHitTestResultData::IsScrollbar& isScrollbar, bool isSelected, bool isTextNode, bool isOverTextInsideFormControlElement, bool isDownloadableMedia, bool mediaIsInFullscreen, bool isActivePDFAnnotation, const WebHitTestResultData::ElementType& elementType, std::optional<FrameInfoData>&& frameInfo, std::optional<WebCore::FrameIdentifier> targetFrame, std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData, const String& lookupText, const String& tooltipText, const String& imageText, std::optional<WebCore::SharedMemory::Handle>&& imageHandle, const RefPtr<WebCore::ShareableBitmap>& imageBitmap, const String& sourceImageMIMEType, bool hasEntireImage, bool allowsFollowingLink, bool allowsFollowingImageURL, std::optional<WebCore::ResourceResponse>&& linkLocalResourceResponse,
+WebHitTestResultData::WebHitTestResultData(const String& absoluteImageURL, const String& absolutePDFURL, const String& absoluteLinkURL, const String& absoluteMediaURL, const String& absoluteModelURL, const String& linkLabel, const String& linkTitle, const String& linkSuggestedFilename, const String& imageSuggestedFilename, bool isContentEditable, const WebCore::IntRect& elementBoundingBox, const WebKit::WebHitTestResultData::IsScrollbar& isScrollbar, bool isSelected, bool isTextNode, bool isOverTextInsideFormControlElement, bool isDownloadableMedia, bool mediaIsInFullscreen, bool isActivePDFAnnotation, const WebHitTestResultData::ElementType& elementType, std::optional<FrameInfoData>&& frameInfo, std::optional<WebCore::FrameIdentifier> targetFrame, const String& lookupText, const String& tooltipText, const String& imageText, std::optional<WebCore::SharedMemory::Handle>&& imageHandle, const RefPtr<WebCore::ShareableBitmap>& imageBitmap, const String& sourceImageMIMEType, bool hasEntireImage, bool allowsFollowingLink, bool allowsFollowingImageURL, std::optional<WebCore::ResourceResponse>&& linkLocalResourceResponse,
 #if PLATFORM(MAC)
     const WebHitTestResultPlatformData& platformData,
 #endif
@@ -158,6 +164,7 @@ WebHitTestResultData::WebHitTestResultData(const String& absoluteImageURL, const
         , absolutePDFURL(absolutePDFURL)
         , absoluteLinkURL(absoluteLinkURL)
         , absoluteMediaURL(absoluteMediaURL)
+        , absoluteModelURL(absoluteModelURL)
         , linkLabel(linkLabel)
         , linkTitle(linkTitle)
         , linkSuggestedFilename(linkSuggestedFilename)
@@ -174,7 +181,6 @@ WebHitTestResultData::WebHitTestResultData(const String& absoluteImageURL, const
         , elementType(elementType)
         , frameInfo(WTF::move(frameInfo))
         , targetFrame(targetFrame)
-        , remoteUserInputEventData(remoteUserInputEventData)
         , lookupText(lookupText)
         , tooltipText(tooltipText)
         , imageText(imageText)
@@ -194,11 +200,9 @@ WebHitTestResultData::WebHitTestResultData(const String& absoluteImageURL, const
         imageSharedMemory = WebCore::SharedMemory::map(WTF::move(*imageHandle), WebCore::SharedMemory::Protection::ReadOnly);
 }
 
-WebHitTestResultData::~WebHitTestResultData()
-{
-}
+WebHitTestResultData::~WebHitTestResultData() = default;
 
-IntRect WebHitTestResultData::elementBoundingBoxInWindowCoordinates(const WebCore::HitTestResult& hitTestResult)
+IntRect WebHitTestResultData::elementBoundingBoxInMainFrameViewCoordinates(const WebCore::HitTestResult& hitTestResult)
 {
     RefPtr node = hitTestResult.innerNonSharedNode();
     if (!node)
@@ -216,12 +220,12 @@ IntRect WebHitTestResultData::elementBoundingBoxInWindowCoordinates(const WebCor
     if (!renderer)
         return IntRect();
 
-    return view->contentsToWindow(renderer->absoluteBoundingBoxRect());
+    return view->contentsToMainFrameView(renderer->absoluteBoundingBoxRect());
 }
 
 std::optional<WebCore::SharedMemory::Handle> WebHitTestResultData::getImageSharedMemoryHandle() const
 {
-    std::optional<WebCore::SharedMemory::Handle> imageHandle = std::nullopt;
+    std::optional<WebCore::SharedMemory::Handle> imageHandle;
     if (RefPtr memory = imageSharedMemory; memory && !memory->span().empty()) {
         if (auto handle = memory->createHandle(WebCore::SharedMemory::Protection::ReadOnly))
             imageHandle = WTF::move(*handle);

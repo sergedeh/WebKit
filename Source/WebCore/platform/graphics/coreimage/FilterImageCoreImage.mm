@@ -28,12 +28,13 @@
 
 #if USE(CORE_IMAGE)
 
+#import "ColorSpace.h"
 #import "ColorSpaceCG.h"
-#import "DestinationColorSpace.h"
 #import "Filter.h"
 #import "Logging.h"
 #import <CoreImage/CIFilterBuiltins.h>
 #import <CoreImage/CoreImage.h>
+#import <wtf/BlockObjCExceptions.h>
 #import <wtf/MathExtras.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/SystemTracing.h>
@@ -83,17 +84,17 @@ ImageBuffer* FilterImage::filterResultImageBuffer(const Filter& filter)
 
     ASSERT(imageBuffer->surface());
 
-    RetainPtr context = colorSpace() == DestinationColorSpace::LinearSRGB() ? sharedLinearSRGBCIContext() : sharedSRGBCIContext();
+    RetainPtr context = colorSpace() == ColorSpace::LinearSRGB() ? sharedLinearSRGBCIContext() : sharedSRGBCIContext();
 
     // We use -[CIContext:startTaskToRender...] because it lets us specify `fromRect`, which provides the rect against which earlier
     // CIImages extents are computed (in flipped coordinates). -[CIContext render:...] uses the size of the IOSurface, which is only
     // the output size of the last filter operation.
-    RetainPtr destination = adoptNS([[CIRenderDestination alloc] initWithIOSurface:(__bridge id)imageBuffer->surface()->surface()]);
-    [destination setColorSpace:m_colorSpace.platformColorSpace()];
+    RetainPtr destination = adoptNS([[CIRenderDestination alloc] initWithIOSurface:(__bridge id)protect(imageBuffer->surface()->surface()).get()]);
+    [destination setColorSpace:protect(m_colorSpace.platformColorSpace())];
 
     RetainPtr image = m_ciImage;
 
-    if (filter.isShowingDebugOverlay()) {
+    if (filter.renderingOptions().contains(FilterRenderingOption::ShowDebugOverlay)) {
         RetainPtr stripesFilter = [CIFilter stripesGeneratorFilter];
         [stripesFilter setWidth:30];
         [stripesFilter setColor0:[CIColor clearColor]];

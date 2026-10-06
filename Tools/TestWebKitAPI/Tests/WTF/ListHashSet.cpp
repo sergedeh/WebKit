@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include "Counters.h"
+#include "Helpers/Counters.h"
 #include "MoveOnly.h"
 #include <wtf/InlineWeakPtr.h>
 #include <wtf/ListHashSet.h>
@@ -37,11 +37,10 @@
 namespace {
 
 class InlineWeakPtrObject : public RefCountedWithInlineWeakPtr<InlineWeakPtrObject> {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(InlineWeakPtrObject);
 public:
     static Ref<InlineWeakPtrObject> create()
     {
-        return adoptRef(*new InlineWeakPtrObject);
+        return createRefCountedWithInlineWeakPtr<InlineWeakPtrObject>();
     }
 };
 
@@ -541,7 +540,7 @@ class ListHashSetReferencedItem : public RefCounted<ListHashSetReferencedItem> {
 public:
     static Ref<ListHashSetReferencedItem> create()
     {
-        auto result = adoptRef(*new ListHashSetReferencedItem());
+        Ref result = adoptRef(*new ListHashSetReferencedItem());
         return result;
     }
 

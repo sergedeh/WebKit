@@ -84,8 +84,6 @@
 42262706 WIN7 D3D11 NVIDIA : dEQP-GLES3.functional.rasterization.flatshading.triangles = FAIL
 
 // Vertex attribute aliasing is not supported on D3D
-42262131 D3D9 : dEQP-GLES3.functional.attribute_location.bind_aliasing.cond* = FAIL
-42262131 D3D9 : dEQP-GLES3.functional.attribute_location.bind_aliasing.max_cond* = FAIL
 42262131 D3D11 : dEQP-GLES3.functional.attribute_location.bind_aliasing.cond* = FAIL
 42262131 D3D11 : dEQP-GLES3.functional.attribute_location.bind_aliasing.max_cond* = FAIL
 
@@ -313,174 +311,6 @@
 42261655 OPENGL : dEQP-GLES3.functional.fbo.blit.default_framebuffer.srgb8_alpha8_linear_out_of_bounds_blit_to_default = FAIL
 42261655 OPENGL : dEQP-GLES3.functional.fbo.blit.default_framebuffer.srgb8_alpha8_linear_scale_blit_to_default = FAIL
 42261655 OPENGL : dEQP-GLES3.functional.fbo.blit.default_framebuffer.srgb8_alpha8_nearest_scale_blit_to_default = FAIL
-
-// Mac failures (overbroad suppresions)
-42262130 MAC OPENGL : dEQP-GLES3.functional.attribute_location.bind_aliasing.cond* = SKIP
-42262130 MAC OPENGL : dEQP-GLES3.functional.attribute_location.bind_aliasing.max_cond* = SKIP
-40096462 MAC OPENGL : dEQP-GLES3.functional.fbo.blit.default_framebuffer.* = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.fbo.blit.rect.out_of_bounds_reverse_* = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.implementation_limits.compressed_texture_formats = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.implementation_limits.num_compressed_texture_formats = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.primitive_restart.* = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.linkage.varying.rules.vertex_declare_fragment_use = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.scoping.valid.function_parameter_hides_struct_type_fragment = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.scoping.valid.function_parameter_hides_struct_type_vertex = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.scoping.valid.local_int_variable_hides_struct_type_fragment = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.scoping.valid.local_int_variable_hides_struct_type_vertex = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.scoping.valid.local_struct_variable_hides_struct_type_fragment = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.scoping.valid.local_struct_variable_hides_struct_type_vertex = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.state_query.integers.compressed_texture_formats_getfloat = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.state_query.integers.compressed_texture_formats_getinteger = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.state_query.integers.compressed_texture_formats_getinteger64 = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.dither.disabled.* = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.fragment_ops.depth_stencil.stencil_depth_funcs.stencil_* = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.arrays.complex_expression.and_short_circuits_* = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.arrays.complex_expression.or_short_circuits_* = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.fragdata.valid_static_index = FAIL
-40096462 MAC OPENGL : dEQP-GLES3.functional.shaders.loops.short_circuit.* = FAIL
-42261996 MAC OPENGL : dEQP-GLES3.functional.fbo.blit.rect.out_of_bounds_linear = FAIL
-
-// ETC compressed formats not supported
-42262497 MAC OPENGL : dEQP-GLES3.functional.negative_api.texture.compressedtexsubimage* = FAIL
-42262497 MAC OPENGL : dEQP-GLES3.functional.negative_api.texture.generatemipmap = FAIL
-
-// Mac AMD failures
-40096462 MAC OPENGL AMD : dEQP-GLES3.functional.clipping.point.wide_point_clip = FAIL
-40096462 MAC OPENGL AMD : dEQP-GLES3.functional.clipping.point.wide_point_clip_viewport_center = FAIL
-40096462 MAC OPENGL AMD : dEQP-GLES3.functional.clipping.point.wide_point_clip_viewport_corner = FAIL
-40096462 MAC OPENGL AMD : dEQP-GLES3.functional.fbo.blit.rect.out_of_bounds_nearest = FAIL
-40096462 MAC OPENGL AMD : dEQP-GLES3.functional.shaders.builtin_functions.precision.tanh.highp_* = FAIL
-40096462 MAC OPENGL AMD : dEQP-GLES3.functional.texture.mipmap.2d.projected.* = FAIL
-40096462 MAC OPENGL AMD : dEQP-GLES3.functional.transform_feedback.* = FAIL
-
-42261996 MAC OPENGL AMD : dEQP-GLES3.functional.shaders.builtin_functions.precision.ceil.* = FAIL
-42261996 MAC OPENGL AMD : dEQP-GLES3.functional.shaders.texture_functions.textureprojlod.isampler3d_vertex = FAIL
-42261996 MAC OPENGL AMD : dEQP-GLES3.functional.shaders.texture_functions.textureprojlod.usampler3d_vertex = FAIL
-
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.draw.draw_elements.indices.user_ptr.index_byte = FAIL
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.draw.draw_elements_instanced.indices.user_ptr.index_byte = FAIL
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.dither.enabled.* = FAIL
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.draw.random.* = FAIL
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.fragment_ops.depth_stencil.stencil_depth_funcs.no_stencil* = FAIL
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.fragment_ops.depth_stencil.stencil_ops.keep* = FAIL
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.fragment_ops.depth_stencil.stencil_ops.zero* = FAIL
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.shaders.fragdata.valid_dynamic_index = FAIL
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.shaders.fragdata.valid_uniform_index = FAIL
-42263733 MAC OPENGL AMD : dEQP-GLES3.functional.shaders.fragdata.draw_buffers = FAIL
-
-42264744 MAC OPENGL AMD : dEQP-GLES3.functional.texture.specification.texsubimage3d_pbo.* = FAIL
-42264744 MAC OPENGL AMD : dEQP-GLES3.functional.texture.specification.teximage3d_pbo.r8* = FAIL
-42264744 MAC OPENGL AMD : dEQP-GLES3.functional.texture.specification.teximage3d_pbo.rg8* = FAIL
-42264744 MAC OPENGL AMD : dEQP-GLES3.functional.texture.specification.teximage3d_pbo.r16* = FAIL
-
-// New failures on MacBook Pro 2019 macOS 13.2.1
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.fbo.msaa.renderbuffer_resize.ms_to_nonms = FAIL
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.fbo.msaa.renderbuffer_resize.nonms_to_nonms = FAIL
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.pbo.renderbuffer.rgb5_a1_clears = FAIL
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.pbo.renderbuffer.rgb5_a1_triangles = FAIL
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.pbo.renderbuffer.rgba4_clears = FAIL
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.pbo.renderbuffer.rgba4_triangles = FAIL
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.pbo.renderbuffer.rgba8_clears = FAIL
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.pbo.renderbuffer.rgba8_triangles = FAIL
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.pbo.renderbuffer.srgb8_alpha8_clears = FAIL
-42266544 MAC OPENGL AMD : dEQP-GLES3.functional.pbo.renderbuffer.srgb8_alpha8_triangles = FAIL
-
-// Mac Intel crashes
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.discard.function_static_loop_never = SKIP
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.discard.dynamic_loop_never = SKIP
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.discard.static_loop_never = SKIP
-// Mac Intel UHD 630 crashes
-40644819 MAC OPENGL INTEL : dEQP-GLES3.functional.draw.random.127 = SKIP
-
-// Mac Intel failures
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.color_clear.* = FAIL
-// All the out of bounds variants fail.
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_mag_reverse_src_dst_y = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_min_reverse_src_dst_y = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_mag = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_mag_reverse_dst_x = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_mag_reverse_src_dst_x = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_mag_reverse_src_dst_y = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_mag_reverse_src_x = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_min = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_min_reverse_dst_x = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_min_reverse_src_dst_x = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_min_reverse_src_dst_y = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_min_reverse_src_x = FAIL
-// Fails for all integer formats
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.completeness.attachment_combinations.none_rbo_none_none = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.completeness.attachment_combinations.none_tex_none_none = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.polygon_offset.default_render_with_units = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.polygon_offset.fixed16_render_with_units = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.polygon_offset.fixed24_render_with_units = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.builtin_functions.precision.cos.highp_* = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.builtin_functions.precision.sin.highp_* = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.invariance.lowp.common_subexpression_1 = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.invariance.lowp.common_subexpression_3 = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.invariance.mediump.common_subexpression_1 = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.invariance.mediump.common_subexpression_3 = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.invariance.highp.common_subexpression_1 = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.invariance.highp.common_subexpression_3 = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.texelfetchoffset.usampler2d_fragment = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.texelfetchoffset.usampler2d_vertex  = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.texturegradoffset.usampler3d_fragment  = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.texturegrad.usampler3d_fragment  = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.texturegrad.usamplercube_fragment  = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.texturegrad.usamplercube_vertex  = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.texturelod.usamplercube_fragment  = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.texturelod.usamplercube_vertex  = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.textureprojgradoffset.usampler3d_fragment  = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.textureprojgrad.usampler3d_fragment  = FAIL
-// Fails the integer npot cases = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.format.sized.cube.* = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.specification.basic_copyteximage2d.cube_alpha = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.specification.basic_copyteximage2d.cube_luminance = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.specification.basic_copyteximage2d.cube_luminance_alpha = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.specification.basic_copyteximage2d.cube_rgb = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.specification.basic_copyteximage2d.cube_rgba = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.specification.random_teximage2d.2d_5 = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.specification.teximage3d_* = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.specification.texsubimage3d_* = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.ubo.* = FAIL
-40096462 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.texelfetchoffset.* = FAIL
-
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_mag = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_mag_reverse_src_x = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_mag_reverse_dst_x = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_mag_reverse_src_dst_x = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_min = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_min_reverse_src_x = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_min_reverse_dst_x = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_min_reverse_src_dst_x = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.filtering.2d_array.combinations.linear_nearest_* = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.filtering.2d.combinations.linear_nearest_* = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.filtering.3d.combinations.linear_nearest_* = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.filtering.cube.combinations.linear_nearest_* = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.mipmap.cube.max_level.linear_nearest = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.vertex.2d_array.filtering.linear_nearest_* = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.vertex.2d.filtering.linear_nearest_* = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.vertex.3d.filtering.linear_nearest_* = FAIL
-42261996 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.vertex.cube.filtering.linear_nearest_* = FAIL
-
-40096594 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.invalidate.format.rgb8 = FAIL
-40096594 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.render.resize.tex2d_rgb16f = FAIL
-40096594 MAC OPENGL INTEL : dEQP-GLES3.functional.fbo.render.resize.tex2d_rgb8 = FAIL
-
-42263733 MAC OPENGL INTEL : dEQP-GLES3.functional.fragment_out.basic.int.* = FAIL
-42263733 MAC OPENGL INTEL : dEQP-GLES3.functional.fragment_out.basic.uint.* = FAIL
-
-// Mac Intel UHD 630 failures
-40644819 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.textureprojlod.isampler3d_vertex = FAIL
-40644819 MAC OPENGL INTEL : dEQP-GLES3.functional.shaders.texture_functions.textureprojlod.usampler3d_vertex = FAIL
-40644819 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.mipmap.cube.base_level.linear_linear = FAIL
-40644819 MAC OPENGL INTEL : dEQP-GLES3.functional.texture.mipmap.cube.base_level.linear_nearest = FAIL
-
-40096672 MAC OPENGL INTEL : dEQP-GLES3.functional.draw_buffers_indexed.random.max_required_draw_buffers.11 = FAIL
-40096672 MAC OPENGL INTEL : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.5 = FAIL
-40096672 MAC OPENGL INTEL : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.9 = FAIL
-40096672 MAC OPENGL INTEL : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.14 = FAIL
-40096672 MAC OPENGL INTEL : dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.17 = FAIL
-
 
 // Android only failures
 42260746 ANDROID GLES : dEQP-GLES3.functional.occlusion_query.* = FAIL
@@ -767,10 +597,6 @@
 
 /////////////////////////////////////
 
-// Pixel 4 expectations.
-42264522 PIXEL4ORXL VULKAN : dEQP-GLES3.functional.fbo.invalidate.default.bind_depth = SKIP
-42264522 PIXEL4ORXL VULKAN : dEQP-GLES3.functional.fragment_ops.random.* = SKIP
-
 42265027 PIXEL4ORXL GLES : dEQP-GLES3.functional.multisample.fbo_4_samples.* = FAIL
 42265027 PIXEL4ORXL GLES : dEQP-GLES3.functional.multisample.fbo_max_samples.* = FAIL
 42265027 PIXEL4ORXL GLES : dEQP-GLES3.functional.transform_feedback.random.interleaved.lines.3 = FAIL
@@ -778,6 +604,29 @@
 42265027 PIXEL4ORXL GLES : dEQP-GLES3.functional.transform_feedback.random.interleaved.triangles.10 = FAIL
 42265027 PIXEL4ORXL GLES : dEQP-GLES3.functional.transform_feedback.random_full_array_capture.* = FAIL
 42266310 PIXEL4ORXL GLES : dEQP-GLES3.functional.shaders.function.global_variable_aliasing_* = FAIL
+
+// Pixel 10
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.fbo.blit.default_framebuffer.srgb8_alpha8 = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.fbo.blit.default_framebuffer.srgb8_alpha8_linear_out_of_bounds_blit_to_default = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.fbo.blit.default_framebuffer.srgb8_alpha8_linear_scale_blit_to_default = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.fbo.blit.default_framebuffer.srgb8_alpha8_nearest_scale_blit_to_default = FAIL
+449087811 PIXEL10 GLES : dEQP-GLES3.functional.shaders.fragdata.valid_dynamic_index = FAIL
+449087811 PIXEL10 GLES : dEQP-GLES3.functional.shaders.fragdata.valid_uniform_index = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.array_member_dynamic_index_fragment = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.array_member_dynamic_index_vertex = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.array_member_fragment = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.array_member_vertex = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.dynamic_loop_nested_struct_array_fragment = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.dynamic_loop_nested_struct_array_vertex = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.loop_nested_struct_array_fragment = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.loop_nested_struct_array_vertex = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.nested_struct_array_dynamic_index_fragment = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.nested_struct_array_dynamic_index_vertex = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.nested_struct_array_fragment = FAIL
+449120558 PIXEL10 GLES : dEQP-GLES3.functional.shaders.struct.local.nested_struct_array_vertex = FAIL
+523128541 PIXEL10 GLES : dEQP-GLES3.functional.ubo.random.all_shared_buffer.21 = FAIL
+523128541 PIXEL10 GLES : dEQP-GLES3.functional.ubo.random.all_shared_buffer.40 = FAIL
+523128541 PIXEL10 GLES : dEQP-GLES3.functional.ubo.random.nested_structs_arrays.9 = FAIL
 
 42265203 LINUX NVIDIA GTX1660 VULKAN : dEQP-GLES3.functional.shaders.random.all_features.fragment.26 = FAIL
 42265203 LINUX NVIDIA GTX1660 VULKAN : dEQP-GLES3.functional.shaders.random.all_features.fragment.31 = FAIL
@@ -793,14 +642,14 @@
 42265173 UBSAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride17_components4_quads* = SKIP
 
 // Samsung Galaxy S22 (Xclipse)
-b/267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.draw.random.* = SKIP
-b/267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.instance_array_basic_type.* = SKIP
-b/267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.multi_basic_types.* = SKIP
-b/267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.multi_nested_struct.* = SKIP
-b/267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.random.* = SKIP
-b/267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.single_nested_struct* = SKIP
-b/267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.single_struct_array* = SKIP
-b/267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.*int2_10_10_10* = SKIP
+267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.draw.random.* = SKIP
+267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.instance_array_basic_type.* = SKIP
+267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.multi_basic_types.* = SKIP
+267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.multi_nested_struct.* = SKIP
+267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.random.* = SKIP
+267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.single_nested_struct* = SKIP
+267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.ubo.single_struct_array* = SKIP
+267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.*int2_10_10_10* = SKIP
 
 // Samsung Galaxy S23
 42266598 GALAXYS23 VULKAN : dEQP-GLES3.functional.fbo.blit.depth_stencil.* = SKIP
@@ -835,82 +684,85 @@ b/267953710 GALAXYS22 VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attrib
 42266598 GALAXYS23 VULKAN : dEQP-GLES3.functional.shaders.random.trigonometric.fragment.* = SKIP
 
 // Samsung Galaxy S24 (Xclipse)
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.draw.random.118 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.draw.random.124 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.draw.random.136 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.draw.random.138 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first24_offset16_stride32_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first24_offset16_stride32_quads5 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first24_offset16_stride8_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first24_offset16_stride8_quads5 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first6_offset16_stride32_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first6_offset16_stride32_quads5 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first6_offset16_stride8_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first6_offset16_stride8_quads5 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.normalize.int2_10_10_10.components4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.normalize.int2_10_10_10.components4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.normalize.usigned_int2_10_10_10.components4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.normalize.usigned_int2_10_10_10.components4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset32_stride32_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset32_stride32_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset32_stride4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset32_stride4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset4_stride32_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset4_stride32_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset4_stride4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset4_stride4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec2_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec2_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec3_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec3_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec2_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec2_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec3_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec3_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.buffer_stride16_components4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.buffer_stride16_components4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.buffer_stride32_components4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.buffer_stride32_components4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride16_components4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride16_components4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride17_components4_quads256 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride32_components4_quads1 = SKIP
-b/410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride32_components4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.draw.random.118 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.draw.random.124 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.draw.random.136 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.draw.random.138 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first24_offset16_stride32_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first24_offset16_stride32_quads5 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first24_offset16_stride8_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first24_offset16_stride8_quads5 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first6_offset16_stride32_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first6_offset16_stride32_quads5 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first6_offset16_stride8_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.first.int2_10_10_10.first6_offset16_stride8_quads5 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.normalize.int2_10_10_10.components4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.normalize.int2_10_10_10.components4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.normalize.usigned_int2_10_10_10.components4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.normalize.usigned_int2_10_10_10.components4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset32_stride32_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset32_stride32_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset32_stride4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset32_stride4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset4_stride32_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset4_stride32_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset4_stride4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.offset.int2_10_10_10.offset4_stride4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec2_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec2_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec3_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec3_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.int2_10_10_10.components4_vec4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec2_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec2_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec3_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec3_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.output_types.usigned_int2_10_10_10.components4_vec4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.buffer_stride16_components4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.buffer_stride16_components4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.buffer_stride32_components4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.buffer_stride32_components4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride16_components4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride16_components4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride17_components4_quads256 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride32_components4_quads1 = SKIP
+410630704 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.vertex_arrays.single_attribute.strides.int2_10_10_10.user_ptr_stride32_components4_quads256 = SKIP
+558505633 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.transform_feedback.array.interleaved.triangles.highp_mat4x3 = FAIL
+558505633 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.transform_feedback.interpolation.centroid.mediump_vec4_lines_interleaved = FAIL
+558505633 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.transform_feedback.interpolation.smooth.mediump_vec4_lines_interleaved = FAIL
 
 // Snapdragon 8 Gen3 Mobile Reference Device
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fbo.blit.depth_stencil.*stencil* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fbo.msaa.*_samples.*stencil* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fbo.render.*stencil* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fbo.stencil.basic.*stencil* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fragment_ops.interaction.basic_shader.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.rasterization*line*wide = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.builtin_functions.pack_unpack.unpackhalf2x16_fragment = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.fragdata.valid_dynamic_index = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.function.global_variable_aliasing_fragment = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.indexing.moredynamic.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.all_features.fragment.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.basic_expression.combined.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.basic_expression.fragment.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.comparison_ops.fragment.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.conditionals.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.exponential.fragment.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.scalar_conversion.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.swizzle.fragment.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.texture.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.trigonometric.fragment.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.texture_functions.texture*.*sampler3d* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.texture*3d* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.texture*cube* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.texture*mixed* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.transform_feedback.array* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.transform_feedback.basic_types* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.transform_feedback.interpolation.* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.transform_feedback.random* = SKIP
-b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.uniform_api.value.assigned.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fbo.blit.depth_stencil.*stencil* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fbo.msaa.*_samples.*stencil* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fbo.render.*stencil* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fbo.stencil.basic.*stencil* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.fragment_ops.interaction.basic_shader.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.rasterization*line*wide = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.builtin_functions.pack_unpack.unpackhalf2x16_fragment = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.fragdata.valid_dynamic_index = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.function.global_variable_aliasing_fragment = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.indexing.moredynamic.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.all_features.fragment.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.basic_expression.combined.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.basic_expression.fragment.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.comparison_ops.fragment.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.conditionals.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.exponential.fragment.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.scalar_conversion.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.swizzle.fragment.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.texture.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.random.trigonometric.fragment.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.shaders.texture_functions.texture*.*sampler3d* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.texture*3d* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.texture*cube* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.texture*mixed* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.transform_feedback.array* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.transform_feedback.basic_types* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.transform_feedback.interpolation.* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.transform_feedback.random* = SKIP
+328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.uniform_api.value.assigned.* = SKIP
 
 // VK_EXT_transform_feedback doesn't support capturing array elements and a waiver exists
 42262773 VULKAN : dEQP-GLES3.functional.transform_feedback.array_element.interleaved.* = FAIL
@@ -933,3 +785,27 @@ b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.uniform_api.value.assigned.
 376899587 PIXEL4ORXL : dEQP-GLES3.functional.negative_api.vertex_array.draw_elements_instanced_incomplete_primitive = SKIP
 376899587 PIXEL4ORXL : dEQP-GLES3.functional.negative_api.vertex_array.draw_range_elements = SKIP
 376899587 PIXEL4ORXL : dEQP-GLES3.functional.negative_api.vertex_array.draw_range_elements_incomplete_primitive = SKIP
+
+// Translator IR failures
+// IR's use of `while` and `if (!condition) break` instead of `for(..)` makes the HLSL generator think the loops are discontinuous, and as a result it drops the derivative built-ins!
+349994211 IR D3D11 NVIDIA : dEQP-GLES3.functional.shaders.derivate.*.uniform_loop* = SKIP
+// Untriaged failures with HLSL
+349994211 IR D3D11 NVIDIA : dEQP-GLES3.functional.shaders.switch.default_label_static_* = SKIP
+349994211 IR D3D11 NVIDIA : dEQP-GLES3.functional.shaders.switch.default_not_last_static_* = SKIP
+349994211 IR D3D11 NVIDIA : dEQP-GLES3.functional.shaders.switch.if_in_switch_static_* = SKIP
+// Some |bool| variables seem to be given a precision
+349994211 IR PIXEL10 GLES : dEQP-GLES3.functional.shaders.random.* = SKIP
+349994211 IR PIXEL10 GLES : dEQP-GLES3.functional.fragment_ops.interaction.basic_shader.31 = SKIP
+
+// webkit.org/b/319849
+0 METAL : dEQP-GLES3.functional.shaders.builtin_functions.common.isinf.* = SKIP
+0 METAL : dEQP-GLES3.functional.shaders.builtin_functions.common.isnan.* = SKIP
+0 METAL : dEQP-GLES3.functional.shaders.builtin_functions.precision.* = SKIP
+0 METAL : dEQP-GLES3.functional.shaders.linkage.varying.rules.* = SKIP
+0 METAL : dEQP-GLES3.functional.shaders.metamorphic.bubblesort_flag.variant_* = SKIP
+0 METAL : dEQP-GLES3.functional.shaders.metamorphic.synthetic.variant_* = SKIP
+0 METAL : dEQP-GLES3.functional.shaders.operator.geometric.faceforward.mediump_vec2_vertex = SKIP
+// Vulkan driver crash on Samsung S22 and S24 devices.
+8021882 GALAXYS22 VULKAN : dEQP-GLES3.functional.transform_feedback.*.lines.* = SKIP
+8021882 GALAXYS24EXYNOS VULKAN : dEQP-GLES3.functional.transform_feedback.*.lines.* = SKIP
+

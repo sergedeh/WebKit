@@ -28,19 +28,21 @@ namespace WebCore {
 
 class HitTestLocation {
 public:
+    enum class RectBased : bool { No, Yes };
+
     WEBCORE_EXPORT HitTestLocation();
     HitTestLocation(const LayoutPoint&);
-    HitTestLocation(const FloatPoint&, const FloatQuad&);
+    HitTestLocation(const FloatPoint&, const FloatQuad&, RectBased = RectBased::Yes);
 
-    HitTestLocation(const LayoutRect&);
+    WEBCORE_EXPORT HitTestLocation(const LayoutRect&);
 
     // Make a copy the HitTestLocation in a new region by applying given offset to internal point and area.
     HitTestLocation(const HitTestLocation&, const LayoutSize& offset);
     WEBCORE_EXPORT HitTestLocation(const HitTestLocation&);
     WEBCORE_EXPORT ~HitTestLocation();
-    HitTestLocation& operator=(const HitTestLocation&);
+    HitTestLocation& NODELETE operator=(const HitTestLocation&);
 
-    const LayoutPoint& point() const { return m_point; }
+    const LayoutPoint& point() const LIFETIME_BOUND { return m_point; }
     IntPoint roundedPoint() const { return roundedIntPoint(m_point); }
 
     // Rect-based hit test related methods.
@@ -48,15 +50,15 @@ public:
     bool isRectilinear() const { return m_isRectilinear; }
     LayoutRect boundingBox() const { return m_boundingBox; }
 
-    WEBCORE_EXPORT bool intersects(const LayoutRect&) const;
+    WEBCORE_EXPORT bool NODELETE intersects(const LayoutRect&) const;
     bool intersects(const FloatRect&) const;
     bool intersects(const LayoutRoundedRect&) const;
 
-    const FloatPoint& transformedPoint() const { return m_transformedPoint; }
-    const FloatQuad& transformedRect() const { return m_transformedRect; }
+    const FloatPoint& transformedPoint() const LIFETIME_BOUND { return m_transformedPoint; }
+    const FloatQuad& transformedRect() const LIFETIME_BOUND { return m_transformedRect; }
 
 private:
-    template<typename RectType> bool intersectsRect(const RectType&) const;
+    template<typename RectType> bool NODELETE intersectsRect(const RectType&) const;
 
     void move(const LayoutSize&);
 

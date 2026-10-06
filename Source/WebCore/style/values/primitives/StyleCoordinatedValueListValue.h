@@ -34,7 +34,6 @@ namespace Style {
 // https://drafts.csswg.org/css-values-4/#coordinating-list-property
 
 template<typename T> concept CoordinatedValueListValue = requires(T value) {
-    { T::computedValueUsesUsedValues } -> std::same_as<const bool&>;
     { T::baseProperty.value } -> std::same_as<const CSSPropertyID&>;
     { value.clone(std::declval<const T&>()) } -> std::same_as<T>;
     { value.isInitial() } -> std::same_as<bool>;
@@ -250,21 +249,21 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 
 // Applies the provided functor to each property of the CoordinatedValueList value, invoking the functor with each properties CSSPropertyID as the first template argument, and then and'ing the results.
 template<CoordinatedValueListValue T, typename F>
-constexpr bool allOfCoordinatedValueListProperties(NOESCAPE F&& f)
+constexpr bool allOfCoordinatedValueListProperties(NOESCAPE const F& f)
 {
     return WTF::apply([&]<typename... Ts>(const Ts& ...) { return (f.template operator()<Ts::value>() && ...); }, T::properties);
 }
 
 // Applies the provided functor to each property of the CoordinatedValueList value, invoking the functor with each properties CSSPropertyID as the first template argument, and then or'ing the results.
 template<CoordinatedValueListValue T, typename F>
-constexpr bool anyOfCoordinatedValueListProperties(NOESCAPE F&& f)
+constexpr bool anyOfCoordinatedValueListProperties(NOESCAPE const F& f)
 {
     return WTF::apply([&]<typename... Ts>(const Ts& ...) { return (f.template operator()<Ts::value>() || ...); }, T::properties);
 }
 
 // Applies the provided functor to each property of the CoordinatedValueList value, invoking the functor with each properties CSSPropertyID as the first template argument.
 template<CoordinatedValueListValue T, typename F>
-constexpr void eachCoordinatedValueListProperties(NOESCAPE F&& f)
+constexpr void eachCoordinatedValueListProperties(NOESCAPE const F& f)
 {
     WTF::apply([&]<typename... Ts>(const Ts& ...) { (f.template operator()<Ts::value>(), ...); }, T::properties);
 }
@@ -289,6 +288,15 @@ bool allPropertiesAreUnsetOrFilled(const T& value)
     return allOfCoordinatedValueListProperties<T>([&value]<CSSPropertyID propertyID>() {
         using PropertyAccessor = CoordinatedValueListPropertyConstAccessor<propertyID>;
         return !PropertyAccessor { value }.isSet();
+    });
+}
+
+template<CoordinatedValueListValue T>
+bool allPropertiesAreSet(const T& value)
+{
+    return allOfCoordinatedValueListProperties<T>([&value]<CSSPropertyID propertyID>() {
+        using PropertyAccessor = CoordinatedValueListPropertyConstAccessor<propertyID>;
+        return PropertyAccessor { value }.isSet();
     });
 }
 

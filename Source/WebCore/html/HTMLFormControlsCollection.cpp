@@ -53,24 +53,24 @@ Ref<HTMLFormControlsCollection> HTMLFormControlsCollection::create(ContainerNode
 
 HTMLFormControlsCollection::~HTMLFormControlsCollection() = default;
 
-std::optional<Variant<RefPtr<RadioNodeList>, RefPtr<Element>>> HTMLFormControlsCollection::namedItemOrItems(const AtomString& name) const
+std::optional<Variant<Ref<RadioNodeList>, Ref<Element>>> HTMLFormControlsCollection::namedItemOrItems(const AtomString& name) const
 {
     auto namedItems = this->namedItems(name);
 
     if (namedItems.isEmpty())
         return std::nullopt;
     if (namedItems.size() == 1)
-        return Variant<RefPtr<RadioNodeList>, RefPtr<Element>> { RefPtr<Element> { WTF::move(namedItems[0]) } };
+        return Variant<Ref<RadioNodeList>, Ref<Element>> { WTF::move(namedItems[0]) };
 
-    return Variant<RefPtr<RadioNodeList>, RefPtr<Element>> { RefPtr<RadioNodeList> { protectedOwnerNode()->radioNodeList(name) } };
+    return Variant<Ref<RadioNodeList>, Ref<Element>> { protect(ownerNode())->radioNodeList(name) };
 }
 
-static unsigned findFormListedElement(const Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>>& elements, const Element& element)
+static unsigned NODELETE findFormListedElement(const Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>>& elements, const Element& element)
 {
     for (unsigned i = 0; i < elements.size(); ++i) {
-        RefPtr currentElement = elements[i].get();
+        auto* currentElement = elements[i].get();
         ASSERT(currentElement);
-        RefPtr listedElement = currentElement->asFormListedElement();
+        auto* listedElement = currentElement->asFormListedElement();
         ASSERT(listedElement);
         if (listedElement->isEnumeratable() && currentElement == &element)
             return i;
@@ -91,11 +91,11 @@ HTMLElement* HTMLFormControlsCollection::customElementAfter(Element* current) co
         start = findFormListedElement(elements, *current) + 1;
 
     for (unsigned i = start; i < elements.size(); ++i) {
-        RefPtr element = elements[i].get();
+        auto* element = elements[i].get();
         ASSERT(element);
         ASSERT(element->asFormListedElement());
         if (element->asFormListedElement()->isEnumeratable()) {
-            m_cachedElement = element.get();
+            m_cachedElement = element;
             m_cachedElementOffsetInArray = i;
             ASSERT(element == elements[i].get());
             return elements[i].get();

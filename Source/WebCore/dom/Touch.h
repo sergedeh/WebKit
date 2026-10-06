@@ -68,7 +68,7 @@ public:
     float webkitRotationAngle() const { return m_rotationAngle; }
     double twist() const { return m_twist; }
     float webkitForce() const { return m_force; }
-    const DoublePoint& absoluteLocation() const { return m_absoluteLocation; }
+    const DoublePoint& absoluteLocation() const LIFETIME_BOUND { return m_absoluteLocation; }
     Ref<Touch> cloneWithNewTarget(EventTarget*) const;
 
 private:
@@ -80,7 +80,7 @@ private:
         const DoublePoint& screenPosition, const DoublePoint& pagePosition,
         const DoubleSize& radius, float rotationAngle, double twist, float force, DoublePoint absoluteLocation);
 
-    RefPtr<EventTarget> m_target;
+    const RefPtr<EventTarget> m_target;
     int m_identifier;
     // Position relative to the viewport in CSS px.
     DoublePoint m_clientPosition;

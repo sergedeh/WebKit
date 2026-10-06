@@ -41,7 +41,7 @@ std::optional<PipelineLayoutDescriptor> ConvertToBackingContext::convertToBackin
     if (!base)
         return std::nullopt;
 
-    std::optional<Vector<WebGPUIdentifier>> optionalBindGroupLayouts = std::nullopt;
+    std::optional<Vector<WebGPUIdentifier>> optionalBindGroupLayouts;
     Vector<WebGPUIdentifier> bindGroupLayouts;
     if (pipelineLayoutDescriptor.bindGroupLayouts) {
         bindGroupLayouts.reserveInitialCapacity(pipelineLayoutDescriptor.bindGroupLayouts->size());
@@ -60,15 +60,15 @@ std::optional<WebCore::WebGPU::PipelineLayoutDescriptor> ConvertFromBackingConte
     if (!base)
         return std::nullopt;
 
-    std::optional<Vector<Ref<WebCore::WebGPU::BindGroupLayout>>> optionalBindGroupLayouts = std::nullopt;
+    std::optional<Vector<Ref<WebCore::WebGPU::BindGroupLayout>>> optionalBindGroupLayouts;
     Vector<Ref<WebCore::WebGPU::BindGroupLayout>> bindGroupLayouts;
     if (pipelineLayoutDescriptor.bindGroupLayouts) {
         bindGroupLayouts.reserveInitialCapacity(pipelineLayoutDescriptor.bindGroupLayouts->size());
         for (const auto& backingBindGroupLayout : *pipelineLayoutDescriptor.bindGroupLayouts) {
-            WeakPtr entry = convertBindGroupLayoutFromBacking(backingBindGroupLayout);
+            RefPtr entry = convertBindGroupLayoutFromBacking(backingBindGroupLayout);
             if (!entry)
                 return std::nullopt;
-            bindGroupLayouts.append(*entry);
+            bindGroupLayouts.append(entry.releaseNonNull());
         }
 
         optionalBindGroupLayouts = bindGroupLayouts;

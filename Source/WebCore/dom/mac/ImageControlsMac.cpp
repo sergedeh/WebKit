@@ -103,7 +103,7 @@ bool isInsideImageControls(const Node& node)
     if (!host)
         return false;
 
-    return host->protectedUserAgentShadowRoot()->contains(node);
+    return host->userAgentShadowRoot()->contains(node);
 }
 
 void createImageControls(HTMLElement& element)
@@ -120,12 +120,12 @@ void createImageControls(HTMLElement& element)
     style->setTextContent(String { shadowStyle });
     shadowRoot->appendChild(WTF::move(style));
     
-    Ref button = HTMLButtonElement::create(HTMLNames::buttonTag, element.protectedDocument(), nullptr);
+    Ref button = HTMLButtonElement::create(HTMLNames::buttonTag, protect(element.document()));
     button->setIdAttribute(imageControlsButtonIdentifier());
     controlLayer->appendChild(button);
     controlLayer->setUserAgentPart(UserAgentParts::appleAttachmentControlsContainer());
     
-    if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(element.renderer()))
+    if (auto* renderImage = dynamicDowncast<RenderImage>(element.renderer()))
         renderImage->setHasShadowControls(true);
 }
 
@@ -134,10 +134,10 @@ static Image* imageFromImageElementNode(Node& node)
     CheckedPtr renderer = dynamicDowncast<RenderImage>(node.renderer());
     if (!renderer)
         return nullptr;
-    CachedResourceHandle image = renderer->cachedImage();
+    RefPtr image = renderer->cachedImage();
     if (!image || image->errorOccurred())
         return nullptr;
-    return image->imageForRenderer(renderer.get());
+    return image->image();
 }
 
 bool handleEvent(HTMLElement& element, Event& event)
@@ -170,7 +170,7 @@ bool handleEvent(HTMLElement& element, Event& event)
         if (!view)
             return false;
 
-        auto point = view->contentsToWindow(renderer->absoluteBoundingBoxRect()).minXMaxYCorner();
+        auto point = view->contentsToMainFrameView(renderer->absoluteBoundingBoxRect()).minXMaxYCorner();
 
         if (RefPtr shadowHost = dynamicDowncast<HTMLImageElement>(target->shadowHost())) {
             RefPtr image = imageFromImageElementNode(*shadowHost);
@@ -186,12 +186,12 @@ bool handleEvent(HTMLElement& element, Event& event)
     return false;
 }
 
-static bool isImageMenuEnabled(HTMLElement& element)
+static bool NODELETE isImageMenuEnabled(HTMLElement& element)
 {
-    if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element))
+    if (auto* imageElement = dynamicDowncast<HTMLImageElement>(element))
         return imageElement->isImageMenuEnabled();
 
-    if (RefPtr attachmentElement = dynamicDowncast<HTMLAttachmentElement>(element))
+    if (auto* attachmentElement = dynamicDowncast<HTMLAttachmentElement>(element))
         return attachmentElement->isImageMenuEnabled();
 
     return false;
@@ -206,7 +206,7 @@ void updateImageControls(HTMLElement& element)
     if (!element.document().settings().imageControlsEnabled())
         return;
 
-    element.protectedDocument()->checkedEventLoop()->queueTask(TaskSource::InternalAsyncTask, [weakElement = WeakPtr { element }] {
+    protect(protect(element.document())->eventLoop())->queueTask(TaskSource::InternalAsyncTask, [weakElement = WeakPtr { element }] {
         RefPtr protectedElement = weakElement.get();
         if (!protectedElement)
             return;
@@ -245,9 +245,9 @@ void destroyImageControls(HTMLElement& element)
     if (!renderObject)
         return;
 
-    if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(*renderObject))
+    if (auto* renderImage = dynamicDowncast<RenderImage>(*renderObject))
         renderImage->setHasShadowControls(false);
-    else if (CheckedPtr renderAttachment = dynamicDowncast<RenderAttachment>(*renderObject))
+    else if (auto* renderAttachment = dynamicDowncast<RenderAttachment>(*renderObject))
         renderAttachment->setHasShadowControls(false);
 }
 

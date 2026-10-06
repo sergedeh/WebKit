@@ -72,15 +72,17 @@ public:
     friend void appendNumberFormatNotationOptionsToSkeleton(IntlType*, StringBuilder&);
 
     void initializePluralRules(JSGlobalObject*, JSValue locales, JSValue options);
-    JSValue select(JSGlobalObject*, double value) const;
+    JSValue select(JSGlobalObject*, double targetValue) const;
+    JSValue select(JSGlobalObject*, IntlMathematicalValue&& targetValue) const;
     JSValue selectRange(JSGlobalObject*, double start, double end) const;
+    JSValue selectRange(JSGlobalObject*, IntlMathematicalValue&& start, IntlMathematicalValue&& end) const;
     JSObject* resolvedOptions(JSGlobalObject*) const;
 
 private:
     IntlPluralRules(VM&, Structure*);
     DECLARE_DEFAULT_FINISH_CREATION;
 
-    static Vector<String> localeData(const String&, RelevantExtensionKey);
+    static Vector<String> NODELETE localeData(const String&, RelevantExtensionKey);
 
     enum class Type : bool { Cardinal, Ordinal };
 
@@ -100,6 +102,7 @@ private:
     IntlRoundingType m_roundingType { IntlRoundingType::FractionDigits };
     Type m_type { Type::Cardinal };
     IntlNotation m_notation { IntlNotation::Standard };
+    CompactDisplay m_compactDisplay { CompactDisplay::Short };
 };
 
 } // namespace JSC

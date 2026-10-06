@@ -29,9 +29,9 @@
 #include "PlatformPopupMenuData.h"
 #include "WebPopupItem.h"
 #include "WebPopupMenuProxy.h"
-#include <OleAcc.h>
 #include <WebCore/ScrollableArea.h>
 #include <WebCore/Scrollbar.h>
+#include <oleacc.h>
 #include <wtf/TZoneMalloc.h>
 
 #if USE(SKIA)
@@ -116,7 +116,7 @@ private:
 
 
     int itemHeight() const { return m_itemHeight; }
-    const WebCore::IntRect& windowRect() const { return m_windowRect; }
+    const WebCore::IntRect& windowRect() const LIFETIME_BOUND { return m_windowRect; }
     int wheelDelta() const { return m_wheelDelta; }
     void setWasClicked(bool b = true) { m_wasClicked = b; }
     bool wasClicked() const { return m_wasClicked; }
@@ -141,7 +141,7 @@ private:
     PlatformPopupMenuData m_data;
     int m_newSelectedIndex { 0 };
 
-    RefPtr<WebCore::Scrollbar> m_scrollbar;
+    const RefPtr<WebCore::Scrollbar> m_scrollbar;
 #if USE(CAIRO)
     GDIObject<HDC> m_DC;
     GDIObject<HBITMAP> m_bmp;

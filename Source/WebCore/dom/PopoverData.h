@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,12 +25,15 @@
 
 #pragma once
 
+#include "CloseWatcher.h"
 #include "Element.h"
 #include "HTMLElement.h"
 #include "HTMLFormControlElement.h"
 #include "ToggleEventTask.h"
 
 namespace WebCore {
+
+class EventListener;
 
 enum class PopoverVisibilityState : bool {
     Hidden,
@@ -56,6 +59,15 @@ public:
     HTMLElement* invoker() const { return m_invoker.get(); }
     void setInvoker(const HTMLElement* element) { m_invoker = element; }
 
+    bool showingAsHint() const { return m_showingAsHint; }
+    void setShowingAsHint(bool showingAsHint) { m_showingAsHint = showingAsHint; }
+
+    HTMLElement* hintStackParent() const { return m_hintStackParent.get(); }
+    void setHintStackParent(HTMLElement* element) { m_hintStackParent = element; }
+
+    CloseWatcher* closeWatcher() { return m_closeWatcher.get(); };
+    void setCloseWatcher(RefPtr<CloseWatcher>&& closeWatcher) { m_closeWatcher = WTF::move(closeWatcher); }
+
     class ScopedStartShowingOrHiding {
     public:
     explicit ScopedStartShowingOrHiding(Element& popover)
@@ -76,13 +88,29 @@ public:
         bool m_wasSet;
     };
 
+    class PopoverCloseWatcherEventListener final : public EventListener {
+    public:
+        static Ref<PopoverCloseWatcherEventListener> create(HTMLElement& popover)
+        {
+            return adoptRef(*new PopoverCloseWatcherEventListener(popover));
+        }
+        void handleEvent(ScriptExecutionContext&, Event&) final;
+    private:
+        explicit PopoverCloseWatcherEventListener(HTMLElement&);
+
+        WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData> m_popover;
+    };
+
 private:
-    PopoverState m_popoverState;
-    PopoverVisibilityState m_visibilityState;
+    PopoverState m_popoverState { PopoverState::None };
+    PopoverVisibilityState m_visibilityState { PopoverVisibilityState::Hidden };
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_previouslyFocusedElement;
-    RefPtr<ToggleEventTask> m_toggleEventTask;
+    const RefPtr<ToggleEventTask> m_toggleEventTask;
     WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData> m_invoker;
+    WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData> m_hintStackParent;
     bool m_isHidingOrShowingPopover = false;
+    bool m_showingAsHint = false;
+    RefPtr<CloseWatcher> m_closeWatcher;
 };
 
 }

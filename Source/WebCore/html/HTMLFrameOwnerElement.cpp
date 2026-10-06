@@ -27,7 +27,8 @@
 #include "FrameLoader.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
-#include "NodeInlines.h"
+#include "LocalFrameInlines.h"
+#include "FrameDestructionObserverInlines.h"
 #include "RemoteFrame.h"
 #include "RemoteFrameClient.h"
 #include "RenderWidget.h"
@@ -63,7 +64,7 @@ void HTMLFrameOwnerElement::setContentFrame(Frame& frame)
     ASSERT(isConnected());
     m_contentFrame = frame;
 
-    for (RefPtr<ContainerNode> node = this; node; node = node->parentOrShadowHostNode())
+    for (Node* node = this; node; node = node->parentOrShadowHostNode())
         node->incrementConnectedSubframeCount();
 }
 
@@ -74,15 +75,15 @@ void HTMLFrameOwnerElement::clearContentFrame()
 
     m_contentFrame = nullptr;
 
-    for (RefPtr<ContainerNode> node = this; node; node = node->parentOrShadowHostNode())
+    for (Node* node = this; node; node = node->parentOrShadowHostNode())
         node->decrementConnectedSubframeCount();
 }
 
 void HTMLFrameOwnerElement::disconnectContentFrame()
 {
     if (RefPtr frame = m_contentFrame.get()) {
-        if (RefPtr innerDocument = contentDocument())
-            innerDocument->willBeDisconnectedFromFrame(protectedDocument());
+        if (auto* innerDocument = contentDocument())
+            innerDocument->willBeDisconnectedFromFrame(document());
         frame->frameDetached();
         if (frame == m_contentFrame.get())
             frame->disconnectOwnerElement();
@@ -94,11 +95,6 @@ HTMLFrameOwnerElement::~HTMLFrameOwnerElement()
 {
     if (RefPtr contentFrame = m_contentFrame.get())
         contentFrame->disconnectOwnerElement();
-}
-
-RefPtr<Frame> HTMLFrameOwnerElement::protectedContentFrame() const
-{
-    return m_contentFrame.get();
 }
 
 Document* HTMLFrameOwnerElement::contentDocument() const
@@ -150,10 +146,7 @@ bool HTMLFrameOwnerElement::isProhibitedSelfReference(const URL& completeURL) co
         return false;
     // We allow one level of self-reference because some websites depend on that, but we don't allow more than one.
     bool foundOneSelfReference = false;
-    for (RefPtr<Frame> frame = document().frame(); frame; frame = frame->tree().parent()) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
-        if (!localFrame)
-            continue;
+    for (Ref localFrame : inclusiveAncestorFrames<LocalFrame>(document().frame())) {
         // Use creationURL() because url() can be changed via History.replaceState() so it's not reliable.
         if (equalIgnoringFragmentIdentifier(localFrame->document()->creationURL(), completeURL)) {
             if (foundOneSelfReference)

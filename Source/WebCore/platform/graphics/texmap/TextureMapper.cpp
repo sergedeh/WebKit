@@ -24,7 +24,7 @@
 
 #if USE(TEXTURE_MAPPER)
 
-#include "BitmapTexture.h"
+#include "BitmapTexturePool.h"
 #include "ClipPath.h"
 #include "FilterOperations.h"
 #include "FloatPolygon.h"
@@ -217,25 +217,13 @@ TextureMapper::TextureMapper()
 {
 }
 
-Ref<BitmapTexture> TextureMapper::acquireTextureFromPool(const IntSize& size, OptionSet<BitmapTexture::Flags> flags)
-{
-    return m_texturePool.acquireTexture(size, flags);
-}
-
-#if USE(GBM)
-Ref<BitmapTexture> TextureMapper::createTextureForImage(EGLImage image, OptionSet<BitmapTexture::Flags> flags)
-{
-    return m_texturePool.createTextureForImage(image, flags);
-}
-#endif
-
 #if USE(GRAPHICS_LAYER_WC)
 void TextureMapper::releaseUnusedTexturesNow()
 {
     // GraphicsLayerWC runs TextureMapper in the OpenGL thread of the
     // GPU process that doesn't use RunLoop. RunLoop::Timer doesn't
     // work in the thread.
-    m_texturePool.releaseUnusedTexturesTimerFired();
+    BitmapTexturePool::singleton().releaseUnusedTexturesNow();
 }
 #endif
 
@@ -303,7 +291,7 @@ void TextureMapper::drawNumber(int number, const Color& color, const FloatPoint&
 #if USE(CAIRO)
     int pointSize = 8;
 
-    CString counterString = String::number(number).ascii();
+    auto counterString = String::number(number).ascii();
     // cairo_text_extents() requires a cairo_t, so dimensions need to be guesstimated.
     int width = counterString.length() * pointSize * 1.2;
     int height = pointSize * 1.5;
@@ -328,7 +316,7 @@ void TextureMapper::drawNumber(int number, const Color& color, const FloatPoint&
     IntRect sourceRect(IntPoint::zero(), size);
     IntRect targetRect(roundedIntPoint(targetPoint), size);
 
-    auto texture = m_texturePool.acquireTexture(size, { BitmapTexture::Flags::SupportsAlpha });
+    auto texture = BitmapTexturePool::singleton().acquireTexture(size, { BitmapTexture::Flags::SupportsAlpha });
     const unsigned char* bits = cairo_image_surface_get_data(surface);
     int stride = cairo_image_surface_get_stride(surface);
     texture->updateContents(bits, sourceRect, IntPoint::zero(), stride, PixelFormat::BGRA8);
@@ -409,7 +397,6 @@ static int computeGaussianKernel(float radius, std::array<float, SimplifiedGauss
 
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib/Win port
     float fullKernel[GaussianKernelMaxHalfSize];
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     fullKernel[0] = 1; // gauss(0, radius);
     float sum = fullKernel[0];
@@ -444,6 +431,7 @@ static int computeGaussianKernel(float radius, std::array<float, SimplifiedGauss
         kernel[i] = fullKernel[offset1] + fullKernel[offset2];
         offset[i] = (fullKernel[offset1] * offset1 + fullKernel[offset2] * offset2) / kernel[i];
     }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     return simplifiedKernelHalfSize;
 }
@@ -936,8 +924,8 @@ void TextureMapper::drawTexturedQuadWithProgram(TextureMapperShaderProgram& prog
         glUniform1i(textureAndSampler.second, i);
 
         if (repeatWrap) {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_REPEAT);
         }
     }
 
@@ -956,8 +944,8 @@ void TextureMapper::drawTexturedQuadWithProgram(TextureMapperShaderProgram& prog
     if (repeatWrap) {
         for (auto& textureAndSampler : texturesAndSamplers) {
             glBindTexture(target, textureAndSampler.first);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         }
     }
 }
@@ -1050,7 +1038,7 @@ RefPtr<BitmapTexture> TextureMapper::applyBlurFilter(RefPtr<BitmapTexture>& sour
     if (radiusX < MinBlurRadius && radiusY < MinBlurRadius)
         return sourceTexture;
 
-    RefPtr<BitmapTexture> resultTexture = m_texturePool.acquireTexture(textureSize, { BitmapTexture::Flags::SupportsAlpha });
+    RefPtr<BitmapTexture> resultTexture = BitmapTexturePool::singleton().acquireTexture(textureSize, { BitmapTexture::Flags::SupportsAlpha });
     IntSize currentSize = textureSize;
     IntSize targetSize = currentSize;
     Vector<Direction> blurDirections;
@@ -1126,8 +1114,9 @@ RefPtr<BitmapTexture> TextureMapper::applyBlurFilter(RefPtr<BitmapTexture>& sour
 RefPtr<BitmapTexture> TextureMapper::applyDropShadowFilter(RefPtr<BitmapTexture>& sourceTexture, const DropShadowFilterOperation& dropShadowFilter)
 {
     const auto& textureSize = sourceTexture->size();
-    RefPtr<BitmapTexture> resultTexture = m_texturePool.acquireTexture(textureSize, { BitmapTexture::Flags::SupportsAlpha });
-    RefPtr<BitmapTexture> contentTexture = m_texturePool.acquireTexture(textureSize, { BitmapTexture::Flags::SupportsAlpha });
+    auto& texturePool = BitmapTexturePool::singleton();
+    RefPtr<BitmapTexture> resultTexture = texturePool.acquireTexture(textureSize, { BitmapTexture::Flags::SupportsAlpha });
+    RefPtr<BitmapTexture> contentTexture = texturePool.acquireTexture(textureSize, { BitmapTexture::Flags::SupportsAlpha });
     IntSize currentSize = textureSize;
     IntSize targetSize = currentSize;
     float radius = float(dropShadowFilter.stdDeviation());
@@ -1252,7 +1241,7 @@ RefPtr<BitmapTexture> TextureMapper::applySinglePassFilter(RefPtr<BitmapTexture>
         return sourceTexture;
     }
 
-    RefPtr<BitmapTexture> resultTexture = m_texturePool.acquireTexture(sourceTexture->size(), { BitmapTexture::Flags::SupportsAlpha });
+    RefPtr<BitmapTexture> resultTexture = BitmapTexturePool::singleton().acquireTexture(sourceTexture->size(), { BitmapTexture::Flags::SupportsAlpha });
 
     bindSurface(resultTexture.get());
 
@@ -1390,7 +1379,7 @@ bool TextureMapper::beginRoundedRectClip(const TransformationMatrix& modelViewMa
     // arrays must have a predefined size. The limit is defined inside ClipStack, and that's why we need to call
     // clipStack().isRoundedRectClipAllowed() before trying to add a new clip.
 
-    if (!targetRect.isRounded() || !targetRect.isRenderable() || targetRect.isEmpty() || !modelViewMatrix.isInvertible() || !clipStack().isRoundedRectClipAllowed())
+    if (!targetRect.hasNonZeroRadii() || !targetRect.isRenderable() || targetRect.isEmpty() || !modelViewMatrix.isInvertible() || !clipStack().isRoundedRectClipAllowed())
         return false;
 
     FloatQuad quad = modelViewMatrix.projectQuad(targetRect.rect());
@@ -1582,6 +1571,13 @@ void TextureMapper::drawTextureExternalOES(GLuint texture, OptionSet<TextureMapp
     flags.add(TextureMapperFlags::ShouldUseExternalOESTextureRect);
     Ref<TextureMapperShaderProgram> program = data().getShaderProgram(TextureMapperShaderProgram::Option::TextureExternalOES);
     drawTexturedQuadWithProgram(program.get(), { { texture, program->externalOESTextureLocation() } }, flags, targetRect, modelViewMatrix, opacity);
+}
+
+void TextureMapper::drawTextureExternalOESYUV(GLuint texture, OptionSet<TextureMapperFlags> flags, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity)
+{
+    flags.add(TextureMapperFlags::ShouldUseExternalOESTextureRect);
+    Ref<TextureMapperShaderProgram> program = data().getShaderProgram(TextureMapperShaderProgram::Option::TextureExternalOESYUV);
+    drawTexturedQuadWithProgram(program.get(), { { texture, program->externalOESYUVTextureLocation() } }, flags, targetRect, modelViewMatrix, opacity);
 }
 
 Ref<TextureMapperGPUBuffer> TextureMapper::acquireBufferFromPool(size_t size, TextureMapperGPUBuffer::Type type)

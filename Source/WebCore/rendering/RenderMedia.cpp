@@ -40,7 +40,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMedia);
 
-RenderMedia::RenderMedia(Type type, HTMLMediaElement& element, RenderStyle&& style)
+RenderMedia::RenderMedia(Type type, HTMLMediaElement& element, Style::ComputedStyle&& style)
     : RenderImage(type, element, WTF::move(style), ReplacedFlag::IsMedia)
 {
     setHasShadowControls(true);
@@ -54,20 +54,25 @@ void RenderMedia::paintReplaced(PaintInfo&, const LayoutPoint&)
 
 void RenderMedia::layout()
 {
-    LayoutSize oldSize = size();
+    LayoutSize oldSize = borderBoxSize();
     RenderImage::layout();
-    if (oldSize != size())
-        protectedMediaElement()->layoutSizeChanged();
+    if (oldSize != borderBoxSize())
+        protect(mediaElement())->layoutSizeChanged();
 }
 
-void RenderMedia::styleDidChange(Style::Difference difference, const RenderStyle* oldStyle)
+void RenderMedia::styleDidChange(Style::Difference difference, const Style::ComputedStyle* oldStyle)
 {
     RenderImage::styleDidChange(difference, oldStyle);
+
+    Ref mediaElement = this->mediaElement();
     if (!oldStyle || style().usedVisibility() != oldStyle->usedVisibility())
-        protectedMediaElement()->visibilityDidChange();
+        mediaElement->visibilityDidChange();
 
     if (!oldStyle || style().dynamicRangeLimit() != oldStyle->dynamicRangeLimit())
-        protectedMediaElement()->dynamicRangeLimitDidChange(style().dynamicRangeLimit().toPlatformDynamicRangeLimit());
+        mediaElement->dynamicRangeLimitDidChange(style().dynamicRangeLimit().toPlatformDynamicRangeLimit());
+
+    if (oldStyle && style().transform() != oldStyle->transform())
+        mediaElement->layoutSizeChanged();
 }
 
 } // namespace WebCore

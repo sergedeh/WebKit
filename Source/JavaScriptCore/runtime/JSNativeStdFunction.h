@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/Intrinsic.h>
 #include <JavaScriptCore/JSFunction.h>
 
 namespace JSC {
@@ -56,15 +57,32 @@ public:
 
     JS_EXPORT_PRIVATE static JSNativeStdFunction* create(VM&, JSGlobalObject*, unsigned length, const String& name, NativeStdFunction&&, Intrinsic = NoIntrinsic, NativeFunction nativeConstructor = callHostFunctionAsConstructor);
 
+    static JSNativeStdFunction* create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeStdFunction&& nativeFunction, auto... captures)
+        requires (sizeof...(captures) > 0)
+    {
+        NativeExecutable* executable = getHostFunction(vm, NoIntrinsic, callHostFunctionAsConstructor, length, name);
+        Structure* structure = globalObject->nativeStdFunctionStructure();
+        JSNativeStdFunction* function = new (NotNull, allocateCell<JSNativeStdFunction>(vm)) JSNativeStdFunction(vm, executable, globalObject, structure, WTF::move(nativeFunction), captures...);
+        function->finishCreation(vm);
+        return function;
+    }
+
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     const NativeStdFunction& function() { return m_function; }
 
 private:
-    JSNativeStdFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, NativeStdFunction&&);
-    void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name);
+    JSNativeStdFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, NativeStdFunction&& function, auto... captures)
+        : Base(vm, executable, globalObject, structure)
+        , m_function(WTF::move(function))
+        , m_captures { WriteBarrier<Unknown>(vm, this, captures)... }
+    {
+    }
+
+    JS_EXPORT_PRIVATE static NativeExecutable* getHostFunction(VM&, Intrinsic, NativeFunction, unsigned length, const String& name);
 
     NativeStdFunction m_function;
+    FixedVector<WriteBarrier<Unknown>> m_captures;
 };
 
 } // namespace JSC

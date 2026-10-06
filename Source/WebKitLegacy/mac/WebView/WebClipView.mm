@@ -33,6 +33,7 @@
 #import "WebFrameInternal.h"
 #import "WebFrameView.h"
 #import "WebViewPrivate.h"
+#import <WebCore/DocumentView.h>
 #import <WebCore/LocalFrame.h>
 #import <WebCore/LocalFrameView.h>
 
@@ -91,8 +92,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (![webFrameView isKindOfClass:[WebFrameView class]])
         return [super visibleRect];
 
-    if (auto* coreFrame = core([webFrameView webFrame])) {
-        if (auto* frameView = coreFrame->view()) {
+    if (RefPtr coreFrame = core([webFrameView webFrame])) {
+        if (RefPtr frameView = coreFrame->view()) {
             if (frameView->isEnclosedInCompositingLayer())
                 return [self bounds];
         }
@@ -116,8 +117,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     // this happens, WebCore will not paint. So, we need to mark this region dirty so that it paints properly.
     auto *webFrameView = (WebFrameView *)[[self superview] superview];
     if ([webFrameView isKindOfClass:[WebFrameView class]]) {
-        if (auto* coreFrame = core([webFrameView webFrame])) {
-            if (auto* frameView = coreFrame->view()) {
+        if (RefPtr coreFrame = core([webFrameView webFrame])) {
+            if (RefPtr frameView = coreFrame->view()) {
                 if (!frameView->layoutContext().inPaintableState())
                     [self setNeedsDisplay:YES];
             }

@@ -74,7 +74,7 @@ public:
 
     // StartTag, EndTag, DOCTYPE.
 
-    const DataVector& name() const;
+    const DataVector& name() const LIFETIME_BOUND;
 
     void appendToName(char16_t);
 
@@ -96,7 +96,7 @@ public:
     // StartTag, EndTag.
 
     bool selfClosing() const;
-    const AttributeList& attributes() const;
+    const AttributeList& attributes() const LIFETIME_BOUND;
 
     void beginStartTag(Latin1Character);
 
@@ -118,7 +118,7 @@ public:
     // other types of tokens because we want to save a per-character branch.
     // There is no beginCharacters, and appending a character sets the type.
 
-    const DataVector& characters() const;
+    const DataVector& characters() const LIFETIME_BOUND;
     bool charactersIsAll8BitData() const;
 
     void appendToCharacter(Latin1Character);
@@ -128,7 +128,7 @@ public:
 
     // Comment.
 
-    const DataVector& comment() const;
+    const DataVector& comment() const LIFETIME_BOUND;
     bool commentIsAll8BitData() const;
 
     void beginComment();
@@ -137,6 +137,8 @@ public:
     void appendToComment(char16_t);
 
 private:
+    static constexpr size_t maximumRetainedDataCapacity = 16 * 1024;
+
     DataVector m_data;
     char16_t m_data8BitCheck { 0 };
     Type m_type { Type::Uninitialized };
@@ -155,7 +157,11 @@ const HTMLToken::Attribute* findAttribute(const Vector<HTMLToken::Attribute>&, S
 inline void HTMLToken::clear()
 {
     m_type = Type::Uninitialized;
-    m_data.clear();
+    // Keep the buffer for the next token, unless an unusually large token grew it.
+    if (m_data.capacity() > maximumRetainedDataCapacity)
+        m_data.clear();
+    else
+        m_data.shrink(0);
     m_data8BitCheck = 0;
 }
 

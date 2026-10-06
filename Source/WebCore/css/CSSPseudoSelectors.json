@@ -50,6 +50,11 @@
             "conditional": "ENABLE(FULLSCREEN_API)"
         },
         "-internal-media-document": {},
+        "-internal-select-popover": {},
+        "-internal-select-preferred-size-one": {
+            "comment": "Preferred size because box type (list box, dropdown) depends on appearance."
+        },
+        "-internal-uses-menulist": {},
         "-webkit-any": {
             "argument": "required",
             "comment": "Alias of :is() with different specificity rules.",
@@ -72,12 +77,9 @@
             "status": "non-standard"
         },
         "active": {},
-        "active-view-transition": {
-            "settings-flag": "viewTransitionsEnabled"
-        },
+        "active-view-transition": { },
         "active-view-transition-type": {
-            "argument": "required",
-            "settings-flag": "viewTransitionsEnabled"
+            "argument": "required"
         },
         "any-link": {
             "aliases": [
@@ -116,6 +118,9 @@
         "end": {
             "comment": "For scrollbar styling.",
             "status": "non-standard"
+        },
+        "even-less-good": {
+            "settings-flag": "cssAppearanceBaseEnabled"
         },
         "first-child": {},
         "first-of-type": {},
@@ -195,6 +200,9 @@
         "open": {
             "settings-flag": "openPseudoClassEnabled"
         },
+        "optimum": {
+            "settings-flag": "cssAppearanceBaseEnabled"
+        },
         "optional": {},
         "out-of-range": {},
         "past": {
@@ -234,6 +242,9 @@
         "start": {
             "comment": "For scrollbar styling.",
             "status": "non-standard"
+        },
+        "suboptimum": {
+            "settings-flag": "cssAppearanceBaseEnabled"
         },
         "target": {},
         "user-invalid": {},
@@ -276,6 +287,21 @@
         },
         "-internal-color-swatch-overlay": {
             "status": "non-standard",
+            "user-agent-part": true
+        },
+        "-internal-fallback-popup-menu": {
+            "user-agent-part": true
+        },
+        "-internal-fallback-popup-menu-group-label": {
+            "user-agent-part": true
+        },
+        "-internal-fallback-popup-menu-item": {
+            "user-agent-part": true
+        },
+        "-internal-fallback-popup-menu-item-selected": {
+            "user-agent-part": true
+        },
+        "-internal-fallback-popup-menu-separator": {
             "user-agent-part": true
         },
         "-webkit-color-swatch-wrapper": {
@@ -399,6 +425,9 @@
             "status": "non-standard",
             "user-agent-part": true
         },
+        "-internal-optgroup-label": {
+            "user-agent-part": true
+        },
         "-webkit-progress-bar": {
             "status": "non-standard",
             "user-agent-part": true
@@ -514,6 +543,9 @@
         "before": {
             "supports-single-colon-for-compatibility": true
         },
+        "checkmark": {
+            "settings-flag": "htmlEnhancedSelectEnabled || cssAppearanceBaseEnabled"
+        },
         "cue": {
             "argument": "optional",
             "conditional": "ENABLE(VIDEO)",
@@ -522,8 +554,17 @@
         "details-content": {
             "user-agent-part": true
         },
+        "field-content": {
+            "settings-flag": "htmlEnhancedSelectEnabled || cssAppearanceBaseEnabled",
+            "user-agent-part": true
+        },
         "-internal-cue-background": {
             "conditional": "ENABLE(VIDEO)",
+            "status": "non-standard",
+            "user-agent-part": true
+        },
+        "-internal-image-overlay-text": {
+            "conditional": "ENABLE(IMAGE_ANALYSIS)",
             "status": "non-standard",
             "user-agent-part": true
         },
@@ -549,7 +590,10 @@
         },
         "picker": {
             "argument": "required",
-            "settings-flag": "htmlEnhancedSelectPseudoElementsEnabled"
+            "settings-flag": "htmlEnhancedSelectEnabled && cssPickerPseudoElementEnabled"
+        },
+        "picker-icon": {
+            "settings-flag": "htmlEnhancedSelectEnabled"
         },
         "placeholder": {
             "aliases": [
@@ -558,6 +602,18 @@
             "user-agent-part": true
         },
         "selection": {},
+        "slider-fill": {
+            "settings-flag": "cssAppearanceBaseEnabled",
+            "user-agent-part": true
+        },
+        "slider-thumb": {
+            "settings-flag": "cssAppearanceBaseEnabled",
+            "user-agent-part": true
+        },
+        "slider-track": {
+            "settings-flag": "cssAppearanceBaseEnabled",
+            "user-agent-part": true
+        },
         "slotted": {
             "argument": "required"
         },
@@ -565,32 +621,18 @@
         "target-text": {
             "settings-flag": "targetTextPseudoElementEnabled"
         },
-        "thumb": {
-            "settings-flag": "thumbAndTrackPseudoElementsEnabled",
-            "user-agent-part": true
-        },
-        "track": {
-            "settings-flag": "thumbAndTrackPseudoElementsEnabled",
-            "user-agent-part": true
-        },
-        "view-transition": {
-            "settings-flag": "viewTransitionsEnabled"
-        },
+        "view-transition": { },
         "view-transition-group": {
-            "argument": "required",
-            "settings-flag": "viewTransitionsEnabled"
+            "argument": "required"
         },
         "view-transition-image-pair": {
-            "argument": "required",
-            "settings-flag": "viewTransitionsEnabled"
+            "argument": "required"
         },
         "view-transition-new": {
-            "argument": "required",
-            "settings-flag": "viewTransitionsEnabled"
+            "argument": "required"
         },
         "view-transition-old": {
-            "argument": "required",
-            "settings-flag": "viewTransitionsEnabled"
+            "argument": "required"
         }
     }
 }

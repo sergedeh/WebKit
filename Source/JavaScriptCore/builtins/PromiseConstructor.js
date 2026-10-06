@@ -34,15 +34,12 @@ function try(callback /*, ...args */)
     for (var i = 1; i < @argumentCount(); i++)
         @putByValDirect(args, i - 1, arguments[i]);
 
-    var promiseCapability = @newPromiseCapability(this);
     try {
         var value = callback.@apply(@undefined, args);
-        promiseCapability.resolve.@call(@undefined, value);
     } catch (error) {
-        promiseCapability.reject.@call(@undefined, error);
+        return @promiseReject(this, error);
     }
-
-    return promiseCapability.promise;
+    return @promiseResolve(this, value);
 }
 
 @nakedConstructor
@@ -53,33 +50,7 @@ function Promise(executor)
     if (!@isCallable(executor))
         @throwTypeError("Promise constructor takes a function argument");
 
-    var promise = @createPromise(this, /* isInternalPromise */ false);
-    var capturedPromise = promise;
-
-    try {
-        executor(
-            (resolution) => {
-                return @resolvePromiseWithFirstResolvingFunctionCallCheck(capturedPromise, resolution);
-            },
-            (reason) => {
-                return @rejectPromiseWithFirstResolvingFunctionCallCheck(capturedPromise, reason);
-            });
-    } catch (error) {
-        @rejectPromiseWithFirstResolvingFunctionCallCheck(promise, error);
-    }
-
-    return promise;
-}
-
-@nakedConstructor
-function InternalPromise(executor)
-{
-    "use strict";
-
-    if (!@isCallable(executor))
-        @throwTypeError("InternalPromise constructor takes a function argument");
-
-    var promise = @createPromise(this, /* isInternalPromise */ true);
+    var promise = @createPromise(this);
     var capturedPromise = promise;
 
     try {

@@ -26,7 +26,9 @@
 #pragma once
 
 #include "MessageReceiver.h"
+#include "NativeWebWheelEvent.h"
 #include "SameDocumentNavigationType.h"
+#include "WebEvent.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/BoxExtents.h>
 #include <WebCore/Color.h>
@@ -42,6 +44,7 @@
 
 #if PLATFORM(COCOA)
 #include <wtf/BlockPtr.h>
+#include <wtf/WeakObjCPtr.h>
 #endif
 
 #if PLATFORM(GTK)
@@ -80,7 +83,9 @@ class Navigation;
 }
 
 #if PLATFORM(MAC)
-typedef NSEvent* PlatformScrollEvent;
+// A reference rather than a value: events are refcounted now, and this is only ever passed through,
+// never stored.
+typedef const WebKit::NativeWebWheelEvent& PlatformScrollEvent;
 #elif PLATFORM(GTK)
 typedef struct {
     WebCore::FloatSize delta;
@@ -95,11 +100,19 @@ typedef void* PlatformScrollEvent;
 
 namespace WebKit {
 
+class SwipeProgressTracker;
 class ViewSnapshot;
 class WebBackForwardList;
+#if ENABLE(BACK_FORWARD_LIST_SWIFT)
+class WebBackForwardListWrapper;
+#else
+using WebBackForwardListWrapper = WebBackForwardList;
+#endif
 class WebBackForwardListItem;
 class WebPageProxy;
 class WebProcessProxy;
+
+enum class WebEventPhase : uint8_t;
 
 class ViewGestureController final : public IPC::MessageReceiver, public RefCounted<ViewGestureController> {
     WTF_MAKE_TZONE_ALLOCATED(ViewGestureController);
@@ -109,11 +122,13 @@ public:
     static constexpr double defaultMaxMagnification { 3 };
 
     static Ref<ViewGestureController> create(WebPageProxy&);
+    static ViewGestureController* NODELETE controllerForPage(WebPageProxyIdentifier);
     ~ViewGestureController();
 
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
+    void platformInitialize();
     void platformTeardown();
 
     void disconnectFromProcess();
@@ -142,6 +157,8 @@ public:
     bool shouldIgnorePinnedState() { return m_pendingSwipeTracker.shouldIgnorePinnedState(); }
     void setShouldIgnorePinnedState(bool ignore) { m_pendingSwipeTracker.setShouldIgnorePinnedState(ignore); }
 
+    bool canBeginOrContinueSwipe() const { return hasActiveSwipeGesture() || m_pendingSwipeTracker.isPending(); }
+
     bool isPhysicallySwipingLeft(SwipeDirection) const;
 
     double magnification() const;
@@ -153,16 +170,18 @@ public:
 #endif
 
 #if PLATFORM(MAC)
-    void handleMagnificationGestureEvent(PlatformScrollEvent, WebCore::FloatPoint origin);
+    void handleMagnificationGesture(double scale, WebEventPhase, WebCore::FloatPoint originInViewCoordinates, WebEventInputSource = WebEventInputSource::UserDriven);
     void handleSmartMagnificationGesture(WebCore::FloatPoint gestureLocationInViewCoordinates);
 
-    void gestureEventWasNotHandledByWebCore(PlatformScrollEvent, WebCore::FloatPoint origin);
-
     void setCustomSwipeViews(Vector<RetainPtr<NSView>> views) { m_customSwipeViews = WTF::move(views); }
-    const WebCore::FloatBoxExtent& customSwipeViewsObscuredContentInsets() const { return m_customSwipeViewsObscuredContentInsets; }
+    bool hasCustomSwipeViews() const { return !m_customSwipeViews.isEmpty(); }
+    float customSwipeViewsWidth() const { return m_currentSwipeCustomViewBounds.width(); }
+    const WebCore::FloatBoxExtent& customSwipeViewsObscuredContentInsets() const LIFETIME_BOUND { return m_customSwipeViewsObscuredContentInsets; }
     void setCustomSwipeViewsObscuredContentInsets(WebCore::FloatBoxExtent&& insets) { m_customSwipeViewsObscuredContentInsets = WTF::move(insets); }
     WebCore::FloatRect windowRelativeBoundsForCustomSwipeViews() const;
     void setDidMoveSwipeSnapshotCallback(BlockPtr<void (CGRect)>&& callback) { m_didMoveSwipeSnapshotCallback = WTF::move(callback); }
+
+    SwipeProgressTracker* swipeProgressTracker() const { return m_swipeProgressTracker.get(); }
 #elif PLATFORM(IOS_FAMILY)
     bool isNavigationSwipeGestureRecognizer(UIGestureRecognizer *) const;
     void installSwipeHandler(UIView *gestureRecognizerView, UIView *swipingView);
@@ -176,7 +195,7 @@ public:
     void endMagnification();
 #endif
 
-    void setAlternateBackForwardListSourcePage(WebPageProxy*);
+    void NODELETE setAlternateBackForwardListSourcePage(WebPageProxy*);
 
     bool canSwipeInDirection(SwipeDirection, DeferToConflictingGestures) const;
 
@@ -222,9 +241,9 @@ private:
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
-    static ViewGestureController* controllerForGesture(WebPageProxyIdentifier, GestureID);
+    static ViewGestureController* NODELETE controllerForGesture(WebPageProxyIdentifier, GestureID);
 
-    static GestureID takeNextGestureID();
+    static GestureID NODELETE takeNextGestureID();
     void willBeginGesture(ViewGestureType);
     void didEndGesture();
     void resetState();
@@ -232,7 +251,11 @@ private:
     void didStartProvisionalOrSameDocumentLoadForMainFrame();
 
 #if PLATFORM(COCOA)
-    WebBackForwardList* backForwardListForNavigation() const;
+#if ENABLE(BACK_FORWARD_LIST_SWIFT)
+    std::optional<WebBackForwardList> backForwardListForNavigation() const;
+#else
+    WebBackForwardList* NODELETE backForwardListForNavigation() const;
+#endif
 #endif
 
     class SnapshotRemovalTracker : public CanMakeCheckedPtr<SnapshotRemovalTracker> {
@@ -263,7 +286,7 @@ private:
         enum class ShouldIgnoreEventIfPaused : bool { No, Yes };
         bool eventOccurred(Events, ShouldIgnoreEventIfPaused = ShouldIgnoreEventIfPaused::Yes);
         bool cancelOutstandingEvent(Events);
-        bool hasOutstandingEvent(Event);
+        bool NODELETE hasOutstandingEvent(Event);
 
         void startWatchdog(Seconds);
 
@@ -301,7 +324,9 @@ private:
 
     void endMagnificationGesture();
 
-    WebCore::FloatPoint scaledMagnificationOrigin(WebCore::FloatPoint origin, double scale);
+    WebCore::FloatPoint NODELETE scaledMagnificationOrigin(WebCore::FloatPoint origin, double scale);
+
+    std::optional<bool> platformEventShouldCancelSwipe(PlatformScrollEvent, WebCore::FloatSize);
 
     void startSwipeGesture(PlatformScrollEvent, SwipeDirection);
     void trackSwipeGesture(PlatformScrollEvent, SwipeDirection, RefPtr<WebBackForwardListItem>);
@@ -311,7 +336,7 @@ private:
 
     void willEndSwipeGesture(WebBackForwardListItem& targetItem, bool cancelled);
     void endSwipeGesture(WebBackForwardListItem* targetItem, bool cancelled);
-    bool shouldUseSnapshotForSize(ViewSnapshot&, WebCore::FloatSize swipeLayerSize, WebCore::FloatBoxExtent obscuredContentInsets);
+    bool NODELETE shouldUseSnapshotForSize(ViewSnapshot&, WebCore::FloatSize swipeLayerSize, WebCore::FloatBoxExtent obscuredContentInsets);
 
 #if PLATFORM(MAC)
     static double resistanceForDelta(double deltaScale, double currentScale, double minMagnification, double maxMagnification);
@@ -331,13 +356,14 @@ private:
         bool handleEvent(PlatformScrollEvent);
         void eventWasNotHandledByWebCore(PlatformScrollEvent);
 
-        void reset(ASCIILiteral resetReasonForLogging);
+        void NODELETE reset(ASCIILiteral resetReasonForLogging);
 
         bool shouldIgnorePinnedState() { return m_shouldIgnorePinnedState; }
         void setShouldIgnorePinnedState(bool ignore) { m_shouldIgnorePinnedState = ignore; }
 
+        bool isPending() const { return m_state != State::None; }
+
     private:
-        Ref<ViewGestureController> protectedViewGestureController() const;
 
         bool tryToStartSwipe(PlatformScrollEvent);
         bool scrollEventCanBecomeSwipe(PlatformScrollEvent, SwipeDirection&);
@@ -404,6 +430,7 @@ private:
 
     double m_initialMagnification { 1 };
     WebCore::FloatPoint m_initialMagnificationOrigin;
+    std::optional<WebEventInputSource> m_magnificationGestureInputSource;
 #endif
 
 #if PLATFORM(MAC)
@@ -431,12 +458,15 @@ private:
     WebCore::FloatRect m_currentSwipeCustomViewBounds;
 
     BlockPtr<void (CGRect)> m_didMoveSwipeSnapshotCallback;
+
+    friend class SwipeProgressTracker;
+    std::unique_ptr<SwipeProgressTracker> m_swipeProgressTracker;
 #elif PLATFORM(IOS_FAMILY)
-    UIView* m_liveSwipeView { nullptr };
+    WeakObjCPtr<UIView> m_liveSwipeView;
     RetainPtr<UIView> m_liveSwipeViewClippingView;
     RetainPtr<UIView> m_snapshotView;
     RetainPtr<UIView> m_transitionContainerView;
-    RetainPtr<WKSwipeTransitionController> m_swipeInteractiveTransitionDelegate;
+    const RetainPtr<WKSwipeTransitionController> m_swipeInteractiveTransitionDelegate;
     RetainPtr<_UIViewControllerOneToOneTransitionContext> m_swipeTransitionContext;
     uint64_t m_snapshotRemovalTargetRenderTreeSize { 0 };
     bool m_didCallWillEndSwipeGesture { false };

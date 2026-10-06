@@ -30,6 +30,7 @@
 #include "ColorSerialization.h"
 #include "ContentfulPaintChecker.h"
 #include "Document.h"
+#include "DocumentView.h"
 #include "Element.h"
 #include "FixedContainerEdges.h"
 #include "FrameSnapshotting.h"
@@ -51,13 +52,12 @@
 #include "RegistrableDomain.h"
 #include "RenderImage.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "Settings.h"
-#include "StylableInlines.h"
+#include "StyleableInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "WebAnimation.h"
 #include <ranges>
 #include <wtf/HashCountedSet.h>
-#include <wtf/ListHashSet.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
@@ -76,12 +76,12 @@ static bool isValidSampleLocation(Document& document, const IntPoint& location)
     for (auto& hitTestNode : hitTestResult.listBasedTestResult()) {
         Ref node = hitTestNode.get();
 
-        auto* renderer = node->renderer();
+        CheckedPtr renderer = node->renderer();
         if (!renderer)
             return false;
 
         // Skip images (both `<img>` and CSS `background-image`) as they're likely not a solid color.
-        if (is<RenderImage>(renderer) || renderer->style().hasBackgroundImage())
+        if (is<RenderImage>(renderer) || Style::hasImageInAnyLayer(renderer->style().backgroundLayers()))
             return false;
 
         RefPtr element = dynamicDowncast<Element>(node.get());
@@ -121,10 +121,17 @@ static std::optional<Lab<float>> sampleColor(Document& document, IntPoint&& loca
         return std::nullopt;
 
     // FIXME: <https://webkit.org/b/225942> (Sampled Page Top Color: support sampling non-RGB values like P3)
-    auto colorSpace = DestinationColorSpace::SRGB();
+
+    static constexpr OptionSet snapshotFlags {
+        SnapshotFlags::ExcludeSelectionHighlighting,
+        SnapshotFlags::PaintEverythingExcludingSelection,
+        SnapshotFlags::FastAndLowQualityFilters
+    };
+
+    auto colorSpace = ColorSpace::SRGB();
 
     ASSERT(document.view());
-    auto snapshot = snapshotFrameRect(document.view()->protectedFrame(), IntRect(location, IntSize(1, 1)), { { SnapshotFlags::ExcludeSelectionHighlighting, SnapshotFlags::PaintEverythingExcludingSelection }, PixelFormat::BGRA8, colorSpace });
+    auto snapshot = snapshotFrameRect(protect(document.view()->frame()), IntRect(location, IntSize(1, 1)), { snapshotFlags, PixelFormat::BGRA8, colorSpace });
     if (!snapshot)
         return std::nullopt;
 
@@ -283,8 +290,8 @@ std::optional<Color> PageColorSampler::sampleTop(Page& page)
 bool PageColorSampler::colorsAreSimilar(const Color& a, const Color& b)
 {
     static constexpr auto maxDistanceSquaredForSimilarColors = 36;
-    auto [redA, greenA, blueA, alphaA] = a.toResolvedColorComponentsInColorSpace(DestinationColorSpace::SRGB());
-    auto [redB, greenB, blueB, alphaB] = b.toResolvedColorComponentsInColorSpace(DestinationColorSpace::SRGB());
+    auto [redA, greenA, blueA, alphaA] = a.toResolvedColorComponentsInColorSpace(ColorSpace::SRGB());
+    auto [redB, greenB, blueB, alphaB] = b.toResolvedColorComponentsInColorSpace(ColorSpace::SRGB());
     auto distance = pow(255 * (redA - redB), 2) + pow(255 * (greenA - greenB), 2) + pow(255 * (blueA - blueB), 2);
     return distance <= maxDistanceSquaredForSimilarColors;
 }
@@ -311,7 +318,7 @@ Variant<PredominantColorType, Color> PageColorSampler::predominantColor(Page& pa
         SnapshotFlags::FixedAndStickyLayersOnly,
     };
 
-    auto colorSpace = DestinationColorSpace::SRGB();
+    auto colorSpace = ColorSpace::SRGB();
     auto snapshot = snapshotFrameRect(*frame, snappedIntRect(absoluteRect), { snapshotFlags, PixelFormat::BGRA8, colorSpace });
     if (!snapshot)
         return PredominantColorType::None;

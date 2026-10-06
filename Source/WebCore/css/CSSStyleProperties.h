@@ -27,6 +27,7 @@
 #include <WebCore/CSSProperty.h>
 #include <WebCore/CSSPropertyNames.h>
 #include <WebCore/CSSStyleDeclaration.h>
+#include <WebCore/MutableStyleProperties.h>
 #include <WebCore/StyleRuleType.h>
 #include <WebCore/StyledElement.h>
 #include <wtf/HashMap.h>
@@ -85,7 +86,7 @@ public:
     {
     }
 
-    void ref() const override;
+    void NODELETE ref() const override;
     void deref() const override;
 
     StyleSheetContents* contextStyleSheet() const;
@@ -144,9 +145,9 @@ public:
 private:
     StyleRuleCSSStyleProperties(MutableStyleProperties&, CSSRule&);
 
-    CSSStyleSheet* parentStyleSheet() const final;
+    CSSStyleSheet* NODELETE parentStyleSheet() const final;
 
-    CSSRule* parentRule() const final;
+    CSSRule* NODELETE parentRule() const final;
 
     [[nodiscard]] bool willMutate() final;
     void didMutate(MutationType) final;

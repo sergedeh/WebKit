@@ -40,16 +40,16 @@ public:
     { }
 
     void matchAllPageRules(int pageIndex);
-    const MatchResult& matchResult() const { return m_result; }
+    const MatchResult& matchResult() const LIFETIME_BOUND { return m_result; }
 
 private:
-    bool isLeftPage(int pageIndex) const;
+    bool NODELETE isLeftPage(int pageIndex) const;
     bool isRightPage(int pageIndex) const { return !isLeftPage(pageIndex); }
-    bool isFirstPage(int pageIndex) const;
-    String pageName(int pageIndex) const;
+    bool NODELETE isFirstPage(int pageIndex) const;
+    WTF::String NODELETE pageName(int pageIndex) const;
 
-    void matchPageRules(RuleSet* rules, bool isLeftPage, bool isFirstPage, const String& pageName);
-    void matchPageRulesForList(Vector<StyleRulePage*>& matchedRules, const Vector<StyleRulePage*>& rules, bool isLeftPage, bool isFirstPage, const String& pageName);
+    void matchPageRules(RuleSet* rules, bool isLeftPage, bool isFirstPage, const WTF::String& pageName);
+    void matchPageRulesForList(Vector<StyleRulePage*>& matchedRules, const Vector<StyleRulePage*>& rules, bool isLeftPage, bool isFirstPage, const WTF::String& pageName);
 
     ScopeRuleSets& m_ruleSets;
     WritingMode m_rootWritingMode;

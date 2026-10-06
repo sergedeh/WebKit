@@ -49,12 +49,11 @@ public:
 
     WEBCORE_EXPORT explicit Credential(NSURLCredential *);
 
-    WEBCORE_EXPORT bool isEmpty() const;
+    WEBCORE_EXPORT bool NODELETE isEmpty() const;
 
     bool encodingRequiresPlatformData() const;
 
     WEBCORE_EXPORT NSURLCredential *nsCredential() const;
-    WEBCORE_EXPORT RetainPtr<NSURLCredential> protectedNSCredential() const;
 
     static bool platformCompare(const Credential&, const Credential&);
 

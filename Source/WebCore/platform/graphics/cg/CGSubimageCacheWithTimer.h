@@ -33,6 +33,7 @@
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashSet.h>
 #include <wtf/HashTraits.h>
+#include <wtf/Hasher.h>
 #include <wtf/Lock.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/RunLoop.h>
@@ -69,16 +70,15 @@ public:
     };
 
     struct CacheHash {
-        static unsigned hash(CGImageRef image, const FloatRect& rect)
+        static unsigned NODELETE hash(CGImageRef image, const FloatRect& rect)
         {
-            return pairIntHash(PtrHash<CGImageRef>::hash(image),
-                (static_cast<unsigned>(rect.x()) << 16) | static_cast<unsigned>(rect.y()));
+            return computeHash(image, rect.x(), rect.y(), rect.width(), rect.height());
         }
         static unsigned hash(const CacheEntry& key)
         {
             return hash(key.image.get(), key.rect);
         }
-        static bool equal(const CacheEntry& a, const CacheEntry& b)
+        static bool NODELETE equal(const CacheEntry& a, const CacheEntry& b)
         {
             return a.image == b.image && a.rect == b.rect;
         }
@@ -109,9 +109,8 @@ private:
     CacheHashSet m_cache WTF_GUARDED_BY_LOCK(m_lock);
     RunLoop::Timer m_timer WTF_GUARDED_BY_LOCK(m_lock);
 
-    static CGSubimageCacheWithTimer& subimageCache();
+    static CGSubimageCacheWithTimer& subimageCacheSingleton();
     static bool subimageCacheExists();
-    static CGSubimageCacheWithTimer* s_cache;
 };
 
 #endif // CACHE_SUBIMAGES

@@ -74,7 +74,7 @@ Ref<WebDataListSuggestionsDropdownMac> WebDataListSuggestionsDropdownMac::create
     return adoptRef(*new WebDataListSuggestionsDropdownMac(page, view));
 }
 
-WebDataListSuggestionsDropdownMac::~WebDataListSuggestionsDropdownMac() { }
+WebDataListSuggestionsDropdownMac::~WebDataListSuggestionsDropdownMac() = default;
 
 WebDataListSuggestionsDropdownMac::WebDataListSuggestionsDropdownMac(WebPageProxy& page, NSView *view)
     : WebDataListSuggestionsDropdown(page)
@@ -82,7 +82,7 @@ WebDataListSuggestionsDropdownMac::WebDataListSuggestionsDropdownMac(WebPageProx
 {
 }
 
-void WebDataListSuggestionsDropdownMac::show(WebCore::DataListSuggestionInformation&& information)
+void WebDataListSuggestionsDropdownMac::platformShow(WebCore::DataListSuggestionInformation&& information)
 {
     if (m_dropdownUI) {
         [m_dropdownUI updateWithInformation:WTF::move(information)];
@@ -99,7 +99,7 @@ void WebDataListSuggestionsDropdownMac::didSelectOption(const String& selectedOp
     if (!page)
         return;
 
-    page->didSelectOption(selectedOption);
+    page->didSelectOption(selectedOption, m_targetFrameID);
     close();
 }
 
@@ -111,7 +111,7 @@ void WebDataListSuggestionsDropdownMac::selectOption()
 
     String selectedOption = [m_dropdownUI currentSelectedString];
     if (!selectedOption.isNull())
-        page->didSelectOption(selectedOption);
+        page->didSelectOption(selectedOption, m_targetFrameID);
 
     close();
 }
@@ -145,8 +145,11 @@ void WebDataListSuggestionsDropdownMac::close()
 
     self.hasShadow = YES;
 #if HAVE(LIQUID_GLASS)
-    if (WebKit::isLiquidGlassEnabled())
-        _backdropView = adoptNS([[NSGlassEffectView alloc] initWithFrame:contentRect]);
+    if (WebKit::isLiquidGlassEnabled()) {
+        RetainPtr glassView = adoptNS([[NSGlassEffectView alloc] initWithFrame:contentRect]);
+        [glassView set_adaptiveAppearance:_NSGlassEffectViewAdaptiveAppearanceOff];
+        _backdropView = WTF::move(glassView);
+    }
 #endif
 
     if (!_backdropView) {
@@ -470,8 +473,8 @@ static BOOL shouldShowDividersBetweenCells(const Vector<WebCore::DataListSuggest
 
     CGFloat width = std::min<CGFloat>(std::max(rect.width(), rect.height()), screenRect.size.width);
     CGFloat height = std::min<CGFloat>(totalIntercellSpacingAndPadding + std::min(totalCellHeight, maximumTotalHeightForDropdownCells), screenRect.size.height);
-    CGFloat originX = std::max<CGFloat>(NSMinX(windowRect), 0);
-    CGFloat originY = std::max<CGFloat>(NSMinY(windowRect) - height - dropdownTopMargin, 0);
+    CGFloat originX = std::clamp<CGFloat>(NSMinX(windowRect), NSMinX(screenRect), NSMaxX(screenRect) - width);
+    CGFloat originY = std::clamp<CGFloat>(NSMinY(windowRect) - height - dropdownTopMargin, NSMinY(screenRect), NSMaxY(screenRect) - height);
 
     return NSMakeRect(originX, originY, width, height);
 }

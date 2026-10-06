@@ -29,6 +29,9 @@
 
 #include "config.h"
 #include "CodeBlock.h"
+#include "ModuleProgramExecutable.h"
+#include "Printer.h"
+#include "ProgramExecutable.h"
 
 #include "ArithProfile.h"
 #include "BaselineJITCode.h"
@@ -44,7 +47,6 @@
 #include "DFGCommon.h"
 #include "DFGJITCode.h"
 #include "EvalCodeBlock.h"
-#include "FullCodeOrigin.h"
 #include "FunctionCodeBlock.h"
 #include "FunctionExecutableDump.h"
 #include "GetPutInfo.h"
@@ -73,11 +75,11 @@
 #include "PCToCodeOriginMap.h"
 #include "ProfilerDatabase.h"
 #include "ProgramCodeBlock.h"
+#include "PropertyInlineCache.h"
 #include "ReduceWhitespace.h"
 #include "SlotVisitorInlines.h"
 #include "SourceProvider.h"
-#include "StackVisitor.h"
-#include "StructureStubInfo.h"
+#include "SymbolTableInlines.h"
 #include "TypeLocationCache.h"
 #include "TypeProfiler.h"
 #include "VMInlines.h"
@@ -105,20 +107,20 @@ const ClassInfo CodeBlock::s_info = {
     CREATE_METHOD_TABLE(CodeBlock)
 };
 
-CString CodeBlock::inferredName() const
+UTF8CString CodeBlock::inferredName() const
 {
     switch (codeType()) {
     case GlobalCode:
-        return "<global>"_span;
+        return "<global>"_s;
     case EvalCode:
-        return "<eval>"_span;
+        return "<eval>"_s;
     case FunctionCode:
-        return jsCast<FunctionExecutable*>(ownerExecutable())->ecmaName().utf8();
+        return uncheckedDowncast<FunctionExecutable>(ownerExecutable())->ecmaName().utf8();
     case ModuleCode:
-        return "<module>"_span;
+        return "<module>"_s;
     default:
         CRASH();
-        return ""_span;
+        return ""_s;
     }
 }
 
@@ -160,18 +162,18 @@ CodeBlockHash CodeBlock::hash() const
     return m_hash;
 }
 
-CString CodeBlock::sourceCodeForTools() const
+UTF8CString CodeBlock::sourceCodeForTools() const
 {
     if (codeType() != FunctionCode)
         return ownerExecutable()->source().toUTF8();
 
-    FunctionExecutable* executable = jsCast<FunctionExecutable*>(ownerExecutable());
+    FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(ownerExecutable());
     return executable->source().provider()->getRange(
         executable->functionStart(),
         executable->parametersStartOffset() + executable->source().length()).utf8();
 }
 
-CString CodeBlock::sourceCodeOnOneLine() const
+UTF8CString CodeBlock::sourceCodeOnOneLine() const
 {
     return reduceWhitespace(sourceCodeForTools());
 }
@@ -187,8 +189,6 @@ void CodeBlock::dumpAssumingJITType(PrintStream& out, JITType jitType) const
     if (codeType() == FunctionCode)
         out.print(specializationKind());
     out.print(", ", instructionsSize());
-    if (this->jitType() == JITType::BaselineJIT && m_shouldAlwaysBeInlined)
-        out.print(" (ShouldAlwaysBeInlined)");
     if (ownerExecutable()->neverInline())
         out.print(" (NeverInline)");
     if (ownerExecutable()->neverOptimize())
@@ -274,7 +274,7 @@ public:
     
     void dump(PrintStream& out) const final
     {
-        out.print("Linking put_to_scope in ", FunctionExecutableDump(jsCast<FunctionExecutable*>(m_codeBlock->ownerExecutable())), " for ", m_ident);
+        out.print("Linking put_to_scope in ", FunctionExecutableDump(uncheckedDowncast<FunctionExecutable>(m_codeBlock->ownerExecutable())), " for ", m_ident);
     }
     
 private:
@@ -287,7 +287,6 @@ private:
 CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock& other)
     : JSCell(vm, structure)
     , m_globalObject(other.m_globalObject)
-    , m_shouldAlwaysBeInlined(true)
 #if ENABLE(JIT)
     , m_capabilityLevelState(DFG::CapabilityLevelNotSet)
 #endif
@@ -297,8 +296,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     , m_isJettisoned(false)
     , m_numCalleeLocals(other.m_numCalleeLocals)
     , m_numVars(other.m_numVars)
-    , m_numberOfArgumentsToSkip(other.m_numberOfArgumentsToSkip)
-    , m_couldBeTainted(other.m_couldBeTainted)
+    , m_numberOfArgumentsToSkipAndCouldBeTainted(other.m_numberOfArgumentsToSkipAndCouldBeTainted)
     , m_hasDebuggerStatement(false)
     , m_steppingMode(SteppingModeDisabled)
     , m_numBreakpoints(0)
@@ -343,8 +341,7 @@ void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
 
 CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
     : JSCell(vm, structure)
-    , m_globalObject(scope->globalObject(), WriteBarrierEarlyInit)
-    , m_shouldAlwaysBeInlined(true)
+    , m_globalObject(scope->realm(), WriteBarrierEarlyInit)
 #if ENABLE(JIT)
     , m_capabilityLevelState(DFG::CapabilityLevelNotSet)
 #endif
@@ -376,9 +373,24 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     setNumParameters(unlinkedCodeBlock->numParameters(), allocateArgumentValueProfiles);
 
     m_couldBeTainted = source().provider()->couldBeTainted();
+    ASSERT(couldBeTainted() == !!(m_numberOfArgumentsToSkipAndCouldBeTainted & 0x80000000));
     vm.heap.codeBlockSet().add(this);
     checker().set(CrashChecker::This, checker().hash(this));
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
+}
+
+static FunctionExecutable* instantiatedModuleFunctionExecutable(JSModuleEnvironment* moduleEnvironment, ScriptExecutable* topLevelExecutable, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    SymbolTableEntry::Fast entry = moduleEnvironment->symbolTable()->get(unlinkedExecutable->name().impl());
+    if (entry.isNull())
+        return nullptr;
+    auto* function = dynamicDowncast<JSFunction>(moduleEnvironment->variableAt(entry.scopeOffset()).get());
+    if (!function)
+        return nullptr;
+    auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
+    if (!executable || executable->unlinkedExecutable() != unlinkedExecutable || executable->topLevelExecutable() != topLevelExecutable)
+        return nullptr;
+    return executable;
 }
 
 // The main purpose of this function is to generate linked bytecode from unlinked bytecode. The process
@@ -410,8 +422,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     // We already have the cloned symbol table for the module environment since we need to instantiate
     // the module environments before linking the code block. We replace the stored symbol table with the already cloned one.
-    if (UnlinkedModuleProgramCodeBlock* unlinkedModuleProgramCodeBlock = jsDynamicCast<UnlinkedModuleProgramCodeBlock*>(unlinkedCodeBlock)) {
-        SymbolTable* clonedSymbolTable = jsCast<ModuleProgramExecutable*>(ownerExecutable)->moduleEnvironmentSymbolTable();
+    JSModuleEnvironment* moduleEnvironment = nullptr;
+    if (UnlinkedModuleProgramCodeBlock* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(unlinkedCodeBlock)) {
+        moduleEnvironment = uncheckedDowncast<JSModuleEnvironment>(scope);
+        SymbolTable* clonedSymbolTable = uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable)->moduleEnvironmentSymbolTable();
         if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes()) {
             ConcurrentJSLocker locker(clonedSymbolTable->m_lock);
             clonedSymbolTable->prepareForTypeProfiling(locker);
@@ -425,7 +439,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
-        m_functionDecls[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
+        FunctionExecutable* executable = moduleEnvironment ? instantiatedModuleFunctionExecutable(moduleEnvironment, topLevelExecutable, unlinkedExecutable) : nullptr;
+        if (!executable)
+            executable = unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
+        m_functionDecls[i].set(vm, this, executable);
     }
 
     m_functionExprs = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionExprs());
@@ -500,13 +517,13 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         LINK(OpGetByVal)
         LINK(OpGetPrivateName)
 
-        LINK(OpTryGetById)
         LINK(OpGetByIdDirect)
         LINK(OpGetByValWithThis)
         LINK(OpToThis)
 
         LINK(OpGetById)
         LINK(OpGetLength)
+        LINK(OpInstanceof)
 
         LINK(OpEnumeratorNext)
         LINK(OpEnumeratorInByVal)
@@ -534,6 +551,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         LINK(OpCreateGenerator)
 
         LINK(OpJneqPtr)
+        LINK(OpIteratorCloseCheck)
 
         LINK(OpCatch)
         LINK(OpProfileControlFlow)
@@ -545,9 +563,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         LINK(OpSuperConstruct, callLinkInfo)
         LINK(OpIteratorOpen, callLinkInfo)
         LINK(OpIteratorNext, callLinkInfo)
+        LINK(OpAsyncIteratorOpen, callLinkInfo)
+        LINK(OpAsyncIteratorNext, callLinkInfo)
         LINK(OpCallVarargs, callLinkInfo)
         LINK(OpTailCallVarargs, callLinkInfo)
-        LINK(OpTailCallForwardArguments, callLinkInfo)
         LINK(OpConstructVarargs, callLinkInfo)
         LINK(OpSuperConstructVarargs, callLinkInfo)
         LINK(OpCallIgnoreResult, callLinkInfo)
@@ -570,7 +589,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             if (op.lexicalEnvironment) {
                 if (op.type == ModuleVar) {
                     // Keep the linked module environment strongly referenced.
-                    if (stronglyReferencedModuleEnvironments.add(jsCast<JSModuleEnvironment*>(op.lexicalEnvironment)).isNewEntry)
+                    if (stronglyReferencedModuleEnvironments.add(uncheckedDowncast<JSModuleEnvironment>(op.lexicalEnvironment)).isNewEntry)
                         addConstant(ConcurrentJSLocker(m_lock), op.lexicalEnvironment);
                     metadata.m_lexicalEnvironment.set(vm, this, op.lexicalEnvironment);
                 } else
@@ -615,18 +634,31 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             if (bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar) {
                 // Only do watching if the property we're putting to is not anonymous.
                 if (bytecode.m_var != UINT_MAX) {
-                    SymbolTable* symbolTable = jsCast<SymbolTable*>(getConstant(bytecode.m_symbolTableOrScopeDepth.symbolTable()));
+                    SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(getConstant(bytecode.m_symbolTableOrScopeDepth.symbolTable()));
                     const Identifier& ident = identifier(bytecode.m_var);
-                    ConcurrentJSLocker locker(symbolTable->m_lock);
-                    auto iter = symbolTable->find(locker, ident.impl());
-                    ASSERT(iter != symbolTable->end(locker));
-                    if (bytecode.m_getPutInfo.initializationMode() == InitializationMode::ScopedArgumentInitialization) {
-                        ASSERT(bytecode.m_value.isArgument());
-                        unsigned argumentIndex = bytecode.m_value.toArgument() - 1;
-                        symbolTable->prepareToWatchScopedArgument(iter->value, argumentIndex);
-                    } else
-                        iter->value.prepareToWatch();
-                    metadata.m_watchpointSet = iter->value.watchpointSet();
+                    {
+                        ConcurrentJSLocker locker(symbolTable->m_lock);
+                        auto iter = symbolTable->find(locker, ident.impl());
+                        ASSERT(iter != symbolTable->end(locker));
+                        if (bytecode.m_getPutInfo.initializationMode() == InitializationMode::ScopedArgumentInitialization) {
+                            ASSERT(bytecode.m_value.isArgument());
+                            unsigned argumentIndex = bytecode.m_value.toArgument() - 1;
+                            symbolTable->prepareToWatchScopedArgument(iter->value, argumentIndex);
+                        } else
+                            iter->value.prepareToWatch();
+                        metadata.m_watchpointSet = iter->value.watchpointSet();
+                    }
+                    // Generator and async function bodies can resume on a new CodeBlock after the
+                    // original is cleared (e.g. by deleteAllCode). The new CodeBlock's constant pool
+                    // holds a fresh SymbolTable clone, but the suspended activation still references
+                    // the original. Firing the metadata WatchpointSet via touch() at runtime would
+                    // notify watchers of the wrong SymbolTable. Pre-invalidate here so DFG treats
+                    // these captured variables as non-constant, matching ClosureVar semantics.
+                    if (metadata.m_watchpointSet
+                        && ownerExecutable->isFunctionExecutable()
+                        && isGeneratorOrAsyncFunctionBodyParseMode(uncheckedDowncast<FunctionExecutable>(ownerExecutable)->parseMode())) {
+                        metadata.m_watchpointSet->invalidate(vm, PutToScopeFireDetail(this, ident));
+                    }
                 } else
                     metadata.m_watchpointSet = nullptr;
                 break;
@@ -686,7 +718,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 break;
             }
             case ProfileTypeBytecodeLocallyResolved: {
-                SymbolTable* symbolTable = jsCast<SymbolTable*>(getConstant(bytecode.m_symbolTableOrScopeDepth.symbolTable()));
+                SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(getConstant(bytecode.m_symbolTableOrScopeDepth.symbolTable()));
                 const Identifier& ident = identifier(bytecode.m_identifier);
                 ConcurrentJSLocker locker(symbolTable->m_lock);
                 // If our parent scope was created while profiling was disabled, it will not have prepared for profiling yet.
@@ -702,7 +734,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             }
             case ProfileTypeBytecodeFunctionReturnStatement: {
                 RELEASE_ASSERT(ownerExecutable->isFunctionExecutable());
-                globalTypeSet = jsCast<FunctionExecutable*>(ownerExecutable)->returnStatementTypeSet();
+                globalTypeSet = uncheckedDowncast<FunctionExecutable>(ownerExecutable)->returnStatementTypeSet();
                 globalVariableID = TypeProfilerReturnStatement;
                 if (!shouldAnalyze) {
                     // Because a return statement can be added implicitly to return undefined at the end of a function,
@@ -779,7 +811,7 @@ void CodeBlock::setBaselineJITData(std::unique_ptr<BaselineJITData>&& jitData)
     m_jitData = jitData.release();
     checker().set(CrashChecker::BaselineJITData, checker().hash(this, m_jitData));
     auto* baselineJITData = std::bit_cast<BaselineJITData*>(m_jitData);
-    checker().set(CrashChecker::StubInfoCount, checker().hash(this, baselineJITData->stubInfos().size()));
+    checker().set(CrashChecker::PropertyInlineCacheCount, checker().hash(this, baselineJITData->propertyInlineCaches().size()));
 }
 
 void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
@@ -797,12 +829,12 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 
     {
         ASSERT(!m_jitData);
-        auto baselineJITData = BaselineJITData::create(jitCode->m_unlinkedStubInfos.size(), jitCode->m_constantPool.size(), this);
+        auto baselineJITData = BaselineJITData::create(jitCode->m_unlinkedPropertyInlineCaches.size(), jitCode->m_constantPool.size(), this);
 
-        for (unsigned index = 0; index < jitCode->m_unlinkedStubInfos.size(); ++index) {
-            BaselineUnlinkedStructureStubInfo& unlinkedStubInfo = jitCode->m_unlinkedStubInfos[index];
-            auto& stubInfo = baselineJITData->stubInfo(index);
-            stubInfo.initializeFromUnlinkedStructureStubInfo(vm(), this, unlinkedStubInfo);
+        for (unsigned index = 0; index < jitCode->m_unlinkedPropertyInlineCaches.size(); ++index) {
+            BaselineUnlinkedPropertyInlineCache& unlinkedPropertyCache = jitCode->m_unlinkedPropertyInlineCaches[index];
+            auto& propertyCache = baselineJITData->propertyCache(index);
+            propertyCache.initializeFromUnlinkedPropertyInlineCache(vm(), this, unlinkedPropertyCache);
         }
 
         for (size_t i = 0; i < jitCode->m_constantPool.size(); ++i) {
@@ -826,19 +858,6 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         // rely on the instruction count (and are in theory permitted to also inspect the instruction stream to more accurate assess the cost of tier-up).
         // And the data is stored in JITData.
         optimizeAfterWarmUp();
-    }
-
-    switch (codeType()) {
-    case GlobalCode:
-    case ModuleCode:
-    case EvalCode:
-        m_shouldAlwaysBeInlined = false;
-        break;
-    case FunctionCode:
-        // We could have already set it to false because we detected an uninlineable call.
-        // Don't override that observation.
-        m_shouldAlwaysBeInlined &= canInline(capabilityLevel()) && DFG::mightInlineFunction(JITType::FTLJIT, this);
-        break;
     }
 
     if (jitCode->m_isShareable && !unlinkedCodeBlock()->m_unlinkedBaselineCode && Options::useBaselineJITCodeSharing())
@@ -865,10 +884,10 @@ CodeBlock::~CodeBlock()
         if (cc.isEnabled && m_jitData) {
             RELEASE_ASSERT(cc.get(CrashChecker::BaselineJITData) == cc.hash(this, m_jitData),
                 CrashChecker::BaselineJITData, cc.value(), cc.hash(this, m_jitData), this, m_jitData);
-            auto stubInfoCount = std::bit_cast<BaselineJITData*>(m_jitData)->stubInfos().size();
-            RELEASE_ASSERT(cc.get(CrashChecker::StubInfoCount) == cc.hash(this, stubInfoCount),
-                CrashChecker::StubInfoCount, cc.value(),
-                cc.hash(this, stubInfoCount), this, m_jitData, stubInfoCount);
+            auto propertyCacheCount = std::bit_cast<BaselineJITData*>(m_jitData)->propertyInlineCaches().size();
+            RELEASE_ASSERT(cc.get(CrashChecker::PropertyInlineCacheCount) == cc.hash(this, propertyCacheCount),
+                CrashChecker::PropertyInlineCacheCount, cc.value(),
+                cc.hash(this, propertyCacheCount), this, m_jitData, propertyCacheCount);
             RELEASE_ASSERT(!cc.get(CrashChecker::DFGJITData),
                 CrashChecker::DFGJITData, cc.value(), cc.hash(this, m_jitData), this, m_jitData);
         }
@@ -941,14 +960,14 @@ CodeBlock::~CodeBlock()
         } else {
             RELEASE_ASSERT(cc.get(CrashChecker::BaselineJITData) == cc.hash(this, m_jitData),
                 CrashChecker::BaselineJITData, cc.value(), cc.hash(this, m_jitData), this, m_jitData);
-            auto stubInfoCount = std::bit_cast<BaselineJITData*>(m_jitData)->stubInfos().size();
-            RELEASE_ASSERT(cc.get(CrashChecker::StubInfoCount) == cc.hash(this, stubInfoCount),
-                CrashChecker::StubInfoCount, cc.value(), cc.hash(this, stubInfoCount), this, m_jitData, stubInfoCount);
+            auto propertyCacheCount = std::bit_cast<BaselineJITData*>(m_jitData)->propertyInlineCaches().size();
+            RELEASE_ASSERT(cc.get(CrashChecker::PropertyInlineCacheCount) == cc.hash(this, propertyCacheCount),
+                CrashChecker::PropertyInlineCacheCount, cc.value(), cc.hash(this, propertyCacheCount), this, m_jitData, propertyCacheCount);
         }
     }
-    forEachStructureStubInfo([&](StructureStubInfo& stubInfo) {
-        stubInfo.aboutToDie();
-        stubInfo.deref();
+    forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
+        propertyCache.aboutToDie();
+        propertyCache.deref();
         return IterationStatus::Continue;
     });
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
@@ -1066,18 +1085,31 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
             if (!constant.isEmpty()) {
                 if (constant.isCell()) {
                     JSCell* cell = constant.asCell();
-                    if (SymbolTable* symbolTable = jsDynamicCast<SymbolTable*>(cell)) {
+                    if (SymbolTable* symbolTable = dynamicDowncast<SymbolTable>(cell)) {
                         if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes()) {
                             ConcurrentJSLocker locker(symbolTable->m_lock);
                             symbolTable->prepareForTypeProfiling(locker);
                         }
 
-                        SymbolTable* clone = symbolTable->cloneScopePart(vm);
+                        // We have to make sure to use a single code block for constant watchpointing.
+                        // If we didn't then we could jettison a compilation because that constant changed
+                        // but invalidate the clone. Then the next compilation would see the original
+                        // watchpoint intact and assume the value is still the original constant.
+                        SymbolTable* clone = globalObject->symbolTableCache().get(symbolTable);
+                        if (!clone) {
+                            // For non-builtin code, link the clone's singleton watchpoint to the master
+                            // SymbolTable held inside the UnlinkedCodeBlock so that all per-realm clones
+                            // share one InferredValue. This avoids re-firing the singleton watchpoint
+                            // independently in every realm (e.g. on navigation) for the same code.
+                            auto propagateCloneInvalidationToOriginal = m_unlinkedCode->isBuiltinFunction() ? SymbolTable::PropagateCloneInvalidationToOriginal::No : SymbolTable::PropagateCloneInvalidationToOriginal::Yes;
+                            clone = symbolTable->cloneScopePart(vm, propagateCloneInvalidationToOriginal);
+                            globalObject->symbolTableCache().set(symbolTable, clone);
+                        }
                         if (wasCompiledWithDebuggingOpcodes())
-                            clone->setRareDataCodeBlock(this);
+                            clone->collectDebuggerInfo(this);
 
                         constant = clone;
-                    } else if (jsDynamicCast<JSTemplateObjectDescriptor*>(cell))
+                    } else if (is<JSTemplateObjectDescriptor>(cell))
                         templateObjectIndices.append(i);
                 }
             }
@@ -1093,7 +1125,7 @@ void CodeBlock::initializeTemplateObjects(ScriptExecutable* topLevelExecutable, 
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
     for (unsigned i : templateObjectIndices) {
-        auto* descriptor = jsCast<JSTemplateObjectDescriptor*>(m_constantRegisters[i].get());
+        auto* descriptor = uncheckedDowncast<JSTemplateObjectDescriptor>(m_constantRegisters[i].get());
         auto* templateObject = topLevelExecutable->createTemplateObject(globalObject(), descriptor);
         RETURN_IF_EXCEPTION(scope, void());
         m_constantRegisters[i].set(vm(), this, templateObject);
@@ -1128,7 +1160,7 @@ CodeBlock* CodeBlock::specialOSREntryBlockOrNull()
 
 size_t CodeBlock::estimatedSize(JSCell* cell, VM& vm)
 {
-    CodeBlock* thisObject = jsCast<CodeBlock*>(cell);
+    CodeBlock* thisObject = uncheckedDowncast<CodeBlock>(cell);
     size_t extraMemoryAllocated = 0;
     if (thisObject->m_metadata)
         extraMemoryAllocated += thisObject->m_metadata->sizeInBytesForGC();
@@ -1139,27 +1171,31 @@ size_t CodeBlock::estimatedSize(JSCell* cell, VM& vm)
 }
 
 template<typename Func>
-inline void CodeBlock::forEachStructureStubInfo(Func func)
+inline void CodeBlock::forEachPropertyInlineCache(Func func)
 {
     UNUSED_PARAM(func);
 #if ENABLE(JIT)
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
 #if ENABLE(DFG_JIT)
-        for (auto* stubInfo : jitCode()->dfgCommon()->m_stubInfos) {
-            if (func(*stubInfo) == IterationStatus::Done)
+        for (auto* propertyCache : jitCode()->dfgCommon()->m_handlerPropertyInlineCaches) {
+            if (func(*propertyCache) == IterationStatus::Done)
+                return;
+        }
+        for (auto* propertyCache : jitCode()->dfgCommon()->m_repatchingPropertyInlineCaches) {
+            if (func(*propertyCache) == IterationStatus::Done)
                 return;
         }
         if (auto* jitData = dfgJITData()) {
-            for (auto& stubInfo : jitData->stubInfos()) {
-                if (func(stubInfo) == IterationStatus::Done)
+            for (auto& propertyCache : jitData->propertyInlineCaches()) {
+                if (func(propertyCache) == IterationStatus::Done)
                     return;
             }
         }
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
-            for (auto& stubInfo : jitData->stubInfos()) {
-                if (func(stubInfo) == IterationStatus::Done)
+            for (auto& propertyCache : jitData->propertyInlineCaches()) {
+                if (func(propertyCache) == IterationStatus::Done)
                     return;
             }
         }
@@ -1170,7 +1206,7 @@ inline void CodeBlock::forEachStructureStubInfo(Func func)
 template<typename Visitor>
 void CodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    CodeBlock* thisObject = jsCast<CodeBlock*>(cell);
+    CodeBlock* thisObject = uncheckedDowncast<CodeBlock>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(cell, visitor);
     thisObject->visitChildren(visitor);
@@ -1181,24 +1217,32 @@ DEFINE_VISIT_CHILDREN(CodeBlock);
 template<typename Visitor>
 void CodeBlock::visitChildren(Visitor& visitor)
 {
-    ConcurrentJSLocker locker(m_lock);
+    {
+        ConcurrentJSLocker locker(m_lock);
 
-    // In CodeBlock::shouldVisitStrongly() we may have decided to skip visiting this
-    // codeBlock. However, if we end up visiting it anyway due to other references,
-    // we can clear this flag and allow the verifier GC to visit it as well.
-    m_visitChildrenSkippedDueToOldAge = false;
-    if (CodeBlock* otherBlock = specialOSREntryBlockOrNull())
-        visitor.appendUnbarriered(otherBlock);
+        // In CodeBlock::shouldVisitStrongly() we may have decided to skip visiting this
+        // codeBlock. However, if we end up visiting it anyway due to other references,
+        // we can clear this flag and allow the verifier GC to visit it as well.
+        m_visitChildrenSkippedDueToOldAge = false;
+        if (CodeBlock* otherBlock = specialOSREntryBlockOrNull())
+            visitor.appendUnbarriered(otherBlock);
 
-    size_t extraMemory = 0;
-    if (m_metadata)
-        extraMemory += m_metadata->sizeInBytesForGC();
-    if (m_jitCode && !m_jitCode->isShared())
-        extraMemory += m_jitCode->size();
-    visitor.reportExtraMemoryVisited(extraMemory);
+        size_t extraMemory = 0;
+        if (m_metadata)
+            extraMemory += m_metadata->sizeInBytesForGC();
+        if (m_jitCode && !m_jitCode->isShared())
+            extraMemory += m_jitCode->size();
+        visitor.reportExtraMemoryVisited(extraMemory);
 
-    stronglyVisitStrongReferences(locker, visitor);
-    stronglyVisitWeakReferences(locker, visitor);
+        stronglyVisitStrongReferences(locker, visitor);
+        stronglyVisitWeakReferences(locker, visitor);
+    }
+
+    // Update profiles from concurrent markers to reduce the cost of update at the GC end phase as its execution is serialized.
+    if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
+        if (visitor.isFirstVisit() && JITCode::isBaselineCode(jitType()))
+            updatePredictionsConcurrently();
+    }
     
     Heap::CodeBlockSpaceAndSet::setFor(*subspace()).add(this);
 }
@@ -1239,7 +1283,7 @@ bool CodeBlock::shouldJettisonDueToWeakReference(VM& vm)
     return !vm.heap.isMarked(this);
 }
 
-static Seconds timeToLive(JITType jitType)
+static Seconds NODELETE timeToLive(JITType jitType)
 {
     if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]] {
         switch (jitType) {
@@ -1369,8 +1413,8 @@ void CodeBlock::propagateTransitions(const ConcurrentJSLocker&, Visitor& visitor
     }
 
 #if ENABLE(JIT)
-    forEachStructureStubInfo([&](StructureStubInfo& stubInfo) {
-        stubInfo.propagateTransitions(visitor);
+    forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
+        propertyCache.propagateTransitions(visitor);
         return IterationStatus::Continue;
     });
 #endif // ENABLE(JIT)
@@ -1440,7 +1484,7 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
     bool allAreLiveSoFar = true;
     for (unsigned i = 0; i < dfgCommon->m_weakReferences.size(); ++i) {
         JSCell* reference = dfgCommon->m_weakReferences[i].get();
-        ASSERT(!jsDynamicCast<CodeBlock*>(reference));
+        ASSERT(!is<CodeBlock>(reference));
         if (!visitor.isMarked(reference)) {
             allAreLiveSoFar = false;
             break;
@@ -1470,7 +1514,7 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, AbstractSlotVisitor&);
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, SlotVisitor&);
 
-void CodeBlock::finalizeLLIntInlineCaches()
+void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
 {
     VM& vm = *m_vm;
 
@@ -1492,6 +1536,10 @@ void CodeBlock::finalizeLLIntInlineCaches()
             clearIfNeeded(metadata.m_modeMetadata, "iterator open"_s);
         });
 
+        m_metadata->forEach<OpAsyncIteratorOpen>([&] (auto& metadata) {
+            clearIfNeeded(metadata.m_modeMetadata, "async iterator open"_s);
+        });
+
         m_metadata->forEach<OpIteratorNext>([&] (auto& metadata) {
             clearIfNeeded(metadata.m_doneModeMetadata, "iterator next"_s);
             clearIfNeeded(metadata.m_valueModeMetadata, "iterator next"_s);
@@ -1508,15 +1556,6 @@ void CodeBlock::finalizeLLIntInlineCaches()
 
         m_metadata->forEach<OpGetLength>([&] (auto& metadata) {
             clearIfNeeded(metadata.m_modeMetadata, "get length"_s);
-        });
-
-        m_metadata->forEach<OpTryGetById>([&] (auto& metadata) {
-            StructureID oldStructureID = metadata.m_structureID;
-            if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
-                return;
-            dataLogLnIf(Options::verboseOSR(), "Clearing try_get_by_id LLInt property access.");
-            metadata.m_structureID = StructureID();
-            metadata.m_offset = 0;
         });
 
         m_metadata->forEach<OpGetByIdDirect>([&] (auto& metadata) {
@@ -1690,6 +1729,11 @@ void CodeBlock::finalizeLLIntInlineCaches()
                 LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(instruction->as<OpIteratorOpen>().metadata(this).m_modeMetadata);
                 break;
             }
+            case op_async_iterator_open: {
+                dataLogLnIf(Options::verboseOSR(), "Clearing LLInt async iterator open property access.");
+                LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(instruction->as<OpAsyncIteratorOpen>().metadata(this).m_modeMetadata);
+                break;
+            }
             case op_iterator_next: {
                 dataLogLnIf(Options::verboseOSR(), "Clearing LLInt iterator next property access.");
                 // FIXME: We don't really want to clear both caches here but it's kinda annoying to figure out which one this is referring to...
@@ -1725,59 +1769,59 @@ void CodeBlock::finalizeLLIntInlineCaches()
 }
 
 #if ENABLE(JIT)
-void CodeBlock::finalizeJITInlineCaches()
+void CodeBlock::reconcileJITInlineCachesAtGCEnd()
 {
 #if ENABLE(DFG_JIT)
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
         for (auto* callLinkInfo : m_jitCode->dfgCommon()->m_callLinkInfos)
-            callLinkInfo->visitWeak(vm());
+            callLinkInfo->reconcileWeakReferencesAtGCEnd(vm());
         for (auto* callLinkInfo : m_jitCode->dfgCommon()->m_directCallLinkInfos)
-            callLinkInfo->visitWeak(vm());
+            callLinkInfo->reconcileWeakReferencesAtGCEnd(vm());
         if (auto* jitData = dfgJITData()) {
             for (auto& callLinkInfo : jitData->callLinkInfos())
-                callLinkInfo.visitWeak(vm());
+                callLinkInfo.reconcileWeakReferencesAtGCEnd(vm());
         }
     }
 #endif
 
-    forEachStructureStubInfo([&](StructureStubInfo& stubInfo) {
+    forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
         ConcurrentJSLockerBase locker(NoLockingNecessary);
-        stubInfo.visitWeak(locker, this);
+        propertyCache.reconcileWeakReferencesAtGCEnd(locker, this);
         return IterationStatus::Continue;
     });
 }
 #endif
 
-void CodeBlock::finalizeUnconditionally(VM& vm, CollectionScope)
+void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
     UNUSED_PARAM(vm);
 
-    // CodeBlock::finalizeUnconditionally is called for all live CodeBlocks.
+    // Called for all live CodeBlocks.
     // We do not need to call updateAllPredictions for DFG / FTL since the same thing happens in LLInt / Baseline CodeBlock for them.
     if (JITCode::isBaselineCode(jitType()))
         updateAllPredictions();
 
     if (JITCode::couldBeInterpreted(jitType())) {
-        finalizeLLIntInlineCaches();
+        reconcileLLIntInlineCachesAtGCEnd();
         // If the CodeBlock is DFG or FTL, CallLinkInfo in metadata is not related.
         forEachLLIntOrBaselineCallLinkInfo([&](DataOnlyCallLinkInfo& callLinkInfo) {
-            callLinkInfo.visitWeak(vm);
+            callLinkInfo.reconcileWeakReferencesAtGCEnd(vm);
         });
     }
 
 #if ENABLE(JIT)
     if (!!jitCode())
-        finalizeJITInlineCaches();
+        reconcileJITInlineCachesAtGCEnd();
 #endif
 
 #if ENABLE(DFG_JIT)
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
         DFG::CommonData* dfgCommon = m_jitCode->dfgCommon();
         if (auto* statuses = dfgCommon->recordedStatuses.get())
-            statuses->finalize(vm);
+            statuses->reconcileWeakReferences(vm);
 
         if (auto* jitData = dfgJITData())
-            jitData->finalizeUnconditionally();
+            jitData->reconcileWeakReferencesAtGCEnd();
     }
 #endif // ENABLE(DFG_JIT)
 
@@ -1848,8 +1892,8 @@ void CodeBlock::getICStatusMap(const ConcurrentJSLocker&, ICStatusMap& result)
     }
 #if ENABLE(JIT)
     if (JITCode::isJIT(jitType())) {
-        forEachStructureStubInfo([&](StructureStubInfo& stubInfo) {
-            result.add(stubInfo.codeOrigin, ICStatus()).iterator->value.stubInfo = &stubInfo;
+        forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
+            result.add(propertyCache.codeOrigin, ICStatus()).iterator->value.propertyCache = &propertyCache;
             return IterationStatus::Continue;
         });
         if (JSC::JITCode::isOptimizingJIT(jitType())) {
@@ -1886,22 +1930,6 @@ void CodeBlock::getICStatusMap(ICStatusMap& result)
     ConcurrentJSLocker locker(m_lock);
     getICStatusMap(locker, result);
 }
-
-#if ENABLE(JIT)
-StructureStubInfo* CodeBlock::findStubInfo(CodeOrigin codeOrigin)
-{
-    ConcurrentJSLocker locker(m_lock);
-    StructureStubInfo* result = nullptr;
-    forEachStructureStubInfo([&](StructureStubInfo& stubInfo) {
-        if (stubInfo.codeOrigin == codeOrigin) {
-            result = &stubInfo;
-            return IterationStatus::Done;
-        }
-        return IterationStatus::Continue;
-    });
-    return result;
-}
-#endif
 
 template<typename Visitor>
 void CodeBlock::visitOSRExitTargets(const ConcurrentJSLocker&, Visitor& visitor)
@@ -1944,8 +1972,8 @@ void CodeBlock::stronglyVisitStrongReferences(const ConcurrentJSLocker& locker, 
     });
 
 #if ENABLE(JIT)
-    forEachStructureStubInfo([&](StructureStubInfo& stubInfo) {
-        stubInfo.visitAggregate(visitor);
+    forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
+        propertyCache.visitAggregate(visitor);
         return IterationStatus::Continue;
     });
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
@@ -1961,6 +1989,10 @@ void CodeBlock::stronglyVisitStrongReferences(const ConcurrentJSLocker& locker, 
 #endif
 }
 
+// Runs from visitChildren, so the CodeBlock is already known live. It is live either
+// because something marked it directly, for instance a conservative stack scan finding
+// it running, or because all of its code dependencies are still live. In the former case
+// we need to ensure those dependencies stay alive, and that is what happens here.
 template<typename Visitor>
 void CodeBlock::stronglyVisitWeakReferences(const ConcurrentJSLocker&, Visitor& visitor)
 {
@@ -2155,18 +2187,15 @@ void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSi
 LineColumn CodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
     RELEASE_ASSERT(bytecodeIndex.offset() < instructions().size());
-    auto lineColumn = m_unlinkedCode->lineColumnForBytecodeIndex(bytecodeIndex);
-    lineColumn.column += lineColumn.line ? 1 : firstLineColumnOffset();
-    lineColumn.line += ownerExecutable()->firstLine();
-    return lineColumn;
+    auto entry = m_unlinkedCode->expressionInfoForBytecodeIndex(bytecodeIndex);
+    unsigned divotInProvider = sourceOffset() + entry.divot;
+    return source().provider()->documentLineColumnForOffset(divotInProvider);
 }
 
 ExpressionInfo::Entry CodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
     auto entry = m_unlinkedCode->expressionInfoForBytecodeIndex(bytecodeIndex);
     entry.divot += sourceOffset();
-    entry.lineColumn.column += entry.lineColumn.line ? 1 : firstLineColumnOffset();
-    entry.lineColumn.line += ownerExecutable()->firstLine();
     return entry;
 }
 
@@ -2185,14 +2214,8 @@ bool CodeBlock::hasOpDebugForLineAndColumn(unsigned line, std::optional<unsigned
 
 void CodeBlock::shrinkToFit(const ConcurrentJSLocker&, ShrinkMode shrinkMode)
 {
-#if USE(JSVALUE32_64)
-    // Only 32bit Baseline JIT is touching m_constantRegisters address directly.
-    if (shrinkMode == ShrinkMode::EarlyShrink)
-        m_constantRegisters.shrinkToFit();
-#else
     UNUSED_PARAM(shrinkMode);
     m_constantRegisters.shrinkToFit();
-#endif
 }
 
 void CodeBlock::linkIncomingCall(JSCell* caller, CallLinkInfoBase* incoming)
@@ -2204,6 +2227,7 @@ void CodeBlock::linkIncomingCall(JSCell* caller, CallLinkInfoBase* incoming)
 
 void CodeBlock::unlinkOrUpgradeIncomingCalls(VM& vm, CodeBlock* newCodeBlock)
 {
+IGNORE_GCC_WARNINGS_BEGIN("dangling-pointer")
     SentinelLinkedList<CallLinkInfoBase, BasicRawSentinelNode<CallLinkInfoBase>> toBeRemoved;
     toBeRemoved.takeFrom(m_incomingCalls);
 
@@ -2212,6 +2236,7 @@ void CodeBlock::unlinkOrUpgradeIncomingCalls(VM& vm, CodeBlock* newCodeBlock)
     // be accumulated correctly.
     while (!toBeRemoved.isEmpty())
         toBeRemoved.begin()->unlinkOrUpgrade(vm, this, newCodeBlock);
+IGNORE_GCC_WARNINGS_END
 }
 
 CodeBlock* CodeBlock::newReplacement()
@@ -2224,16 +2249,16 @@ CodeBlock* CodeBlock::replacement()
     const ClassInfo* classInfo = this->classInfo();
 
     if (classInfo == FunctionCodeBlock::info())
-        return jsCast<FunctionExecutable*>(ownerExecutable())->codeBlockFor(isConstructor() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall);
+        return uncheckedDowncast<FunctionExecutable>(ownerExecutable())->codeBlockFor(isConstructor() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall);
 
     if (classInfo == EvalCodeBlock::info())
-        return jsCast<EvalExecutable*>(ownerExecutable())->codeBlock();
+        return uncheckedDowncast<EvalExecutable>(ownerExecutable())->codeBlock();
 
     if (classInfo == ProgramCodeBlock::info())
-        return jsCast<ProgramExecutable*>(ownerExecutable())->codeBlock();
+        return uncheckedDowncast<ProgramExecutable>(ownerExecutable())->codeBlock();
 
     if (classInfo == ModuleProgramCodeBlock::info())
-        return jsCast<ModuleProgramExecutable*>(ownerExecutable())->codeBlock();
+        return uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable())->codeBlock();
 
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
@@ -2276,6 +2301,16 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
 
     m_isJettisoned = true;
 
+#if ENABLE(DFG_JIT)
+    if (jitType() == JITType::DFGJIT)
+        didDFGJettison(reason);
+#endif
+
+#if ENABLE(FTL_JIT)
+    if (jitType() == JITType::FTLJIT)
+        didFTLJettison(reason);
+#endif
+
     CodeBlock* codeBlock = this; // Placate GCC for use in CODEBLOCK_LOG_EVENT  (does not like this).
     CODEBLOCK_LOG_EVENT(codeBlock, "jettison", ("due to ", reason, ", counting = ", mode == CountReoptimization, ", detail = ", pointerDump(detail)));
 
@@ -2284,8 +2319,8 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
 #if ENABLE(JIT)
     {
         ConcurrentJSLocker locker(m_lock);
-        forEachStructureStubInfo([&](StructureStubInfo& stubInfo) {
-            stubInfo.deref();
+        forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
+            propertyCache.deref();
             return IterationStatus::Continue;
         });
     }
@@ -2406,117 +2441,13 @@ JSGlobalObject* CodeBlock::globalObjectFor(CodeOrigin codeOrigin)
     return inlineCallFrame->baselineCodeBlock->globalObject();
 }
 
-class RecursionCheckFunctor {
-public:
-    RecursionCheckFunctor(CallFrame* startCallFrame, CodeBlock* codeBlock, unsigned depthToCheck)
-        : m_startCallFrame(startCallFrame)
-        , m_codeBlock(codeBlock)
-        , m_depthToCheck(depthToCheck)
-        , m_foundStartCallFrame(false)
-        , m_didRecurse(false)
-    { }
-
-    IterationStatus operator()(StackVisitor& visitor) const
-    {
-        CallFrame* currentCallFrame = visitor->callFrame();
-
-        if (currentCallFrame == m_startCallFrame)
-            m_foundStartCallFrame = true;
-
-        if (m_foundStartCallFrame) {
-            if (visitor->codeBlock() == m_codeBlock) {
-                m_didRecurse = true;
-                return IterationStatus::Done;
-            }
-
-            if (!m_depthToCheck--)
-                return IterationStatus::Done;
-        }
-
-        return IterationStatus::Continue;
-    }
-
-    bool didRecurse() const { return m_didRecurse; }
-
-private:
-    CallFrame* const m_startCallFrame;
-    CodeBlock* const m_codeBlock;
-    mutable unsigned m_depthToCheck;
-    mutable bool m_foundStartCallFrame;
-    mutable bool m_didRecurse;
-};
-
 void CodeBlock::noticeIncomingCall(JSCell* caller)
 {
     RELEASE_ASSERT(!m_isJettisoned);
 
-    CodeBlock* callerCodeBlock = jsDynamicCast<CodeBlock*>(caller);
+    CodeBlock* callerCodeBlock = dynamicDowncast<CodeBlock>(caller);
     
     dataLogLnIf(Options::verboseCallLink(), "Noticing call link from ", pointerDump(callerCodeBlock), " to ", *this);
-    
-#if ENABLE(DFG_JIT)
-    if (!m_shouldAlwaysBeInlined)
-        return;
-    
-    if (!callerCodeBlock) {
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is native.");
-        return;
-    }
-
-    if (!hasBaselineJITProfiling())
-        return;
-
-    if (!DFG::mightInlineFunction(JITType::FTLJIT, this))
-        return;
-
-    if (!canInline(capabilityLevelState()))
-        return;
-    
-    if (!DFG::isSmallEnoughToInlineCodeInto(callerCodeBlock)) {
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is too large.");
-        return;
-    }
-
-    if (callerCodeBlock->jitType() == JITType::InterpreterThunk) {
-        // If the caller is still in the interpreter, then we can't expect inlining to
-        // happen anytime soon. Assume it's profitable to optimize it separately. This
-        // ensures that a function is SABI only if it is called no more frequently than
-        // any of its callers.
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is in LLInt.");
-        return;
-    }
-    
-    if (JSC::JITCode::isOptimizingJIT(callerCodeBlock->jitType())) {
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI bcause caller was already optimized.");
-        return;
-    }
-    
-    if (callerCodeBlock->codeType() != FunctionCode) {
-        // If the caller is either eval or global code, assume that that won't be
-        // optimized anytime soon. For eval code this is particularly true since we
-        // delay eval optimization by a *lot*.
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is not a function.");
-        return;
-    }
-
-    // Recursive calls won't be inlined.
-    if (callerCodeBlock->capabilityLevelState() == DFG::CapabilityLevelNotSet) {
-        dataLog("In call from ", FullCodeOrigin(callerCodeBlock, CodeOrigin { }), " to ", *this, ": caller's DFG capability level is not set.\n");
-        CRASH();
-    }
-    
-    if (canCompile(callerCodeBlock->capabilityLevelState()))
-        return;
-    
-    dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because the caller is not a DFG candidate.");
-    
-    m_shouldAlwaysBeInlined = false;
-#endif
 }
 
 unsigned CodeBlock::reoptimizationRetryCounter() const
@@ -2656,7 +2587,7 @@ double CodeBlock::optimizationThresholdScalingFactor() const
     return result;
 }
 
-static int32_t clipThreshold(double threshold)
+static int32_t NODELETE clipThreshold(double threshold)
 {
     if (threshold < 1.0)
         return 1;
@@ -2705,14 +2636,28 @@ void CodeBlock::dontOptimizeAnytimeSoon()
         jitData->executeCounter().deferIndefinitely();
 }
 
-void CodeBlock::optimizeAfterWarmUp()
+template<CodeBlock::QuickTierUpCheck check>
+void CodeBlock::optimizeAfterWarmUpImpl()
 {
     dataLogLnIf(Options::verboseOSR(), *this, ": Optimizing after warm-up.");
 #if ENABLE(DFG_JIT)
-    if (auto* jitData = baselineJITData())
-        jitData->executeCounter().setNewThreshold(adjustedCounterValue(Options::thresholdForOptimizeAfterWarmUp()), this);
+    if (auto* jitData = baselineJITData()) {
+        int32_t threshold = Options::thresholdForOptimizeAfterWarmUp();
+        if constexpr (check == QuickTierUpCheck::Apply) {
+            if (unlinkedCodeBlock()->isQuickDFGTierUp()) {
+                threshold = static_cast<int32_t>(threshold * Options::quickDFGTierUpThresholdFactor());
+                dataLogLnIf(Options::verboseOSR(), *this, ": Quick DFG tier-up enabled and code is stable, bytecodeCost=", bytecodeCost(), ", codeType=", codeType(), ", adjustedThreshold=", threshold, ", finalThreshold=", adjustedCounterValue(threshold), " optimizationDelayCounter=", m_optimizationDelayCounter);
+            }
+        }
+        jitData->executeCounter().setNewThreshold(adjustedCounterValue(threshold), this);
+    }
 #endif
 }
+
+template void CodeBlock::optimizeAfterWarmUpImpl<CodeBlock::QuickTierUpCheck::Apply>();
+void CodeBlock::optimizeAfterWarmUp() { optimizeAfterWarmUpImpl<QuickTierUpCheck::Apply>(); }
+template void CodeBlock::optimizeAfterWarmUpImpl<CodeBlock::QuickTierUpCheck::Ignore>();
+void CodeBlock::optimizeAfterWarmUpIgnoreQuickTierUp() { optimizeAfterWarmUpImpl<QuickTierUpCheck::Ignore>(); }
 
 void CodeBlock::optimizeAfterLongWarmUp()
 {
@@ -2766,6 +2711,7 @@ void CodeBlock::setOptimizationThresholdBasedOnCompilationResult(CompilationResu
         return;
     case CompilationResult::CompilationFailed:
         dontOptimizeAnytimeSoon();
+        didFailDFGCompilation();
         return;
     case CompilationResult::CompilationDeferred:
         // We'd like to do dontOptimizeAnytimeSoon() but we cannot because
@@ -2822,9 +2768,52 @@ bool CodeBlock::shouldReoptimizeFromLoopNow()
 {
     return osrExitCounter() >= exitCountThresholdForReoptimizationFromLoop();
 }
+
+void CodeBlock::didInstallDFGCode()
+{
+#if PLATFORM(MAC)
+    // Always reset — allows quick tier-up recovery after reinstall.
+    // Enable this only on macOS due to perf regression on iOS.
+    unlinkedCodeBlock()->setQuickDFGTierUp(TriState::True);
+#else
+    // Restore old one-shot behavior — once failed, stays disabled.
+    if (!unlinkedCodeBlock()->hasQuickDFGTierUpUpdated())
+        unlinkedCodeBlock()->setQuickDFGTierUp(TriState::True);
+#endif
+}
+
+void CodeBlock::didDFGJettison(Profiler::JettisonReason reason)
+{
+    if (Profiler::isSpeculationFailure(reason))
+        unlinkedCodeBlock()->setQuickDFGTierUp(TriState::False);
+}
+
+void CodeBlock::didFailDFGCompilation()
+{
+    unlinkedCodeBlock()->setQuickDFGTierUp(TriState::False);
+}
+
+#if ENABLE(FTL_JIT)
+void CodeBlock::didInstallFTLCode()
+{
+    unlinkedCodeBlock()->setQuickFTLTierUp(true);
+}
+
+void CodeBlock::didFTLJettison(Profiler::JettisonReason reason)
+{
+    if (Profiler::isSpeculationFailure(reason))
+        unlinkedCodeBlock()->setQuickFTLTierUp(false);
+}
+
+void CodeBlock::didFailFTLCompilation()
+{
+    unlinkedCodeBlock()->setQuickFTLTierUp(false);
+}
 #endif
 
-ArrayProfile* CodeBlock::getArrayProfile(const ConcurrentJSLocker&, BytecodeIndex bytecodeIndex)
+#endif
+
+ArrayProfile* CodeBlock::getArrayProfile(BytecodeIndex bytecodeIndex)
 {
     auto instruction = instructions().at(bytecodeIndex);
 
@@ -2928,32 +2917,24 @@ bool CodeBlock::hasIdentifier(UniquedStringImpl* uid)
 }
 #endif
 
-void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(const ConcurrentJSLocker& locker, unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles)
+void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles)
 {
     numberOfLiveNonArgumentValueProfiles = 0;
-    numberOfSamplesInProfiles = 0; // If this divided by ValueProfile::numberOfBuckets equals numberOfValueProfiles() then value profiles are full.
+    numberOfSamplesInProfiles = 0;
 
     unsigned index = 0;
     UnlinkedCodeBlock* unlinkedCodeBlock = this->unlinkedCodeBlock();
     bool isBuiltinFunction = unlinkedCodeBlock->isBuiltinFunction();
     auto unlinkedValueProfiles = unlinkedCodeBlock->unlinkedValueProfiles().mutableSpan();
     forEachValueProfile([&](auto& profile, bool isArgument) {
-        unsigned numSamples = profile.totalNumberOfSamples();
         using Profile = std::remove_reference_t<decltype(profile)>;
         static_assert(Profile::numberOfBuckets == 1);
-        if (numSamples > Profile::numberOfBuckets)
-            numSamples = Profile::numberOfBuckets; // We don't want profiles that are extremely hot to be given more weight.
-        numberOfSamplesInProfiles += numSamples;
-        if (isArgument) {
-            profile.computeUpdatedPrediction(locker);
-            if (!isBuiltinFunction)
-                unlinkedValueProfiles[index].update(profile);
-            ++index;
-            return;
+        bool wasLive = profile.computeUpdatedPrediction() != SpecNone;
+        if (wasLive) {
+            ++numberOfSamplesInProfiles;
+            if (!isArgument)
+                ++numberOfLiveNonArgumentValueProfiles;
         }
-        if (profile.numberOfSamples() || profile.isSampledBefore())
-            numberOfLiveNonArgumentValueProfiles++;
-        profile.computeUpdatedPrediction(locker);
         if (!isBuiltinFunction)
             unlinkedValueProfiles[index].update(profile);
         ++index;
@@ -2963,29 +2944,23 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(const Co
         m_metadata->forEach<OpCatch>([&](auto& metadata) {
             if (metadata.m_buffer) {
                 metadata.m_buffer->forEach([&](ValueProfileAndVirtualRegister& profile) {
-                    profile.computeUpdatedPrediction(locker);
+                    profile.computeUpdatedPrediction();
                 });
             }
         });
     }
 }
 
-void CodeBlock::updateAllNonLazyValueProfilePredictions(const ConcurrentJSLocker& locker)
+void CodeBlock::updateAllNonLazyValueProfilePredictions()
 {
     unsigned ignoredValue1, ignoredValue2;
-    updateAllNonLazyValueProfilePredictionsAndCountLiveness(locker, ignoredValue1, ignoredValue2);
+    updateAllNonLazyValueProfilePredictionsAndCountLiveness(ignoredValue1, ignoredValue2);
 }
 
-void CodeBlock::updateAllLazyValueProfilePredictions(const ConcurrentJSLocker& locker)
+void CodeBlock::updateAllLazyValueProfilePredictions()
 {
-#if USE(JSVALUE32_64)
-    // JSVALUE64 does not need a lock.
-    ASSERT(m_lock.isLocked());
-#endif
 #if ENABLE(DFG_JIT)
-    lazyValueProfiles().computeUpdatedPredictions(locker, this);
-#else
-    UNUSED_PARAM(locker);
+    lazyValueProfiles().computeUpdatedPredictions(this);
 #endif
 }
 
@@ -3024,14 +2999,20 @@ void CodeBlock::updateAllArrayAllocationProfilePredictions()
     });
 }
 
+// Folds each profile's sampled value into a pointer-free SpeculatedType and clears the sample.
+// The samples are untraced JSValues and StructureIDs, so this only runs while they are still
+// readable, which means any time from marking up to the sweep that would free them.
 void CodeBlock::updateAllPredictions()
 {
-    {
-        ConcurrentJSLocker locker(valueProfileLock());
-        updateAllNonLazyValueProfilePredictions(locker);
-        updateAllLazyValueProfilePredictions(locker);
-    }
+    updatePredictionsConcurrently();
+    // This reads Butterfly from JSObject to obtain vectorLength, which can be safe only from the main thread.
     updateAllArrayAllocationProfilePredictions();
+}
+
+void CodeBlock::updatePredictionsConcurrently()
+{
+    updateAllNonLazyValueProfilePredictions();
+    updateAllLazyValueProfilePredictions();
     updateAllArrayProfilePredictions();
 }
 
@@ -3044,13 +3025,10 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
     
     unsigned numberOfLiveNonArgumentValueProfiles;
     unsigned numberOfSamplesInProfiles;
-    {
-        ConcurrentJSLocker locker(valueProfileLock());
-        updateAllNonLazyValueProfilePredictionsAndCountLiveness(locker, numberOfLiveNonArgumentValueProfiles, numberOfSamplesInProfiles);
-        updateAllLazyValueProfilePredictions(locker);
-    }
-    updateAllArrayAllocationProfilePredictions();
+    updateAllNonLazyValueProfilePredictionsAndCountLiveness(numberOfLiveNonArgumentValueProfiles, numberOfSamplesInProfiles);
+    updateAllLazyValueProfilePredictions();
     updateAllArrayProfilePredictions();
+    updateAllArrayAllocationProfilePredictions();
 
     double livenessRate = 1.0;
     if (numberOfNonArgumentValueProfiles())
@@ -3068,7 +3046,15 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
             numberOfSamplesInProfiles, ValueProfile::numberOfBuckets * numberOfNonArgumentValueProfiles());
     }
 
-    if (livenessRate >= Options::desiredProfileLivenessRate() && fullnessRate >= Options::desiredProfileFullnessRate() && static_cast<unsigned>(m_optimizationDelayCounter) + 1 >= Options::minimumOptimizationDelay())
+    double requiredLivenessRate = Options::desiredProfileLivenessRate();
+    double requiredFullnessRate = Options::desiredProfileFullnessRate();
+
+    if (unlinkedCodeBlock()->isQuickDFGTierUp()) {
+        requiredLivenessRate *= Options::relaxedProfileCoverageFactorForQuickDFGTierUp();
+        requiredFullnessRate *= Options::relaxedProfileCoverageFactorForQuickDFGTierUp();
+    }
+
+    if (livenessRate >= requiredLivenessRate && fullnessRate >= requiredFullnessRate && static_cast<unsigned>(m_optimizationDelayCounter) + 1 >= Options::minimumOptimizationDelay())
         return true;
 
 #if ENABLE(DFG_JIT)
@@ -3114,19 +3100,18 @@ void CodeBlock::tallyFrequentExitSites()
     switch (jitType()) {
     case JITType::DFGJIT: {
         auto* jitCode = m_jitCode->dfg();
-        for (auto& exit : jitCode->m_osrExit)
-            exit.considerAddingAsFrequentExitSite(profiledBlock);
+        if (auto* jitData = dfgJITData()) {
+            for (auto& stub : jitData->exitStubs())
+                jitCode->m_osrExits.at(stub.exitIndex).considerAddingAsFrequentExitSite(profiledBlock);
+        }
         break;
     }
 
 #if ENABLE(FTL_JIT)
     case JITType::FTLJIT: {
-        // There is no easy way to avoid duplicating this code since the FTL::JITCode::m_osrExit
-        // vector contains a totally different type, that just so happens to behave like
-        // DFG::JITCode::m_osrExit.
         auto* jitCode = m_jitCode->ftl();
-        for (auto& exit : jitCode->m_osrExit)
-            exit.considerAddingAsFrequentExitSite(profiledBlock);
+        for (auto& stub : jitCode->m_osrExitStubs)
+            jitCode->osrExit(stub.exitIndex).considerAddingAsFrequentExitSite(profiledBlock);
         break;
     }
 #endif
@@ -3141,7 +3126,7 @@ void CodeBlock::tallyFrequentExitSites()
 void CodeBlock::notifyLexicalBindingUpdate()
 {
     JSGlobalObject* globalObject = m_globalObject.get();
-    JSGlobalLexicalEnvironment* globalLexicalEnvironment = jsCast<JSGlobalLexicalEnvironment*>(globalObject->globalScope());
+    JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(globalObject->globalScope());
     SymbolTable* symbolTable = globalLexicalEnvironment->symbolTable();
 
     ConcurrentJSLocker locker(m_lock);
@@ -3259,7 +3244,7 @@ String CodeBlock::nameForRegister(VirtualRegister virtualRegister)
     for (auto& constantRegister : m_constantRegisters) {
         if (constantRegister.get().isEmpty())
             continue;
-        if (SymbolTable* symbolTable = jsDynamicCast<SymbolTable*>(constantRegister.get())) {
+        if (SymbolTable* symbolTable = dynamicDowncast<SymbolTable>(constantRegister.get())) {
             ConcurrentJSLocker locker(symbolTable->m_lock);
             auto end = symbolTable->end(locker);
             for (auto ptr = symbolTable->begin(locker); ptr != end; ++ptr) {
@@ -3291,6 +3276,8 @@ ValueProfile* CodeBlock::tryGetValueProfileForBytecodeIndex(BytecodeIndex byteco
 
     case op_iterator_open:
         return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpIteratorOpen>(), bytecodeIndex.checkpoint()))];
+    case op_async_iterator_open:
+        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpAsyncIteratorOpen>(), bytecodeIndex.checkpoint()))];
     case op_iterator_next:
         return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpIteratorNext>(), bytecodeIndex.checkpoint()))];
     case op_instanceof:
@@ -3302,12 +3289,12 @@ ValueProfile* CodeBlock::tryGetValueProfileForBytecodeIndex(BytecodeIndex byteco
     }
 }
 
-SpeculatedType CodeBlock::valueProfilePredictionForBytecodeIndex(const ConcurrentJSLocker& locker, BytecodeIndex bytecodeIndex, JSValue* specFailValue)
+SpeculatedType CodeBlock::valueProfilePredictionForBytecodeIndex(BytecodeIndex bytecodeIndex, JSValue* specFailValue)
 {
     if (ValueProfile* valueProfile = tryGetValueProfileForBytecodeIndex(bytecodeIndex)) {
         if (specFailValue)
-            valueProfile->computeUpdatedPredictionForExtraValue(locker, *specFailValue);
-        return valueProfile->computeUpdatedPrediction(locker);
+            valueProfile->computeUpdatedPredictionForExtraValue(*specFailValue);
+        return valueProfile->computeUpdatedPrediction();
     }
     return SpecNone;
 }
@@ -3559,9 +3546,9 @@ std::optional<CodeOrigin> CodeBlock::findPC(void* pc)
     {
         ConcurrentJSLocker locker(m_lock);
         std::optional<CodeOrigin> result;
-        forEachStructureStubInfo([&](StructureStubInfo& stubInfo) {
-            if (stubInfo.containsPC(pc)) {
-                result = stubInfo.codeOrigin;
+        forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
+            if (propertyCache.containsPC(pc)) {
+                result = propertyCache.codeOrigin;
                 return IterationStatus::Done;
             }
             return IterationStatus::Continue;
@@ -3601,21 +3588,6 @@ void CodeBlock::jitSoon()
 void CodeBlock::jitNextInvocation()
 {
     m_unlinkedCode->llintExecuteCounter().setNewThreshold(0, this);
-}
-
-bool CodeBlock::useDataIC() const
-{
-#if ENABLE(DFG_JIT)
-    if (jitType() == JITType::DFGJIT) {
-        if (auto* jitCode = m_jitCode.get())
-            return static_cast<const DFG::JITCode*>(jitCode)->isUnlinked();
-    }
-#endif
-#if ENABLE(FTL_JIT)
-    if (jitType() == JITType::FTLJIT)
-        return Options::useDataICInFTL();
-#endif
-    return true;
 }
 
 CodePtr<JSEntryPtrTag> CodeBlock::addressForCallConcurrently(const ConcurrentJSLocker&, ArityCheckMode arityCheck) const
@@ -3722,7 +3694,7 @@ void CodeBlock::dumpMathICStats()
 
 void setPrinter(Printer::PrintRecord& record, CodeBlock* codeBlock)
 {
-    Printer::setPrinter(record, toCString(codeBlock));
+    Printer::setPrinter(record, toUTF8CString(codeBlock));
 }
 
 } // namespace JSC

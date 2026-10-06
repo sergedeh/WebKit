@@ -59,22 +59,10 @@ template<> NSArray *filterObjects<NSArray>(NSArray *, bool NS_NOESCAPE (^block)(
 template<> NSDictionary *filterObjects<NSDictionary>(NSDictionary *, bool NS_NOESCAPE (^block)(id key, id value));
 template<> NSSet *filterObjects<NSSet>(NSSet *, bool NS_NOESCAPE (^block)(id key, id value));
 
-template<typename T>
-T *filterObjects(const RetainPtr<T>& container, bool NS_NOESCAPE (^block)(id key, id value))
-{
-    return filterObjects<T>(container.get(), block);
-}
-
 template<typename T> T *mapObjects(T *container, id NS_NOESCAPE (^block)(id key, id value));
 template<> NSArray *mapObjects<NSArray>(NSArray *, id NS_NOESCAPE (^block)(id key, id value));
 template<> NSDictionary *mapObjects<NSDictionary>(NSDictionary *, id NS_NOESCAPE (^block)(id key, id value));
 template<> NSSet *mapObjects<NSSet>(NSSet *, id NS_NOESCAPE (^block)(id key, id value));
-
-template<typename T>
-T *mapObjects(const RetainPtr<T>& container, id NS_NOESCAPE (^block)(id key, id value))
-{
-    return mapObjects<T>(container.get(), block);
-}
 
 template<typename T>
 T *objectForKey(NSDictionary *dictionary, id key, bool returningNilIfEmpty = true, Class containingObjectsOfClass = Nil)
@@ -83,12 +71,6 @@ T *objectForKey(NSDictionary *dictionary, id key, bool returningNilIfEmpty = tru
     ASSERT(!containingObjectsOfClass);
     // Specialized implementations in CocoaHelpers.mm handle returningNilIfEmpty and containingObjectsOfClass for different Foundation types.
     return dynamic_objc_cast<T>(dictionary[key]);
-}
-
-template<typename T>
-T *objectForKey(const RetainPtr<NSDictionary>& dictionary, id key, bool returningNilIfEmpty = true, Class containingObjectsOfClass = Nil)
-{
-    return objectForKey<T>(dictionary.get(), key, returningNilIfEmpty, containingObjectsOfClass);
 }
 
 inline bool boolForKey(NSDictionary *dictionary, id key, bool defaultValue)
@@ -102,6 +84,14 @@ inline std::optional<RetainPtr<T>> toOptional(T *maybeNil)
 {
     if (maybeNil)
         return maybeNil;
+    return std::nullopt;
+}
+
+template<typename T>
+inline std::optional<Ref<T>> toOptional(RefPtr<T> maybeNull)
+{
+    if (maybeNull)
+        return maybeNull.releaseNonNull();
     return std::nullopt;
 }
 
@@ -142,8 +132,6 @@ NSString *privacyPreservingDescription(NSError *);
 NSURL *ensureDirectoryExists(NSURL *directory);
 
 NSString *escapeCharactersInString(NSString *, NSString *charactersToEscape);
-
-void callAfterRandomDelay(Function<void()>&&);
 
 NSDate *toAPI(const WallTime&);
 WallTime toImpl(NSDate *);

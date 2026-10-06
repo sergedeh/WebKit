@@ -5,6 +5,9 @@
 import("//testing/test.gni")
 import("../../gni/angle.gni")
 import("angle_unittests.gni")
+if (angle_use_wayland) {
+  import("../../build_overrides/wayland.gni")
+}
 
 declare_args() {
   build_angle_gles1_conform_tests = checkout_angle_internal
@@ -110,6 +113,9 @@ angle_static_library("angle_test_expectations") {
     sources += test_expectation_sources_ios
     frameworks = [ "Foundation.framework" ]
   }
+  if (angle_ir) {
+    configs += [ "${angle_root}:angle_translator_ir" ]
+  }
 }
 
 config("angle_common_test_utils_config") {
@@ -125,7 +131,8 @@ template("angle_common_test_utils") {
   angle_source_set(target_name) {
     testonly = true
     if (is_ios) {
-      # shared libraries are hidden inside ios_framework_bundle, but we include headers from them
+      # shared libraries are hidden inside ios_framework_bundle, but we include
+      # headers from them
       check_includes = false
     }
     public_configs = [
@@ -192,8 +199,8 @@ angle_test("angle_system_info_test") {
 angle_test("angle_unittests") {
   sources = angle_unittests_sources + [ "angle_unittest_main.cpp" ]
 
-  # Compiler tests frequently require either TranslatorGLSL or TranslatorESSL.  Build them only if
-  # both are enabled.
+  # Compiler tests frequently require either TranslatorGLSL or TranslatorESSL.
+  # Build them only if both are enabled.
   if (angle_enable_essl && angle_enable_glsl) {
     sources += angle_unittests_compiler_tests_sources
 
@@ -242,8 +249,8 @@ angle_test("angle_unittests") {
   }
 
   if (!is_android && !is_fuchsia && !is_ios) {
-    # SystemUtils.RunApp, the only unittest using a helper binary, is not supported on these
-    # platforms yet.
+    # SystemUtils.RunApp, the only unittest using a helper binary, is not
+    # supported on these platforms yet.
     data_deps = [ ":test_utils_unittest_helper" ]
   }
 
@@ -253,6 +260,10 @@ angle_test("angle_unittests") {
 
   if (angle_has_rapidjson) {
     sources += [ "../common/serializer/JsonSerializer_unittest.cpp" ]
+  }
+
+  if (angle_ir) {
+    configs += [ "${angle_root}:angle_translator_ir" ]
   }
 }
 
@@ -274,9 +285,13 @@ if (is_win || is_linux || is_chromeos || is_android || is_fuchsia || is_apple) {
     sources = angle_end2end_tests_sources + [ "angle_end2end_tests_main.cpp" ]
     if (angle_enable_cl) {
       sources += [ "capture_tests/CapturedTestCL.cpp" ]
+      configs += [ "$angle_root:opencl_no_pragma_messages" ]
     }
     libs = []
     defines = []
+    if (angle_use_partition_alloc) {
+      defines += [ "ANGLE_USE_PARTITION_ALLOC" ]
+    }
     configs += [ "${angle_root}:libANGLE_config" ]
 
     if (is_ios) {
@@ -306,6 +321,7 @@ if (is_win || is_linux || is_chromeos || is_android || is_fuchsia || is_apple) {
     }
     if (angle_use_wayland) {
       sources += [ "egl_tests/EGLWaylandTest.cpp" ]
+      public_deps += [ "$wayland_protocols_gn_dir:xdg_shell_protocol" ]
     }
 
     deps = [
@@ -540,12 +556,27 @@ if (is_win || is_linux || is_chromeos || is_android || is_fuchsia || is_apple) {
       ":angle_common_test_utils_static",
       "$angle_root:angle_static",
     ]
+    if (angle_use_wayland) {
+      deps += [
+        "$wayland_gn_dir:wayland_client",
+        "$wayland_gn_dir:wayland_egl",
+        "$wayland_protocols_gn_dir:xdg_shell_protocol",
+      ]
+    }
 
     deps += [ "${angle_root}:angle_gl_enum_utils" ]
 
     if (angle_enable_vulkan) {
       sources += angle_white_box_tests_vulkan_sources
       deps += [ "$angle_root/src/common/vulkan:angle_vulkan_entry_points" ]
+    }
+
+    if (angle_ir) {
+      configs += [ "${angle_root}:angle_translator_ir" ]
+    }
+
+    if (angle_enable_metal) {
+      sources += angle_white_box_tests_metal_sources
     }
   }
 }
@@ -571,11 +602,12 @@ template("angle_perftests_common") {
   angle_source_set(target_name) {
     testonly = true
     if (is_ios) {
-      # shared libraries are hidden inside ios_framework_bundle, but we include headers from them
+      # shared libraries are hidden inside ios_framework_bundle, but we include
+      # headers from them
       check_includes = false
     }
     sources = [
-      "../common/base/anglebase/trace_event/trace_event.h",
+      "../libANGLE/trace.h",
       "perf_tests/ANGLEComputeTestCL.cpp",
       "perf_tests/ANGLEComputeTestCL.h",
       "perf_tests/ANGLEPerfTest.cpp",
@@ -616,13 +648,14 @@ angle_perftests_common("angle_perftests_static") {
 if (is_win || is_linux || is_chromeos || is_android || is_apple) {
   import("angle_perftests.gni")
 
-  # This test suite is for perf tests that use ANGLE's internals in some direct way.
+  # This test suite is for perf tests that use ANGLE's internals in some direct
+  # way.
   angle_test("angle_white_box_perftests") {
     include_dirs = [ "." ]
     sources =
         angle_white_box_perf_tests_sources + [ "angle_perftests_main.cpp" ]
 
-    if (angle_enable_d3d11 || angle_enable_d3d9) {
+    if (angle_enable_d3d11) {
       sources += [ "perf_tests/IndexDataManagerTest.cpp" ]
     }
 
@@ -630,6 +663,14 @@ if (is_win || is_linux || is_chromeos || is_android || is_apple) {
       ":angle_perftests_static",
       "$angle_root:angle_static",
     ]
+
+    if (angle_use_wayland) {
+      deps += [
+        "$wayland_gn_dir:wayland_client",
+        "$wayland_gn_dir:wayland_egl",
+        "$wayland_protocols_gn_dir:xdg_shell_protocol",
+      ]
+    }
 
     data = [
       "$angle_root/scripts/process_angle_perf_results.py",
@@ -698,7 +739,7 @@ if (build_angle_perftests) {
     if (is_win && target_cpu != "arm64") {
       data_deps += [ "${angle_root}/third_party/glmark2:glmark2_wgl" ]
     }
-    if (is_linux || is_chromeos) {
+    if ((is_linux || is_chromeos) && angle_use_x11) {
       data_deps += [ "${angle_root}/third_party/glmark2:glmark2_glx" ]
     }
   }
@@ -720,7 +761,8 @@ if (build_angle_trace_tests) {
     assert(is_clang, "angle trace tests require clang")
 
     if (is_ios) {
-      # shared libraries are hidden inside ios_framework_bundle, but we include headers from them
+      # shared libraries are hidden inside ios_framework_bundle, but we include
+      # headers from them
       check_includes = false
     }
 
@@ -741,8 +783,9 @@ if (build_angle_trace_tests) {
       "restricted_traces:gen_trace_list_json",
     ]
 
-    # If this flag is set, we want to build the trace libraries independent of the APK, i.e. not packaged.
-    # We're doing this for size reasons - the APK is too large if you include all the traces.
+    # If this flag is set, we want to build the trace libraries independent of
+    # the APK, i.e. not packaged. We're doing this for size reasons - the APK is
+    # too large if you include all the traces.
     if (restricted_traces_outside_of_apk) {
       defines = [ "ANGLE_TRACE_EXTERNAL_BINARIES" ]
       deps += [ "$angle_root/util:angle_trace_loader" ]
@@ -772,7 +815,8 @@ if (build_angle_trace_tests) {
     data_deps = [ "${angle_root}:angle" ]
 
     if (is_clang) {
-      # Allows us to edit traces and remove chunks of code without compile warnings.
+      # Allows us to edit traces and remove chunks of code without compile
+      # warnings.
       cflags_cc = [ "-Wno-unused-const-variable" ]
     }
   }
@@ -861,12 +905,13 @@ if (build_angle_gles1_conform_tests) {
       "COMMON",
       "CONFORM_ALTERNATE_MAIN",
 
-      # NULLWS defines is only used in covegl/native.h, remove here.
-      # if needed please add it in angle_test("angle_gles1_covegl_no_gtest") defines.
-      #"NULLWS",
+      # NULLWS defines is only used in covegl/native.h, remove here. if needed
+      # please add it in angle_test("angle_gles1_covegl_no_gtest") defines.
+      # #"NULLWS",
     ]
 
-    # This is used by the tests to typedef uint32_t. For some reason only needed on mac.
+    # This is used by the tests to typedef uint32_t. For some reason only needed
+    # on mac.
     if (is_apple) {
       defines += [ "__linux" ]
     }
@@ -1348,6 +1393,14 @@ if (build_angle_deqp_tests && !is_fuchsia) {
       "ANGLE_DEQP_DATA_DIR=\"gen/vk_gl_cts_data/data\"",
     ]
 
+    if (is_linux) {
+      if (angle_use_x11) {
+        defines += [ "DEQP_SUPPORT_X11=1" ]
+      } else if (angle_use_wayland) {
+        defines += [ "DEQP_SUPPORT_WAYLAND=1" ]
+      }
+    }
+
     if (is_android) {
       include_dirs += [ "$deqp_path/framework/platform/android" ]
 
@@ -1542,7 +1595,7 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     public_deps = [ ":angle_deqp_framework_debase" ]
   }
 
-  config("angle_deqp_framework_common_config") {
+  config("angle_deqp_framework_common_public_config") {
     include_dirs = [
       "$deqp_path/framework/common",
       "$deqp_path/framework/randomshaders",
@@ -1550,14 +1603,30 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     ]
   }
 
+  config("angle_deqp_framework_common_private_config") {
+    cflags_cc = [
+      # Usage of deprecated std::float_denorm_style.
+      # https://github.com/KhronosGroup/VK-GL-CTS/blob/84f86d999680e3d8a416b578bfc6e86ce8910853/framework/common/tcuFloatFormat.cpp#L275C32-L279
+      "-Wno-deprecated-declarations",
+    ]
+  }
+
   angle_deqp_source_set("angle_deqp_framework_common") {
     sources = deqp_framework_common_sources
-    public_configs = [ ":angle_deqp_framework_common_config" ]
+    if (is_win) {
+      sources += deqp_framework_common_win_sources
+    } else {
+      sources += deqp_framework_common_linux_sources
+    }
+
+    public_configs = [ ":angle_deqp_framework_common_public_config" ]
+    configs += [ ":angle_deqp_framework_common_private_config" ]
     public_deps = [
       ":angle_deqp_framework_decpp",
       ":angle_deqp_framework_qphelper",
       ":angle_deqp_framework_xexml",
     ]
+    deps = [ "${angle_jsoncpp_dir}:jsoncpp" ]
   }
 
   config("angle_deqp_framework_opengl_config") {
@@ -1613,11 +1682,13 @@ if (build_angle_deqp_tests && !is_fuchsia) {
 
   angle_deqp_source_set("angle_deqp_framework_platform") {
     if (is_ios) {
-      # shared libraries are hidden inside ios_framework_bundle, but we include headers from them
+      # shared libraries are hidden inside ios_framework_bundle, but we include
+      # headers from them
       check_includes = false
     }
     sources = deqp_framework_platform_sources
     libs = []
+    public_deps = []
     if (is_win) {
       sources += [
         "$deqp_path/framework/platform/win32/tcuWGL.cpp",
@@ -1628,17 +1699,34 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     }
     if (is_linux) {
       sources += [
-        "$deqp_path/framework/platform/lnx/X11/tcuLnxX11.cpp",
-        "$deqp_path/framework/platform/lnx/X11/tcuLnxX11.hpp",
-        "$deqp_path/framework/platform/lnx/X11/tcuLnxX11EglDisplayFactory.cpp",
-        "$deqp_path/framework/platform/lnx/X11/tcuLnxX11EglDisplayFactory.hpp",
         "$deqp_path/framework/platform/lnx/tcuLnx.cpp",
         "$deqp_path/framework/platform/lnx/tcuLnx.hpp",
         "$deqp_path/framework/platform/lnx/tcuLnxEglPlatform.cpp",
         "$deqp_path/framework/platform/lnx/tcuLnxEglPlatform.hpp",
       ]
+      if (angle_use_x11) {
+        sources += [
+          "$deqp_path/framework/platform/lnx/X11/tcuLnxX11.cpp",
+          "$deqp_path/framework/platform/lnx/X11/tcuLnxX11.hpp",
+          "$deqp_path/framework/platform/lnx/X11/tcuLnxX11EglDisplayFactory.cpp",
+          "$deqp_path/framework/platform/lnx/X11/tcuLnxX11EglDisplayFactory.hpp",
+        ]
+      } else if (angle_use_wayland) {
+        sources += [
+          "$angle_root/src/tests/deqp_support/wayland/xdg-shell.h",
+          "$deqp_path/framework/platform/lnx/wayland/tcuLnxWayland.cpp",
+          "$deqp_path/framework/platform/lnx/wayland/tcuLnxWayland.hpp",
+          "$deqp_path/framework/platform/lnx/wayland/tcuLnxWaylandEglDisplayFactory.cpp",
+          "$deqp_path/framework/platform/lnx/wayland/tcuLnxWaylandEglDisplayFactory.hpp",
+        ]
+        public_deps += [
+          "$wayland_gn_dir:wayland_client",
+          "$wayland_gn_dir:wayland_egl",
+          "$wayland_protocols_gn_dir:xdg_shell_protocol",
+        ]
+      }
     }
-    public_deps = [
+    public_deps += [
       ":angle_deqp_framework_common",
       ":angle_deqp_framework_egl",
     ]
@@ -1646,7 +1734,8 @@ if (build_angle_deqp_tests && !is_fuchsia) {
 
   angle_deqp_source_set("angle_deqp_libtester") {
     if (is_ios) {
-      # shared libraries are hidden inside ios_framework_bundle, but we include headers from them
+      # shared libraries are hidden inside ios_framework_bundle, but we include
+      # headers from them
       check_includes = false
     }
     public_deps = [
@@ -1798,7 +1887,8 @@ if (build_angle_deqp_tests && !is_fuchsia) {
       } else if (_api == "gles31") {
         data = angle_deqp_data_gles31
       } else {
-        # Make sure we include something so that angle_deqp_libtester_main.cpp can find something.
+        # Make sure we include something so that angle_deqp_libtester_main.cpp
+        # can find something.
         data = [ "$root_gen_dir/vk_gl_cts_data/data/gles2/shaders/misc.test" ]
       }
     }
@@ -1862,7 +1952,8 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     }
   }
 
-  # The CTS also includes a set of "KHR" tests that are separate from the main body of dEQP tests.
+  # The CTS also includes a set of "KHR" tests that are separate from the main
+  # body of dEQP tests.
 
   config("angle_deqp_khr_common_config") {
     include_dirs = [
@@ -1906,7 +1997,8 @@ if (build_angle_deqp_tests && !is_fuchsia) {
       deps = [ ":angle_deqp_khr_common" ]
       deps += angle_deqp_data_copy_targets
       if (api == "gles2") {
-        # Make sure we include something so that angle_deqp_libtester_main.cpp can find something.
+        # Make sure we include something so that angle_deqp_libtester_main.cpp
+        # can find something.
         data = [ "$root_gen_dir/vk_gl_cts_data/data/gles2/shaders/misc.test" ]
         mustpass_dir = _khronos_gles_mustpass
       } else if (api == "gles3") {
@@ -2095,6 +2187,7 @@ group("angle_tests") {
     deps += [ ":angle_trace_perf_tests" ]
     deps += [ "capture_tests:angle_capture_tests_multi_frame_trace" ]
     deps += [ "capture_tests:angle_capture_tests_active_textures_trace" ]
+    deps += [ "capture_tests:angle_capture_tests_client_wait_sync_trace" ]
     if (angle_enable_cl) {
       deps += [ "capture_tests:angle_capture_tests_multi_frame_cl_trace" ]
     }

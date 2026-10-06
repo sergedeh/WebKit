@@ -65,9 +65,9 @@ public:
     PlatformXR::InputSourceHandle handle() const { return m_source.handle; }
     XRHandedness handedness() const { return m_source.handedness; }
     XRTargetRayMode targetRayMode() const { return m_source.targetRayMode; };
-    const WebXRSpace& targetRaySpace() const {return m_targetRaySpace.get(); };
+    WebXRSpace& targetRaySpace() const { return m_targetRaySpace.get(); };
     WebXRSpace* gripSpace() const { return m_gripSpace.get(); }
-    const Vector<String>& profiles() const { return m_source.profiles; };
+    const Vector<String>& profiles() const LIFETIME_BOUND { return m_source.profiles; };
     double connectTime() const { return m_connectTime; }
 #if ENABLE(GAMEPAD)
     Gamepad* gamepad() const { return m_gamepad.ptr(); }
@@ -84,7 +84,7 @@ public:
     void pollEvents(Vector<Ref<XRInputSourceEvent>>&);
 
     // For GC reachablitiy.
-    WebXRSession* session();
+    WebXRSession* NODELETE session();
 
 private:
     WebXRInputSource(Document&, WebXRSession&, double timestamp, const InputSource&);
@@ -100,7 +100,7 @@ private:
 #endif
 
 #if ENABLE(WEBXR_HANDS)
-    RefPtr<WebXRHand> m_hand;
+    const RefPtr<WebXRHand> m_hand;
 #endif
 
     bool m_selectStarted { false };

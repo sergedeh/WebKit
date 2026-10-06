@@ -41,64 +41,6 @@ void pas_heap_config_utils_null_activate(void)
 {
 }
 
-bool pas_heap_config_utils_for_each_shared_page_directory(
-    pas_segregated_heap* heap,
-    bool (*callback)(pas_segregated_shared_page_directory* directory,
-                     void* arg),
-    void* arg)
-{
-    pas_segregated_page_config_variant variant;
-    pas_basic_heap_runtime_config* runtime_config;
-
-    runtime_config = (pas_basic_heap_runtime_config*)heap->runtime_config;
-
-    for (PAS_EACH_SEGREGATED_PAGE_CONFIG_VARIANT_ASCENDING(variant)) {
-        if (!pas_shared_page_directory_by_size_for_each(
-                pas_basic_heap_page_caches_get_shared_page_directories(
-                    runtime_config->page_caches, variant),
-                callback, arg))
-            return false;
-    }
-
-    return true;
-}
-
-bool pas_heap_config_utils_for_each_shared_page_directory_remote(
-    pas_enumerator* enumerator,
-    pas_segregated_heap* heap,
-    bool (*callback)(pas_enumerator* enumerator,
-                     pas_segregated_shared_page_directory* directory,
-                     void* arg),
-    void* arg)
-{
-    pas_basic_heap_runtime_config runtime_config;
-    pas_basic_heap_page_caches page_caches;
-    pas_segregated_page_config_variant variant;
-
-    if (!pas_enumerator_copy_remote(
-            enumerator,
-            &runtime_config,
-            heap->runtime_config,
-            sizeof(pas_basic_heap_runtime_config)))
-        return false;
-
-    if (!pas_enumerator_copy_remote(
-            enumerator,
-            &page_caches,
-            runtime_config.page_caches,
-            sizeof(pas_basic_heap_page_caches)))
-        return false;
-
-    for (PAS_EACH_SEGREGATED_PAGE_CONFIG_VARIANT_ASCENDING(variant)) {
-        if (!pas_shared_page_directory_by_size_for_each_remote(
-                pas_basic_heap_page_caches_get_shared_page_directories(&page_caches, variant),
-                enumerator, callback, arg))
-            return false;
-    }
-
-    return true;
-}
-
 pas_aligned_allocation_result
 pas_heap_config_utils_allocate_aligned(
     size_t size,
@@ -124,10 +66,7 @@ pas_heap_config_utils_allocate_aligned(
 
     runtime_config = (pas_basic_heap_runtime_config*)
         pas_heap_for_large_heap(large_heap)->segregated_heap.runtime_config;
-    if (large_heap->is_megapage_heap)
-        cache = &runtime_config->page_caches->megapage_large_heap_cache;
-    else
-        cache = &runtime_config->page_caches->large_heap_cache;
+    cache = &runtime_config->page_caches->large_heap_cache;
     
     allocation_result =
         pas_large_heap_physical_page_sharing_cache_try_allocate_with_alignment(
@@ -165,7 +104,8 @@ void* pas_heap_config_utils_prepare_to_enumerate(pas_enumerator* enumerator,
     pas_heap_config* config_ptr;
     pas_basic_heap_config_root_data* root_data_ptr;
     pas_basic_heap_config_root_data root_data;
-    pas_page_header_table medium_page_header_table;
+    pas_page_header_table medium_segregated_page_header_table;
+    pas_page_header_table medium_bitfit_page_header_table;
     pas_page_header_table marge_page_header_table;
 
     if (!pas_enumerator_copy_remote(enumerator, &config_ptr, enumerator->root->heap_configs + my_config->kind, sizeof(pas_heap_config*)))
@@ -181,13 +121,22 @@ void* pas_heap_config_utils_prepare_to_enumerate(pas_enumerator* enumerator,
     
     pas_ptr_hash_map_construct(&result->page_header_table);
 
-    if (!pas_enumerator_copy_remote(enumerator, &medium_page_header_table, root_data.medium_page_header_table, sizeof(pas_page_header_table)))
+    if (!pas_enumerator_copy_remote(enumerator, &medium_segregated_page_header_table, root_data.medium_segregated_page_header_table, sizeof(pas_page_header_table)))
         return NULL;
 
     if (!pas_basic_heap_config_enumerator_data_add_page_header_table(
             result,
             enumerator,
-            &medium_page_header_table))
+            &medium_segregated_page_header_table))
+        return NULL;
+
+    if (!pas_enumerator_copy_remote(enumerator, &medium_bitfit_page_header_table, root_data.medium_bitfit_page_header_table, sizeof(pas_page_header_table)))
+        return NULL;
+
+    if (!pas_basic_heap_config_enumerator_data_add_page_header_table(
+            result,
+            enumerator,
+            &medium_bitfit_page_header_table))
         return NULL;
     
     if (!pas_enumerator_copy_remote(enumerator, &marge_page_header_table, root_data.marge_page_header_table, sizeof(pas_page_header_table)))

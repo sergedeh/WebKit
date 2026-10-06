@@ -65,8 +65,8 @@ void ReplaceNodeWithSpanCommand::doApply()
     if (!m_elementToReplace->isConnected())
         return;
     if (!m_spanElement)
-        m_spanElement = HTMLSpanElement::create(m_elementToReplace->protectedDocument());
-    swapInNodePreservingAttributesAndChildren(protectedSpanElement().releaseNonNull(), m_elementToReplace);
+        lazyInitialize(m_spanElement, HTMLSpanElement::create(protect(m_elementToReplace->document())));
+    swapInNodePreservingAttributesAndChildren(protect(spanElement()).releaseNonNull(), m_elementToReplace);
 }
 
 void ReplaceNodeWithSpanCommand::doUnapply()

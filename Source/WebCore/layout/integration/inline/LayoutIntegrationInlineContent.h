@@ -67,10 +67,10 @@ class InlineContent : public CanMakeWeakPtr<InlineContent> {
 public:
     InlineContent(const RenderBlockFlow& formattingContextRoot);
 
-    InlineDisplay::Content& displayContent() { return m_displayContent; }
-    const InlineDisplay::Content& displayContent() const { return m_displayContent; }
-    bool hasContentfulInFlowBox() const;
-    bool hasContentfulInlineLevelBox() const;
+    InlineDisplay::Content& displayContent()  LIFETIME_BOUND { return m_displayContent; }
+    const InlineDisplay::Content& displayContent() const LIFETIME_BOUND { return m_displayContent; }
+    bool NODELETE hasContentfulInFlowBox() const;
+    bool NODELETE hasContentfulInlineLevelBox() const;
 
     FloatRect scrollableOverflow() const { return m_scrollableOverflow; }
     FloatRect inkOverflow() const { return m_inkOverflow; }
@@ -82,27 +82,30 @@ public:
     float clearGapBeforeFirstLine() const { return m_clearGapBeforeFirstLine; }
     bool hasBlockLevelBoxes() const { return m_hasBlockLevelBoxes; }
     bool hasPaintedInlineLevelBoxes() const { return m_hasPaintedInlineLevelBoxes; }
+    bool contentFitsWithinMaximumLines() const { return m_contentFitsWithinMaximumLines; }
 
     IteratorRange<const InlineDisplay::Box*> boxesForRect(const LayoutRect&) const;
 
-    const InlineDisplay::Line& lineForBox(const InlineDisplay::Box& box) const { return displayContent().lines[box.lineIndex()]; }
-    size_t indexForBox(const InlineDisplay::Box&) const;
-    const InlineDisplay::Box* firstBoxForLayoutBox(const Layout::Box&) const;
+    const InlineDisplay::Line& lineForBox(const InlineDisplay::Box& box) const LIFETIME_BOUND { return displayContent().lines[box.lineIndex()]; }
+    size_t NODELETE indexForBox(const InlineDisplay::Box&) const;
+    const InlineDisplay::Box* firstBoxForLayoutBox(const Layout::Box&) const LIFETIME_BOUND;
     std::optional<size_t> firstBoxIndexForLayoutBox(const Layout::Box&) const;
 
     // Returns a block level box if the line is for block-in-inline.
-    const InlineDisplay::Box* blockLevelBoxForLine(const InlineDisplay::Line&) const;
-    bool isInlineBoxWrapperForBlockLevelBox(const InlineDisplay::Box&) const;
+    const InlineDisplay::Box* NODELETE blockLevelBoxForLine(const InlineDisplay::Line&) const LIFETIME_BOUND;
+    bool NODELETE isInlineBoxWrapperForBlockLevelBox(const InlineDisplay::Box&) const;
 
-    template<typename Function> void traverseNonRootInlineBoxes(const Layout::Box&, Function&&);
+    template<typename Function> void traverseNonRootInlineBoxes(const Layout::Box&, NOESCAPE const Function&);
 
-    const RenderBlockFlow& formattingContextRoot() const;
+    const RenderBlockFlow& NODELETE formattingContextRoot() const;
 
-    const Vector<SVGTextFragment>& svgTextFragments(size_t boxIndex) const;
-    Vector<Vector<SVGTextFragment>>& svgTextFragmentsForBoxes() { return m_svgTextFragmentsForBoxes; }
+    const Vector<SVGTextFragment>& NODELETE svgTextFragments(size_t boxIndex) const LIFETIME_BOUND;
+    Vector<Vector<SVGTextFragment>>& svgTextFragmentsForBoxes() LIFETIME_BOUND { return m_svgTextFragmentsForBoxes; }
 
     void shrinkToFit();
     void releaseCaches();
+
+    void clearFormattingContextRoot();
 
 private:
     friend class InlineContentBuilder;
@@ -115,11 +118,14 @@ private:
     void setClearGapAfterLastLine(float clearGapAfterLastLine) { m_clearGapAfterLastLine = clearGapAfterLastLine; }
     void setFirstLinePaginationOffset(float firstLinePaginationOffset) { m_firstLinePaginationOffset = firstLinePaginationOffset; }
     void setHasBlockLevelBoxes() { m_hasBlockLevelBoxes = true; }
+    void setContentMayHaveInkOverflow(bool mayHaveInkOverflow) { m_contentMayHaveInkOverflow = mayHaveInkOverflow; }
+    bool contentMayHaveInkOverflow() const { return m_contentMayHaveInkOverflow; }
     void setHasPaintedInlineLevelBoxes() { m_hasPaintedInlineLevelBoxes = true; }
+    void setContentFitsWithinMaximumLines(bool contentFits) { m_contentFitsWithinMaximumLines = contentFits; }
 
-    const Vector<size_t>& nonRootInlineBoxIndexesForLayoutBox(const Layout::Box&) const;
+    const Vector<size_t>& nonRootInlineBoxIndexesForLayoutBox(const Layout::Box&) const LIFETIME_BOUND;
 
-    CheckedRef<const RenderBlockFlow> m_formattingContextRoot;
+    CheckedPtr<const RenderBlockFlow> m_formattingContextRoot;
 
     InlineDisplay::Content m_displayContent;
     using FirstBoxIndexCache = HashMap<CheckedRef<const Layout::Box>, size_t>;
@@ -132,15 +138,17 @@ private:
     float m_clearGapBeforeFirstLine { 0 };
     float m_clearGapAfterLastLine { 0 };
     std::optional<float> m_firstLinePaginationOffset { };
+    bool m_contentFitsWithinMaximumLines { false };
 
     bool m_hasMultilinePaintOverlap { false };
     bool m_hasBlockLevelBoxes { false };
+    bool m_contentMayHaveInkOverflow { false };
     bool m_hasPaintedInlineLevelBoxes { false };
 
     Vector<Vector<SVGTextFragment>> m_svgTextFragmentsForBoxes;
 };
 
-template<typename Function> void InlineContent::traverseNonRootInlineBoxes(const Layout::Box& layoutBox, Function&& function)
+template<typename Function> void InlineContent::traverseNonRootInlineBoxes(const Layout::Box& layoutBox, NOESCAPE const Function& function)
 {
     for (auto index : nonRootInlineBoxIndexesForLayoutBox(layoutBox))
         function(displayContent().boxes[index]);

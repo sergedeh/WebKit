@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleTextUnderlinePosition.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -32,8 +33,8 @@ namespace Style {
 
 auto CSSValueConversion<TextUnderlinePosition>::operator()(BuilderState& state, const CSSValue& value) -> TextUnderlinePosition
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
         case CSSValueAuto:
             return CSS::Keyword::Auto { };
         case CSSValueFromFont:
@@ -50,13 +51,13 @@ auto CSSValueConversion<TextUnderlinePosition>::operator()(BuilderState& state, 
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue>(state, value);
     if (!list)
         return CSS::Keyword::Auto { };
 
     TextUnderlinePositionValueEnumSet result;
-    for (Ref item : *list) {
-        switch (item->valueID()) {
+    for (auto& item : *list) {
+        switch (item.valueID()) {
         case CSSValueFromFont:
             if (result.contains(TextUnderlinePositionValue::Under)) {
                 state.setCurrentPropertyInvalidAtComputedValueTime();

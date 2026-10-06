@@ -37,11 +37,11 @@ public:
 
     double elapsedTime() const { return m_elapsedTime; }
     const String& pseudoElement();
-    const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier() const { return m_pseudoElementIdentifier; }
+    const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier() const LIFETIME_BOUND { return m_pseudoElementIdentifier; }
 
 protected:
     StyleOriginatedAnimationEvent(enum EventInterfaceType, const AtomString& type, WebAnimation*, std::optional<Seconds> scheduledTime, double, const std::optional<Style::PseudoElementIdentifier>&);
-    StyleOriginatedAnimationEvent(enum EventInterfaceType, const AtomString&, const EventInit&, IsTrusted, double, const String&);
+    StyleOriginatedAnimationEvent(enum EventInterfaceType, const AtomString&, EventInit&&, IsTrusted, double, String&&, RefPtr<WebAnimation>&&);
 
 private:
     double m_elapsedTime;

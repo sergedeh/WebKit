@@ -83,6 +83,13 @@ inline AccessibilityObject* AXObjectCache::getOrCreate(Element& element, IsPartO
     return getOrCreateSlow(element, isPartOfRelation);
 }
 
+inline AccessibilityObject* AXObjectCache::getOrCreate(Widget& widget)
+{
+    if (auto* object = get(widget))
+        return object;
+    return getOrCreateSlow(widget);
+}
+
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 
 inline void AXObjectCache::scheduleObjectRegionsUpdate(bool scheduleImmediately)
@@ -93,18 +100,6 @@ inline void AXObjectCache::scheduleObjectRegionsUpdate(bool scheduleImmediately)
 inline void AXObjectCache::willUpdateObjectRegions()
 {
     m_geometryManager->willUpdateObjectRegions();
-}
-
-inline void AXObjectCache::objectBecameIgnored(const AccessibilityObject& object)
-{
-    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID))
-        tree->objectBecameIgnored(object);
-}
-
-inline void AXObjectCache::objectBecameUnignored(const AccessibilityObject& object)
-{
-    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID))
-        tree->objectBecameUnignored(object);
 }
 
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)

@@ -2,6 +2,7 @@
  * Copyright (C) 2011 Andreas Kling (kling@webkit.org)
  * Copyright (C) 2013 Adobe Systems Incorporated. All rights reserved.
  * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,52 +34,70 @@
 #include "CSSAttrValue.h"
 #include "CSSBackgroundRepeatValue.h"
 #include "CSSBasicShapeValue.h"
+#include "CSSBorderImageOutsetValue.h"
+#include "CSSBorderImageRepeatValue.h"
 #include "CSSBorderImageSliceValue.h"
+#include "CSSBorderImageSourceValue.h"
 #include "CSSBorderImageWidthValue.h"
 #include "CSSBoxShadowPropertyValue.h"
+#include "CSSCalcSizeValue.h"
 #include "CSSCanvasValue.h"
+#include "CSSClipValue.h"
+#include "CSSColorImageValue.h"
 #include "CSSColorSchemeValue.h"
 #include "CSSColorValue.h"
-#include "CSSCounterValue.h"
+#include "CSSContentValue.h"
 #include "CSSCrossfadeValue.h"
 #include "CSSCursorImageValue.h"
+#include "CSSCustomIdentValue.h"
 #include "CSSCustomPropertyValue.h"
 #include "CSSDynamicRangeLimitValue.h"
 #include "CSSEasingFunctionValue.h"
 #include "CSSFilterImageValue.h"
 #include "CSSFilterValue.h"
+#include "CSSFlexWrapValue.h"
 #include "CSSFontFaceSrcValue.h"
+#include "CSSFontFamilyNameValue.h"
 #include "CSSFontFeatureValue.h"
+#include "CSSFontPaletteValue.h"
 #include "CSSFontStyleRangeValue.h"
 #include "CSSFontStyleWithAngleValue.h"
 #include "CSSFontValue.h"
 #include "CSSFontVariationValue.h"
 #include "CSSFunctionValue.h"
 #include "CSSGradientValue.h"
-#include "CSSGridAutoRepeatValue.h"
-#include "CSSGridIntegerRepeatValue.h"
-#include "CSSGridLineNamesValue.h"
+#include "CSSGridAutoFlowValue.h"
 #include "CSSGridLineValue.h"
 #include "CSSGridTemplateAreasValue.h"
+#include "CSSGridTemplateListValue.h"
+#include "CSSGridTrackSizesValue.h"
 #include "CSSImageSetOptionValue.h"
 #include "CSSImageSetValue.h"
 #include "CSSImageValue.h"
+#include "CSSKeywordValue.h"
+#include "CSSLightDarkImageValue.h"
+#include "CSSMaskBorderOutsetValue.h"
+#include "CSSMaskBorderRepeatValue.h"
+#include "CSSMaskBorderSliceValue.h"
+#include "CSSMaskBorderSourceValue.h"
+#include "CSSMaskBorderWidthValue.h"
 #include "CSSNamedImageValue.h"
 #include "CSSOffsetRotateValue.h"
 #include "CSSPaintImageValue.h"
+#include "CSSParamValue.h"
 #include "CSSPathValue.h"
-#include "CSSPendingSubstitutionValue.h"
 #include "CSSPositionValue.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSProperty.h"
-#include "CSSQuadValue.h"
+#include "CSSQuotesValue.h"
 #include "CSSRatioValue.h"
 #include "CSSRayValue.h"
-#include "CSSRectValue.h"
-#include "CSSReflectValue.h"
 #include "CSSScrollValue.h"
 #include "CSSSerializationContext.h"
-#include "CSSSubgridValue.h"
+#include "CSSShorthandSubstitutionValue.h"
+#include "CSSStringValue.h"
+#include "CSSSubstitutionValue.h"
+#include "CSSSymbolsFunctionValue.h"
 #include "CSSTextShadowPropertyValue.h"
 #include "CSSToLengthConversionData.h"
 #include "CSSTransformListValue.h"
@@ -86,13 +105,16 @@
 #include "CSSUnicodeRangeValue.h"
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
-#include "CSSVariableReferenceValue.h"
 #include "CSSViewValue.h"
+#include "CSSWebkitBoxReflectValue.h"
 #include "ComputedStyleDependencies.h"
-#include "DeprecatedCSSOMPrimitiveValue.h"
-#include "DeprecatedCSSOMValueList.h"
+#include "DeprecatedCSSOMCustomValue.h"
 #include "EventTarget.h"
 #include <wtf/Hasher.h>
+
+#if ENABLE(SPATIAL_PORTAL)
+#include "CSSPinnedAnchorNameValue.h"
+#endif
 
 namespace WebCore {
 
@@ -105,139 +127,179 @@ static_assert(sizeof(CSSValue) == sizeof(SameSizeAsCSSValue), "CSS value should 
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSValue);
 
-template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visitor&& visitor)
+template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(NOESCAPE const Visitor& visitor)
 {
     using enum CSSValue::ClassType;
     switch (m_classType) {
     case AppleColorFilter:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSAppleColorFilterValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSAppleColorFilterValue>(*this));
     case Attr:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSAttrValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSAttrValue>(*this));
     case BackgroundRepeat:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBackgroundRepeatValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSBackgroundRepeatValue>(*this));
     case BasicShape:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBasicShapeValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSBasicShapeValue>(*this));
+    case BorderImageOutset:
+        return std::invoke(visitor, uncheckedDowncast<CSSBorderImageOutsetValue>(*this));
+    case BorderImageRepeat:
+        return std::invoke(visitor, uncheckedDowncast<CSSBorderImageRepeatValue>(*this));
     case BorderImageSlice:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBorderImageSliceValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSBorderImageSliceValue>(*this));
+    case BorderImageSource:
+        return std::invoke(visitor, uncheckedDowncast<CSSBorderImageSourceValue>(*this));
     case BorderImageWidth:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBorderImageWidthValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSBorderImageWidthValue>(*this));
     case BoxShadowProperty:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBoxShadowPropertyValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSBoxShadowPropertyValue>(*this));
     case Canvas:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCanvasValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSCanvasValue>(*this));
+    case CalcSize:
+        return std::invoke(visitor, uncheckedDowncast<CSSCalcSizeValue>(*this));
+    case Clip:
+        return std::invoke(visitor, uncheckedDowncast<CSSClipValue>(*this));
     case Color:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSColorValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSColorValue>(*this));
 #if ENABLE(DARK_MODE_CSS)
     case ColorScheme:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSColorSchemeValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSColorSchemeValue>(*this));
 #endif
-    case Counter:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCounterValue>(*this));
+    case Content:
+        return std::invoke(visitor, uncheckedDowncast<CSSContentValue>(*this));
     case Crossfade:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCrossfadeValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSCrossfadeValue>(*this));
     case CursorImage:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCursorImageValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSCursorImageValue>(*this));
+    case CustomIdent:
+        return std::invoke(visitor, uncheckedDowncast<CSSCustomIdentValue>(*this));
     case CustomProperty:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCustomPropertyValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSCustomPropertyValue>(*this));
     case DynamicRangeLimit:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSDynamicRangeLimitValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSDynamicRangeLimitValue>(*this));
     case EasingFunction:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSEasingFunctionValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSEasingFunctionValue>(*this));
     case FilterImage:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFilterImageValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFilterImageValue>(*this));
     case Filter:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFilterValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFilterValue>(*this));
+    case FlexWrap:
+        return std::invoke(visitor, uncheckedDowncast<CSSFlexWrapValue>(*this));
     case Font:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFontValue>(*this));
     case FontFaceSrcLocal:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontFaceSrcLocalValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFontFaceSrcLocalValue>(*this));
     case FontFaceSrcResource:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontFaceSrcResourceValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFontFaceSrcResourceValue>(*this));
+    case FontFamilyName:
+        return std::invoke(visitor, uncheckedDowncast<CSSFontFamilyNameValue>(*this));
     case FontFeature:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontFeatureValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFontFeatureValue>(*this));
+    case FontPalette:
+        return std::invoke(visitor, uncheckedDowncast<CSSFontPaletteValue>(*this));
     case FontStyleWithAngle:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontStyleWithAngleValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFontStyleWithAngleValue>(*this));
     case FontStyleRange:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontStyleRangeValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFontStyleRangeValue>(*this));
     case FontVariation:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontVariationValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFontVariationValue>(*this));
     case Function:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFunctionValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSFunctionValue>(*this));
     case Gradient:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSGradientValue>(*this));
-    case GridAutoRepeat:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSGridAutoRepeatValue>(*this));
-    case GridIntegerRepeat:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSGridIntegerRepeatValue>(*this));
-    case GridLineNames:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSGridLineNamesValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSGradientValue>(*this));
+    case GridAutoFlow:
+        return std::invoke(visitor, uncheckedDowncast<CSSGridAutoFlowValue>(*this));
     case GridLineValue:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSGridLineValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSGridLineValue>(*this));
     case GridTemplateAreas:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSGridTemplateAreasValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSGridTemplateAreasValue>(*this));
+    case GridTemplateList:
+        return std::invoke(visitor, uncheckedDowncast<CSSGridTemplateListValue>(*this));
+    case GridTrackSizes:
+        return std::invoke(visitor, uncheckedDowncast<CSSGridTrackSizesValue>(*this));
+    case Keyword:
+        return std::invoke(visitor, uncheckedDowncast<CSSKeywordValue>(*this));
     case Image:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSImageValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSImageValue>(*this));
     case ImageSetOption:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSImageSetOptionValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSImageSetOptionValue>(*this));
     case ImageSet:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSImageSetValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSImageSetValue>(*this));
+    case MaskBorderOutset:
+        return std::invoke(visitor, uncheckedDowncast<CSSMaskBorderOutsetValue>(*this));
+    case MaskBorderRepeat:
+        return std::invoke(visitor, uncheckedDowncast<CSSMaskBorderRepeatValue>(*this));
+    case MaskBorderSlice:
+        return std::invoke(visitor, uncheckedDowncast<CSSMaskBorderSliceValue>(*this));
+    case MaskBorderSource:
+        return std::invoke(visitor, uncheckedDowncast<CSSMaskBorderSourceValue>(*this));
+    case MaskBorderWidth:
+        return std::invoke(visitor, uncheckedDowncast<CSSMaskBorderWidthValue>(*this));
+    case ColorImage:
+        return std::invoke(visitor, uncheckedDowncast<CSSColorImageValue>(*this));
+    case LightDarkImage:
+        return std::invoke(visitor, uncheckedDowncast<CSSLightDarkImageValue>(*this));
     case NamedImage:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSNamedImageValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSNamedImageValue>(*this));
     case OffsetRotate:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSOffsetRotateValue>(*this));
-    case Path:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPathValue>(*this));
-    case PendingSubstitutionValue:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPendingSubstitutionValue>(*this));
-    case Position:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPositionValue>(*this));
-    case PositionX:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPositionXValue>(*this));
-    case PositionY:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPositionYValue>(*this));
-    case Primitive:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPrimitiveValue>(*this));
-    case Quad:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSQuadValue>(*this));
-    case Ratio:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSRatioValue>(*this));
-    case Ray:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSRayValue>(*this));
-    case Rect:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSRectValue>(*this));
-    case Reflect:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSReflectValue>(*this));
-    case Scroll:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSScrollValue>(*this));
-    case Subgrid:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSSubgridValue>(*this));
-    case TextShadowProperty:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSTextShadowPropertyValue>(*this));
-    case TransformList:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSTransformListValue>(*this));
-    case URL:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSURLValue>(*this));
-    case UnicodeRange:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSUnicodeRangeValue>(*this));
-    case ValueList:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSValueList>(*this));
-    case ValuePair:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSValuePair>(*this));
-    case VariableReference:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSVariableReferenceValue>(*this));
-    case View:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSViewValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSOffsetRotateValue>(*this));
     case PaintImage:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPaintImageValue>(*this));
+        return std::invoke(visitor, uncheckedDowncast<CSSPaintImageValue>(*this));
+    case Param:
+        return std::invoke(visitor, uncheckedDowncast<CSSParamValue>(*this));
+    case Path:
+        return std::invoke(visitor, uncheckedDowncast<CSSPathValue>(*this));
+    case ShorthandSubstitution:
+        return std::invoke(visitor, uncheckedDowncast<CSSShorthandSubstitutionValue>(*this));
+#if ENABLE(SPATIAL_PORTAL)
+    case PinnedAnchorName:
+        return std::invoke(visitor, uncheckedDowncast<CSSPinnedAnchorNameValue>(*this));
+#endif
+    case Position:
+        return std::invoke(visitor, uncheckedDowncast<CSSPositionValue>(*this));
+    case PositionX:
+        return std::invoke(visitor, uncheckedDowncast<CSSPositionXValue>(*this));
+    case PositionY:
+        return std::invoke(visitor, uncheckedDowncast<CSSPositionYValue>(*this));
+    case Primitive:
+        return std::invoke(visitor, uncheckedDowncast<CSSPrimitiveValue>(*this));
+    case Quotes:
+        return std::invoke(visitor, uncheckedDowncast<CSSQuotesValue>(*this));
+    case Ratio:
+        return std::invoke(visitor, uncheckedDowncast<CSSRatioValue>(*this));
+    case Ray:
+        return std::invoke(visitor, uncheckedDowncast<CSSRayValue>(*this));
+    case Scroll:
+        return std::invoke(visitor, uncheckedDowncast<CSSScrollValue>(*this));
+    case String:
+        return std::invoke(visitor, uncheckedDowncast<CSSStringValue>(*this));
+    case TextShadowProperty:
+        return std::invoke(visitor, uncheckedDowncast<CSSTextShadowPropertyValue>(*this));
+    case TransformList:
+        return std::invoke(visitor, uncheckedDowncast<CSSTransformListValue>(*this));
+    case URL:
+        return std::invoke(visitor, uncheckedDowncast<CSSURLValue>(*this));
+    case UnicodeRange:
+        return std::invoke(visitor, uncheckedDowncast<CSSUnicodeRangeValue>(*this));
+    case ValueList:
+        return std::invoke(visitor, uncheckedDowncast<CSSValueList>(*this));
+    case ValuePair:
+        return std::invoke(visitor, uncheckedDowncast<CSSValuePair>(*this));
+    case Substitution:
+        return std::invoke(visitor, uncheckedDowncast<CSSSubstitutionValue>(*this));
+    case SymbolsFunction:
+        return std::invoke(visitor, uncheckedDowncast<CSSSymbolsFunctionValue>(*this));
+    case View:
+        return std::invoke(visitor, uncheckedDowncast<CSSViewValue>(*this));
+    case WebkitBoxReflect:
+        return std::invoke(visitor, uncheckedDowncast<CSSWebkitBoxReflectValue>(*this));
     }
 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visitor&& visitor) const
+template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(NOESCAPE const Visitor& visitor) const
 {
     return const_cast<CSSValue&>(*this).visitDerived([&](auto& value) {
-        return std::invoke(std::forward<Visitor>(visitor), std::as_const(value));
+        return std::invoke(visitor, std::as_const(value));
     });
 }
 
@@ -276,20 +338,17 @@ ComputedStyleDependencies CSSValue::computedStyleDependencies() const
 
 void CSSValue::collectComputedStyleDependencies(ComputedStyleDependencies& dependencies) const
 {
-    // FIXME: Unclear why it's OK that we do not cover CSSValuePair, CSSQuadValue, CSSRectValue, CSSBorderImageSliceValue, CSSBorderImageWidthValue, and others here. Probably should use visitDerived unless they don't allow the primitive values that can have dependencies. May want to base this on a traverseValues or forEachValue function instead.
+    // FIXME: Unclear why it's OK that we do not cover CSSValuePair, CSSBorderImageSliceValue, CSSBorderImageWidthValue, and others here. Probably should use visitDerived unless they don't allow the primitive values that can have dependencies. May want to base this on a traverseValues or forEachValue function instead.
     // FIXME: Consider a non-recursive algorithm for walking this tree of dependencies.
     if (auto* asList = dynamicDowncast<CSSValueContainingVector>(*this)) {
-        for (Ref listValue : *asList)
-            listValue->collectComputedStyleDependencies(dependencies);
+        for (auto& listValue : *asList)
+            listValue.collectComputedStyleDependencies(dependencies);
         return;
     }
     if (auto* asPrimitiveValue = dynamicDowncast<CSSPrimitiveValue>(*this))
         asPrimitiveValue->collectComputedStyleDependencies(dependencies);
-}
-
-bool CSSValue::canResolveDependenciesWithConversionData(const CSSToLengthConversionData& conversionData) const
-{
-    return computedStyleDependencies().canResolveDependenciesWithConversionData(conversionData);
+    if (auto* asCalcSizeValue = dynamicDowncast<CSSCalcSizeValue>(*this))
+        asCalcSizeValue->collectComputedStyleDependencies(dependencies);
 }
 
 bool CSSValue::equals(const CSSValue& other) const
@@ -341,11 +400,11 @@ String CSSValue::cssText(const CSS::SerializationContext& context) const
 ASCIILiteral CSSValue::separatorCSSText(ValueSeparator separator)
 {
     switch (separator) {
-    case SpaceSeparator:
+        case ValueSeparator::Space:
         return " "_s;
-    case CommaSeparator:
+        case ValueSeparator::Comma:
         return ", "_s;
-    case SlashSeparator:
+        case ValueSeparator::Slash:
         return " / "_s;
     }
     ASSERT_NOT_REACHED();
@@ -354,49 +413,24 @@ ASCIILiteral CSSValue::separatorCSSText(ValueSeparator separator)
 
 void CSSValue::operator delete(CSSValue* value, std::destroying_delete_t)
 {
-    value->visitDerived([]<typename ValueType> (ValueType& value) {
+    value->visitDerived([]<typename ValueType>(ValueType& value) {
         std::destroy_at(&value);
         ValueType::freeAfterDestruction(&value);
     });
 }
 
-// FIXME: Consider renaming to DeprecatedCSSOMValue::create and moving it out of the CSSValue class.
-Ref<DeprecatedCSSOMValue> CSSValue::createDeprecatedCSSOMWrapper(CSSStyleDeclaration& styleDeclaration) const
+Ref<DeprecatedCSSOMValue> CSSValue::createDeprecatedCSSOMWrapper(CSSStyleDeclaration& owner) const
 {
-    using enum CSSValue::ClassType;
-    switch (m_classType) {
-    case Image:
-        return uncheckedDowncast<CSSImageValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
-    case Primitive:
-    case Color:
-    case Counter:
-    case Quad:
-    case Rect:
-    case URL:
-    case ValuePair:
-        return DeprecatedCSSOMPrimitiveValue::create(*this, styleDeclaration);
-    case ValueList:
-    case GridAutoRepeat: // FIXME: Likely this class should not be exposed and serialized as a CSSValueList. Confirm and remove this case.
-    case GridIntegerRepeat: // FIXME: Likely this class should not be exposed and serialized as a CSSValueList. Confirm and remove this case.
-    case ImageSet: // FIXME: Likely this class should not be exposed and serialized as a CSSValueList. Confirm and remove this case.
-    case Subgrid: // FIXME: Likely this class should not be exposed and serialized as a CSSValueList. Confirm and remove this case.
-    case TransformList:
-        return DeprecatedCSSOMValueList::create(downcast<CSSValueContainingVector>(*this), styleDeclaration);
+    return visitDerived([&](auto& value) -> Ref<DeprecatedCSSOMValue> {
+        return value.customCreateDeprecatedCSSOMWrapper(owner);
+    });
+}
 
-    // To maintain existing behavior, properties that used to be CSSValueLists that now have strong value representations
-    // need custom wrapper code to create a `DeprecatedCSSOMValueList`.
-    case AppleColorFilter:
-        return uncheckedDowncast<CSSAppleColorFilterValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
-    case BoxShadowProperty:
-        return uncheckedDowncast<CSSBoxShadowPropertyValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
-    case Filter:
-        return uncheckedDowncast<CSSFilterValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
-    case TextShadowProperty:
-        return uncheckedDowncast<CSSTextShadowPropertyValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
-
-    default:
-        return DeprecatedCSSOMComplexValue::create(*this, styleDeclaration);
-    }
+Ref<DeprecatedCSSOMValue> CSSValue::customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration& owner) const
+{
+    return DeprecatedCSSOMCustomValue::create([copy = Ref { *this }](const CSS::SerializationContext& context) {
+        return copy->cssText(context);
+    }, owner);
 }
 
 void add(Hasher& hasher, const CSSValue& value)
@@ -404,4 +438,4 @@ void add(Hasher& hasher, const CSSValue& value)
     value.addHash(hasher);
 }
 
-}
+} // namespace WebCore

@@ -22,6 +22,8 @@
 #include "ErrorInstance.h"
 
 #include "CodeBlock.h"
+#include "CustomGetterSetter.h"
+#include "ErrorInstanceInlines.h"
 #include "InlineCallFrame.h"
 #include "IntegrityInlines.h"
 #include "Interpreter.h"
@@ -34,13 +36,26 @@ namespace JSC {
 
 const ClassInfo ErrorInstance::s_info = { "Error"_s, &JSNonFinalObject::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ErrorInstance) };
 
+static JSC_DECLARE_CUSTOM_GETTER(errorInstanceMaterializingStackGetter);
+
+JSC_DEFINE_CUSTOM_GETTER(errorInstanceMaterializingStackGetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto* errorInstance = uncheckedDowncast<ErrorInstance>(JSValue::decode(thisValue));
+    errorInstance->materializeErrorInfoIfNeeded(vm);
+    return JSValue::encode(errorInstance->getDirect(vm, vm.propertyNames->stack));
+}
+
 ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
     : Base(vm, structure)
     , m_errorType(errorType)
     , m_stackOverflowError(false)
     , m_outOfMemoryError(false)
     , m_errorInfoMaterialized(false)
+    , m_hasErrorInfo(false)
+    , m_stackPropertyProvidedByCapturedStackTrace(false)
     , m_nativeGetterTypeError(false)
+    , m_parseError(false)
 #if ENABLE(WEBASSEMBLY)
     , m_catchableFromWasm(true)
 #endif // ENABLE(WEBASSEMBLY)
@@ -167,10 +182,41 @@ void ErrorInstance::finishCreation(VM& vm, String&& message, LineColumn lineColu
     m_lineColumn = lineColumn;
     m_sourceURL = WTF::move(sourceURL);
     m_stackString = WTF::move(stackString);
+    m_hasErrorInfo = !m_stackString.isNull();
     if (!message.isNull())
         putDirect(vm, vm.propertyNames->message, jsString(vm, WTF::move(message)), static_cast<unsigned>(PropertyAttribute::DontEnum));
     if (!cause.isNull())
         putDirect(vm, vm.propertyNames->cause, jsString(vm, WTF::move(cause)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
+void ErrorInstance::finishCreationForEmbedderError(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+
+    std::unique_ptr<Vector<StackFrame>> stackTrace = getStackTrace(vm, this, /* useCurrentFrame */ true);
+    {
+        Locker locker { cellLock() };
+        m_stackTrace = WTF::move(stackTrace);
+    }
+    vm.writeBarrier(this);
+
+    // Deliberately add no own "message" / "cause" properties; the embedder exposes those itself.
+}
+
+void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&& sourceURL, String&& stackString)
+{
+    ASSERT(!m_errorInfoMaterialized);
+    ASSERT(!m_capturedStackTrace);
+
+    {
+        Locker locker { cellLock() };
+        m_stackTrace = nullptr;
+    }
+    m_lineColumn = lineColumn;
+    m_sourceURL = WTF::move(sourceURL);
+    m_stackString = WTF::move(stackString);
+    m_hasErrorInfo = !m_stackString.isNull();
 }
 
 // Based on ErrorPrototype's errorProtoFuncToString(), but is modified to
@@ -212,7 +258,7 @@ String ErrorInstance::sanitizedNameString(JSGlobalObject* globalObject)
     // Error objects may have a name property, and if not, its prototype should have
     // a name property for the type of error e.g. "SyntaxError".
     while (currentObj.isCell() && prototypeDepth++ < 2) {
-        JSObject* obj = jsCast<JSObject*>(currentObj);
+        JSObject* obj = uncheckedDowncast<JSObject>(currentObj);
         if (JSObject::getOwnPropertySlot(obj, globalObject, namePropertName, nameSlot) && nameSlot.isValue()) {
             nameValue = nameSlot.getValue(globalObject, namePropertName);
             break;
@@ -251,25 +297,34 @@ String ErrorInstance::tryGetMessageForDebugging()
     if (JSObject::getOwnNonIndexPropertySlot(vm, structure(), messagePropertName, messageSlot))
         messageValue = messageSlot.getPureResult();
 
-    if (JSString* string = jsDynamicCast<JSString*>(messageValue))
+    if (JSString* string = dynamicDowncast<JSString>(messageValue))
         return string->tryGetValue();
     return emptyString();
 }
 
-void ErrorInstance::finalizeUnconditionally(VM& vm, CollectionScope)
+static bool hasUnmarkedFrame(VM& vm, const Vector<StackFrame>& frames)
 {
-    if (!m_stackTrace)
-        return;
+    return std::ranges::any_of(frames, [&](const StackFrame& frame) {
+        return !frame.isMarked(vm);
+    });
+}
 
+void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
+{
     // We don't want to keep our stack traces alive forever if the user doesn't access the stack trace.
     // If we did, we might end up keeping functions (and their global objects) alive that happened to
     // get caught in a trace.
-    for (const auto& frame : *m_stackTrace.get()) {
-        if (!frame.isMarked(vm)) {
-            computeErrorInfo(vm);
-            return;
-        }
+    // Since the frames are weak, a dead one means the trace can no longer be reconstructed, so
+    // materialize it into strings while it is still readable.
+    if (m_capturedStackTrace && hasUnmarkedFrame(vm, *m_capturedStackTrace)) {
+        DeferGCForAWhile deferGC(vm);
+        m_stackString = Interpreter::stackTraceAsString(vm, *m_capturedStackTrace);
+        Locker locker { cellLock() };
+        m_capturedStackTrace->clear();
     }
+
+    if (m_stackTrace && hasUnmarkedFrame(vm, *m_stackTrace))
+        computeErrorInfo(vm);
 }
 
 void ErrorInstance::computeErrorInfo(VM& vm)
@@ -281,19 +336,22 @@ void ErrorInstance::computeErrorInfo(VM& vm)
 
     if (m_stackTrace && !m_stackTrace->isEmpty()) {
         getLineColumnAndSource(vm, m_stackTrace.get(), m_lineColumn, m_sourceURL);
-        m_stackString = Interpreter::stackTraceAsString(vm, *m_stackTrace.get());
+        if (!m_stackPropertyProvidedByCapturedStackTrace)
+            m_stackString = Interpreter::stackTraceAsString(vm, *m_stackTrace.get());
+        m_hasErrorInfo = true;
         m_stackTrace = nullptr;
     }
 }
 
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 {
+    bool materializedCapturedStackProperty = materializeCapturedStackPropertyIfSaved(vm);
     if (m_errorInfoMaterialized)
-        return false;
+        return materializedCapturedStackProperty;
 
     computeErrorInfo(vm);
 
-    if (!m_stackString.isNull()) {
+    if (m_hasErrorInfo) {
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
         putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
@@ -301,7 +359,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         if (!m_sourceURL.isEmpty())
             putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
 
-        putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(m_stackString)), attributes);
+        if (!m_stackPropertyProvidedByCapturedStackTrace)
+            putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(m_stackString)), attributes);
     }
 
     m_errorInfoMaterialized = true;
@@ -318,10 +377,47 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyNa
     return false;
 }
 
+bool ErrorInstance::trySaveCapturedStackTraceForLazyMaterialization(VM& vm, Vector<StackFrame>& stackTrace)
+{
+    bool needsPlaceholder = !m_capturedStackTrace;
+    if (needsPlaceholder && (isValidOffset(getDirectOffset(vm, vm.propertyNames->stack)) || !isStructureExtensible()))
+        return false;
+    auto capturedStackTrace = makeUnique<Vector<StackFrame>>(WTF::move(stackTrace));
+    {
+        Locker locker { cellLock() };
+        m_capturedStackTrace = WTF::move(capturedStackTrace);
+    }
+    m_stackString = String();
+    if (needsPlaceholder)
+        putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceMaterializingStackGetter, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+    vm.writeBarrier(this);
+    return true;
+}
+
+bool ErrorInstance::materializeCapturedStackPropertyIfSaved(VM& vm)
+{
+    if (!m_capturedStackTrace)
+        return false;
+
+    std::unique_ptr<Vector<StackFrame>> capturedStackTrace;
+    {
+        Locker locker { cellLock() };
+        capturedStackTrace = WTF::move(m_capturedStackTrace);
+    }
+    String stackString = WTF::move(m_stackString);
+    if (stackString.isNull()) {
+        // The frames are weak, so a collection while formatting could free what they point to.
+        DeferGCForAWhile deferGC(vm);
+        stackString = Interpreter::stackTraceAsString(vm, *capturedStackTrace);
+    }
+    putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return true;
+}
+
 bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
-    ErrorInstance* thisObject = jsCast<ErrorInstance*>(object);
+    ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
     thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
     return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
 }
@@ -329,7 +425,7 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
 void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder&, DontEnumPropertiesMode mode)
 {
     VM& vm = globalObject->vm();
-    ErrorInstance* thisObject = jsCast<ErrorInstance*>(object);
+    ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
     if (mode == DontEnumPropertiesMode::Include)
         thisObject->materializeErrorInfoIfNeeded(vm);
 }
@@ -337,7 +433,7 @@ void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject*
 bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
-    ErrorInstance* thisObject = jsCast<ErrorInstance*>(object);
+    ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
     thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
     return Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow);
 }
@@ -345,7 +441,7 @@ bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
 bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
-    ErrorInstance* thisObject = jsCast<ErrorInstance*>(cell);
+    ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
     bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
     if (materializedProperties)
         slot.disableCaching();
@@ -355,7 +451,7 @@ bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
 bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
     VM& vm = globalObject->vm();
-    ErrorInstance* thisObject = jsCast<ErrorInstance*>(cell);
+    ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
     bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
     if (materializedProperties)
         slot.disableCaching();

@@ -8,15 +8,13 @@
 //   shader variables.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "common/CompiledShaderState.h"
+#include "common/unsafe_buffers.h"
 
 #include <cstring>
 
 #include "common/BinaryStream.h"
+#include "common/span.h"
 #include "common/utilities.h"
 
 namespace gl
@@ -209,13 +207,13 @@ std::string JoinShaderSources(GLsizei count, const char *const *string, const GL
     // First pass, calculate the total length of the joined string
     for (GLsizei i = 0; i < count; ++i)
     {
-        if (length == nullptr || length[i] < 0)
+        if (length == nullptr || ANGLE_UNSAFE_TODO(length[i]) < 0)
         {
-            totalLength += std::strlen(string[i]);
+            totalLength += std::strlen(ANGLE_UNSAFE_TODO(string[i]));
         }
         else
         {
-            totalLength += static_cast<size_t>(length[i]);
+            totalLength += static_cast<size_t>(ANGLE_UNSAFE_TODO(length[i]));
         }
     }
 
@@ -225,13 +223,14 @@ std::string JoinShaderSources(GLsizei count, const char *const *string, const GL
     joinedString.reserve(totalLength);
     for (GLsizei i = 0; i < count; ++i)
     {
-        if (length == nullptr || length[i] < 0)
+        if (length == nullptr || ANGLE_UNSAFE_TODO(length[i]) < 0)
         {
-            joinedString.append(string[i]);
+            joinedString.append(ANGLE_UNSAFE_TODO(string[i]));
         }
         else
         {
-            joinedString.append(string[i], static_cast<size_t>(length[i]));
+            joinedString.append(ANGLE_UNSAFE_TODO(string[i]),
+                                static_cast<size_t>(ANGLE_UNSAFE_TODO(length[i])));
         }
     }
 
@@ -284,7 +283,6 @@ void CompiledShaderState::buildCompiledShaderState(const ShHandle compilerHandle
     uniformBlocks       = GetShaderVariables(sh::GetUniformBlocks(compilerHandle));
     shaderStorageBlocks = GetShaderVariables(sh::GetShaderStorageBlocks(compilerHandle));
     metadataFlags       = sh::CompilerMetadataFlags(sh::GetMetadataFlags(compilerHandle));
-    specConstUsageBits  = SpecConstUsageBits(sh::GetShaderSpecConstUsageBits(compilerHandle));
 
     switch (shaderType)
     {
@@ -314,7 +312,7 @@ void CompiledShaderState::buildCompiledShaderState(const ShHandle compilerHandle
                 GetActiveShaderVariables(sh::GetOutputVariables(compilerHandle));
             advancedBlendEquations =
                 gl::BlendEquationBitSet(sh::GetAdvancedBlendEquations(compilerHandle));
-            pixelLocalStorageFormats = *sh::GetPixelLocalStorageFormats(compilerHandle);
+            pixelLocalStorageLayouts = *sh::GetPixelLocalStorageLayouts(compilerHandle);
             break;
         }
         case gl::ShaderType::Geometry:
@@ -397,7 +395,6 @@ void CompiledShaderState::serialize(gl::BinaryOutputStream &stream) const
     }
 
     stream.writeInt(metadataFlags.bits());
-    stream.writeInt(specConstUsageBits.bits());
 
     switch (shaderType)
     {
@@ -452,9 +449,8 @@ void CompiledShaderState::serialize(gl::BinaryOutputStream &stream) const
                 WriteShaderVar(&stream, shaderVariable);
             }
             stream.writeInt(advancedBlendEquations.bits());
-            stream.writeInt<size_t>(pixelLocalStorageFormats.size());
-            stream.writeBytes(reinterpret_cast<const uint8_t *>(pixelLocalStorageFormats.data()),
-                              pixelLocalStorageFormats.size());
+            stream.writeInt<size_t>(pixelLocalStorageLayouts.size());
+            stream.writeBytes(angle::as_byte_span(pixelLocalStorageLayouts));
             break;
         }
         case gl::ShaderType::Geometry:
@@ -472,11 +468,11 @@ void CompiledShaderState::serialize(gl::BinaryOutputStream &stream) const
 
             {
                 unsigned char value = static_cast<unsigned char>(geometryShaderInputPrimitiveType);
-                stream.writeBytes(&value, 1);
+                stream.writeBytes(angle::byte_span_from_ref(value));
             }
             {
                 unsigned char value = static_cast<unsigned char>(geometryShaderOutputPrimitiveType);
-                stream.writeBytes(&value, 1);
+                stream.writeBytes(angle::byte_span_from_ref(value));
             }
             {
                 int value = static_cast<int>(geometryShaderMaxVertices);
@@ -564,7 +560,6 @@ void CompiledShaderState::deserialize(gl::BinaryInputStream &stream)
     }
 
     metadataFlags      = sh::CompilerMetadataFlags(stream.readInt<uint32_t>());
-    specConstUsageBits = SpecConstUsageBits(stream.readInt<uint32_t>());
 
     switch (shaderType)
     {
@@ -627,9 +622,8 @@ void CompiledShaderState::deserialize(gl::BinaryInputStream &stream)
             int advancedBlendEquationBits;
             stream.readInt(&advancedBlendEquationBits);
             advancedBlendEquations = gl::BlendEquationBitSet(advancedBlendEquationBits);
-            pixelLocalStorageFormats.resize(stream.readInt<size_t>());
-            stream.readBytes(reinterpret_cast<uint8_t *>(pixelLocalStorageFormats.data()),
-                             pixelLocalStorageFormats.size());
+            pixelLocalStorageLayouts.resize(stream.readInt<size_t>());
+            stream.readBytes(angle::as_writable_byte_span(pixelLocalStorageLayouts));
             break;
         }
         case gl::ShaderType::Geometry:
@@ -649,13 +643,13 @@ void CompiledShaderState::deserialize(gl::BinaryInputStream &stream)
 
             {
                 unsigned char value;
-                stream.readBytes(&value, 1);
+                stream.readBytes(angle::byte_span_from_ref(value));
                 geometryShaderInputPrimitiveType = static_cast<gl::PrimitiveMode>(value);
             }
 
             {
                 unsigned char value;
-                stream.readBytes(&value, 1);
+                stream.readBytes(angle::byte_span_from_ref(value));
                 geometryShaderOutputPrimitiveType = static_cast<gl::PrimitiveMode>(value);
             }
 

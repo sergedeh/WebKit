@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2024 Igalia S.L. All rights reserved.
- * Copyright (C) 2024-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2024-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -160,9 +160,41 @@ static constexpr auto sidePanelPathManifestKey = "default_path"_s;
 
 static const size_t maximumNumberOfShortcutCommands = 4;
 
+WebExtension::DataResources WebExtension::toDataResources(const WebExtension::Resources& resources)
+{
+    DataResources result;
+    for (auto& [key, value] : resources) {
+        if (auto* data = std::get_if<Ref<API::Data>>(&value))
+            result.set(key, *data);
+    }
+    return result;
+}
+
+WebExtension::StringResources WebExtension::toStringResources(const WebExtension::Resources& resources)
+{
+    StringResources result;
+    for (auto& [key, value] : resources) {
+        if (auto* string = std::get_if<String>(&value))
+            result.set(key, *string);
+    }
+    return result;
+}
+
+WebExtension::WebExtension(const JSON::Value& manifest, Resources&& resources)
+    : m_manifestJSON(manifest)
+    , m_dataResources(toDataResources(resources))
+    , m_stringResources(toStringResources(resources))
+{
+    auto manifestString = manifest.toJSONString();
+    RELEASE_ASSERT(manifestString);
+
+    m_stringResources.set("manifest.json"_s, manifestString);
+}
+
 WebExtension::WebExtension(Resources&& resources)
     : m_manifestJSON(JSON::Value::null())
-    , m_resources(WTF::move(resources))
+    , m_dataResources(toDataResources(resources))
+    , m_stringResources(toStringResources(resources))
 {
 }
 
@@ -257,7 +289,7 @@ String WebExtension::processFileAndExtractZipArchive(const String& path)
 
 bool WebExtension::parseManifest(StringView manifestString)
 {
-    RefPtr manifestValue = JSON::Value::parseJSON(manifestString);
+    RefPtr manifestValue = JSON::Value::parseJSON(manifestString, JSON::Value::ParsingMode::AllowTrailingCommas);
     if (!manifestValue) {
         recordError(createError(Error::InvalidManifest));
         return false;
@@ -510,7 +542,7 @@ URL WebExtension::resourceFileURLForPath(const String& originalPath)
     auto basePath = FileSystem::realPath(m_resourceBaseURL.fileSystemPath());
     auto resourcePath = FileSystem::realPath(result.fileSystemPath());
     if (!resourcePath.startsWith(basePath)) {
-        RELEASE_LOG_ERROR(Extensions, "Resource URL path escape attempt: %s", resourcePath.utf8().data());
+        RELEASE_LOG_ERROR(Extensions, "Resource URL path escape attempt: %s", resourcePath.utf8());
         return { };
     }
 
@@ -535,7 +567,7 @@ String WebExtension::resourceMIMETypeForPath(const String& path)
     return MIMETypeRegistry::mimeTypeForPath(path);
 }
 
-Expected<String, RefPtr<API::Error>> WebExtension::resourceStringForPath(const String& originalPath, CacheResult cacheResult, SuppressNotFoundErrors suppressErrors)
+std::expected<String, RefPtr<API::Error>> WebExtension::resourceStringForPath(const String& originalPath, CacheResult cacheResult, SuppressNotFoundErrors suppressErrors)
 {
     ASSERT(originalPath);
 
@@ -548,14 +580,13 @@ Expected<String, RefPtr<API::Error>> WebExtension::resourceStringForPath(const S
     if (path == generatedBackgroundPageFilename || path == generatedBackgroundServiceWorkerFilename)
         return generatedBackgroundContent();
 
-    if (auto entry = m_resources.find(path); entry != m_resources.end()) {
-        return WTF::switchOn(entry->value,
-            [](const Ref<API::Data>& data) {
-                return String::fromUTF8(data->span());
-            },
-            [](const String& string) {
-                return string;
-            });
+    if (auto maybeString = m_stringResources.getOptional(path))
+        return *maybeString;
+
+    if (auto maybeData = m_dataResources.getOptional(path)) {
+        auto string = String::fromUTF8(maybeData->get().span());
+        m_stringResources.set(path, string);
+        return string;
     }
 
     auto dataResult = resourceDataForPath(path, cacheResult, suppressErrors);
@@ -572,12 +603,12 @@ Expected<String, RefPtr<API::Error>> WebExtension::resourceStringForPath(const S
 
     auto result = decoder->decode(data->span());
     if (cacheResult == CacheResult::Yes)
-        m_resources.set(path, result);
+        m_stringResources.set(path, result);
 
     return result;
 }
 
-static int toAPI(WebExtension::Error error)
+static int NODELETE toAPI(WebExtension::Error error)
 {
     switch (error) {
     case WebExtension::Error::Unknown:
@@ -634,7 +665,7 @@ Ref<API::Error> WebExtension::createError(Error error, const String& customLocal
 
     case Error::InvalidManifest:
         if (underlyingError && !underlyingError->localizedDescription().isEmpty())
-            localizedDescription = WEB_UI_FORMAT_STRING("Unable to parse manifest: %s", "WKWebExtensionErrorInvalidManifest description, because of a JSON error", underlyingError->localizedDescription().utf8().data());
+            localizedDescription = WEB_UI_FORMAT_STRING("Unable to parse manifest: %s", "WKWebExtensionErrorInvalidManifest description, because of a JSON error", underlyingError->localizedDescription().utf8());
         else
             localizedDescription = WEB_UI_STRING("Unable to parse manifest because of an unexpected format.", "WKWebExtensionErrorInvalidManifest description");
         break;
@@ -691,7 +722,7 @@ Ref<API::Error> WebExtension::createError(Error error, const String& customLocal
 
     case Error::InvalidDeclarativeNetRequest:
         if (underlyingError && !underlyingError->localizedDescription().isEmpty())
-            localizedDescription = WEB_UI_FORMAT_STRING("Unable to parse `declarativeNetRequest` rules: %s", "WKWebExtensionErrorInvalidDeclarativeNetRequest description, because of a JSON error", underlyingError->localizedDescription().utf8().data());
+            localizedDescription = WEB_UI_FORMAT_STRING("Unable to parse `declarativeNetRequest` rules: %s", "WKWebExtensionErrorInvalidDeclarativeNetRequest description, because of a JSON error", underlyingError->localizedDescription().utf8());
         else
             localizedDescription = WEB_UI_STRING("Unable to parse `declarativeNetRequest` rules because of an unexpected error.", "WKWebExtensionErrorInvalidDeclarativeNetRequest description");
         break;
@@ -793,19 +824,24 @@ const Vector<String>& WebExtension::supportedLocales()
 
     // For tests that don't have a file system location, check the resource cache.
     auto prefixLength = localesString.length();
-    for (const auto& resourceEntry : m_resources) {
-        auto path = resourceEntry.key;
+    auto pathFunctor = [&](const String& path) {
         if (!path.startsWith(localesString))
-            continue;
+            return;
 
         auto localeEnd = path.find('/', prefixLength);
         if (localeEnd == notFound)
-            continue;
+            return;
 
         auto locale = path.substring(prefixLength, localeEnd - prefixLength);
         if (!m_supportedLocales.contains(locale))
             m_supportedLocales.append(locale);
-    }
+    };
+
+    for (auto& path : m_dataResources.keys())
+        pathFunctor(path);
+
+    for (auto& path : m_stringResources.keys())
+        pathFunctor(path);
 
     return m_supportedLocales;
 }
@@ -1404,7 +1440,7 @@ void WebExtension::populateContentScriptPropertiesIfNeeded()
         });
 
         if (!scriptPaths->length() && !styleSheetPaths->length()) {
-            recordError(createError(Error::InvalidContentScripts, WEB_UI_STRING("Manifest `content_scripts` entry has missing or empty 'js' and 'css' arrays.", "WKWebExtensionErrorInvalidContentScripts description for missing or empty 'js' and 'css' arrays")));
+            recordError(createError(Error::InvalidContentScripts, WEB_UI_STRING("Manifest `content_scripts` entry has missing or empty `js` and `css` arrays.", "WKWebExtensionErrorInvalidContentScripts description for missing or empty `js` and `css` arrays")));
             return;
         }
 
@@ -1540,13 +1576,13 @@ RefPtr<WebCore::Icon> WebExtension::sidebarIcon(WebCore::FloatSize idealSize)
     return nullptr;
 }
 
-const String& WebExtension::sidebarDocumentPath()
+const std::optional<String>& WebExtension::sidebarDocumentPath()
 {
     populateSidebarPropertiesIfNeeded();
     return m_sidebarDocumentPath;
 }
 
-const String& WebExtension::sidebarTitle()
+const std::optional<String>& WebExtension::sidebarTitle()
 {
     populateSidebarPropertiesIfNeeded();
     return m_sidebarTitle;
@@ -1568,28 +1604,35 @@ void WebExtension::populateSidebarPropertiesIfNeeded()
     // sidebarAction documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/sidebar_action
 
     if (RefPtr sidebarActionObject = manifestObject->getObject(sidebarActionManifestKey)) {
-        populateSidebarActionProperties(sidebarActionObject);
+        populateSidebarActionProperties(*sidebarActionObject);
         return;
     }
 
     if (RefPtr sidePanelObject = manifestObject->getObject(sidePanelManifestKey))
-        populateSidePanelProperties(sidePanelObject);
+        populateSidePanelProperties(*sidePanelObject);
+}
+
+static std::optional<String> toOptionalString(String&& string)
+{
+    if (string.isNull())
+        return std::nullopt;
+    return WTF::move(string);
 }
 
 void WebExtension::populateSidebarActionProperties(const JSON::Object& sidebarActionObject)
 {
     // FIXME: <https://webkit.org/b/276833> implement sidebar icon parsing
-    m_sidebarIconsCache = nullptr;
-    m_sidebarTitle = sidebarActionObject.getString(sidebarActionTitleManifestKey);
-    m_sidebarDocumentPath = sidebarActionObject.getString(sidebarActionPathManifestKey);
+    m_sidebarIconsCache = std::nullopt;
+    m_sidebarTitle = toOptionalString(sidebarActionObject.getString(sidebarActionTitleManifestKey));
+    m_sidebarDocumentPath = toOptionalString(sidebarActionObject.getString(sidebarActionPathManifestKey));
 }
 
 void WebExtension::populateSidePanelProperties(const JSON::Object& sidePanelObject)
 {
-    // Since sidePanel cannot set a default title or icon from the manifest, setting these to null here is intentional.
-    m_sidebarIconsCache = nullptr;
-    m_sidebarTitle = nullString();
-    m_sidebarDocumentPath = sidePanelObject.getString(sidePanelPathManifestKey);
+    // Since sidePanel cannot set a default title or icon from the manifest, setting these to nullopt here is intentional.
+    m_sidebarIconsCache = std::nullopt;
+    m_sidebarTitle = std::nullopt;
+    m_sidebarDocumentPath = toOptionalString(sidePanelObject.getString(sidePanelPathManifestKey));
 }
 #endif // ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
 
@@ -1604,6 +1647,9 @@ const WebExtension::PermissionsSet& WebExtension::supportedPermissions()
 #endif
 #if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
         WebExtensionPermission::bookmarks(),
+#endif
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+        WebExtensionPermission::offscreen(),
 #endif
     };
     return permissions;
@@ -1693,13 +1739,7 @@ void WebExtension::populateExternallyConnectableIfNeeded()
                 continue;
 
             if (RefPtr matchPattern = WebExtensionMatchPattern::getOrCreate(matchPatternString)) {
-                if (matchPattern->matchesAllURLs() || !matchPattern->isSupported()) {
-                    shouldReportError = true;
-                    continue;
-                }
-
-                // URL patterns must contain at least a second-level domain. Top level domains and wildcards are not standalone patterns.
-                if (matchPattern->hostIsPublicSuffix()) {
+                if (!matchPattern || !matchPattern->isSupported()) {
                     shouldReportError = true;
                     continue;
                 }
@@ -2385,7 +2425,7 @@ void WebExtension::populateCommandsIfNeeded()
     }
 }
 
-Expected<WebExtension::DeclarativeNetRequestRulesetData, Ref<API::Error>> WebExtension::parseDeclarativeNetRequestRulesetObject(const JSON::Object& rulesetObject)
+std::expected<WebExtension::DeclarativeNetRequestRulesetData, Ref<API::Error>> WebExtension::parseDeclarativeNetRequestRulesetObject(const JSON::Object& rulesetObject)
 {
     auto rulesetID = rulesetObject.getString(declarativeNetRequestRulesetIDManifestKey);
     if (rulesetID.isEmpty()) {
@@ -2465,12 +2505,12 @@ void WebExtension::populateDeclarativeNetRequestPropertiesIfNeeded()
 
         auto& ruleset = optionalRuleset.value();
         if (seenRulesetIDs.contains(ruleset.rulesetID)) {
-            recordError(createError(Error::InvalidDeclarativeNetRequest, WEB_UI_FORMAT_STRING("`declarative_net_request` ruleset with id \"%s\" is invalid. Ruleset id must be unique.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for duplicate ruleset id", ruleset.rulesetID.utf8().data())));
+            recordError(createError(Error::InvalidDeclarativeNetRequest, WEB_UI_FORMAT_STRING("`declarative_net_request` ruleset with id \"%s\" is invalid. Ruleset id must be unique.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for duplicate ruleset id", ruleset.rulesetID.utf8())));
             continue;
         }
 
         if (ruleset.enabled && ++enabledRulesetCount > webExtensionDeclarativeNetRequestMaximumNumberOfEnabledRulesets && !recordedTooManyRulesetsManifestError) {
-            recordError(createError(Error::InvalidDeclarativeNetRequest, WEB_UI_FORMAT_STRING("Exceeded maximum number of enabled `declarative_net_request` static rulesets. The first %lu will be applied, the remaining will be ignored.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for too many enabled static rulesets", webExtensionDeclarativeNetRequestMaximumNumberOfEnabledRulesets)));
+            recordError(createError(Error::InvalidDeclarativeNetRequest, WEB_UI_FORMAT_STRING("Exceeded maximum number of enabled `declarative_net_request` static rulesets. The first %zu will be applied, the remaining will be ignored.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for too many enabled static rulesets", webExtensionDeclarativeNetRequestMaximumNumberOfEnabledRulesets)));
             recordedTooManyRulesetsManifestError = true;
             continue;
         }

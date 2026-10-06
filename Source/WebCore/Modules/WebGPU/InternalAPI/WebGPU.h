@@ -36,11 +36,6 @@ namespace WebCore {
 class NativeImage;
 class IntSize;
 class GraphicsContext;
-namespace DDModel {
-class DDMesh;
-struct DDImageAsset;
-struct DDMeshDescriptor;
-}
 }
 
 namespace WebCore::WebGPU {
@@ -58,8 +53,6 @@ class Device;
 class ExternalTexture;
 class GPU;
 class GPUImpl;
-class GraphicsContext;
-class NativeImage;
 class PipelineLayout;
 class PresentationContext;
 class QuerySet;
@@ -81,10 +74,9 @@ struct PresentationContextDescriptor;
 
 class GPU : public AbstractRefCounted {
 public:
-    virtual ~GPU() = default;
+    WEBCORE_EXPORT virtual ~GPU() = default;
 
     virtual void requestAdapter(const RequestAdapterOptions&, CompletionHandler<void(RefPtr<Adapter>&&)>&&) = 0;
-    virtual RefPtr<DDModel::DDMesh> createModelBacking(unsigned width, unsigned height, const DDModel::DDImageAsset& diffuseTexture, const DDModel::DDImageAsset& specularTexture, CompletionHandler<void(Vector<MachSendRight>&&)>&&) = 0;
 
     virtual RefPtr<PresentationContext> createPresentationContext(const PresentationContextDescriptor&) = 0;
 

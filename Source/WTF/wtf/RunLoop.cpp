@@ -29,6 +29,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/ThreadSpecific.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/threads/BinarySemaphore.h>
 
@@ -53,7 +54,7 @@ public:
         m_runLoop->threadWillExit();
     }
 
-    RunLoop& runLoop() { return m_runLoop; }
+    RunLoop& NODELETE runLoop() { return m_runLoop; }
 
 private:
     const Ref<RunLoop> m_runLoop;
@@ -101,7 +102,7 @@ RunLoop* RunLoop::webIfExists()
 }
 #endif
 
-Ref<RunLoop> RunLoop::create(ASCIILiteral threadName, ThreadType threadType, Thread::QOS qos)
+Ref<RunLoop> RunLoop::create(ASCIILiteral threadName, ThreadType threadType, ThreadQOS qos)
 {
     RefPtr<RunLoop> runLoop;
     BinarySemaphore semaphore;
@@ -168,7 +169,7 @@ void RunLoop::dispatch(Function<void()>&& function)
         wakeUp();
 }
 
-Ref<RunLoop::DispatchTimer> RunLoop::dispatchAfter(Seconds delay, Function<void()>&& function)
+Ref<RunLoop::DispatchTimer> RunLoop::scheduleTimer(Seconds delay, Function<void()>&& function)
 {
     RELEASE_ASSERT(function);
     Ref<DispatchTimer> timer = adoptRef(*new DispatchTimer(*this));
@@ -234,6 +235,14 @@ String RunLoop::listActiveTimersForLogging() const
     builder.append(timers.last());
     builder.append(" }"_s);
     return builder.toString();
+}
+
+void callOnRunLoop(RunLoop& runLoop, Function<void()>&& function)
+{
+    if (&runLoop == &RunLoop::mainSingleton())
+        callOnMainThread(WTF::move(function));
+    else
+        runLoop.dispatch(WTF::move(function));
 }
 
 } // namespace WTF

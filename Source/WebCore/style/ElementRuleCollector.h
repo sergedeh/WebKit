@@ -65,15 +65,16 @@ public:
     void setMedium(const MQ::MediaQueryEvaluator& medium) { m_isPrintStyle = medium.isPrintMedia(); }
 
 
-    const MatchResult& matchResult() const;
-    Ref<MatchResult> releaseMatchResult();
+    const MatchResult& NODELETE matchResult() const;
+    Ref<MatchResult> NODELETE releaseMatchResult();
 
-    const Vector<Ref<const StyleRule>>& matchedRuleList() const;
+    const Vector<Ref<const StyleRule>>& NODELETE matchedRuleList() const;
 
     void clearMatchedRules();
 
     EnumSet<PseudoElementType> matchedPseudoElements() const { return m_matchedPseudoElements; }
-    const Relations& styleRelations() const { return m_styleRelations; }
+    PseudoElementBoxGeneration pseudoElementBoxGeneration() const { return m_pseudoElementBoxGeneration; }
+    const Relations& styleRelations() const LIFETIME_BOUND { return m_styleRelations; }
 
     void addAuthorKeyframeRules(const StyleRuleKeyframe&);
 
@@ -87,6 +88,7 @@ private:
     void matchUserAgentPartRules(DeclarationOrigin);
     void matchHostPseudoClassRules(DeclarationOrigin);
     void matchSlottedPseudoElementRules(DeclarationOrigin);
+    void matchSlottedPseudoElementRulesInUserAgentShadowTree(DeclarationOrigin);
     void matchPartPseudoElementRules(DeclarationOrigin);
     void matchPartPseudoElementRulesForScope(const Element& partMatchingElement, DeclarationOrigin);
 
@@ -95,20 +97,21 @@ private:
     void collectMatchingRules(DeclarationOrigin);
     void collectMatchingRules(const MatchRequest&);
     void collectMatchingRulesForList(const RuleSet::RuleDataVector*, const MatchRequest&);
+    void collectMatchingRulesForList(const RuleSet::RuleDataVector&, const MatchRequest&);
     void collectMatchingRulesForListSlow(const RuleSet::RuleDataVector&, const MatchRequest&);
-    bool isFirstMatchModeAndHasMatchedAnyRules() const;
+    bool NODELETE isFirstMatchModeAndHasMatchedAnyRules() const;
     struct ScopingRootWithDistance {
         RefPtr<const ContainerNode> scopingRoot;
         unsigned distance { std::numeric_limits<unsigned>::max() };
         bool matchesVisited { false };
     };
-    bool ruleMatches(const RuleData&, unsigned& specificity, ScopeOrdinal, std::optional<ScopingRootWithDistance> scopingRoot = { });
+    bool ruleMatches(const RuleData&, unsigned& specificity, ScopeOrdinal, const ScopingRootWithDistance* = nullptr);
     bool containerQueriesMatch(const RuleData&, const MatchRequest&);
     std::pair<bool, std::optional<Vector<ScopingRootWithDistance>>> scopeRulesMatch(const RuleData&, const MatchRequest&);
 
     void sortMatchedRules();
 
-    Vector<MatchedProperties>& declarationsForOrigin(DeclarationOrigin);
+    Vector<MatchedProperties>& NODELETE declarationsForOrigin(DeclarationOrigin);
     void sortAndTransferMatchedRules(DeclarationOrigin);
     void transferMatchedRules(DeclarationOrigin, std::optional<ScopeOrdinal> forScope = { });
 
@@ -118,10 +121,10 @@ private:
     const Element& element() const { return m_element.get(); }
 
     const Ref<const Element> m_element;
-    Ref<const RuleSet> m_authorStyle;
-    RefPtr<const RuleSet> m_userStyle;
-    RefPtr<const RuleSet> m_userAgentMediaQueryStyle;
-    RefPtr<const RuleSet> m_dynamicViewTransitionsStyle;
+    const Ref<const RuleSet> m_authorStyle;
+    const RefPtr<const RuleSet> m_userStyle;
+    const RefPtr<const RuleSet> m_userAgentMediaQueryStyle;
+    const RefPtr<const RuleSet> m_dynamicViewTransitionsStyle;
     SelectorMatchingState* m_selectorMatchingState;
 
     bool m_shouldIncludeEmptyRules { false };
@@ -137,6 +140,7 @@ private:
     Ref<MatchResult> m_result;
     Relations m_styleRelations;
     EnumSet<PseudoElementType> m_matchedPseudoElements;
+    PseudoElementBoxGeneration m_pseudoElementBoxGeneration { PseudoElementBoxGeneration::NotForBeforeOrAfter };
 };
 
 ALWAYS_INLINE void ElementRuleCollector::collectMatchingRulesForList(const RuleSet::RuleDataVector* rules, const MatchRequest& matchRequest)
@@ -144,6 +148,13 @@ ALWAYS_INLINE void ElementRuleCollector::collectMatchingRulesForList(const RuleS
     if (!rules || rules->isEmpty())
         return;
     collectMatchingRulesForListSlow(*rules, matchRequest);
+}
+
+ALWAYS_INLINE void ElementRuleCollector::collectMatchingRulesForList(const RuleSet::RuleDataVector& rules, const MatchRequest& matchRequest)
+{
+    if (rules.isEmpty())
+        return;
+    collectMatchingRulesForListSlow(rules, matchRequest);
 }
 
 }

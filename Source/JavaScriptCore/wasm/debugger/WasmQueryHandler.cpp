@@ -26,7 +26,7 @@
 #include "config.h"
 #include "WasmQueryHandler.h"
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -50,10 +50,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "WasmVirtualAddress.h"
 #include <cstring>
 #include <wtf/DataLog.h>
-#include <wtf/HexNumber.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -87,6 +86,10 @@ void QueryHandler::handleGeneralQuery(StringView packet)
         handleWasmCallStack(packet);
     else if (packet.startsWith("qWasmLocal:"_s))
         handleWasmLocal(packet);
+    else if (packet.startsWith("qWasmGlobal:"_s))
+        handleWasmGlobal(packet);
+    else if (packet.startsWith("qWasmStackValue:"_s))
+        handleWasmStackValue(packet);
     else if (packet.startsWith("qMemoryRegionInfo:"_s))
         m_debugServer.m_memoryHandler->handleMemoryRegionInfo(packet);
     else
@@ -144,7 +147,12 @@ void QueryHandler::handleRegisterInfo(StringView packet)
     // WebAssembly Context: WASM only exposes PC register for debugging
     // Other registers are internal to the WASM runtime and not accessible
     StringView regNumStr = packet.substring(strlen("qRegisterInfo"));
-    int regNum = static_cast<int>(parseHex(regNumStr));
+    auto parsedRegNum = parseHexStrict(regNumStr);
+    if (!parsedRegNum) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidRegister);
+        return;
+    }
+    int regNum = static_cast<int>(*parsedRegNum);
 
     if (!regNum) {
         // PC register definition for WebAssembly debugging
@@ -177,8 +185,13 @@ bool QueryHandler::parseLibrariesReadPacket(StringView packet, size_t& offset, s
     if (parts.size() != 2)
         return false;
 
-    offset = parseHex(parts[0]);
-    maxSize = parseHex(parts[1]);
+    auto parsedOffset = parseHexStrict(parts[0]);
+    auto parsedMaxSize = parseHexStrict(parts[1]);
+    if (!parsedOffset || !parsedMaxSize)
+        return false;
+
+    offset = *parsedOffset;
+    maxSize = *parsedMaxSize;
     return true;
 }
 
@@ -208,41 +221,6 @@ bool QueryHandler::handleChunkedLibrariesResponse(size_t offset, size_t maxSize,
     return true;
 }
 
-String QueryHandler::buildWasmCallStackResponse()
-{
-    auto* state = m_debugServer.execution().debuggeeStateSafe();
-    if (!state->atBreakpoint()) {
-        dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] buildWasmCallStackResponse: not stopped at breakpoint, returning empty");
-        return String();
-    }
-
-    auto& stopData = *state->stopData;
-    RELEASE_ASSERT(stopData.callFrame);
-    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] buildWasmCallStackResponse: starting manual stack walk from CallFrame ", RawPointer(stopData.callFrame));
-
-    Vector<VirtualAddress> frameAddresses;
-    frameAddresses.append(stopData.address);
-    CallFrame* currentFrame = stopData.callFrame;
-    uint8_t* returnPC = nullptr;
-    VirtualAddress virtualReturnPC;
-    unsigned frameIndex = 0;
-
-    // FIXME: Only supports consecutive wasm->wasm calls. Need to support interleaved wasm<->js calls (skipping stubs, including JS frames).
-    while (getWasmReturnPC(currentFrame, returnPC, virtualReturnPC) && frameIndex < 100) {
-        frameAddresses.append(virtualReturnPC);
-        currentFrame = currentFrame->callerFrame();
-        frameIndex++;
-    }
-
-    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] CallStack: finished walking call stack, processed ", frameIndex, " frames");
-
-    StringBuilder result;
-    for (VirtualAddress address : frameAddresses)
-        result.append(toNativeEndianHex(address));
-    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] buildWasmCallStackResponse: collected ", frameAddresses.size(), " frames, response length: ", result.length());
-    return result.toString();
-}
-
 void QueryHandler::handleStartNoAckMode()
 {
     // Format: QStartNoAckMode
@@ -264,6 +242,7 @@ void QueryHandler::handleSupported()
     // This allows LLDB to see loaded WebAssembly modules as "libraries" for debugging
     String supportedFeatures = makeString(
         "qXfer:libraries:read+;"_s, // Support library list transfer for WASM modules
+        "qWasmInstance+;"_s, // A Wasm query may name the module instance it is about (see [19])
         "PacketSize=1000;"_s // Maximum packet size for data transfer
     );
     m_debugServer.sendReply(supportedFeatures);
@@ -321,6 +300,11 @@ void QueryHandler::handleLibrariesRead(StringView packet)
     if (handleChunkedLibrariesResponse(offset, maxSize, response)) {
         dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Sending library list chunk: offset=", offset, ", maxSize=", maxSize);
         m_debugServer.sendReply(response);
+        // The list is only complete on the final chunk ('l' prefix); mark it sent there.
+        if (response[0] == 'l') {
+            m_debugServer.m_hasSentLibraryList.store(true, std::memory_order_release);
+            m_debugServer.moduleManager().notifyLibraryRequeryComplete();
+        }
     } else {
         dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Failed to generate library list chunk");
         m_debugServer.sendErrorReply(ProtocolError::MemoryError);
@@ -342,10 +326,14 @@ void QueryHandler::handleWasmCallStack(StringView packet)
     }
 
     StringView threadIdStr = strings[1];
-    uint64_t requestedThreadId = parseHex(threadIdStr);
-    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmCallStack thread ID: ", requestedThreadId);
+    auto requestedThreadId = parseHexStrict(threadIdStr);
+    if (!requestedThreadId) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmCallStack thread ID: ", *requestedThreadId);
 
-    String response = m_debugServer.execution().callStackStringFor(requestedThreadId);
+    String response = m_debugServer.execution().callStackStringFor(*requestedThreadId);
     dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmCallStack response: ", response);
 
     if (response.isEmpty()) {
@@ -382,34 +370,61 @@ void QueryHandler::handleWasmLocal(StringView packet)
         return;
     }
 
-    uint32_t frameIndex = parseDecimal(parts[1]);
-    uint32_t localIndex = parseDecimal(parts[2]);
+    // Reject a non-numeric field rather than defaulting it to 0, which would answer for frame 0.
+    auto parsedFrameIndex = parseInteger<uint32_t>(parts[1]);
+    auto parsedLocalIndex = parseInteger<uint32_t>(parts[2]);
+    if (!parsedFrameIndex || !parsedLocalIndex) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+    uint32_t frameIndex = *parsedFrameIndex;
+    uint32_t localIndex = *parsedLocalIndex;
 
     dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmLocal frame=", frameIndex, ", variable=", localIndex);
 
-    // For now, only support frame 0 (current frame)
-    if (frameIndex) {
-        m_debugServer.sendErrorReply(ProtocolError::UnknownCommand);
-        return;
-    }
-
-    auto* state = m_debugServer.execution().debuggeeStateSafe();
-    if (!state->atBreakpoint()) {
+    auto* state = m_debugServer.execution().debuggeeStateForTest();
+    if (state->isStoppedAtSystemCall() || state->isStoppedAtPrologue()) {
         m_debugServer.sendErrorReply(ProtocolError::UnknownCommand);
         return;
     }
 
     auto& stopData = *state->stopData;
-    auto functionIndex = stopData.callee->functionIndex();
-    const auto& moduleInfo = stopData.instance->module().moduleInformation();
-    const Vector<Type>& localTypes = moduleInfo.debugInfo->ensureFunctionDebugInfo(functionIndex).locals;
+    CallFrame* localCallFrame = nullptr;
+    RefPtr<IPIntCallee> localCallee;
+    JSWebAssemblyInstance* instance = nullptr;
 
-    IPInt::IPIntLocal& local = stopData.locals[localIndex];
+    if (!frameIndex) {
+        localCallFrame = stopData.callFrame;
+        localCallee = stopData.callee;
+        instance = stopData.instance;
+    } else {
+        auto frames = collectCallStack(stopData.address, stopData.callFrame, stopData.instance->vm());
+        if (frameIndex >= frames.size() || !frames[frameIndex].isWasmFrame()) {
+            m_debugServer.sendErrorReply(ProtocolError::UnknownCommand);
+            return;
+        }
+        const auto& frameInfo = frames[frameIndex];
+        localCallFrame = frameInfo.wasmCallFrame;
+        localCallee = frameInfo.wasmCallee;
+        instance = frameInfo.wasmCallFrame->wasmInstance();
+    }
+
+    auto functionIndex = localCallee->functionIndex();
+    const auto& moduleInfo = instance->module().moduleInformation();
+    const Vector<Type>& localTypes = moduleInfo.ensureFunctionDebugInfo(functionIndex).locals;
+
+    if (localIndex >= localTypes.size()) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+
+    IPInt::FrameAccess frame(localCallFrame, localCallee.get());
+    IPInt::IPIntLocal& local = *frame.localSlot(localIndex);
     Type localType = localTypes[localIndex];
     logWasmLocalValue(localIndex, local, localType);
 
     String response;
-    uint32_t width = typeKindToWidth(localType.kind);
+    uint32_t width = typeKindToWidth(localType.kind());
     switch (width) {
     case 32: {
         response = toNativeEndianHex(local.i32);
@@ -420,15 +435,252 @@ void QueryHandler::handleWasmLocal(StringView packet)
         break;
     }
     case 128: {
-        RELEASE_ASSERT(localType.kind == TypeKind::V128, "Expected V128 for 128-bit type");
+        RELEASE_ASSERT(localType.kind() == TypeKind::V128, "Expected V128 for 128-bit type");
         response = toNativeEndianHex(local.v128);
         break;
     }
     default:
-        RELEASE_ASSERT(false, "Unsupported TypeKind bit size: ", width, " for TypeKind: ", localType.kind);
+        RELEASE_ASSERT(false, "Unsupported TypeKind bit size: ", width, " for TypeKind: ", localType.kind());
         break;
     }
     m_debugServer.sendReply(response);
+}
+
+JSWebAssemblyInstance* QueryHandler::instanceForFrame(uint32_t frameIndex)
+{
+    auto* state = m_debugServer.execution().debuggeeStateForTest();
+    if (state->isStoppedAtSystemCall())
+        return nullptr;
+
+    auto& stopData = *state->stopData;
+    if (!frameIndex)
+        return stopData.instance;
+
+    auto frames = collectCallStack(stopData.address, stopData.callFrame, stopData.instance->vm());
+    if (frameIndex >= frames.size() || !frames[frameIndex].isWasmFrame())
+        return nullptr;
+    return frames[frameIndex].wasmCallFrame->wasmInstance();
+}
+
+void QueryHandler::handleWasmGlobal(StringView packet)
+{
+    // Format: qWasmGlobal:<global-index>;instance:<instance-id>;
+    //     or: qWasmGlobal:<frame-index>;<global-index>
+    // LLDB: Get value of a WebAssembly global variable
+    // Reference: [18] and [19] in wasm/debugger/README.md
+
+    // WebAssembly Context: A global index only names a global together with an instance to read
+    // it from. The instance form names one directly, the frame form names the frame's instance.
+    auto parts = splitWithDelimiters(packet, ":;"_s);
+    if (parts.size() != 3) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+
+    static constexpr auto instanceKey = "instance:"_s;
+    bool namesInstance = parts[2].startsWith(instanceKey);
+
+    StringView instanceOrFrameField = parts[1];
+    if (namesInstance) {
+        if (!parts[2].endsWith(';')) {
+            m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+            return;
+        }
+        instanceOrFrameField = parts[2].left(parts[2].length() - 1).substring(instanceKey.length());
+    }
+
+    auto globalIndex = parseInteger<uint32_t>(namesInstance ? parts[1] : parts[2]);
+    auto instanceOrFrameIndex = parseInteger<uint32_t>(instanceOrFrameField);
+    if (!globalIndex || !instanceOrFrameIndex) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+
+    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmGlobal ", namesInstance ? "instance="_s : "frame="_s, *instanceOrFrameIndex, ", global=", *globalIndex);
+
+    auto* instance = namesInstance ? m_debugServer.moduleManager().jsInstance(*instanceOrFrameIndex) : instanceForFrame(*instanceOrFrameIndex);
+    if (!instance) {
+        m_debugServer.sendErrorReply(ProtocolError::UnknownCommand);
+        return;
+    }
+
+    const auto& moduleInfo = instance->module().moduleInformation();
+    if (*globalIndex >= moduleInfo.globalCount()) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+
+    Type globalType = moduleInfo.global(*globalIndex).type;
+    uint32_t width = typeKindToWidth(globalType.kind());
+
+    String response;
+    switch (width) {
+    case 32:
+        response = toNativeEndianHex(static_cast<uint32_t>(instance->loadI32Global(*globalIndex)));
+        break;
+    case 64:
+        response = toNativeEndianHex(static_cast<uint64_t>(instance->loadI64Global(*globalIndex)));
+        break;
+    case 128:
+        response = toNativeEndianHex(instance->loadV128Global(*globalIndex));
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+        break;
+    }
+    m_debugServer.sendReply(response);
+}
+
+// IPInt frame layout, for suspendedFrameOperandStackDepth
+// =======================================================
+//
+// $test pushes three i32s and calls $middle, which takes one parameter; we are stopped inside $middle
+// and want $test's operand stack depth. Numbers are measured, from
+// JSTests/wasm/debugger/resources/wasm/depth-wasm-wasm-wasm.js. A frame straddles its own cfr: the
+// six-slot header sits at positive offsets, everything else below.
+//
+//   == CALLER FRAME: $test ==============================================================
+//   cfr +40   slot 5  thisArgument = -144    <-- saved sp delta
+//   cfr +32   slot 4  argumentCountIncludingThis
+//   cfr +24   slot 3  callee
+//   cfr +16   slot 2  codeBlock
+//   cfr + 8   slot 1  returnPC
+//   cfr + 0   slot 0  callerFrame
+//   -------------------------------------------------------------------------------------
+//   cfr -  8          PC
+//   cfr - 16          MC
+//   cfr - 24          UnboxedWasmCalleeStackSlot
+//   cfr - 32          (pad)                  <-- stackEnd
+//   =====================================================================================
+//   cfr - 48   0x11111111   index 0   pushed 1st
+//   cfr - 64   0x22222222   index 1   pushed 2nd  <-- firstNonArg
+//   cfr - 80   0x33333333   index 2   pushed 3rd  = $middle's arg
+//   -------------------------------------------------------------------------------------
+//             (extraSpaceForReturns -- 0 bytes here)   <-- sp on entry to .ipint_call_common
+//   -------------------------------------------------------------------------------------
+//   cfr - 88          PC                                        |
+//   cfr - 96          first_non_arg - cfr = -64                 | THE GROUP
+//   cfr -104          wasmInstance                              | (4 slots)
+//   cfr -112          MC -> caller metadata  <-- group base     |
+//   =====================================================================================
+//   == CALLEE FRAME: $middle ============================================================
+//   cfr -120 = calleeCfr +40   slot 5  thisArgument            |
+//   cfr -128 = calleeCfr +32   slot 4  argumentCount           | the 32 bytes the CALLER
+//   cfr -136 = calleeCfr +24   slot 3  callee                  | reserved = stackFrameSize
+//   cfr -144 = calleeCfr +16   slot 2  codeBlock <-- spAtCall  |
+//   -------------------------------------------------------------------------------------
+//   cfr -152 = calleeCfr + 8   slot 1  returnPC
+//   cfr -160 = calleeCfr + 0   slot 0  callerFrame -> cfr
+//   -------------------------------------------------------------------------------------
+//             $middle's callee-saves, locals, operand stack continue downward...
+//
+// A call into JS lays the caller half out identically; only the callee frame below spAtCall differs.
+//
+// "group" is local shorthand. stackIndex counts from the bottom, matching LLVM's
+// &Elem - &Stack[0] (WebAssemblyDebugFixup.cpp): for depth D and argumentCount A,
+// indices [0, D-A) are untouched and [D-A, D) were consumed by the call.
+//
+// The depth mirrors what the engine does on return, so it must stay aligned with:
+//   group address   mintAlign(_call) storing sp, _wasm_ipint_call_return_location adding stackFrameSize
+//   group slots     _wasm_ipint_call_return_location's loads of MC and (2 * SlotSize)[sc3]
+static size_t suspendedFrameOperandStackDepth(const FrameInfo& frame, IPInt::IPIntStackEntry* stackEnd)
+{
+    RELEASE_ASSERT(frame.inFlightCallFrameSize);
+
+    auto* cfr = reinterpret_cast<uint8_t*>(frame.wasmCallFrame);
+    auto* group = cfr + *reinterpret_cast<intptr_t*>(cfr + CallFrameSlot::thisArgument * sizeof(Register)) + frame.inFlightCallFrameSize;
+    auto* stackEndBytes = reinterpret_cast<uint8_t*>(stackEnd);
+
+    // Read first_non_arg back, then add the arguments again.
+#if CPU(ARM64)
+    constexpr size_t savedMCSlot = 0;
+    constexpr size_t firstNonArgSlot = 2;
+#elif CPU(X86_64)
+    constexpr size_t savedMCSlot = 1;
+    constexpr size_t firstNonArgSlot = 3;
+#else
+#error "No known operand stack save layout for this architecture"
+#endif
+    auto* firstNonArg = cfr + *reinterpret_cast<intptr_t*>(group + firstNonArgSlot * sizeof(Register));
+    RELEASE_ASSERT(firstNonArg <= stackEndBytes, reinterpret_cast<uintptr_t>(firstNonArg), reinterpret_cast<uintptr_t>(stackEndBytes));
+    size_t argumentDistance = static_cast<size_t>(stackEndBytes - firstNonArg);
+    RELEASE_ASSERT(!(argumentDistance % sizeof(IPInt::IPIntStackEntry)), argumentDistance);
+
+    auto* savedMC = *reinterpret_cast<const uint8_t**>(group + savedMCSlot * sizeof(Register));
+    RELEASE_ASSERT(savedMC);
+    auto* signature = reinterpret_cast<const IPInt::CallSignatureMetadata*>(savedMC - sizeof(IPInt::CallSignatureMetadata));
+
+    return argumentDistance / sizeof(IPInt::IPIntStackEntry) + signature->numArguments;
+}
+
+void QueryHandler::handleWasmStackValue(StringView packet)
+{
+    // Format: qWasmStackValue:<frame-index>;<stack-index>
+    // LLDB: Get the value of a source variable that lives on the Wasm operand stack
+    // Reference: [20] in wasm/debugger/README.md
+
+    // WebAssembly Context: An optimized build may leave a variable on the operand stack. An entry is
+    // an untyped 16-byte union, so it is sent whole and LLDB narrows it to the variable's DW_AT_type,
+    // which needs llvm/llvm-project#163646.
+    auto parts = splitWithDelimiters(packet, ":;"_s);
+    if (parts.size() != 3) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+
+    auto parsedFrameIndex = parseInteger<uint32_t>(parts[1]);
+    auto parsedStackIndex = parseInteger<uint32_t>(parts[2]);
+    if (!parsedFrameIndex || !parsedStackIndex) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+    uint32_t frameIndex = *parsedFrameIndex;
+    uint32_t stackIndex = *parsedStackIndex;
+
+    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmStackValue frame=", frameIndex, ", index=", stackIndex);
+
+    auto* state = m_debugServer.execution().debuggeeStateForTest();
+    if (state->isStoppedAtSystemCall() || state->isStoppedAtPrologue()) {
+        m_debugServer.sendErrorReply(ProtocolError::UnknownCommand);
+        return;
+    }
+
+    auto& stopData = *state->stopData;
+    Vector<FrameInfo> frames;
+    if (frameIndex) {
+        frames = collectCallStack(stopData.address, stopData.callFrame, stopData.instance->vm());
+        if (frameIndex >= frames.size() || !frames[frameIndex].isWasmFrame()) {
+            m_debugServer.sendErrorReply(ProtocolError::UnknownCommand);
+            return;
+        }
+    }
+    FrameInfo stoppedFrame { stopData.address, stopData.callFrame, stopData.callee, 0 };
+    const FrameInfo& target = frameIndex ? frames[frameIndex] : stoppedFrame;
+
+    // The operand stack grows downwards from stackEnd, so stackEnd is one past the deepest entry.
+    IPInt::FrameAccess frame(target.wasmCallFrame, target.wasmCallee.get());
+    IPInt::IPIntStackEntry* stackEnd = frame.stackEnd();
+
+    size_t depth;
+    if (!frameIndex) {
+        IPInt::IPIntStackEntry* stackPointer = stopData.stack;
+        RELEASE_ASSERT(stackPointer);
+        RELEASE_ASSERT(stackPointer <= stackEnd, reinterpret_cast<uintptr_t>(stackPointer), reinterpret_cast<uintptr_t>(stackEnd));
+        depth = static_cast<size_t>(stackEnd - stackPointer);
+    } else
+        depth = suspendedFrameOperandStackDepth(target, stackEnd);
+
+    if (stackIndex >= depth) {
+        dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmStackValue: index ", stackIndex, " beyond depth ", depth);
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+
+    // LLVM indexes from the bottom of the stack (WebAssemblyDebugFixup.cpp), so 0 is the deepest entry.
+    IPInt::IPIntStackEntry& entry = *(stackEnd - 1 - stackIndex);
+    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmStackValue depth=", depth, " i32=", entry.i32, " i64=", entry.i64);
+
+    m_debugServer.sendReply(toNativeEndianHex(entry.v128));
 }
 
 } // namespace Wasm
@@ -436,4 +688,4 @@ void QueryHandler::handleWasmLocal(StringView packet)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

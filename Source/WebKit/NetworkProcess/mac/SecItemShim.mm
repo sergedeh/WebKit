@@ -28,7 +28,6 @@
 
 #if ENABLE(SEC_ITEM_SHIM)
 
-#include "BlockingResponseMap.h"
 #include "NetworkProcess.h"
 #include "SecItemRequestData.h"
 #include "SecItemResponseData.h"
@@ -58,7 +57,7 @@ extern "C" void _CFURLConnectionSetFrameworkStubs(const struct _CFNFrameworksStu
 
 namespace WebKit {
 
-static WeakPtr<NetworkProcess>& globalNetworkProcess()
+static WeakPtr<NetworkProcess>& NODELETE globalNetworkProcess()
 {
     static NeverDestroyed<WeakPtr<NetworkProcess>> networkProcess;
     return networkProcess.get();
@@ -67,7 +66,7 @@ static WeakPtr<NetworkProcess>& globalNetworkProcess()
 static std::optional<SecItemResponseData> sendSecItemRequest(SecItemRequestData::Type requestType, CFDictionaryRef query, CFDictionaryRef attributesToMatch = 0)
 {
     if (RunLoop::isMain()) {
-        auto sendSync = globalNetworkProcess()->protectedParentProcessConnection()->sendSync(Messages::SecItemShimProxy::SecItemRequestSync(SecItemRequestData(requestType, query, attributesToMatch)), 0);
+        auto sendSync = protect(globalNetworkProcess()->parentProcessConnection())->sendSync(Messages::SecItemShimProxy::SecItemRequestSync(SecItemRequestData(requestType, query, attributesToMatch)), 0);
         auto [response] = sendSync.takeReplyOr(std::nullopt);
         return response;
     }
@@ -83,7 +82,7 @@ static std::optional<SecItemResponseData> sendSecItemRequest(SecItemRequestData:
             return;
         }
 
-        globalNetworkProcess()->protectedParentProcessConnection()->sendWithAsyncReply(Messages::SecItemShimProxy::SecItemRequest(SecItemRequestData(requestType, cfQuery.get(), cfAttributesToMatch.get())), [&](auto reply) {
+        protect(globalNetworkProcess()->parentProcessConnection())->sendWithAsyncReply(Messages::SecItemShimProxy::SecItemRequest(SecItemRequestData(requestType, cfQuery.get(), cfAttributesToMatch.get())), [&](auto reply) {
             if (reply)
                 response = WTF::move(*reply);
 

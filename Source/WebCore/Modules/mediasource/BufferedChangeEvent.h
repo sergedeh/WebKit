@@ -53,15 +53,15 @@ public:
         return adoptRef(*new BufferedChangeEvent(type, WTF::move(init)));
     }
 
-    RefPtr<TimeRanges> addedRanges() const;
-    RefPtr<TimeRanges> removedRanges() const;
+    RefPtr<TimeRanges> NODELETE addedRanges() const;
+    RefPtr<TimeRanges> NODELETE removedRanges() const;
 
 private:
     BufferedChangeEvent(RefPtr<TimeRanges>&& added, RefPtr<TimeRanges>&& removed);
     BufferedChangeEvent(const AtomString& type, Init&&);
 
-    RefPtr<TimeRanges> m_added;
-    RefPtr<TimeRanges> m_removed;
+    const RefPtr<TimeRanges> m_added;
+    const RefPtr<TimeRanges> m_removed;
 };
 
 } // namespace WebCore

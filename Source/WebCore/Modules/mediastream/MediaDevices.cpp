@@ -44,6 +44,9 @@
 #include "EventNames.h"
 #include "EventTargetInlines.h"
 #include "FrameDestructionObserverInlines.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertSequences.h"
+#include "JSDOMConvertUnion.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSInputDeviceInfo.h"
 #include "JSMediaDeviceInfo.h"
@@ -82,7 +85,7 @@ void MediaDevices::stop()
 {
     if (m_deviceChangeToken) {
         RefPtr document = this->document();
-        auto* controller = document ? UserMediaController::from(document->protectedPage().get()) : nullptr;
+        auto* controller = document ? UserMediaController::from(protect(document->page()).get()) : nullptr;
         if (controller)
             controller->removeDeviceChangeObserver(*m_deviceChangeToken);
     }
@@ -337,7 +340,7 @@ static inline bool checkSpeakerAccess(const Document& document)
         && isFeaturePolicyAllowingSpeakerSelection(document);
 }
 
-static inline bool exposeSpeakersWithoutMicrophoneAccess(const Document& document)
+static inline bool NODELETE exposeSpeakersWithoutMicrophoneAccess(const Document& document)
 {
     return document.frame() && document.frame()->settings().exposeSpeakersWithoutMicrophoneEnabled();
 }
@@ -358,7 +361,7 @@ String MediaDevices::deviceIdToPersistentId(const String& deviceId) const
     return m_audioOutputDeviceIdToPersistentId.get(deviceId);
 }
 
-static RefPtr<MediaDeviceInfo> createDefaultSpeakerAsSpecificDevice(const CaptureDevice& defaultRealDevice, const String& groupId)
+static Ref<MediaDeviceInfo> createDefaultSpeakerAsSpecificDevice(const CaptureDevice& defaultRealDevice, const String& groupId)
 {
     return MediaDeviceInfo::create(makeString(defaultSystemSpeakerLabel(), " - "_s, defaultRealDevice.label()), AudioMediaStreamTrackRenderer::defaultDeviceID(), groupId, MediaDeviceInfo::Kind::Audiooutput);
 }
@@ -379,7 +382,7 @@ void MediaDevices::exposeDevices(Vector<CaptureDeviceWithCapabilities>&& newDevi
 
     m_audioOutputDeviceIdToPersistentId.clear();
 
-    Vector<Variant<RefPtr<MediaDeviceInfo>, RefPtr<InputDeviceInfo>>> devices;
+    Vector<Variant<Ref<MediaDeviceInfo>, Ref<InputDeviceInfo>>> devices;
     for (auto& newDeviceWithCapabilities : newDevices) {
         auto& newDevice = newDeviceWithCapabilities.device;
         if (!canAccessMicrophone && newDevice.type() == CaptureDevice::DeviceType::Microphone)
@@ -405,7 +408,7 @@ void MediaDevices::exposeDevices(Vector<CaptureDeviceWithCapabilities>&& newDevi
                 }
 
                 m_audioOutputDeviceIdToPersistentId.add(deviceId, newDevice.persistentId());
-                devices.append(RefPtr { MediaDeviceInfo::create(newDevice.label(), WTF::move(deviceId), WTF::move(groupId), MediaDeviceInfo::Kind::Audiooutput) });
+                devices.append(MediaDeviceInfo::create(newDevice.label(), WTF::move(deviceId), WTF::move(groupId), MediaDeviceInfo::Kind::Audiooutput));
             }
         } else {
             if (newDevice.type() == CaptureDevice::DeviceType::Camera && !newDevice.label().isEmpty())
@@ -418,7 +421,7 @@ void MediaDevices::exposeDevices(Vector<CaptureDeviceWithCapabilities>&& newDevi
                 if (newDeviceWithCapabilities.device.label().isEmpty())
                     newDeviceWithCapabilities.device.setLabel("default"_s);
             }
-            devices.append(RefPtr<InputDeviceInfo> { InputDeviceInfo::create(WTF::move(newDeviceWithCapabilities), WTF::move(deviceId), WTF::move(groupId)) });
+            devices.append(InputDeviceInfo::create(WTF::move(newDeviceWithCapabilities), WTF::move(deviceId), WTF::move(groupId)));
         }
     }
     promise.resolve(WTF::move(devices));
@@ -430,7 +433,7 @@ void MediaDevices::enumerateDevices(EnumerateDevicesPromise&& promise)
     if (!document)
         return;
 
-    auto* controller = UserMediaController::from(document->protectedPage().get());
+    auto* controller = UserMediaController::from(protect(document->page()).get());
     if (!controller) {
         promise.resolve({ });
         return;
@@ -484,7 +487,7 @@ ScriptExecutionContext* MediaDevices::scriptExecutionContext() const
 void MediaDevices::listenForDeviceChanges()
 {
     RefPtr document = this->document();
-    auto* controller = document ? UserMediaController::from(document->protectedPage().get()) : nullptr;
+    auto* controller = document ? UserMediaController::from(protect(document->page()).get()) : nullptr;
     if (!controller)
         return;
 

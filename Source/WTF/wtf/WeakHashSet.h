@@ -59,7 +59,7 @@ public:
     public:
         WeakHashSetConstIterator() = default;
 
-        T* get() const { return m_position->get(); }
+        T* get() const LIFETIME_BOUND { return m_position->get(); }
         T& operator*() const { return *get(); }
         T* operator->() const { return get(); }
 
@@ -142,6 +142,17 @@ public:
         return removed;
     }
 
+    template<typename Functor>
+    bool removeIf(NOESCAPE const Functor& functor)
+    {
+        bool result = m_set.removeIf([&](const KeyType& item) {
+            auto* pointer = item.get();
+            return !pointer || functor(*pointer);
+        });
+        cleanupHappened();
+        return result;
+    }
+
     void clear()
     {
         m_set.clear();
@@ -168,7 +179,7 @@ public:
     bool hasNullReferences() const
     {
         unsigned count = 0;
-        for (auto _ : m_set) {
+        for (auto& _ : m_set) {
             UNUSED_VARIABLE(_);
             ++count;
         }
@@ -188,7 +199,7 @@ public:
         return m_set.size();
     }
 
-    void forEach(NOESCAPE const Function<void(T&)>& callback) requires HasRefPtrMemberFunctions<T>::value
+    void forEach(NOESCAPE const Function<void(T&)>& callback) requires HasRefPtrMemberFunctions<T>
     {
         auto items = compactMap(m_set, [](const KeyType& item) -> RefPtr<T> {
             return RefPtr { item.get() };
@@ -197,7 +208,7 @@ public:
             callback(item.get());
     }
 
-    void forEach(NOESCAPE const Function<void(T&)>& callback) requires (HasCheckedPtrMemberFunctions<T>::value && !HasRefPtrMemberFunctions<T>::value)
+    void forEach(NOESCAPE const Function<void(T&)>& callback) requires (HasCheckedPtrMemberFunctions<T> && !HasRefPtrMemberFunctions<T>)
     {
         auto items = compactMap(m_set, [](const KeyType& item) -> CheckedPtr<T> {
             return CheckedPtr { item.get() };

@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <WebCore/FontCascade.h>
 #include <WebCore/InlineIteratorBoxLegacyPath.h>
 #include <WebCore/LayoutElementBox.h>
 #include <WebCore/LayoutIntegrationInlineContent.h>
@@ -51,6 +50,7 @@ public:
     bool isText() const { return box().isTextOrSoftLineBreak(); }
     bool isInlineBox() const { return box().isInlineBox(); }
     bool isRootInlineBox() const { return box().isRootInlineBox(); }
+    bool isRubyBase() const { return box().isRubyBase(); }
     // Blocks-in-inline.
     bool isBlockLevelBox() const { return box().isBlockLevelBox(); }
     bool isAtomicInlineBox() const { return box().isAtomicInlineBox(); }
@@ -113,7 +113,7 @@ public:
         return m_inlineContent->formattingContextRoot();
     }
 
-    const RenderStyle& style() const
+    const Style::ComputedStyle& style() const
     {
         return box().style();
     }

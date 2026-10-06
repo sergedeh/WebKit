@@ -26,33 +26,37 @@
 #import "config.h"
 #import "MediaDeviceRoute.h"
 
-#if HAVE(AVROUTING_FRAMEWORK)
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
 
-#import <WebKitAdditions/MediaDeviceRouteAdditions.mm>
+#import "Logging.h"
+#import "MediaSelectionOption.h"
+#import "WebMediaDevicePlatformRoute.h"
+#import <AVKit/AVKit.h>
+#import <pal/avfoundation/MediaTimeAVFoundation.h>
+#import <wtf/BlockPtr.h>
+#import <wtf/CompletionHandler.h>
+#import <wtf/RunLoop.h>
+#import <wtf/darwin/DispatchExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 
+#import <pal/cf/CoreMediaSoftLink.h>
+#import <pal/ios/AVSystemRoutingSoftLink.h>
+
 #define FOR_EACH_READONLY_KEY_PATH(Macro) \
-    Macro(minValue, MinValue, float) \
-    Macro(maxValue, MaxValue, float) \
-    Macro(segments, Segments, Vector<MediaTimelineSegment>) \
-    Macro(currentSegment, CurrentSegment, std::optional<MediaTimelineSegment>) \
-    Macro(state, State, MediaPlaybackSourceState) \
-    Macro(supportedModes, SupportedModes, OptionSet<MediaPlaybackSourceSupportedMode>) \
-    Macro(playbackType, PlaybackType, OptionSet<MediaPlaybackSourcePlaybackType>) \
-    Macro(playbackError, PlaybackError, std::optional<MediaPlaybackSourceError>) \
-    Macro(options, Options, Vector<MediaSelectionOption>) \
-    Macro(hasAudio, HasAudio, bool) \
+    Macro(timeRange, TimeRange, MediaTimeRange) \
+    Macro(ready, Ready, bool) \
+    Macro(buffering, Buffering, bool) \
+    Macro(audioOptions, AudioOptions, Vector<MediaSelectionOption>) \
+    Macro(error, Error, std::optional<MediaPlaybackSourceError>) \
+    Macro(playbackPosition, PlaybackPosition, MediaTime) \
 \
 
 #define FOR_EACH_READWRITE_KEY_PATH(Macro) \
-    Macro(currentValue, CurrentValue, float) \
-    Macro(isPlaying, IsPlaying, bool) \
-    Macro(playbackSpeed, PlaybackSpeed, double) \
-    Macro(scanSpeed, ScanSpeed, double) \
-    Macro(currentAudioOption, CurrentAudioOption, std::optional<MediaSelectionOption>) \
-    Macro(currentSubtitleOption, CurrentSubtitleOption, std::optional<MediaSelectionOption>) \
+    Macro(playing, Playing, bool) \
+    Macro(playbackSpeed, PlaybackSpeed, float) \
+    Macro(scanSpeed, ScanSpeed, float) \
     Macro(muted, Muted, bool) \
-    Macro(volume, Volume, double) \
+    Macro(volume, Volume, float) \
 \
 
 #define FOR_EACH_KEY_PATH(Macro) \
@@ -61,19 +65,23 @@
 \
 
 #define ADD_OBSERVER(KeyPath, SetterSuffix, Type) \
-    [_platformRoute addObserver:self forKeyPath:@#KeyPath options:0 context:WebMediaDeviceRouteObserverContext]; \
+    [_playbackControl addObserver:self forKeyPath:@#KeyPath options:NSKeyValueObservingOptionInitial context:WebPlaybackControlObserverContext]; \
 \
 
 #define REMOVE_OBSERVER(KeyPath, SetterSuffix, Type) \
-    [_platformRoute removeObserver:self forKeyPath:@#KeyPath context:WebMediaDeviceRouteObserverContext]; \
+    [_playbackControl removeObserver:self forKeyPath:@#KeyPath context:WebPlaybackControlObserverContext]; \
+\
+
+#define NOTIFY_CLIENT(KeyPath, SetterSuffix, Type) \
+    if (RefPtr route = _route.get()) { \
+        if (RefPtr client = route->client()) \
+            client->KeyPath##DidChange(*route); \
+    } \
 \
 
 #define OBSERVE_VALUE(KeyPath, SetterSuffix, Type) \
     if ([keyPath isEqualToString:@#KeyPath]) { \
-        if (RefPtr route = _route.get()) { \
-            if (RefPtr client = route->client()) \
-                client->KeyPath##DidChange(*route); \
-        } \
+        NOTIFY_CLIENT(KeyPath, SetterSuffix, Type) \
         return; \
     } \
 \
@@ -81,71 +89,67 @@
 #define DEFINE_GETTER(KeyPath, SetterSuffix, Type) \
     Type MediaDeviceRoute::KeyPath() const \
     { \
-        return convert([[m_route platformRoute] KeyPath]); \
+        return convert([m_playbackControlObserver playbackControl].KeyPath); \
     } \
 \
 
 #define DEFINE_SETTER(KeyPath, SetterSuffix, Type) \
     void MediaDeviceRoute::set##SetterSuffix(Type KeyPath) \
     { \
-        [[m_route platformRoute] set##SetterSuffix:convert(WTF::move(KeyPath))]; \
+        [[m_playbackControlObserver playbackControl] set##SetterSuffix:convert(WTF::move(KeyPath))]; \
     } \
 \
 
 NS_ASSUME_NONNULL_BEGIN
 
-static void* WebMediaDeviceRouteObserverContext = &WebMediaDeviceRouteObserverContext;
+static void* WebPlaybackControlObserverContext = &WebPlaybackControlObserverContext;
 
-@interface WebMediaSelectionOption : NSObject <AVMediaSelectionOptionSource>
-@end
-
-@interface WebMediaSelectionOption ()
-@property (nonatomic, copy) NSString *displayName;
-@property (nonatomic, copy) NSString *identifier;
-@property (nonatomic) AVMediaOptionType type;
-@property (nonatomic, copy) NSString *extendedLanguageTag;
-@end
-
-@implementation WebMediaSelectionOption
-@end
-
-@interface WebMediaDeviceRoute : NSObject
+@interface WebPlaybackControlObserver : NSObject
 + (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
-- (instancetype)initWithRoute:(WebCore::MediaDeviceRoute&)route platformRoute:(WebMediaDevicePlatformRoute *)platformRoute NS_DESIGNATED_INITIALIZER;
-@property (nonatomic, readonly, strong) WebMediaDevicePlatformRoute *platformRoute;
+- (instancetype)initWithRoute:(WebCore::MediaDeviceRoute&)route NS_DESIGNATED_INITIALIZER;
+@property (nonatomic, nullable, strong) NSObject<AVPlaybackUserInterfaceControllable> *playbackControl;
 @end
 
-@implementation WebMediaDeviceRoute {
+@implementation WebPlaybackControlObserver {
     WeakPtr<WebCore::MediaDeviceRoute> _route;
-    RetainPtr<WebMediaDevicePlatformRoute> _platformRoute;
+    RetainPtr<NSObject<AVPlaybackUserInterfaceControllable>> _playbackControl;
 }
 
-- (instancetype)initWithRoute:(WebCore::MediaDeviceRoute&)route platformRoute:(WebMediaDevicePlatformRoute *)platformRoute
+- (instancetype)initWithRoute:(WebCore::MediaDeviceRoute&)route
 {
     if (!(self = [super init]))
         return nil;
 
     _route = route;
-    _platformRoute = platformRoute;
-    FOR_EACH_KEY_PATH(ADD_OBSERVER)
     return self;
 }
 
-- (WebMediaDevicePlatformRoute *)platformRoute
+- (NSObject<AVPlaybackUserInterfaceControllable> * _Nullable)playbackControl
 {
-    return _platformRoute.get();
+    return _playbackControl.get();
+}
+
+- (void)setPlaybackControl:(NSObject<AVPlaybackUserInterfaceControllable> * _Nullable)playbackControl
+{
+    FOR_EACH_KEY_PATH(REMOVE_OBSERVER)
+
+    _playbackControl = playbackControl;
+
+    FOR_EACH_KEY_PATH(ADD_OBSERVER)
 }
 
 - (void)observeValueForKeyPath:(nullable NSString *)keyPath ofObject:(nullable id)object change:(nullable NSDictionary *)change context:(nullable void*)context
 {
-    if (context != WebMediaDeviceRouteObserverContext) {
+    if (context != WebPlaybackControlObserverContext) {
         [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
         return;
     }
 
-    FOR_EACH_KEY_PATH(OBSERVE_VALUE)
-    ASSERT_NOT_REACHED();
+    dispatch_async(mainDispatchQueueSingleton(), ^{
+        FOR_EACH_KEY_PATH(OBSERVE_VALUE)
+        ASSERT_NOT_REACHED();
+    });
 }
 
 - (void)dealloc
@@ -156,9 +160,59 @@ static void* WebMediaDeviceRouteObserverContext = &WebMediaDeviceRouteObserverCo
 
 @end
 
+NS_ASSUME_NONNULL_END
+
 namespace WebCore {
 
-static double convert(double value)
+void MediaDeviceRoute::loadURL(const URL& url, CompletionHandler<void(const MediaDeviceRouteLoadURLResult&)>&& completionHandler)
+{
+    RetainPtr platformURL = url.createNSURL();
+    if (!platformURL)
+        return completionHandler(makeUnexpected(MediaDeviceRouteLoadURLError::InvalidURL));
+
+    disconnectFromSession();
+
+#if HAVE(AVSYSTEMROUTING_FRAMEWORK)
+    m_routeSession = adoptNS([PAL::allocAVSystemRouteSessionInstance() initWithURL:platformURL.get() mode:AVSystemRouteLaunchModePlayer]);
+    [platformRoute() addSession:m_routeSession.get()];
+
+    auto completionBlock = makeBlockPtr([weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](NSError * _Nullable error, AVSystemRouteMediaSession * _Nullable mediaSession) mutable {
+        RunLoop::mainSingleton().dispatch([weakThis = WTF::move(weakThis), completionHandler = WTF::move(completionHandler), error = RetainPtr { error }, mediaSession = RetainPtr { mediaSession }]() mutable {
+            if (!!error)
+                return completionHandler(makeUnexpected(MediaDeviceRouteLoadURLError::PlatformError));
+
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis)
+                return completionHandler(makeUnexpected(MediaDeviceRouteLoadURLError::NoRoute));
+
+            RetainPtr<id> playbackControl = [mediaSession playbackControl];
+            if ([playbackControl conformsToProtocol:@protocol(AVPlaybackUserInterfaceControllable)])
+                [protectedThis->m_playbackControlObserver setPlaybackControl:(NSObject<AVPlaybackUserInterfaceControllable> *)playbackControl.get()];
+            else
+                RELEASE_LOG_ERROR(Media, "MediaDeviceRoute::loadURL: playbackControl does not conform to AVPlaybackUserInterfaceControllable");
+            completionHandler({ });
+        });
+    });
+
+    [m_routeSession startWithCompletionHandler:completionBlock.get()];
+#else
+    auto completionBlock = makeBlockPtr([weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](NSError * _Nullable error, NSObject<AVPlaybackUserInterfaceControllable> * _Nullable playbackControl) mutable {
+        if (!!error)
+            return completionHandler(makeUnexpected(MediaDeviceRouteLoadURLError::PlatformError));
+
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return completionHandler(makeUnexpected(MediaDeviceRouteLoadURLError::NoRoute));
+
+        [protectedThis->m_playbackControlObserver setPlaybackControl:playbackControl];
+        completionHandler({ });
+    });
+
+    [platformRoute() startWithURL:platformURL.get() completionHandler:completionBlock.get()];
+#endif
+}
+
+static float convert(float value)
 {
     return value;
 }
@@ -168,16 +222,19 @@ static bool convert(bool value)
     return value;
 }
 
-static MediaTimelineSegment::Type convert(AVMediaTimelineSegmentType segmentType)
+static CMTime convert(MediaTime time)
 {
-    switch (segmentType) {
-    case AVMediaTimelineSegmentTypePrimary:
-        return MediaTimelineSegment::Type::Primary;
-    case AVMediaTimelineSegmentTypeSecondary:
-        return MediaTimelineSegment::Type::Secondary;
-    }
+    return PAL::toCMTime(time);
+}
 
-    RELEASE_ASSERT_NOT_REACHED();
+static MediaTime convert(CMTime time)
+{
+    return PAL::toMediaTime(time);
+}
+
+static MediaTime convert(AVPlaybackUserInterfacePlaybackPosition *playbackPosition)
+{
+    return convert(playbackPosition.position);
 }
 
 static MediaTimeRange convert(CMTimeRange timeRange)
@@ -186,72 +243,17 @@ static MediaTimeRange convert(CMTimeRange timeRange)
     return { WTF::move(start), start + PAL::toMediaTime(timeRange.duration) };
 }
 
-static std::optional<MediaTimelineSegment> convert(id<AVMediaTimelineSegment> _Nullable segment)
+static CMTime convert(MediaDeviceRoute::SeekTolerance tolerance)
 {
-    if (!segment)
-        return std::nullopt;
-
-    return MediaTimelineSegment {
-        convert(segment.type),
-        segment.isMarked,
-        segment.requiresLinearPlayback,
-        convert(segment.timeRange),
-        segment.identifier,
-    };
-}
-
-static Vector<MediaTimelineSegment> convert(NSArray<AVMediaTimelineSegment> * _Nullable segments)
-{
-    Vector<MediaTimelineSegment> result;
-
-    for (id<AVMediaTimelineSegment> segment in segments)
-        result.append(*convert(segment));
-
-    return result;
-}
-
-static MediaPlaybackSourceState convert(AVMediaPlaybackSourceState state)
-{
-    switch (state) {
-    case AVMediaPlaybackSourceStateReady:
-        return MediaPlaybackSourceState::Ready;
-    case AVMediaPlaybackSourceStateLoading:
-        return MediaPlaybackSourceState::Loading;
-    case AVMediaPlaybackSourceStateSeeking:
-        return MediaPlaybackSourceState::Seeking;
-    case AVMediaPlaybackSourceStateScanning:
-        return MediaPlaybackSourceState::Scanning;
-    case AVMediaPlaybackSourceStateScrubbing:
-        return MediaPlaybackSourceState::Scrubbing;
+    switch (tolerance) {
+    case MediaDeviceRoute::SeekTolerance::Precise:
+        return PAL::kCMTimeZero;
+    case MediaDeviceRoute::SeekTolerance::Approximate:
+        return PAL::kCMTimePositiveInfinity;
     }
 
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static OptionSet<MediaPlaybackSourceSupportedMode> convert(AVMediaPlaybackSourceSupportedMode supportedModes)
-{
-    OptionSet<MediaPlaybackSourceSupportedMode> result;
-
-    if (supportedModes & AVMediaPlaybackSourceSupportedModeScanForward)
-        result.add(MediaPlaybackSourceSupportedMode::ScanForward);
-    if (supportedModes & AVMediaPlaybackSourceSupportedModeScanBackward)
-        result.add(MediaPlaybackSourceSupportedMode::ScanBackward);
-    if (supportedModes & AVMediaPlaybackSourceSupportedModeSeek)
-        result.add(MediaPlaybackSourceSupportedMode::Seek);
-
-    return result;
-}
-
-static OptionSet<MediaPlaybackSourcePlaybackType> convert(AVMediaPlaybackSourcePlaybackType playbackType)
-{
-    OptionSet<MediaPlaybackSourcePlaybackType> result;
-
-    if (playbackType & AVMediaPlaybackSourcePlaybackTypeRegular)
-        result.add(MediaPlaybackSourcePlaybackType::Regular);
-    if (playbackType & AVMediaPlaybackSourcePlaybackTypeLive)
-        result.add(MediaPlaybackSourcePlaybackType::Live);
-
-    return result;
+    ASSERT_NOT_REACHED();
+    return PAL::kCMTimeZero;
 }
 
 static std::optional<MediaPlaybackSourceError> convert(NSError * _Nullable error)
@@ -266,65 +268,17 @@ static std::optional<MediaPlaybackSourceError> convert(NSError * _Nullable error
     };
 }
 
-static MediaSelectionOption::Type convert(AVMediaOptionType type)
+static Vector<MediaSelectionOption> convert(NSArray * _Nullable options)
 {
-    switch (type) {
-    case AVMediaOptionTypeAudio:
-        return MediaSelectionOption::Type::Audio;
-    case AVMediaOptionTypeLegible:
-        return MediaSelectionOption::Type::Legible;
-    }
-
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static AVMediaOptionType convert(MediaSelectionOption::Type type)
-{
-    switch (type) {
-    case MediaSelectionOption::Type::Audio:
-        return AVMediaOptionTypeAudio;
-    case MediaSelectionOption::Type::Legible:
-        return AVMediaOptionTypeLegible;
-    }
-
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static std::optional<MediaSelectionOption> convert(id<AVMediaSelectionOptionSource> _Nullable option)
-{
-    if (!option)
-        return std::nullopt;
-
-    return MediaSelectionOption {
-        option.displayName,
-        option.identifier,
-        convert(option.type),
-        option.extendedLanguageTag,
-    };
-}
-
-static id<AVMediaSelectionOptionSource> _Nullable convert(const std::optional<MediaSelectionOption>& option)
-{
-    if (!option)
-        return nil;
-
-    RetainPtr result = adoptNS([[WebMediaSelectionOption alloc] init]);
-    [result setDisplayName:option->displayName.createNSString().get()];
-    [result setIdentifier:option->identifier.createNSString().get()];
-    [result setType:convert(option->type)];
-    [result setExtendedLanguageTag:option->extendedLanguageTag.createNSString().get()];
-
-    return result.autorelease();
-}
-
-static Vector<MediaSelectionOption> convert(NSArray<AVMediaSelectionOptionSource> * _Nullable options)
-{
-    Vector<MediaSelectionOption> result;
-
-    for (id<AVMediaSelectionOptionSource> option in options)
-        result.append(*convert(option));
-
-    return result;
+    return Vector<MediaSelectionOption>(options.count, [&](size_t i) {
+        id option = options[i];
+        return MediaSelectionOption {
+            MediaSelectionOption::MediaType::Audio,
+            [option displayName],
+            MediaSelectionOption::LegibleType::Regular,
+            [option extendedLanguageTag],
+        };
+    });
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaDeviceRoute);
@@ -336,30 +290,62 @@ Ref<MediaDeviceRoute> MediaDeviceRoute::create(WebMediaDevicePlatformRoute *plat
 
 MediaDeviceRoute::MediaDeviceRoute(WebMediaDevicePlatformRoute *platformRoute)
     : m_identifier { WTF::UUID::createVersion4() }
-    , m_route { adoptNS([[WebMediaDeviceRoute alloc] initWithRoute:*this platformRoute:platformRoute]) }
+    , m_platformRoute { platformRoute }
+    , m_playbackControlObserver { adoptNS([[WebPlaybackControlObserver alloc] initWithRoute:*this]) }
 {
+}
+
+void MediaDeviceRoute::disconnectFromSession()
+{
+    [m_playbackControlObserver setPlaybackControl:nil];
+
+#if HAVE(AVSYSTEMROUTING_FRAMEWORK)
+    if (RetainPtr routeSession = std::exchange(m_routeSession, nil)) {
+        [routeSession stop];
+        [platformRoute() removeSession:routeSession.get()];
+    }
+#else
+    [platformRoute() stop];
+#endif
+}
+
+String MediaDeviceRoute::deviceName() const
+{
+    return [m_platformRoute routeDisplayName];
+}
+
+String MediaDeviceRoute::routeName() const
+{
+    return [m_platformRoute protocolType].localizedDescription;
 }
 
 WebMediaDevicePlatformRoute *MediaDeviceRoute::platformRoute() const
 {
-    return [m_route platformRoute];
+    return m_platformRoute.get();
 }
 
-MediaDeviceRoute::~MediaDeviceRoute() = default;
+void MediaDeviceRoute::seekToPosition(MediaTime playbackPosition, SeekTolerance tolerance)
+{
+    [[m_playbackControlObserver playbackControl] seekToPosition:convert(WTF::move(playbackPosition)) tolerance:convert(tolerance)];
+}
+
+MediaDeviceRoute::~MediaDeviceRoute()
+{
+    disconnectFromSession();
+}
 
 FOR_EACH_KEY_PATH(DEFINE_GETTER)
 FOR_EACH_READWRITE_KEY_PATH(DEFINE_SETTER)
 
 } // namespace WebCore
 
-NS_ASSUME_NONNULL_END
-
 #undef FOR_EACH_READONLY_KEY_PATH
 #undef FOR_EACH_READWRITE_KEY_PATH
 #undef FOR_EACH_KEY_PATH
 #undef ADD_OBSERVER
+#undef REMOVE_OBSERVER
 #undef OBSERVE_VALUE
 #undef DEFINE_GETTER
 #undef DEFINE_SETTER
 
-#endif // HAVE(AVROUTING_FRAMEWORK)
+#endif // ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)

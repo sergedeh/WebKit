@@ -30,12 +30,13 @@
 #include "SVGGraphicsElement.h"
 #include "SVGUseElement.h"
 #include <wtf/TZoneMallocInlines.h>
+#include "RenderObjectNode.h"
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGTransformableContainer);
 
-RenderSVGTransformableContainer::RenderSVGTransformableContainer(SVGGraphicsElement& element, RenderStyle&& style)
+RenderSVGTransformableContainer::RenderSVGTransformableContainer(SVGGraphicsElement& element, Style::ComputedStyle&& style)
     : RenderSVGContainer(Type::SVGTransformableContainer, element, WTF::move(style))
 {
     ASSERT(isRenderSVGTransformableContainer());
@@ -48,12 +49,7 @@ SVGGraphicsElement& RenderSVGTransformableContainer::graphicsElement() const
     return downcast<SVGGraphicsElement>(RenderSVGContainer::element());
 }
 
-Ref<SVGGraphicsElement> RenderSVGTransformableContainer::protectedGraphicsElement() const
-{
-    return graphicsElement();
-}
-
-inline SVGUseElement* associatedUseElement(SVGGraphicsElement& element)
+inline SVGUseElement* NODELETE associatedUseElement(SVGGraphicsElement& element)
 {
     // If we're either the renderer for a <use> element, or for any <g> element inside the shadow
     // tree, that was created during the use/symbol/svg expansion in SVGUseElement. These containers
@@ -95,10 +91,10 @@ void RenderSVGTransformableContainer::updateLayerTransform()
     RenderSVGContainer::updateLayerTransform();
 }
 
-void RenderSVGTransformableContainer::applyTransform(TransformationMatrix& transform, const RenderStyle& style, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption> options) const
+void RenderSVGTransformableContainer::applyTransform(TransformationMatrix& transform, const Style::ComputedStyle& style, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption> options) const
 {
     auto postTransform = m_supplementalLayerTransform.isIdentity() ? std::nullopt : std::make_optional(m_supplementalLayerTransform);
-    applySVGTransform(transform, protectedGraphicsElement(), style, boundingBox, std::nullopt, postTransform, options);
+    applySVGTransform(transform, protect(graphicsElement()), style, boundingBox, std::nullopt, postTransform, options);
 }
 
 }

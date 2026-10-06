@@ -27,12 +27,14 @@
 
 #if USE(SKIA)
 
-#include "GLFence.h"
 #include "GraphicsContext.h"
+#include "SkiaRecordingResult.h"
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkImage.h>
+#include <skia/core/SkPath.h>
 #include <skia/effects/SkDashPathEffect.h>
+#include <skia/gpu/ganesh/GrContextThreadSafeProxy.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
@@ -42,8 +44,8 @@ class SkSurface;
 namespace WebCore {
 
 class Pattern;
-
-using SkiaImageToFenceMap = HashMap<const SkImage*, std::unique_ptr<GLFence>>;
+class SkiaImageAtlasLayoutBuilder;
+struct SkiaRecordingData;
 
 class WEBCORE_EXPORT GraphicsContextSkia final : public GraphicsContext {
     friend class ImageBufferSkiaAcceleratedBackend;
@@ -54,13 +56,15 @@ public:
     bool hasPlatformContext() const final;
     SkCanvas* platformContext() const final;
 
-    const DestinationColorSpace& colorSpace() const final;
+    const ColorSpace& colorSpace() const final;
 
-    void beginRecording();
-    SkiaImageToFenceMap endRecording();
+    enum class RecordingMode : uint8_t { Tile, Canvas, Scrollbar };
+    void beginRecording(RecordingMode, const sk_sp<GrContextThreadSafeProxy>& = nullptr);
+    SkiaRecordingData endRecording();
+
+    void replayStateOnCanvas(SkCanvas&) const;
 
     void didUpdateState(GraphicsContextState&) final;
-    void didUpdateSingleState(GraphicsContextState&, GraphicsContextState::ChangeIndex) final;
 
     void setLineCap(LineCap) final;
     void setLineDash(const DashArray&, float) final;
@@ -78,16 +82,16 @@ public:
     void strokePath(const Path&) final;
     void clearRect(const FloatRect&) final;
 
-    void drawNativeImage(NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final;
-    void drawPattern(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) final;
+    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) final;
     void drawRect(const FloatRect&, float) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
     void drawLinesForText(const FloatPoint&, float thickness, std::span<const FloatSegment>, bool isPrinting, bool doubleLines, StrokeStyle) final;
     void drawDotsForDocumentMarker(const FloatRect&, DocumentMarkerLineStyle) final;
     void drawEllipse(const FloatRect&) final;
 
-    void drawFocusRing(const Path&, float outlineWidth, const Color&) final;
-    void drawFocusRing(const Vector<FloatRect>&, float outlineOffset, float outlineWidth, const Color&) final;
+    void drawFocusRing(const Path&, float outlineWidth, const Color&, float zoomFactor) final;
+    void drawFocusRing(const Vector<FloatRect>&, float outlineWidth, const Color&, float zoomFactor) final;
 
     void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
     void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
@@ -119,18 +123,20 @@ public:
 
     void drawSkiaText(const sk_sp<SkTextBlob>&, SkScalar, SkScalar, bool, bool);
 
-    static std::unique_ptr<GLFence> createAcceleratedRenderingFence(SkSurface*);
-    static std::unique_ptr<GLFence> createAcceleratedRenderingFence(const sk_sp<SkImage>&, GrDirectContext*);
-
 private:
-    enum class ContextMode : bool {
+    enum class ContextMode : uint8_t {
         PaintingMode,
-        RecordingMode
+        TileRecordingMode,
+        CanvasRecordingMode,
+        ScrollbarRecordingMode
     };
 
     bool makeGLContextCurrentIfNeeded() const;
+#if USE(TEXTURE_MAPPER)
     void trackAcceleratedRenderingFenceIfNeeded(const sk_sp<SkImage>&, GrDirectContext*);
     void trackAcceleratedRenderingFenceIfNeeded(Pattern&);
+#endif
+    sk_sp<SkImage> imageForCurrentThread(const sk_sp<SkImage>&) const;
 
     void setupFillSource(SkPaint&);
     void setupStrokeSource(SkPaint&);
@@ -140,28 +146,53 @@ private:
 
     enum class ShadowStyle : uint8_t { Outset, Inset };
     sk_sp<SkImageFilter> createDropShadowFilterIfNeeded(ShadowStyle) const;
-    bool drawOutsetShadow(SkPaint&, Function<void(const SkPaint&)>&&);
+    bool drawOutsetShadow(SkPaint&, NOESCAPE const Function<void(const SkPaint&)>&);
+
+    void pushSkiaState();
+    void popSkiaState();
 
     void drawSkiaRect(const SkRect&, SkPaint&);
     void drawSkiaPath(const SkPath&, SkPaint&);
     bool drawPathAsSingleElement(const Path&, SkPaint&);
 
-    class SkiaState {
-    public:
-        SkiaState() = default;
+    struct ClipRecord {
+        enum class Type : uint8_t {
+            Rect,
+            Path,
+            Shader
+        };
 
+        Type type { Type::Rect };
+        SkMatrix matrix;
+        SkClipOp op { SkClipOp::kIntersect };
+        bool antialias { false };
+        SkRect rect;
+        SkPath path;
+        sk_sp<SkShader> shader;
+    };
+
+    struct SkiaState {
+        // Stroke properties (saved/restored across all frames).
         struct {
             SkScalar miter { SkFloatToScalar(4) };
             SkPaint::Cap cap { SkPaint::kButt_Cap };
             SkPaint::Join join { SkPaint::kMiter_Join };
             sk_sp<SkPathEffect> dash;
-        } m_stroke;
+        } stroke;
+
+        // Layer-specific (only meaningful when isLayer is true).
+        bool isLayer { false };
+        std::optional<CompositeMode> compositeMode;
+        float alpha { 1.0f };
+
+        // State replay (only populated when m_enableStateReplayTracking).
+        SkMatrix matrix;
+        std::optional<SkRect> layerBounds;
+        std::optional<SkPaint> layerPaint;
+        Vector<ClipRecord> clips;
     };
 
-    struct LayerState {
-        CompositeMode compositeMode;
-        float opacity;
-    };
+    void recordClipIfNeeded(ClipRecord&&);
 
     SkCanvas& m_canvas;
     ContextMode m_contextMode { ContextMode::PaintingMode };
@@ -170,9 +201,13 @@ private:
     CompletionHandler<void()> m_destroyNotify;
     SkiaState m_skiaState;
     Vector<SkiaState, 1> m_skiaStateStack;
-    Vector<LayerState, 1> m_layerStateStack;
+    sk_sp<GrContextThreadSafeProxy> m_threadSafeGrContext;
+#if USE(TEXTURE_MAPPER)
     SkiaImageToFenceMap m_imageToFenceMap;
-    const DestinationColorSpace m_colorSpace;
+#endif
+    bool m_enableStateReplayTracking : 1 { false };
+    std::unique_ptr<SkiaImageAtlasLayoutBuilder> m_atlasLayoutBuilder;
+    const ColorSpace m_colorSpace;
 };
 
 } // namespace WebCore

@@ -153,7 +153,7 @@ int32_t VideoCaptureDS::StartCapture(const VideoCaptureCapability& capability) {
 int32_t VideoCaptureDS::StopCapture() {
   RTC_DCHECK_RUN_ON(&api_checker_);
 
-  HRESULT hr = _mediaControl->StopWhenReady();
+  HRESULT hr = _mediaControl->Stop();
   if (FAILED(hr)) {
     RTC_LOG(LS_INFO) << "Failed to stop the capture graph. " << hr;
     return -1;
@@ -312,7 +312,7 @@ HRESULT VideoCaptureDS::ConnectDVCamera() {
       RTC_LOG(LS_INFO) << "Failed to get input pin from DV decoder";
       return -1;
     }
-    _outputDvPin = GetOutputPin(_dvFilter, GUID_NULL);
+    _outputDvPin = GetOutputPin(_dvFilter, PIN_CATEGORY_CAPTURE);
     if (_outputDvPin == NULL) {
       RTC_LOG(LS_INFO) << "Failed to get output pin from DV decoder";
       return -1;

@@ -34,7 +34,9 @@
 #include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyMemory.h"
 #include "PageCount.h"
-#include "StructureInlines.h"
+#include "StructureCreateInlines.h"
+#include "WasmAddressType.h"
+#include "WasmLimits.h"
 #include "WasmMemory.h"
 #include "WebAssemblyMemoryPrototype.h"
 
@@ -49,6 +51,33 @@ JSWebAssemblyMemory* WebAssemblyMemoryConstructor::createMemoryFromDescriptor(JS
 {
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    Wasm::AddressType addressType; // default i32
+    {
+        Identifier address = Identifier::fromString(vm, "address"_s);
+        JSValue addressTypeValue = memoryDescriptor->get(globalObject, address);
+        RETURN_IF_EXCEPTION(throwScope, { });
+        if (!addressTypeValue.isUndefined()) {
+            String addressTypeString = addressTypeValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, { });
+
+            if (addressTypeString == "i64")
+                addressType = Wasm::AddressType { Wasm::AddressType::I64 };
+            else if (addressTypeString != "i32") {
+                throwTypeError(globalObject, throwScope, "WebAssembly.Memory 'address' must be a string of value 'i32' or 'i64'"_s);
+                return { };
+            }
+
+            if (addressType.is64Bit() && !Options::useWasmMemory64()) {
+                throwTypeError(globalObject, throwScope, "WebAssembly.Memory 'address' of 'i64' requires Memory64 to be enabled"_s);
+                return { };
+            }
+        }
+    }
+
+    // Page counts are declarative, so accept everything a module's own memory type may declare.
+    // What can actually be allocated is bounded separately, and more tightly.
+    uint64_t maxDeclarablePageCount = Wasm::maxDeclarablePages(addressType);
 
     PageCount initialPageCount;
     {
@@ -66,14 +95,10 @@ JSWebAssemblyMemory* WebAssemblyMemoryConstructor::createMemoryFromDescriptor(JS
         if (!initSizeValue.isUndefined())
             minSizeValue = initSizeValue;
 
-        uint32_t size = toNonWrappingUint32(globalObject, minSizeValue);
+        uint64_t size = addressValueToUint64(globalObject, minSizeValue, addressType);
         RETURN_IF_EXCEPTION(throwScope, { });
-        if (!PageCount::isValid(size)) {
+        if (size > maxDeclarablePageCount) {
             throwException(globalObject, throwScope, createRangeError(globalObject, "WebAssembly.Memory 'initial' page count is too large"_s));
-            return { };
-        }
-        if (PageCount(size).bytes() > MAX_ARRAY_BUFFER_SIZE) {
-            throwException(globalObject, throwScope, createOutOfMemoryError(globalObject));
             return { };
         }
         initialPageCount = PageCount(size);
@@ -87,9 +112,9 @@ JSWebAssemblyMemory* WebAssemblyMemoryConstructor::createMemoryFromDescriptor(JS
         JSValue maxSizeValue = memoryDescriptor->get(globalObject, maximum);
         RETURN_IF_EXCEPTION(throwScope, { });
         if (!maxSizeValue.isUndefined()) {
-            uint32_t size = toNonWrappingUint32(globalObject, maxSizeValue);
+            uint64_t size = addressValueToUint64(globalObject, maxSizeValue, addressType);
             RETURN_IF_EXCEPTION(throwScope, { });
-            if (!PageCount::isValid(size)) {
+            if (size > maxDeclarablePageCount) {
                 throwException(globalObject, throwScope, createRangeError(globalObject, "WebAssembly.Memory 'maximum' page count is too large"_s));
                 return { };
             }
@@ -122,7 +147,7 @@ JSWebAssemblyMemory* WebAssemblyMemoryConstructor::createMemoryFromDescriptor(JS
 
     auto* jsMemory = JSWebAssemblyMemory::create(vm, webAssemblyMemoryStructure);
 
-    RefPtr<Wasm::Memory> memory = Wasm::Memory::tryCreate(vm, initialPageCount, maximumPageCount, sharingMode, desiredMemoryMode,
+    RefPtr<Wasm::Memory> memory = Wasm::Memory::tryCreate(vm, initialPageCount, maximumPageCount, sharingMode, addressType, desiredMemoryMode,
         [&vm, jsMemory] (Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { jsMemory->growSuccessCallback(vm, oldPageCount, newPageCount); });
     if (!memory) {
         throwException(globalObject, throwScope, createOutOfMemoryError(globalObject));
@@ -147,7 +172,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyMemory, (JSGlobalObject* globalOb
         JSValue argument = callFrame->argument(0);
         if (!argument.isObject())
             return JSValue::encode(throwException(globalObject, throwScope, createTypeError(globalObject, "WebAssembly.Memory expects its first argument to be an object"_s)));
-        memoryDescriptor = jsCast<JSObject*>(argument);
+        memoryDescriptor = uncheckedDowncast<JSObject>(argument);
     }
 
     JSWebAssemblyMemory* memory = WebAssemblyMemoryConstructor::createMemoryFromDescriptor(globalObject, webAssemblyMemoryStructure, memoryDescriptor);

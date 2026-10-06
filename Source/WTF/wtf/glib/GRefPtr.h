@@ -109,16 +109,20 @@ public:
     GRefPtr(T* ptr /* (transfer floating) */)
         : m_ptr(RefDerefTraits::refIfNotNull(ptr))
     {
+        // After invoking refIfNotNull, ptr must no longer be floating.
+        ASSERT(!m_ptr || !RefDerefTraits::isFloating(m_ptr));
     }
 
     GRefPtr(const GRefPtr& o)
         : m_ptr(RefDerefTraits::refIfNotNull(o.m_ptr))
     {
+        ASSERT(!m_ptr || !RefDerefTraits::isFloating(m_ptr));
     }
 
     GRefPtr(GRefPtr&& o)
         : m_ptr(o.leakRef())
     {
+        ASSERT(!m_ptr || !RefDerefTraits::isFloating(m_ptr));
     }
 
     ~GRefPtr()
@@ -128,6 +132,8 @@ public:
 
     void clear()
     {
+        // Before dereferencing, the pointer must not be floating.
+        ASSERT(!m_ptr || !RefDerefTraits::isFloating(m_ptr));
         RefDerefTraits::derefIfNotNull(std::exchange(m_ptr, nullptr));
     }
 
@@ -143,7 +149,7 @@ public:
         return RefDerefTraits::refIfNotNull(m_ptr);
     }
 
-    T*& outPtr()
+    T*& outPtr() LIFETIME_BOUND
     {
         clear();
         return m_ptr;
@@ -163,7 +169,7 @@ public:
     // Only used for C API functions returning (transfer none) of objects where the above
     // can be established, e.g. objects stored in a global dictionary.
     T* /* (transfer none) */ getUncheckedLifetime() const { return m_ptr; }
-    ALWAYS_INLINE T* operator->() const { return m_ptr; }
+    ALWAYS_INLINE T* operator->() const LIFETIME_BOUND { return m_ptr; }
 
     bool operator!() const { return !m_ptr; }
     explicit operator bool() const { return !!m_ptr; }
@@ -315,6 +321,43 @@ template<typename P> struct HashTraits<GRefPtr<P>> : SimpleClassHashTraits<GRefP
         } \
     };
 
+#if ASSERT_ENABLED
+#define WTF_DEFINE_GREF_TRAITS_INLINE_ASSERT_ON_FLOATING_REF(typeName, refFunc, derefFunc, isFloatingFunc, shouldBeFloatingOnCreation) \
+    template<> struct GRefPtrDefaultRefDerefTraits<typeName> { \
+        static inline typeName* refIfNotNull(typeName* ptr) \
+        { \
+            if (!ptr) [[unlikely]] \
+                return nullptr; \
+            bool wasFloating = isFloatingFunc(ptr); \
+            refFunc(ptr); \
+            ASSERT(!isFloatingFunc(ptr)); \
+            if constexpr (shouldBeFloatingOnCreation) { \
+                if (G_IS_OBJECT(ptr)) { \
+                    if (G_OBJECT(ptr)->ref_count <= 1) \
+                        ASSERT(wasFloating); \
+                    else \
+                        ASSERT(!wasFloating); \
+                } \
+            } else \
+                ASSERT(!wasFloating); \
+            return ptr; \
+        } \
+        static inline void derefIfNotNull(typeName* ptr) \
+        { \
+            if (ptr) [[likely]] \
+                derefFunc(ptr); \
+        } \
+        static inline bool isFloating(typeName* ptr) \
+        { \
+            if (ptr) [[likely]] \
+                return isFloatingFunc(ptr); \
+            return false; \
+        } \
+    };
+#else
+#define WTF_DEFINE_GREF_TRAITS_INLINE_ASSERT_ON_FLOATING_REF(typeName, refFunc, derefFunc, isFloatingFunc, shouldBeFloatingOnCreation) WTF_DEFINE_GREF_TRAITS_INLINE(typeName, refFunc, derefFunc, isFloatingFunc)
+#endif
+
 WTF_DECLARE_GREF_TRAITS(GDBusNodeInfo, WTF_EXPORT_PRIVATE)
 WTF_DECLARE_GREF_TRAITS(GResource)
 
@@ -324,6 +367,7 @@ WTF_DEFINE_GREF_TRAITS_INLINE(GBytes, g_bytes_ref, g_bytes_unref)
 WTF_DEFINE_GREF_TRAITS_INLINE(GClosure, g_closure_ref, g_closure_unref)
 WTF_DEFINE_GREF_TRAITS_INLINE(GDateTime, g_date_time_ref, g_date_time_unref)
 WTF_DEFINE_GREF_TRAITS_INLINE(GHashTable, g_hash_table_ref, g_hash_table_unref)
+WTF_DEFINE_GREF_TRAITS_INLINE(GKeyFile, g_key_file_ref, g_key_file_unref)
 WTF_DEFINE_GREF_TRAITS_INLINE(GMainContext, g_main_context_ref, g_main_context_unref)
 WTF_DEFINE_GREF_TRAITS_INLINE(GMainLoop, g_main_loop_ref, g_main_loop_unref)
 WTF_DEFINE_GREF_TRAITS_INLINE(GMappedFile, g_mapped_file_ref, g_mapped_file_unref)

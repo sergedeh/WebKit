@@ -142,10 +142,10 @@ void GraphicsContextCairo::drawRect(const FloatRect& rect, float borderThickness
     Cairo::drawRect(*this, rect, borderThickness, fillColor(), strokeStyle(), strokeColor());
 }
 
-void GraphicsContextCairo::drawNativeImage(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void GraphicsContextCairo::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
 {
     auto& state = this->state();
-    Cairo::drawPlatformImage(*this, nativeImage.platformImage().get(), destRect, srcRect, { options, state.imageInterpolationQuality() }, state.alpha(), Cairo::ShadowState(state));
+    Cairo::drawPlatformImage(*this, nativeImage.platformImage().get(), destRect, srcRect, { options, imageInterpolationQualityForOptions(options) }, state.alpha(), Cairo::ShadowState(state));
 }
 
 // This is only used to draw borders, so we should not draw shadows.
@@ -224,7 +224,7 @@ void GraphicsContextCairo::clipToImageBuffer(ImageBuffer& buffer, const FloatRec
         Cairo::clipToImageBuffer(*this, nativeImage->platformImage().get(), destRect);
 }
 
-void GraphicsContextCairo::drawFocusRing(const Path& path, float outlineWidth, const Color& color)
+void GraphicsContextCairo::drawFocusRing(const Path& path, float outlineWidth, const Color& color, float)
 {
 #if USE(THEME_ADWAITA)
     Adwaita::paintFocus(*this, path, color);
@@ -235,15 +235,13 @@ void GraphicsContextCairo::drawFocusRing(const Path& path, float outlineWidth, c
 #endif
 }
 
-void GraphicsContextCairo::drawFocusRing(const Vector<FloatRect>& rects, float outlineOffset, float outlineWidth, const Color& color)
+void GraphicsContextCairo::drawFocusRing(const Vector<FloatRect>& rects, float outlineWidth, const Color& color, float)
 {
 #if USE(THEME_ADWAITA)
     Adwaita::paintFocus(*this, rects, color);
-    UNUSED_PARAM(outlineOffset);
     UNUSED_PARAM(outlineWidth);
     return;
 #else
-    UNUSED_PARAM(outlineOffset);
     Cairo::drawFocusRing(*this, rects, outlineWidth, color);
 #endif
 }
@@ -369,12 +367,12 @@ void GraphicsContextCairo::fillRectWithRoundedHole(const FloatRect& rect, const 
     Cairo::fillRectWithRoundedHole(*this, rect, roundedHoleRect, Cairo::FillSource(state), Cairo::ShadowState(state));
 }
 
-void GraphicsContextCairo::drawPattern(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void GraphicsContextCairo::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
 {
     if (!patternTransform.isInvertible())
         return;
 
-    Cairo::drawPattern(*this, nativeImage.platformImage().get(), nativeImage.size(), destRect, tileRect, patternTransform, phase, spacing, options);
+    Cairo::drawPattern(*this, nativeImage.platformImage().get(), nativeImage.size(), destRect, tileRect, patternTransform, phase, spacing, { options, imageInterpolationQualityForOptions(options) });
 }
 
 RenderingMode GraphicsContextCairo::renderingMode() const

@@ -10,14 +10,14 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/README.md
+/LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/anchor-download-aborts-previous-navigation.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/anchor-download-intercept-reject.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/anchor-download-intercept.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/anchor-download.html
+/LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/back-cross-document-event-order-with-pagehide.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/back-cross-document-event-order.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/back-same-document-intercept-reject.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/back-same-document-intercept.html
@@ -33,6 +33,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/navigate-204-205-download-then-same-document.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/navigate-canceled.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/navigate-cross-document-double.html
+/LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/navigate-cross-document-event-order-with-pagehide.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/navigate-cross-document-event-order.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/navigate-double-intercept.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/navigate-in-transition-finished.html
@@ -51,4 +52,4 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/transition-cross-document.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/transition-finished-mark-as-handled.html
 /LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/transition-realms-and-identity.html
-/LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/transition-to.tentative.html
+/LayoutTests/imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/transition-to.html

@@ -133,13 +133,14 @@ namespace WebCore {
     macro(CSSCounterStyleRule) \
     macro(CSSColor) \
     macro(CSSColorValue) \
+    macro(CSSEnvironmentMapRule) \
     macro(CSSFunctionDeclarations) \
     macro(CSSFunctionDescriptors) \
     macro(CSSFunctionRule) \
     macro(CSSHSL) \
     macro(CSSHWB) \
     macro(CSSImageValue) \
-    macro(CSSKeywordValue) \
+    macro(CSSOMKeywordValue) \
     macro(CSSLCH) \
     macro(CSSLab) \
     macro(CSSMathClamp) \
@@ -193,9 +194,11 @@ namespace WebCore {
     macro(DeprecationReportBody) \
     macro(DeviceMotionEvent) \
     macro(DeviceOrientationEvent) \
+    macro(DevicePosture) \
     macro(DigitalCredential) \
     macro(DocumentTimeline) \
     macro(DynamicsCompressorNode) \
+    macro(ElementImage) \
     macro(ElementInternals) \
     macro(EncodedAudioChunk) \
     macro(EncodedVideoChunk) \
@@ -237,6 +240,7 @@ namespace WebCore {
     macro(GPUComputePipeline) \
     macro(GPUDevice) \
     macro(GPUDeviceLostInfo) \
+    macro(GPUError) \
     macro(GPUExternalTexture) \
     macro(GPUInternalError) \
     macro(GPUMapMode) \
@@ -285,6 +289,7 @@ namespace WebCore {
     macro(IDBKeyRange) \
     macro(IDBObjectStore) \
     macro(IDBOpenDBRequest) \
+    macro(IDBRecord) \
     macro(IDBRequest) \
     macro(IDBTransaction) \
     macro(IDBVersionChangeEvent) \
@@ -292,6 +297,9 @@ namespace WebCore {
     macro(ImageBitmap) \
     macro(ImageBitmapRenderingContext) \
     macro(ImageCapture) \
+    macro(ImageDecoder) \
+    macro(ImageTrack) \
+    macro(ImageTrackList) \
     macro(IdleDeadline) \
     macro(InputDeviceInfo) \
     macro(InputEvent) \
@@ -304,6 +312,7 @@ namespace WebCore {
     macro(LockManager) \
     macro(ManagedMediaSource) \
     macro(ManagedSourceBuffer) \
+    macro(MathMLAnchorElement) \
     macro(MathMLElement) \
     macro(MathMLMathElement) \
     macro(MediaCapabilities) \
@@ -327,6 +336,7 @@ namespace WebCore {
     macro(MediaStreamAudioDestinationNode) \
     macro(MediaStreamAudioSourceNode) \
     macro(MediaStreamTrack) \
+    macro(MediaStreamTrackHandle) \
     macro(MediaStreamTrackProcessor) \
     macro(MerchantValidationEvent) \
     macro(MockRTCRtpTransform) \
@@ -336,6 +346,7 @@ namespace WebCore {
     macro(NavigationCurrentEntryChangeEvent) \
     macro(NavigationDestination) \
     macro(NavigationHistoryEntry) \
+    macro(NavigationPrecommitController) \
     macro(NavigationPreloadManager) \
     macro(NavigationTransition) \
     macro(NavigatorCredentials) \
@@ -353,6 +364,7 @@ namespace WebCore {
     macro(OffscreenCanvasRenderingContext2D) \
     macro(Origin) \
     macro(OscillatorNode) \
+    macro(PaintEvent) \
     macro(PaintRenderingContext2D) \
     macro(PannerNode) \
     macro(PaymentAddress) \
@@ -427,7 +439,6 @@ namespace WebCore {
     macro(RemotePlayback) \
     macro(Request) \
     macro(Response) \
-    macro(SFrameTransform) \
     macro(SFrameTransformErrorEvent) \
     macro(SQLError) \
     macro(SQLResultSet) \
@@ -512,7 +523,7 @@ namespace WebCore {
     macro(WebKitMediaKeyNeededEvent) \
     macro(WebKitMediaKeySession) \
     macro(WebKitMediaKeys) \
-    macro(WebKitSerializedNode) \
+    macro(WebKitNodeSnapshot) \
     macro(WebKitJSHandle) \
     macro(WebSocket) \
     macro(WebTransport) \
@@ -523,7 +534,9 @@ namespace WebCore {
     macro(WebTransportReceiveStream) \
     macro(WebTransportSendGroup) \
     macro(WebTransportSendStream) \
+    macro(WebTransportWriter) \
     macro(WindowClient) \
+    macro(Worker) \
     macro(Worklet) \
     macro(WorkletGlobalScope) \
     macro(WritableStream) \
@@ -607,6 +620,7 @@ namespace WebCore {
     macro(consumeChunk) \
     macro(controlledReadableStream) \
     macro(controller) \
+    macro(convertRectToMainFrameCoordinates) \
     macro(cookieStore) \
     macro(createAbortSignal) \
     macro(createImageBitmap) \
@@ -615,6 +629,7 @@ namespace WebCore {
     macro(crossOriginIsolated) \
     macro(customElements) \
     macro(decode) \
+    macro(didDetectExtraBytes) \
     macro(disturbed) \
     macro(document) \
     macro(encode) \
@@ -696,6 +711,7 @@ namespace WebCore {
     macro(onvrdisplaypresentchange) \
     macro(openDatabase) \
     macro(opener) \
+    macro(originAgentCluster) \
     macro(operations) \
     macro(ownerReadableStream) \
     macro(parent) \

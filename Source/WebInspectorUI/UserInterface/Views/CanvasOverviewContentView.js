@@ -56,9 +56,14 @@ WI.CanvasOverviewContentView = class CanvasOverviewContentView extends WI.Collec
         this._recordingAutoCaptureNavigationItem.visibilityPriority = WI.NavigationItem.VisibilityPriority.Low;
         this._recordingAutoCaptureNavigationItem.addEventListener(WI.CheckboxNavigationItem.Event.CheckedDidChange, this._handleRecordingAutoCaptureCheckedDidChange, this);
 
-        let frameCount = this._updateRecordingAutoCaptureInputElementSize();
-        this._setRecordingAutoCaptureFrameCount(frameCount);
-        this._updateRecordingAutoCaptureCheckboxLabel(frameCount);
+        let fragment = document.createDocumentFragment();
+        String.format(WI.UIString("Recording frame count: %s", "Label for input for number of frames to record @ Canvas section of Graphics tab"), [this._recordingAutoCaptureFrameCountInputElement], String.standardFormatters, fragment, (a, b) => {
+            a.append(b);
+            return a;
+        });
+        this._recordingAutoCaptureNavigationItem.label = fragment;
+
+        this._setRecordingAutoCaptureFrameCount(this._recordingAutoCaptureFrameCountInputElementValue);
 
         importNavigationItem.addEventListener(WI.ButtonNavigationItem.Event.Clicked, this._handleImportButtonNavigationItemClicked, this);
 
@@ -112,6 +117,7 @@ WI.CanvasOverviewContentView = class CanvasOverviewContentView extends WI.Collec
         WI.settings.canvasRecordingAutoCaptureFrameCount.addEventListener(WI.Setting.Event.Changed, this._handleCanvasRecordingAutoCaptureFrameCountChanged, this);
 
         WI.canvasManager.addEventListener(WI.CanvasManager.Event.RecordingSaved, this._handleRecordingSaved, this);
+        WI.canvasManager.addEventListener(WI.CanvasManager.Event.RecordingRemoved, this._handleRecordingRemoved, this);
 
         if (this._savedRecordingsTreeOutline)
             this._savedRecordingsTreeOutline.removeChildren();
@@ -128,6 +134,7 @@ WI.CanvasOverviewContentView = class CanvasOverviewContentView extends WI.Collec
     {
         WI.domManager.hideDOMNodeHighlight();
 
+        WI.canvasManager.removeEventListener(WI.CanvasManager.Event.RecordingRemoved, this._handleRecordingRemoved, this);
         WI.canvasManager.removeEventListener(WI.CanvasManager.Event.RecordingSaved, this._handleRecordingSaved, this);
 
         WI.settings.canvasRecordingAutoCaptureFrameCount.removeEventListener(WI.Setting.Event.Changed, this._handleCanvasRecordingAutoCaptureFrameCountChanged, this);
@@ -144,19 +151,7 @@ WI.CanvasOverviewContentView = class CanvasOverviewContentView extends WI.Collec
         if (!(contentView instanceof WI.CanvasContentView))
             return;
 
-        let canvas = contentView.representedObject;
-        if (canvas.cssCanvasName || canvas.contextType === WI.Canvas.ContextType.WebGPU) {
-            canvas.requestClientNodes((clientNodes) => {
-                WI.domManager.highlightDOMNodeList(clientNodes);
-            });
-            return;
-        }
-
-        canvas.requestNode().then((node) => {
-            if (!node || !node.ownerDocument)
-                return;
-            node.highlight();
-        });
+        contentView.representedObject.highlight();
     }
 
     _contentViewMouseLeave(event)
@@ -176,28 +171,6 @@ WI.CanvasOverviewContentView = class CanvasOverviewContentView extends WI.Collec
         WI.canvasManager.setRecordingAutoCaptureFrameCount(enabled, frameCount);
     }
 
-    _updateRecordingAutoCaptureCheckboxLabel(frameCount)
-    {
-        let active = document.activeElement === this._recordingAutoCaptureFrameCountInputElement;
-        let selectionStart = this._recordingAutoCaptureFrameCountInputElement.selectionStart;
-        let selectionEnd = this._recordingAutoCaptureFrameCountInputElement.selectionEnd;
-        let direction = this._recordingAutoCaptureFrameCountInputElement.direction;
-
-        let label = frameCount === 1 ? WI.UIString("Record first %s frame") : WI.UIString("Record first %s frames");
-        let fragment = document.createDocumentFragment();
-        String.format(label, [this._recordingAutoCaptureFrameCountInputElement], String.standardFormatters, fragment, (a, b) => {
-            a.append(b);
-            return a;
-        });
-        this._recordingAutoCaptureNavigationItem.label = fragment;
-
-        if (active) {
-            this._recordingAutoCaptureFrameCountInputElement.selectionStart = selectionStart;
-            this._recordingAutoCaptureFrameCountInputElement.selectionEnd = selectionEnd;
-            this._recordingAutoCaptureFrameCountInputElement.direction = direction;
-        }
-    }
-
     get _recordingAutoCaptureFrameCountInputElementValue()
     {
         return parseInt(this._recordingAutoCaptureFrameCountInputElement.value);
@@ -209,19 +182,6 @@ WI.CanvasOverviewContentView = class CanvasOverviewContentView extends WI.Collec
             this._recordingAutoCaptureFrameCountInputElement.value = frameCount;
 
         this._recordingAutoCaptureFrameCountInputElement.placeholder = frameCount;
-    }
-
-    _updateRecordingAutoCaptureInputElementSize()
-    {
-        let frameCount = this._recordingAutoCaptureFrameCountInputElementValue;
-        if (isNaN(frameCount) || frameCount < 0) {
-            frameCount = 0;
-            this._recordingAutoCaptureFrameCountInputElementValue = frameCount;
-        }
-
-        this._recordingAutoCaptureFrameCountInputElement.autosize();
-
-        return frameCount;
     }
 
     _addSavedRecording(recording)
@@ -246,14 +206,19 @@ WI.CanvasOverviewContentView = class CanvasOverviewContentView extends WI.Collec
             this._savedRecordingsContentView.element.appendChild(this._savedRecordingsTreeOutline.element);
         }
 
-        let recordingTreeElement = new WI.GeneralTreeElement(["recording"], recording.displayName, WI.Recording.displayNameForRecordingType(recording.type), recording);
+        let recordingTreeElement = new WI.SavedRecordingTreeElement(recording, WI.Recording.displayNameForRecordingType(recording.type));
         recordingTreeElement.selectable = false;
         this._savedRecordingsTreeOutline.appendChild(recordingTreeElement);
     }
 
     _handleRecordingAutoCaptureInput(event)
     {
-        let frameCount = this._updateRecordingAutoCaptureInputElementSize();
+        let frameCount = this._recordingAutoCaptureFrameCountInputElementValue;
+        if (isNaN(frameCount) || frameCount < 0) {
+            frameCount = 0;
+            this._recordingAutoCaptureFrameCountInputElementValue = frameCount;
+        }
+
         this._recordingAutoCaptureNavigationItem.checked = !!frameCount;
 
         this._setRecordingAutoCaptureFrameCount(frameCount);
@@ -271,11 +236,8 @@ WI.CanvasOverviewContentView = class CanvasOverviewContentView extends WI.Collec
 
     _handleCanvasRecordingAutoCaptureFrameCountChanged(event)
     {
-        // Only update the value if it is different to prevent mangling the selection.
         if (this._recordingAutoCaptureFrameCountInputElementValue !== WI.settings.canvasRecordingAutoCaptureFrameCount.value)
             this._recordingAutoCaptureFrameCountInputElementValue = WI.settings.canvasRecordingAutoCaptureFrameCount.value;
-
-        this._updateRecordingAutoCaptureCheckboxLabel(WI.settings.canvasRecordingAutoCaptureFrameCount.value);
     }
 
     _handleImportButtonNavigationItemClicked(event)
@@ -286,6 +248,27 @@ WI.CanvasOverviewContentView = class CanvasOverviewContentView extends WI.Collec
     _handleRecordingSaved(event)
     {
         this._addSavedRecording(event.data.recording);
+    }
+
+    _handleRecordingRemoved(event)
+    {
+        if (!this._savedRecordingsTreeOutline)
+            return;
+
+        let treeElement = this._savedRecordingsTreeOutline.findTreeElement(event.data.recording);
+        if (!treeElement)
+            return;
+
+        this._savedRecordingsTreeOutline.removeChild(treeElement);
+        if (this._savedRecordingsTreeOutline.children.length)
+            return;
+
+        this.removeSubview(this._savedRecordingsContentView);
+        this._savedRecordingsContentView = null;
+        this._savedRecordingsTreeOutline = null;
+
+        if (!this.representedObject.size)
+            this.showContentPlaceholder();
     }
 
     _handleSavedRecordingClicked(event)

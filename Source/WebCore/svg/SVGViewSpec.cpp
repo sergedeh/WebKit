@@ -25,9 +25,7 @@
 #include "SVGElement.h"
 #include "SVGFitToViewBox.h"
 #include "SVGNames.h"
-#include "SVGParserUtilities.h"
 #include "SVGTransformList.h"
-#include "SVGTransformable.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringParsingBuffer.h>
 
@@ -47,23 +45,9 @@ SVGViewSpec::SVGViewSpec(SVGElement& contextElement)
     }
 }
 
-RefPtr<SVGElement> SVGViewSpec::viewTarget() const
-{
-    RefPtr contextElement = m_contextElement.get();
-    if (!contextElement)
-        return nullptr;
-    return dynamicDowncast<SVGElement>(contextElement->treeScope().getElementById(m_viewTargetString));
-}
-
-Ref<SVGTransformList> SVGViewSpec::protectedTransform()
-{
-    return m_transform;
-}
-
 void SVGViewSpec::reset()
 {
-    m_viewTargetString = emptyString();
-    protectedTransform()->clearItems();
+    protect(transform())->clearItems();
     SVGFitToViewBox::reset();
     SVGZoomAndPan::reset();
 }
@@ -73,7 +57,7 @@ template<typename CharacterType> static constexpr std::array<CharacterType, 7> v
 template<typename CharacterType> static constexpr std::array<CharacterType, 19> preserveAspectRatioSpec { 'p', 'r', 'e', 's', 'e', 'r', 'v', 'e', 'A', 's', 'p', 'e', 'c', 't', 'R', 'a', 't', 'i', 'o' };
 template<typename CharacterType> static constexpr std::array<CharacterType, 9> transformSpec { 't', 'r', 'a', 'n', 's', 'f', 'o', 'r', 'm' };
 template<typename CharacterType> static constexpr std::array<CharacterType, 10> zoomAndPanSpec { 'z', 'o', 'o', 'm', 'A', 'n', 'd', 'P', 'a', 'n' };
-template<typename CharacterType> static constexpr std::array<CharacterType, 10> viewTargetSpec  { 'v', 'i', 'e', 'w', 'T', 'a', 'r', 'g', 'e', 't' };
+template<typename CharacterType> static constexpr std::array<CharacterType, 10> viewTargetSpec { 'v', 'i', 'e', 'w', 'T', 'a', 'r', 'g', 'e', 't' };
 
 bool SVGViewSpec::parseViewSpec(StringView string)
 {
@@ -99,13 +83,13 @@ bool SVGViewSpec::parseViewSpec(StringView string)
                     if (!skipExactly(buffer, ')'))
                         return false;
                 } else if (skipCharactersExactly(buffer, std::span { viewTargetSpec<CharacterType> })) {
+                    // viewTarget is removed from SVG2 but we still need to skip over it
+                    // to avoid failing the entire svgView() fragment parse.
                     if (!skipExactly(buffer, '('))
                         return false;
-                    auto viewTargetStart = buffer.position();
                     skipUntil(buffer, ')');
                     if (buffer.atEnd())
                         return false;
-                    m_viewTargetString = String({ viewTargetStart, buffer.position() });
                     ++buffer;
                 } else
                     return false;
@@ -136,7 +120,7 @@ bool SVGViewSpec::parseViewSpec(StringView string)
                     return false;
                 if (!skipExactly(buffer, '('))
                     return false;
-                protectedTransform()->parse(buffer);
+                protect(transform())->parse(buffer);
                 if (!skipExactly(buffer, ')'))
                     return false;
             } else

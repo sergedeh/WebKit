@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/JSString.h>
 #include <WebCore/IDLTypes.h>
 #include <WebCore/JSDOMConvertBase.h>
 #include <WebCore/JSDOMGlobalObject.h>
@@ -44,7 +45,7 @@ template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLE
     using Result = ConversionResult<IDLEnumeration<T>>;
 
     template<typename ExceptionThrower = DefaultExceptionThrower>
-    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, NOESCAPE ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);

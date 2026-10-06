@@ -6,13 +6,10 @@ include(GNUInstallDirs)
 include(GLibMacros)
 include(InspectorGResources.cmake)
 include(ModernMediaControlsGResources.cmake)
+include(Platform/Skia.cmake)
 
 if (ENABLE_PDFJS)
     include(PdfJSGResources.cmake)
-endif ()
-
-if (USE_SKIA)
-    include(Platform/Skia.cmake)
 endif ()
 
 set(WebKit_OUTPUT_NAME WPEWebKit-${WPE_API_VERSION})
@@ -52,18 +49,16 @@ if (EXISTS "${TOOLS_DIR}/glib/apply-build-revision-to-files.py")
     )
 endif ()
 
-add_definitions(-DLIBDIR="${LIB_INSTALL_DIR}")
-add_definitions(-DPKGLIBDIR="${LIB_INSTALL_DIR}/wpe-webkit-${WPE_API_VERSION}")
-add_definitions(-DPKGLIBEXECDIR="${LIBEXEC_INSTALL_DIR}")
-add_definitions(-DDATADIR="${CMAKE_INSTALL_FULL_DATADIR}")
-add_definitions(-DLOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}")
+webkit_add_compile_definitions(LIBDIR="${LIB_INSTALL_DIR}")
+webkit_add_compile_definitions(PKGLIBDIR="${LIB_INSTALL_DIR}/wpe-webkit-${WPE_API_VERSION}")
+webkit_add_compile_definitions(PKGLIBEXECDIR="${LIBEXEC_INSTALL_DIR}")
+webkit_add_compile_definitions(DATADIR="${CMAKE_INSTALL_FULL_DATADIR}")
+webkit_add_compile_definitions(LOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}")
 
 if (NOT DEVELOPER_MODE AND NOT CMAKE_SYSTEM_NAME MATCHES "Darwin")
-    WEBKIT_ADD_TARGET_PROPERTIES(WebKit LINK_FLAGS "-Wl,--version-script,${CMAKE_CURRENT_SOURCE_DIR}/webkitglib-symbols.map")
+    target_link_options(WebKit PRIVATE "LINKER:--version-script,${CMAKE_CURRENT_SOURCE_DIR}/webkitglib-symbols.map")
     set_property(TARGET WebKit APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/webkitglib-symbols.map")
 endif ()
-
-set(WebKit_USE_PREFIX_HEADER ON)
 
 add_custom_target(webkitwpe-forwarding-headers
     COMMAND ${PERL_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-forwarding-headers.pl --include-path ${WEBKIT_DIR} --output ${FORWARDING_HEADERS_DIR} --platform wpe --platform soup
@@ -115,13 +110,17 @@ list(APPEND WebKit_SERIALIZATION_IN_FILES Shared/glib/RendererBufferFormat.seria
 
 if (USE_GBM)
   list(APPEND WebKit_SERIALIZATION_IN_FILES
-      Shared/gbm/DMABufBuffer.serialization.in
       Shared/gbm/DRMDevice.serialization.in
   )
 endif ()
 
 list(APPEND WebKit_SERIALIZATION_IN_FILES
     Shared/glib/AvailableInputDevices.serialization.in
+    Shared/glib/CoreIPCGByteArray.serialization.in
+    Shared/glib/CoreIPCGTlsCertificate.serialization.in
+    Shared/glib/CoreIPCGUnixFDList.serialization.in
+    Shared/glib/CoreIPCGVariant.serialization.in
+    Shared/glib/DMABufBufferAttributes.serialization.in
     Shared/glib/InputMethodState.serialization.in
     Shared/glib/RenderProcessInfo.serialization.in
     Shared/glib/RendererBufferTransportMode.serialization.in
@@ -161,7 +160,7 @@ add_custom_command(
     OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/WebKitDirectoryInputStreamData.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebKitDirectoryInputStreamData.h
     MAIN_DEPENDENCY ${WEBCORE_DIR}/css/make-css-file-arrays.pl
     DEPENDS ${WebKit_DirectoryInputStream_DATA}
-    COMMAND ${PERL_EXECUTABLE} ${WEBCORE_DIR}/css/make-css-file-arrays.pl --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" --preprocessor "${CODE_GENERATOR_PREPROCESSOR}" ${WebKit_DERIVED_SOURCES_DIR}/WebKitDirectoryInputStreamData.h ${WebKit_DERIVED_SOURCES_DIR}/WebKitDirectoryInputStreamData.cpp ${WebKit_DirectoryInputStream_DATA}
+    COMMAND ${PERL_EXECUTABLE} ${WEBCORE_DIR}/css/make-css-file-arrays.pl --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${WebKit_DERIVED_SOURCES_DIR}/WebKitDirectoryInputStreamData.h ${WebKit_DERIVED_SOURCES_DIR}/WebKitDirectoryInputStreamData.cpp ${WebKit_DirectoryInputStream_DATA}
     VERBATIM
 )
 
@@ -172,6 +171,8 @@ set(WPE_API_HEADER_TEMPLATES
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitAutomationSession.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitBackForwardList.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitBackForwardListItem.h.in
+    ${WEBKIT_DIR}/UIProcess/API/glib/WebKitClipboardPermissionRequest.h.in
+    ${WEBKIT_DIR}/UIProcess/API/glib/WebKitColorChooserRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitCredential.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitContextMenu.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitContextMenuActions.h.in
@@ -183,6 +184,7 @@ set(WPE_API_HEADER_TEMPLATES
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitEditingCommands.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitEditorState.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitError.h.in
+    ${WEBKIT_DIR}/UIProcess/API/glib/WebKitFaviconDatabase.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitFeature.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitFileChooserRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitFindController.h.in
@@ -204,6 +206,7 @@ set(WPE_API_HEADER_TEMPLATES
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitOptionMenuItem.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitPermissionRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitPermissionStateQuery.h.in
+    ${WEBKIT_DIR}/UIProcess/API/glib/WebKitPointerLockPermissionRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitPolicyDecision.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitResponsePolicyDecision.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitScriptDialog.h.in
@@ -215,6 +218,7 @@ set(WPE_API_HEADER_TEMPLATES
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitURISchemeRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitURISchemeResponse.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitURIUtilities.h.in
+    ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserAgent.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserContent.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserContentFilterStore.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserContentManager.h.in
@@ -237,15 +241,21 @@ if (ENABLE_2022_GLIB_API)
     list(APPEND WPE_API_HEADER_TEMPLATES
         ${WEBKIT_DIR}/UIProcess/API/glib/WebKitNetworkSession.h.in
     )
+    list(APPEND WebKit_SOURCES
+        ${WEBKIT_DIR}/UIProcess/API/glib/WebKitIconLoadingClient.cpp
+    )
 endif ()
 
 if (ENABLE_2022_GLIB_API)
     list(APPEND WPE_API_HEADER_TEMPLATES
         ${WEBKIT_DIR}/UIProcess/API/glib/WebKitWebExtension.h.in
+        ${WEBKIT_DIR}/UIProcess/API/glib/WebKitWebExtensionContext.h.in
         ${WEBKIT_DIR}/UIProcess/API/glib/WebKitWebExtensionMatchPattern.h.in
     )
     list(APPEND WebKit_SOURCES
         ${WEBKIT_DIR}/UIProcess/API/glib/WebKitWebExtension.cpp
+        ${WEBKIT_DIR}/UIProcess/API/glib/WebKitWebExtensionContext.cpp
+        ${WEBKIT_DIR}/UIProcess/API/glib/WebKitWebExtensionMatchPattern.cpp
     )
 endif ()
 
@@ -467,6 +477,7 @@ list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
 )
 
 list(APPEND WebKit_LIBRARIES
+    GLib::GioUnix
     GLib::Module
     Soup3::Soup3
 )
@@ -490,11 +501,8 @@ if (USE_OPENXR)
    list(APPEND WebKit_LIBRARIES OpenXR::openxr_loader)
 endif ()
 
-if (USE_CAIRO)
-    include(Platform/Cairo.cmake)
-    list(APPEND WebKit_LIBRARIES
-        Freetype::Freetype
-    )
+if (USE_LIBSECRET)
+    list(APPEND WebKit_PRIVATE_LIBRARIES Secret::Secret)
 endif ()
 
 if (ENABLE_BUBBLEWRAP_SANDBOX)
@@ -530,26 +538,39 @@ if (ENABLE_WPE_PLATFORM)
         "${WEBKIT_DIR}/WPEPlatform"
     )
 
-    list(APPEND WebKit_PRIVATE_LIBRARIES
-        WPEPlatform
-    )
+    # Link the WPEPlatform OBJECT libraries by name for their link interface.
+    # CMake < 3.29 omits their objects from a Swift link, so pass them
+    # explicitly there. CMake >= 3.29 adds them itself and doing so again
+    # duplicates every symbol.
+    set(_old_cmake_swift_needs_explicit_objects FALSE)
+    if (SWIFT_REQUIRED AND CMAKE_VERSION VERSION_LESS "3.29")
+        set(_old_cmake_swift_needs_explicit_objects TRUE)
+    endif ()
+
+    list(APPEND WebKit_PRIVATE_LIBRARIES WPEPlatform)
+    if (_old_cmake_swift_needs_explicit_objects)
+        list(APPEND WebKit_PRIVATE_LIBRARIES "$<TARGET_OBJECTS:WPEPlatform>")
+    endif ()
 
     if (ENABLE_WPE_PLATFORM_DRM)
-        list(APPEND WebKit_PRIVATE_LIBRARIES
-            WPEPlatformDRM
-        )
+        list(APPEND WebKit_PRIVATE_LIBRARIES WPEPlatformDRM)
+        if (_old_cmake_swift_needs_explicit_objects)
+            list(APPEND WebKit_PRIVATE_LIBRARIES "$<TARGET_OBJECTS:WPEPlatformDRM>")
+        endif ()
     endif ()
 
     if (ENABLE_WPE_PLATFORM_HEADLESS)
-        list(APPEND WebKit_PRIVATE_LIBRARIES
-            WPEPlatformHeadless
-        )
+        list(APPEND WebKit_PRIVATE_LIBRARIES WPEPlatformHeadless)
+        if (_old_cmake_swift_needs_explicit_objects)
+            list(APPEND WebKit_PRIVATE_LIBRARIES "$<TARGET_OBJECTS:WPEPlatformHeadless>")
+        endif ()
     endif ()
 
     if (ENABLE_WPE_PLATFORM_WAYLAND)
-        list(APPEND WebKit_PRIVATE_LIBRARIES
-            WPEPlatformWayland
-        )
+        list(APPEND WebKit_PRIVATE_LIBRARIES WPEPlatformWayland)
+        if (_old_cmake_swift_needs_explicit_objects)
+            list(APPEND WebKit_PRIVATE_LIBRARIES "$<TARGET_OBJECTS:WPEPlatformWayland>")
+        endif ()
     endif ()
 
     list(APPEND WebKit_MESSAGES_IN_FILES
@@ -592,7 +613,7 @@ WEBKIT_BUILD_INSPECTOR_GRESOURCES(
 install(FILES "${CMAKE_BINARY_DIR}/share/inspector.gresource" DESTINATION "${CMAKE_INSTALL_FULL_DATADIR}/wpe-webkit-${WPE_API_VERSION}")
 
 add_library(WPEInjectedBundle MODULE "${WEBKIT_DIR}/WebProcess/InjectedBundle/API/glib/WebKitInjectedBundleMain.cpp")
-ADD_WEBKIT_PREFIX_HEADER(WPEInjectedBundle)
+WEBKIT_ADD_PREFIX_HEADER(WPEInjectedBundle WebKitPrefix.h PREFIX_LANGUAGES CXX)
 target_link_libraries(WPEInjectedBundle WebKit)
 
 target_include_directories(WPEInjectedBundle PRIVATE $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
@@ -762,8 +783,10 @@ GI_INTROSPECT(WPEWebKit ${WPE_API_VERSION} wpe/webkit.h
         ${WPE_INCLUDE_DIRS_FOR_INTROSPECTION}
     SOURCES
         ${WPE_API_INSTALLED_HEADERS}
+        ${WPE_SOURCES_FOR_INTROSPECTION}
         Shared/API/glib
         UIProcess/API/glib
+        UIProcess/API/wpe/WebKitImageWPE.cpp
     NO_IMPLICIT_SOURCES
 )
 GI_DOCGEN(WPEWebKit wpe/wpewebkit.toml.in

@@ -35,19 +35,21 @@
 #include "DOMWrapperWorld.h"
 #include "Document.h"
 #include "FrameConsoleClient.h"
-#include "InspectorPageAgent.h"
+#include "InspectorIdentifierRegistry.h"
 #include "InstrumentingAgents.h"
 #include "JSDOMWindowCustom.h"
 #include "JSExecState.h"
 #include "LocalFrame.h"
 #include "Page.h"
+#include "PageInspectorController.h"
+#include "RuntimeAgentUtilities.h"
 #include "ScriptController.h"
 #include "SecurityOrigin.h"
 #include "UserGestureEmulationScope.h"
 #include <JavaScriptCore/InjectedScript.h>
 #include <JavaScriptCore/InjectedScriptManager.h>
 #include <JavaScriptCore/InspectorProtocolObjects.h>
-#include <wtf/CheckedPtr.h>
+#include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -95,17 +97,22 @@ Inspector::Protocol::ErrorStringOr<void> PageRuntimeAgent::disable()
 
 void PageRuntimeAgent::frameNavigated(LocalFrame& frame)
 {
+    SetForScope ignoreDidClearWindowObject(m_ignoreDidClearWindowObject, true);
     // Ensure execution context is created for the frame even if it doesn't have scripts.
     mainWorldGlobalObject(frame);
 }
 
 void PageRuntimeAgent::didClearWindowObjectInWorld(LocalFrame& frame, DOMWrapperWorld& world)
 {
-    CheckedPtr pageAgent = Ref { m_instrumentingAgents.get() }->enabledPageAgent();
-    if (!pageAgent)
+    if (m_ignoreDidClearWindowObject)
         return;
 
-    notifyContextCreated(pageAgent->frameId(&frame), frame.script().globalObject(world), world);
+    auto frameId = protect(m_inspectedPage->inspectorController().identifierRegistry())->frameId(&frame);
+    if (frameId.isEmpty())
+        return;
+
+    SetForScope ignoreDidClearWindowObject(m_ignoreDidClearWindowObject, true);
+    notifyContextCreated(frameId, protect(frame.script())->globalObject(world), world);
 }
 
 InjectedScript PageRuntimeAgent::injectedScriptForEval(Inspector::Protocol::ErrorString& errorString, std::optional<Inspector::Protocol::Runtime::ExecutionContextId>&& executionContextId)
@@ -115,13 +122,13 @@ InjectedScript PageRuntimeAgent::injectedScriptForEval(Inspector::Protocol::Erro
         if (!localMainFrame)
             return InjectedScript();
 
-        InjectedScript result = injectedScriptManager().injectedScriptFor(&mainWorldGlobalObject(*localMainFrame));
+        auto result = injectedScriptManager().injectedScriptFor(&mainWorldGlobalObject(*localMainFrame));
         if (result.hasNoValue())
             errorString = "Internal error: main world execution context not found"_s;
         return result;
     }
 
-    InjectedScript injectedScript = injectedScriptManager().injectedScriptForId(*executionContextId);
+    auto injectedScript = injectedScriptManager().injectedScriptForId(*executionContextId);
     if (injectedScript.hasNoValue())
         errorString = "Missing injected script for given executionContextId"_s;
     return injectedScript;
@@ -139,44 +146,27 @@ void PageRuntimeAgent::unmuteConsole()
 
 void PageRuntimeAgent::reportExecutionContextCreation()
 {
-    CheckedPtr pageAgent = Ref { m_instrumentingAgents.get() }->enabledPageAgent();
-    if (!pageAgent)
-        return;
+    Ref identifierRegistry = m_inspectedPage->inspectorController().identifierRegistry();
 
-    m_inspectedPage->forEachLocalFrame([&](LocalFrame& frame) {
-        if (!frame.script().canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
+    protect(m_inspectedPage)->forEachLocalFrame([&](LocalFrame& frame) {
+        if (!protect(frame.script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
             return;
 
-        auto frameId = pageAgent->frameId(&frame);
+        auto frameId = identifierRegistry->frameId(&frame);
 
         // Always send the main world first.
         auto& mainGlobalObject = mainWorldGlobalObject(frame);
         notifyContextCreated(frameId, &mainGlobalObject, mainThreadNormalWorldSingleton());
 
-        for (auto& jsWindowProxy : frame.windowProxy().jsWindowProxiesAsVector()) {
+        for (auto& jsWindowProxy : protect(frame.windowProxy())->jsWindowProxiesAsVector()) {
             auto* globalObject = jsWindowProxy->window();
             if (globalObject == &mainGlobalObject)
                 continue;
 
-            Ref securityOrigin = downcast<LocalDOMWindow>(jsWindowProxy->wrapped()).document()->securityOrigin();
+            Ref securityOrigin = protect(downcast<LocalDOMWindow>(jsWindowProxy->wrapped()).document())->securityOrigin();
             notifyContextCreated(frameId, globalObject, jsWindowProxy->world(), securityOrigin.ptr());
         }
     });
-}
-
-static Inspector::Protocol::Runtime::ExecutionContextType toProtocol(DOMWrapperWorld::Type type)
-{
-    switch (type) {
-    case DOMWrapperWorld::Type::Normal:
-        return Inspector::Protocol::Runtime::ExecutionContextType::Normal;
-    case DOMWrapperWorld::Type::User:
-        return Inspector::Protocol::Runtime::ExecutionContextType::User;
-    case DOMWrapperWorld::Type::Internal:
-        return Inspector::Protocol::Runtime::ExecutionContextType::Internal;
-    }
-
-    ASSERT_NOT_REACHED();
-    return Inspector::Protocol::Runtime::ExecutionContextType::Internal;
 }
 
 void PageRuntimeAgent::notifyContextCreated(const Inspector::Protocol::Network::FrameId& frameId, JSC::JSGlobalObject* globalObject, const DOMWrapperWorld& world, SecurityOrigin* securityOrigin)

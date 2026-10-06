@@ -34,7 +34,7 @@ class NodeSet {
 public:
     NodeSet() : m_isSorted(true), m_subtreesAreDisjoint(false) { }
     explicit NodeSet(Ref<Node>&& node)
-        : m_isSorted(true), m_subtreesAreDisjoint(false), m_nodes(1, WTF::move(node))
+        : m_isSorted(true), m_subtreesAreDisjoint(false), m_nodes(FillWith { }, 1, WTF::move(node))
     { }
 
     size_t size() const { return m_nodes.size(); }
@@ -51,7 +51,7 @@ public:
     Node* firstNode() const;
 
     // Returns nullptr if the set is empty.
-    Node* anyNode() const;
+    Node* NODELETE anyNode() const;
 
     // NodeSet itself doesn't check if it contains nodes in document order - the caller should tell it if it does not.
     void markSorted(bool isSorted) { m_isSorted = isSorted; }

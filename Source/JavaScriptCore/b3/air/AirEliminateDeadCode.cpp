@@ -45,7 +45,7 @@ bool eliminateDeadCode(Code& code)
     IndexSet<StackSlot*> liveStackSlots;
     bool changed { false };
     
-    auto isArgLive = [&] (const Arg& arg) -> bool {
+    auto isArgLive = [&](const Arg& arg) -> bool {
         switch (arg.kind()) {
         case Arg::Tmp:
             if (arg.isReg())
@@ -60,10 +60,7 @@ bool eliminateDeadCode(Code& code)
         }
     };
 
-    auto isInstLive = [&] (Inst& inst) -> bool {
-        if (inst.hasNonArgEffects())
-            return true;
-
+    auto isInstLiveByDefs = [&](Inst& inst) -> bool {
         // This instruction should be presumed dead, if its Args are all dead.
         bool storesToLive = false;
         inst.forEachArg(
@@ -76,15 +73,13 @@ bool eliminateDeadCode(Code& code)
             });
         return storesToLive;
     };
-    
-    // Returns true if it's live.
-    auto handleInst = [&] (Inst& inst) -> bool {
-        if (!isInstLive(inst))
-            return false;
 
-        // We get here if the Inst is live. For simplicity we say that a live instruction forces
-        // liveness upon everything it mentions.
-        for (Arg& arg : inst.args) {
+    auto isInstLive = [&](Inst& inst) -> bool {
+        return inst.hasNonArgEffects() || isInstLiveByDefs(inst);
+    };
+
+    auto markArgsLive = [&](Inst& inst) {
+        for (Arg& arg : inst.args()) {
             if (arg.isStack() && !arg.stackSlot()->isLocked())
                 changed |= liveStackSlots.add(arg.stackSlot());
             arg.forEachTmpFast(
@@ -93,39 +88,55 @@ bool eliminateDeadCode(Code& code)
                         changed |= liveTmps.add(tmp);
                 });
         }
+    };
+
+    Vector<Inst*> backingStore;
+
+    for (unsigned blockIndex = code.size(); blockIndex--;) {
+        BasicBlock* block = code[blockIndex];
+        if (!block)
+            continue;
+        for (unsigned instIndex = block->size(); instIndex--;) {
+            Inst& inst = block->at(instIndex);
+            if (!isInstLive(inst))
+                backingStore.append(&inst);
+            else
+                markArgsLive(inst);
+        }
+    }
+
+    auto deadCandidatesInBackwardOrder = backingStore.mutableSpan();
+
+    // Inst in deadCandidatesInBackwardOrder already have hasNonArgEffects() == false, invariant
+    // under live-set growth, so the fixpoint skips that re-check.
+    auto handleInst = [&](Inst& inst) -> bool {
+        if (!isInstLiveByDefs(inst))
+            return false;
+        markArgsLive(inst);
         return true;
     };
 
-    Vector<Inst*> possiblyDead;
-    
-    for (BasicBlock* block : code) {
-        for (Inst& inst : *block) {
-            if (!handleInst(inst))
-                possiblyDead.append(&inst);
-        }
-    }
-    
-    auto runForward = [&] () -> bool {
+    auto runBackward = [&] -> bool {
         changed = false;
-        possiblyDead.removeAllMatching(
+        auto [begin, end] = std::ranges::remove_if(deadCandidatesInBackwardOrder,
             [&] (Inst* inst) -> bool {
                 bool result = handleInst(*inst);
                 changed |= result;
                 return result;
             });
+        deadCandidatesInBackwardOrder = deadCandidatesInBackwardOrder.first(begin - deadCandidatesInBackwardOrder.begin());
         return changed;
     };
 
-    auto runBackward = [&] () -> bool {
+    auto runForward = [&] -> bool {
         changed = false;
-        for (unsigned i = possiblyDead.size(); i--;) {
-            bool result = handleInst(*possiblyDead[i]);
-            if (result) {
-                possiblyDead[i] = possiblyDead.last();
-                possiblyDead.removeLast();
-                changed = true;
-            }
-        }
+        auto [begin, end] = std::ranges::remove_if(deadCandidatesInBackwardOrder | std::views::reverse,
+            [&] (Inst* inst) -> bool {
+                bool result = handleInst(*inst);
+                changed |= result;
+                return result;
+            });
+        deadCandidatesInBackwardOrder = deadCandidatesInBackwardOrder.last(deadCandidatesInBackwardOrder.end() - begin.base());
         return changed;
     };
 
@@ -141,15 +152,22 @@ bool eliminateDeadCode(Code& code)
             break;
     }
 
-    unsigned removedInstCount = 0;
+    // After the fixpoint, deadCandidatesInBackwardOrder holds exactly the dead Insts. Null them
+    // out and sweep with the cheap !inst predicate.
+    if (deadCandidatesInBackwardOrder.empty())
+        return false;
+
+    for (Inst* inst : deadCandidatesInBackwardOrder)
+        *inst = Inst();
+
     for (BasicBlock* block : code) {
-        removedInstCount += block->insts().removeAllMatching(
+        block->insts().removeAllMatching(
             [&] (Inst& inst) -> bool {
-                return !isInstLive(inst);
+                return !inst;
             });
     }
 
-    return !!removedInstCount;
+    return true;
 }
 
 } } } // namespace JSC::B3::Air

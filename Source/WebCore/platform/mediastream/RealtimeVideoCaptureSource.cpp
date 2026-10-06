@@ -33,6 +33,7 @@
 #include "RealtimeMediaSourceSettings.h"
 #include <VideoFrame.h>
 #include <algorithm>
+#include <array>
 #include <wtf/JSONValues.h>
 #include <wtf/MediaTime.h>
 
@@ -69,9 +70,9 @@ void RealtimeVideoCaptureSource::setSupportedPresets(Vector<VideoPreset>&& prese
         preset.sortFrameRateRanges();
 }
 
-std::span<const IntSize> RealtimeVideoCaptureSource::standardVideoSizes()
+SUPPRESS_NODELETE std::span<const IntSize> RealtimeVideoCaptureSource::standardVideoSizes()
 {
-    static constexpr IntSize sizes[] = {
+    static constexpr auto sizes = WTF::toArray<IntSize>({
         { 112, 112 },
         { 160, 160 },
         { 160, 120 }, // 4:3, QQVGA
@@ -106,7 +107,7 @@ std::span<const IntSize> RealtimeVideoCaptureSource::standardVideoSizes()
         { 2592, 1936 },
         { 3264, 2448 }, // 3:4
         { 3840, 2160 }, // 16:9, 4K UHD
-    };
+    });
     return sizes;
 }
 
@@ -211,20 +212,20 @@ bool RealtimeVideoCaptureSource::supportsCaptureSize(std::optional<int> width, s
     return false;
 }
 
-static bool shouldUsePreset(const VideoPreset& current, const VideoPreset& candidate, bool shouldPreferPowerEfficiency)
+static bool NODELETE shouldUsePreset(const VideoPreset& current, const VideoPreset& candidate, bool shouldPreferPowerEfficiency)
 {
     if (shouldPreferPowerEfficiency && candidate.isEfficient() && !current.isEfficient())
         return true;
     return candidate.size().width() <= current.size().width() && candidate.size().height() <= current.size().height() && candidate.isEfficient();
 }
 
-static bool isPresetEfficient(const std::optional<VideoPreset>& preset)
+static bool NODELETE isPresetEfficient(const std::optional<VideoPreset>& preset)
 {
     return preset && preset->isEfficient();
 }
 
 enum PresetToUse : uint8_t { Exact, AspectRatio, Resize };
-static PresetToUse computePresetToUse(const std::optional<VideoPreset>& exactSizePreset, const std::optional<VideoPreset>& aspectRatioPreset, const std::optional<VideoPreset>& resizePreset, bool shouldPreferPowerEfficiency)
+static PresetToUse NODELETE computePresetToUse(const std::optional<VideoPreset>& exactSizePreset, const std::optional<VideoPreset>& aspectRatioPreset, const std::optional<VideoPreset>& resizePreset, bool shouldPreferPowerEfficiency)
 {
     if (exactSizePreset && (!shouldPreferPowerEfficiency || exactSizePreset->isEfficient() || (!isPresetEfficient(aspectRatioPreset) && !isPresetEfficient(resizePreset))))
         return PresetToUse::Exact;
@@ -233,14 +234,14 @@ static PresetToUse computePresetToUse(const std::optional<VideoPreset>& exactSiz
     return PresetToUse::Resize;
 }
 
-static inline double frameRateFromPreset(const VideoPreset& preset, double currentFrameRate)
+static inline double NODELETE frameRateFromPreset(const VideoPreset& preset, double currentFrameRate)
 {
     auto minFrameRate = preset.minFrameRate();
     auto maxFrameRate = preset.maxFrameRate();
     return currentFrameRate >= minFrameRate && currentFrameRate <= maxFrameRate ? currentFrameRate : maxFrameRate;
 }
 
-static inline double zoomFromPreset(const VideoPreset& preset, double currentZoom)
+static inline double NODELETE zoomFromPreset(const VideoPreset& preset, double currentZoom)
 {
     if (currentZoom < preset.minZoom())
         return preset.minZoom();
@@ -299,11 +300,11 @@ std::optional<RealtimeVideoCaptureSource::CaptureSizeFrameRateAndZoom> RealtimeV
         }
 
         IntSize encodingSize;
-        auto lookForAspectRatioMatch = [this, &preset, &encodingSize] (const IntSize& size) -> bool {
+        auto lookForAspectRatioMatch = [protectedThis = Ref { *this }, &preset, &encodingSize] (const IntSize& size) -> bool {
             auto aspectRatio = [] (const IntSize size) -> double {
                 return size.width() / static_cast<double>(size.height());
             };
-            if (std::abs(aspectRatio(preset.size()) - aspectRatio(size)) > 10e-7 || !canResizeVideoFrames())
+            if (std::abs(aspectRatio(preset.size()) - aspectRatio(size)) > 10e-7 || !protectedThis->canResizeVideoFrames())
                 return false;
 
             encodingSize = size;
@@ -481,6 +482,48 @@ auto RealtimeVideoCaptureSource::takePhoto(PhotoSettings&& photoSettings) -> Ref
         photoSettings.imageWidth = sanitizedSize.width();
     }
 
+    auto producer = makeUniqueRef<TakePhotoNativePromise::Producer>();
+    auto promise = producer->promise();
+    m_pendingOperations.append(PendingOperation { PendingPhotoCapture { WTF::move(photoSettings), WTF::move(producer) } });
+
+    if (!m_captureInFlight)
+        dispatchNextOperation();
+
+    return promise;
+}
+
+void RealtimeVideoCaptureSource::applyConstraints(const MediaConstraints& constraints, ApplyConstraintsHandler&& handler)
+{
+    ASSERT(isMainThread());
+    if (!m_captureInFlight && m_pendingOperations.isEmpty()) {
+        RealtimeMediaSource::applyConstraints(constraints, WTF::move(handler));
+        return;
+    }
+    m_pendingOperations.append(PendingOperation { PendingConstraintApplication { constraints, WTF::move(handler) } });
+}
+
+void RealtimeVideoCaptureSource::dispatchNextOperation()
+{
+    ASSERT(isMainThread());
+    ASSERT(!m_captureInFlight);
+
+    // Drain synchronous constraint applications at the front of the queue.
+    while (!m_pendingOperations.isEmpty()) {
+        if (!WTF::holdsAlternative<PendingConstraintApplication>(m_pendingOperations.first()))
+            break;
+        auto pending = std::get<PendingConstraintApplication>(m_pendingOperations.takeFirst());
+        RealtimeMediaSource::applyConstraints(pending.constraints, WTF::move(pending.handler));
+    }
+
+    if (m_pendingOperations.isEmpty())
+        return;
+
+    // Front of queue is a photo capture — dispatch it asynchronously.
+    m_captureInFlight = true;
+    auto pending = std::get<PendingPhotoCapture>(m_pendingOperations.takeFirst());
+    auto photoSettings = WTF::move(pending.settings);
+    auto producer = WTF::move(pending.producer);
+
     std::optional<CaptureSizeFrameRateAndZoom> newPresetForPhoto;
     if (photoSettings.imageHeight || photoSettings.imageWidth) {
         newPresetForPhoto = bestSupportedSizeFrameRateAndZoomConsideringObservers({ photoSettings.imageWidth, photoSettings.imageHeight, { }, { } });
@@ -510,21 +553,38 @@ auto RealtimeVideoCaptureSource::takePhoto(PhotoSettings&& photoSettings) -> Ref
         setSizeFrameRateAndZoomForPhoto(WTF::move(*newPresetForPhoto));
     }
 
-    return takePhotoInternal(WTF::move(photoSettings))->whenSettled(RunLoop::mainSingleton(), [this, protectedThis = Ref { *this }, configurationToRestore = WTF::move(configurationToRestore)] (auto&& result) mutable {
+    takePhotoInternal(WTF::move(photoSettings))->whenSettled(RunLoop::mainSingleton(),
+        [this, protectedThis = Ref { *this }, producer = WTF::move(producer), configurationToRestore = WTF::move(configurationToRestore)] (auto&& result) mutable {
 
-        ASSERT(isMainThread());
+            ASSERT(isMainThread());
 
-        if (configurationToRestore) {
-            setSizeFrameRateAndZoomForPhoto(WTF::move(*configurationToRestore));
+            m_captureInFlight = false;
 
-            if (m_mutedForPhotoCapture) {
-                m_mutedForPhotoCapture = false;
-                setMuted(false);
+            if (configurationToRestore) {
+                setSizeFrameRateAndZoomForPhoto(WTF::move(*configurationToRestore));
+
+                if (m_mutedForPhotoCapture) {
+                    m_mutedForPhotoCapture = false;
+                    setMuted(false);
+                }
             }
-        }
 
-        return TakePhotoNativePromise::createAndSettle(WTF::move(result));
-    });
+            producer->settle(WTF::move(result));
+
+            if (!m_pendingOperations.isEmpty())
+                dispatchNextOperation();
+        });
+}
+
+void RealtimeVideoCaptureSource::didEnd()
+{
+    auto pending = WTF::move(m_pendingOperations);
+    for (auto& operation : pending) {
+        WTF::switchOn(operation,
+            [](PendingPhotoCapture& photo)               { photo.producer->reject("Track ended"_s); },
+            [](PendingConstraintApplication& constraint) { constraint.handler({ }); }
+        );
+    }
 }
 
 void RealtimeVideoCaptureSource::ensureIntrinsicSizeMaintainsAspectRatio()

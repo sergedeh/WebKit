@@ -7,12 +7,10 @@
 //   Performance of texture upload and draw using various formats.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "ANGLEPerfTest.h"
+#include "common/unsafe_buffers.h"
 
+#include <array>
 #include <iostream>
 #include <random>
 #include <sstream>
@@ -29,7 +27,7 @@ enum class TestedFormat
     RGB565,
 };
 
-constexpr const char *kTestedFormatString[] = {
+static constexpr std::array<const char *, 3> kTestedFormatString = {
     "rgba8",
     "rgb8",
     "rgb565",
@@ -129,7 +127,7 @@ void FormatUploadDrawPerfBenchmark::initializeBenchmark()
 
     // Initialize color data.
     mColors.resize(mTextureSize * mTextureSize * mPixelSize);
-    memset(mColors.data(), 0, mTextureSize * mTextureSize * mPixelSize);
+    ANGLE_UNSAFE_TODO(memset(mColors.data(), 0, mTextureSize * mTextureSize * mPixelSize));
 
     // Set up program.
     std::string vs = R"(#version 300 es

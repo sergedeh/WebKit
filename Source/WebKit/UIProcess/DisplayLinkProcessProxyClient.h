@@ -41,13 +41,16 @@ public:
     WTF_MAKE_TZONE_ALLOCATED(DisplayLinkProcessProxyClient);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DisplayLinkProcessProxyClient);
 public:
+    DisplayLinkProcessProxyClient() = default;
     void setConnection(RefPtr<IPC::Connection>&&);
 
 private:
+    explicit DisplayLinkProcessProxyClient(ClangVTableWorkaroundTag);
+
     void displayLinkFired(WebCore::PlatformDisplayID, WebCore::DisplayUpdate, bool wantsFullSpeedUpdates, bool anyObserverWantsCallback) override;
 
     Lock m_connectionLock;
-    RefPtr<IPC::Connection> m_connection;
+    RefPtr<IPC::Connection> m_connection WTF_GUARDED_BY_LOCK(m_connectionLock);
 };
 
 } // namespace WebKit

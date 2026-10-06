@@ -42,6 +42,7 @@
 
 namespace WebCore {
 class Document;
+class HTMLMediaElement;
 class LocalFrame;
 }
 
@@ -97,8 +98,9 @@ private:
     WebCore::Document* documentForFoundTextRange(const WebFoundTextRange&) const;
     std::optional<WebCore::SimpleRange> simpleRangeFromFoundTextRange(WebFoundTextRange);
 
-    RefPtr<WebPage> protectedWebPage() const { return m_webPage.get(); }
-    RefPtr<WebCore::PageOverlay> protectedFindPageOverlay() const { return m_findPageOverlay; }
+#if ENABLE(VIDEO)
+    RefPtr<WebCore::HTMLMediaElement> mediaElementForCueRange(const WebFoundTextRange&) const;
+#endif
 
     WeakPtr<WebPage> m_webPage;
     RefPtr<WebCore::PageOverlay> m_findPageOverlay;

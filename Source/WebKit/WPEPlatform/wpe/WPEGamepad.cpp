@@ -33,9 +33,17 @@
 /**
  * WPEGamepad:
  *
+ * A gamepad device.
+ *
+ * [class@Gamepad] is an abstract class that platform implementations derive to
+ * represent a connected gamepad. It reports input through the
+ * [signal@Gamepad::button-event] and [signal@Gamepad::axis-event]
+ * signals, and may support force feedback through [method@Gamepad.rumble].
+ *
+ * Gamepads are tracked by a [class@GamepadManager].
  */
 struct _WPEGamepadPrivate {
-    CString name;
+    UTF8CString name;
     bool isMonitoringInput;
 };
 
@@ -66,7 +74,7 @@ static void wpeGamepadSetProperty(GObject* object, guint propId, const GValue* v
 
     switch (propId) {
     case PROP_NAME:
-        gamepad->priv->name = g_value_get_string(value);
+        gamepad->priv->name = UTF8CString::unsafeFromUTF8(g_value_get_string(value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
@@ -155,7 +163,7 @@ const char* wpe_gamepad_get_name(WPEGamepad* gamepad)
 {
     g_return_val_if_fail(WPE_IS_GAMEPAD(gamepad), nullptr);
 
-    return gamepad->priv->name.data();
+    return gamepad->priv->name.legacyCStringPointer();
 }
 
 /**
@@ -229,4 +237,43 @@ void wpe_gamepad_axis_event(WPEGamepad* gamepad, WPEGamepadAxis axis, gdouble va
     g_return_if_fail(value >= -1. && value <= 1.);
 
     g_signal_emit(gamepad, signals[AXIS_EVENT], 0, axis, value);
+}
+
+/**
+ * wpe_gamepad_has_rumble:
+ * @gamepad: a #WPEGamepad
+ *
+ * Checks whether a #WPEGamepad has rumble support.
+ * Returns %TRUE if the @gamepad has rumble, %FALSE otherwise.
+ */
+gboolean wpe_gamepad_has_rumble(WPEGamepad *gamepad)
+{
+    g_return_val_if_fail(WPE_IS_GAMEPAD(gamepad), FALSE);
+
+    auto* gamepadClass = WPE_GAMEPAD_GET_CLASS(gamepad);
+    if (gamepadClass->has_rumble)
+        return gamepadClass->has_rumble(gamepad);
+
+    return FALSE;
+}
+
+/**
+ * wpe_gamepad_rumble:
+ * @gamepad: a #WPEGamepad
+ * @strong_magnitude: the magnitude for the heavy motor
+ * @weak_magnitude: the magnitude for the light motor
+ * @duration_ms: the rumble effect play time, in milliseconds
+ *
+ * Attempts to make a #WPEGamepad rumble for @duration_ms milliseconds.
+ * Returns %TRUE if the rumble effect was played, %FALSE otherwise.
+ */
+gboolean wpe_gamepad_rumble(WPEGamepad *gamepad, gdouble strongMagnitude, gdouble weakMagnitude, guint durationMs)
+{
+    g_return_val_if_fail(WPE_IS_GAMEPAD(gamepad), FALSE);
+
+    auto* gamepadClass = WPE_GAMEPAD_GET_CLASS(gamepad);
+    if (gamepadClass->rumble)
+        return gamepadClass->rumble(gamepad, strongMagnitude, weakMagnitude, durationMs);
+
+    return FALSE;
 }

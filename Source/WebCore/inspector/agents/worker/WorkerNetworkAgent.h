@@ -30,12 +30,20 @@
 
 namespace WebCore {
 
-class WorkerNetworkAgent final : public InspectorNetworkAgent {
+class WorkerNetworkAgent final : public InspectorNetworkAgent, public CanMakeCheckedPtr<WorkerNetworkAgent> {
     WTF_MAKE_NONCOPYABLE(WorkerNetworkAgent);
     WTF_MAKE_TZONE_ALLOCATED(WorkerNetworkAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WorkerNetworkAgent);
 public:
     WorkerNetworkAgent(WorkerAgentContext&);
     ~WorkerNetworkAgent();
+
+    // AbstractCanMakeCheckedPtr overrides
+    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
+    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
+    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
+    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
 private:
     Inspector::Protocol::Network::LoaderId loaderIdentifier(DocumentLoader*);
@@ -43,9 +51,9 @@ private:
     Vector<Ref<WebSocket>> activeWebSockets() WTF_REQUIRES_LOCK(WebSocket::allActiveWebSocketsLock());
     void setResourceCachingDisabledInternal(bool);
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    bool setEmulatedConditionsInternal(std::optional<int>&& bytesPerSecondLimit);
+    bool setEmulatedConditionsInternal(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency);
 #endif
-    ScriptExecutionContext* scriptExecutionContext(Inspector::Protocol::ErrorString&, const Inspector::Protocol::Network::FrameId&);
+    ScriptExecutionContext* NODELETE scriptExecutionContext(Inspector::Protocol::ErrorString&, const Inspector::Protocol::Network::FrameId&);
     void addConsoleMessage(std::unique_ptr<Inspector::ConsoleMessage>&&);
     bool shouldForceBufferingNetworkResourceData() const { return true; }
 

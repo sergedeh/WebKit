@@ -17,6 +17,26 @@ Defines a comma-separated list of logging channels and their levels for WebKit's
         - `WebDriverClassic` - For the HTTP-based [WebDriver](https://w3c.github.io/webdriver/) Classic prototol.
         - `WebDriverBiDi` - For the WebSockets-based [WebDriver BiDi](https://github.com/w3c/webdriver-bidi) protocol.
         - `SessionHost` - For messages related to the management of the Browser under automation.
+    - **OpenGL context debugging**: When the `GLContext` logging channel is enabled, WebKit creates
+      EGL contexts with [debug logging](https://wikis.khronos.org/opengl/Debug_Output) configured,
+      which may result in a small graphics performance penalty. If the log level is set to `debug`,
+      e.g. with `WEBKIT_DEBUG='GLContext=debug'`, backtraces leading to errors are added to the
+      error messages.
+
+- `WEBKIT_DEBUG_OUTPUT`
+Selects where the log messages that would be sent the journal should actually go. Only available when
+WebKit is built with journald support (`ENABLE_JOURNALD_LOG`, the default for the GTK and WPE ports).
+It does not alter channel filtering or which messages are enabled.
+    - **Default** (unset): messages go to the systemd journal, if its socket is present, and can be
+      read back filtering by the `WEBKIT_SUBSYSTEM` and `WEBKIT_CHANNEL` fields, e.g.
+      `journalctl WEBKIT_SUBSYSTEM=WPEWebKit WEBKIT_CHANNEL=WebDriverBiDi`. Use `WebKitGTK` as the
+      subsystem for the GTK port. When the journal is not reachable, for instance in a container or
+      a CI image that has no journald running, messages are written to standard error instead.
+    - `journal` - Always write to the systemd journal, even if it's inaccessible.
+    - `stderr` - Always write to standard error, one line per message, prefixed with the subsystem,
+      the channel and the priority, and followed by the source location, if available. Useful to
+      capture the output of a single process into a file, and to force the fallback on a machine
+      that does run journald.
 
 ## Graphics-related variables
 
@@ -30,7 +50,7 @@ Example: `/dev/dri/card0`
 Specifies the render device that WebKit will use for buffer allocation, this is the one used for allocating general gpu buffers. You need to specify a file path.
 Example: `/dev/dri/renderD128`
 
-- `WPE_DMABUF_BUFFER_FORMAT`:
+- `WPE_BUFFER_FORMAT`:
 You can ask WebKit to try to use a format instead the one that is recommended by the underlying system (wayland, drm, etc.), when you define this variable then no other data is going to be used from wayland so it is recommended to also define the drm devices. The value must follow the following format: `pixel_format:memory_layout:usage`:
     - Pixel format, specifies the pixel format as a fourcc code, example: `AR24`
     - Memory layout, defines the memory layout of the buffer, 0 for linear layout

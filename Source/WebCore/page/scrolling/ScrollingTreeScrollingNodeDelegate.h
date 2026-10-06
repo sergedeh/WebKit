@@ -27,8 +27,9 @@
 
 #if ENABLE(ASYNC_SCROLLING)
 
+#include <WebCore/RubberbandingState.h>
 #include <WebCore/ScrollingTreeScrollingNode.h>
-
+#include <wtf/EnumSet.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -43,7 +44,8 @@ public:
     Ref<const ScrollingTreeScrollingNode> scrollingNode() const { return m_scrollingNode; }
 
     virtual bool startAnimatedScrollToPosition(FloatPoint) = 0;
-    virtual void stopAnimatedScroll() = 0;
+
+    virtual void stopAnimatedScroll(EnumSet<AnimatedScrollType>) = 0;
 
     virtual void serviceScrollAnimation(MonotonicTime) = 0;
 
@@ -62,6 +64,14 @@ public:
 
     virtual FloatPoint adjustedScrollPosition(const FloatPoint& scrollPosition) const { return scrollPosition; }
     virtual String scrollbarStateForOrientation(ScrollbarOrientation) const { return ""_s; }
+
+    virtual Vector<PlatformLayerContainer, 2> hitTestableScrollbarLayers() const { return { }; }
+
+    virtual float rubberbandHyperbolicCoefficientForTesting() const { return 0; }
+
+#if HAVE(RUBBER_BANDING)
+    virtual std::optional<RubberbandingState> captureRubberbandingState() const { return std::nullopt; }
+#endif
 
 protected:
     WEBCORE_EXPORT RefPtr<ScrollingTree> scrollingTree() const;

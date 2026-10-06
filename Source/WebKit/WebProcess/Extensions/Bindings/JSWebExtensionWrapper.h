@@ -27,12 +27,21 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
+#include "Protected.h"
+#include <JavaScriptCore/APICast.h>
+#include <JavaScriptCore/JSCJSValuePropertyInlines.h>
+#include <JavaScriptCore/JSCellInlines.h>
+#include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSRetainPtr.h>
+#include <JavaScriptCore/JSStringRefCPP.h>
 #if PLATFORM(COCOA)
 #include <JavaScriptCore/JavaScriptCore.h>
 #else
 #include <JavaScriptCore/JavaScript.h>
 #endif
+#include <WebCore/JSDOMExceptionHandling.h>
+#include <WebCore/JSDOMGlobalObject.h>
+#include <WebCore/ScriptExecutionContext.h>
 #include <wtf/JSONValues.h>
 #include <wtf/WeakPtr.h>
 
@@ -63,7 +72,7 @@ public:
     ~WebExtensionCallbackHandler();
 
     JSGlobalContextRef globalContext() const { return m_globalContext.get(); }
-    JSValueRef callbackFunction() const;
+    JSValueRef NODELETE callbackFunction() const;
 
     void reportError(const String&);
 
@@ -80,7 +89,7 @@ private:
     JSObjectRef m_callbackFunction = nullptr;
     JSObjectRef m_rejectFunction = nullptr;
     JSRetainPtr<JSGlobalContextRef> m_globalContext;
-    RefPtr<WebExtensionAPIRuntimeBase> m_runtime;
+    const RefPtr<WebExtensionAPIRuntimeBase> m_runtime;
 };
 
 enum class NullStringPolicy : uint8_t {
@@ -107,9 +116,9 @@ enum class ValuePolicy : bool {
 RefPtr<WebFrame> toWebFrame(JSContextRef);
 RefPtr<WebPage> toWebPage(JSContextRef);
 
-inline JSRetainPtr<JSStringRef> toJSString(const String& string)
+inline RefPtr<OpaqueJSString> toJSString(const String& string)
 {
-    return JSRetainPtr(Adopt, JSStringCreateWithUTF8CString(!string.isEmpty() ? string.utf8().data() : ""));
+    return createJSString(string);
 }
 
 inline JSValueRef toJSValueRefOrJSNull(JSContextRef context, JSValueRef value)
@@ -133,6 +142,42 @@ inline Ref<WebExtensionCallbackHandler> toJSErrorCallbackHandler(JSContextRef co
     return WebExtensionCallbackHandler::create(context, runtime);
 }
 
+template<size_t ArgumentCount>
+JSValueRef callObjectWithArguments(JSValueRef callbackFunction, JSContextRef context, std::array<JSValueRef, ArgumentCount>&& arguments, JSValueRef* exception = nullptr, bool reportException = true)
+{
+    if (!context || !callbackFunction)
+        return nullptr;
+
+    if (!JSValueIsObject(context, callbackFunction))
+        return nullptr;
+
+    JSObjectRef callbackObject = JSValueToObject(context, callbackFunction, exception);
+    if (!callbackObject)
+        return nullptr;
+
+    auto* globalObject = toJS(JSContextGetGlobalContext(context));
+    RefPtr executionContext = globalObject ? downcast<WebCore::JSDOMGlobalObject>(globalObject)->scriptExecutionContext() : nullptr;
+    if (!executionContext || executionContext->activeDOMObjectsAreStopped())
+        return nullptr;
+
+    JSValueRef internalException = nullptr;
+    JSValueRef result = JSObjectCallAsFunction(context, callbackObject, nullptr, ArgumentCount, arguments.data(), &internalException);
+    if (internalException && reportException) {
+        JSC::JSLockHolder lock(globalObject->vm());
+        auto exceptionValue = toJS(globalObject, internalException);
+        WebCore::reportException(globalObject, exceptionValue);
+    }
+
+    if (exception && internalException)
+        *exception = internalException;
+
+    return result;
+}
+
+template<typename T> Vector<T> toVector(JSContextRef, JSValueRef);
+
+template<> Vector<Protected<JSValueRef>> toVector<Protected<JSValueRef>>(JSContextRef, JSValueRef);
+
 RefPtr<WebExtensionCallbackHandler> toJSCallbackHandler(JSContextRef, JSValueRef callback, WebExtensionAPIRuntimeBase&);
 
 String toString(JSContextRef, JSValueRef, NullStringPolicy = NullStringPolicy::NullAndUndefinedAsNullString);
@@ -151,17 +196,26 @@ bool isDictionary(JSContextRef, JSValueRef);
 bool isRegularExpression(JSContextRef, JSValueRef);
 bool isThenable(JSContextRef, JSValueRef);
 
-JSValueRef fromArray(JSContextRef, Vector<JSValueRef>&&);
+JSValueRef fromArray(JSContextRef, Vector<Protected<JSValueRef>>&&);
 JSValueRef fromArray(JSContextRef, Vector<size_t>&&);
 JSValueRef fromArray(JSContextRef, Vector<String>&&);
 
 JSValueRef fromJSON(JSContextRef, RefPtr<JSON::Value>);
-JSValueRef fromObject(JSContextRef, HashMap<String, JSValueRef>&&);
+JSValueRef fromObject(JSContextRef, HashMap<String, Protected<JSValueRef>>&&);
 
 JSValueRef toJSValueRef(JSContextRef, const String&, NullOrEmptyString = NullOrEmptyString::NullStringAsEmptyString);
+JSValueRef toJSValueRef(JSContextRef, URL, NullOrEmptyString = NullOrEmptyString::NullStringAsEmptyString);
 
 JSValueRef toWindowObject(JSContextRef, WebFrame&);
 JSValueRef toWindowObject(JSContextRef, WebPage&);
+
+RefPtr<JSON::Value> fromJSValue(JSContextRef, JSValueRef);
+RefPtr<JSON::Value> toJSONValue(JSContextRef, JSValueRef, NullValuePolicy = NullValuePolicy::NotAllowed, ValuePolicy = ValuePolicy::Recursive);
+inline JSValueRef toJSValueRefOrJSNull(JSContextRef context, RefPtr<JSON::Object> value)
+{
+    ASSERT(context);
+    return value ? fromJSON(context, value) : JSValueMakeNull(context);
+}
 
 #ifdef __OBJC__
 

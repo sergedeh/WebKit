@@ -41,7 +41,7 @@ static constexpr auto ALG256 = "A256CBC"_s;
 static const size_t IVSIZE = 16;
 }
 
-static inline bool usagesAreInvalidForCryptoAlgorithmAESCBC(CryptoKeyUsageBitmap usages)
+static inline bool NODELETE usagesAreInvalidForCryptoAlgorithmAESCBC(CryptoKeyUsageBitmap usages)
 {
     return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits);
 }
@@ -103,7 +103,7 @@ void CryptoAlgorithmAESCBC::generateKey(const CryptoAlgorithmParameters& paramet
         return;
     }
 
-    callback(WTF::move(result));
+    callback(result.releaseNonNull());
 }
 
 void CryptoAlgorithmAESCBC::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)

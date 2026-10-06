@@ -561,7 +561,6 @@ class DispatchTableGL : angle::NonCopyable
     PFNGLCLEARBUFFERDATAPROC clearBufferData = nullptr;
     PFNGLCLEARBUFFERSUBDATAPROC clearBufferSubData = nullptr;
     PFNGLCOPYIMAGESUBDATAPROC copyImageSubData = nullptr;
-    PFNGLCOVERAGEMODULATIONNVPROC coverageModulationNV = nullptr;
     PFNGLDEBUGMESSAGECALLBACKPROC debugMessageCallback = nullptr;
     PFNGLDEBUGMESSAGECONTROLPROC debugMessageControl = nullptr;
     PFNGLDEBUGMESSAGEINSERTPROC debugMessageInsert = nullptr;
@@ -845,13 +844,6 @@ class DispatchTableGL : angle::NonCopyable
     void initProcsDesktopGL(const gl::Version &version, const std::set<std::string> &extensions);
     void initProcsGLES(const gl::Version &version, const std::set<std::string> &extensions);
     void initProcsSharedExtensions(const std::set<std::string> &extensions);
-
-#if defined(ANGLE_ENABLE_OPENGL_NULL)
-    void initProcsDesktopGLNULL(const gl::Version &version,
-                                const std::set<std::string> &extensions);
-    void initProcsGLESNULL(const gl::Version &version, const std::set<std::string> &extensions);
-    void initProcsSharedExtensionsNULL(const std::set<std::string> &extensions);
-#endif  // defined(ANGLE_ENABLE_OPENGL_NULL)
 };
 
 }  // namespace rx

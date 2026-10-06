@@ -36,13 +36,14 @@ namespace WebCore {
 
 CSSAtRuleID cssAtRuleID(StringView name)
 {
-    static constexpr SortedArrayMap cssAtRules { std::to_array<std::pair<ComparableLettersLiteral, CSSAtRuleID>>({
+    static constexpr SortedArrayMap cssAtRules { WTF::toArray<std::pair<ComparableLettersLiteral, CSSAtRuleID>>({
         { "-webkit-keyframes"_s,     CSSAtRuleWebkitKeyframes },
         { "annotation"_s,            CSSAtRuleAnnotation },
         { "character-variant"_s,     CSSAtRuleCharacterVariant },
         { "charset"_s,               CSSAtRuleCharset },
         { "container"_s,             CSSAtRuleContainer },
         { "counter-style"_s,         CSSAtRuleCounterStyle },
+        { "environment-map"_s,       CSSAtRuleEnvironmentMap },
         { "font-face"_s,             CSSAtRuleFontFace },
         { "font-feature-values"_s,   CSSAtRuleFontFeatureValues },
         { "font-palette-values"_s,   CSSAtRuleFontPaletteValues },

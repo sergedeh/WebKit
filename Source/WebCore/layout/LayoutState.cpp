@@ -27,12 +27,14 @@
 #include "LayoutState.h"
 
 #include "BlockFormattingState.h"
+#include "Document.h"
 #include "InlineContentCache.h"
 #include "LayoutBox.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutContainingBlockChainIterator.h"
 #include "LayoutElementBox.h"
 #include "LayoutInitialContainingBlock.h"
+#include "RenderBlockFlow.h"
 #include "RenderBox.h"
 #include "Settings.h"
 #include "TableFormattingState.h"
@@ -129,7 +131,7 @@ TableFormattingState& LayoutState::formattingStateForTableFormattingContext(cons
 InlineContentCache& LayoutState::inlineContentCache(const ElementBox& formattingContextRoot)
 {
     ASSERT(formattingContextRoot.establishesInlineFormattingContext());
-    return *m_inlineContentCaches.ensure(formattingContextRoot, [&] { return makeUnique<InlineContentCache>(); }).iterator->value;
+    return protect(downcast<RenderBlockFlow>(*formattingContextRoot.rendererForIntegration()))->ensureInlineContentCache();
 }
 
 BlockFormattingState& LayoutState::ensureBlockFormattingState(const ElementBox& formattingContextRoot)
@@ -150,15 +152,9 @@ void LayoutState::destroyBlockFormattingState(const ElementBox& formattingContex
     m_blockFormattingStates.remove(formattingContextRoot);
 }
 
-void LayoutState::destroyInlineContentCache(const ElementBox& formattingContextRoot)
+void LayoutState::layoutWithFormattingContextForBox(const ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight) const
 {
-    ASSERT(formattingContextRoot.establishesInlineFormattingContext());
-    m_inlineContentCaches.remove(formattingContextRoot);
-}
-
-void LayoutState::layoutWithFormattingContextForBox(const ElementBox& box, std::optional<LayoutUnit> widthConstraint, std::optional<LayoutUnit> heightConstraint) const
-{
-    const_cast<LayoutState&>(*this).m_formattingContextLayoutFunction(box, widthConstraint, heightConstraint, const_cast<LayoutState&>(*this));
+    const_cast<LayoutState&>(*this).m_formattingContextLayoutFunction(box, overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, const_cast<LayoutState&>(*this));
 }
 
 LayoutUnit LayoutState::logicalWidthWithFormattingContextForBox(const ElementBox& box, LayoutIntegration::LogicalWidthType logicalWidthType) const

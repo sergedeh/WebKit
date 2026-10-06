@@ -28,26 +28,44 @@
 #include "AXTreeStoreInlines.h"
 
 #include "AXIsolatedTree.h"
-#include "AXTreeStoreInlines.h"
+#include "AXObjectCache.h"
 
 namespace WebCore {
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 template<>
-void AXTreeStore<AXIsolatedTree>::applyPendingChangesForAllIsolatedTrees()
+WEBCORE_EXPORT void AXTreeStore<AXIsolatedTree>::applyPendingChangesForAllIsolatedTrees()
 {
     AX_ASSERT(!isMainThread());
 
-    Locker locker { AXTreeStore<AXIsolatedTree>::s_storeLock };
-    auto& map = AXTreeStore<AXIsolatedTree>::isolatedTreeMap();
-    for (const auto& axIDToTree : map) {
-        if (RefPtr tree = axIDToTree.value.get()) {
-            // Only applyPendingChanges for trees that aren't about to be destroyed.
-            // When a tree is destroyed, it tries to remove itself from AXTreeStore,
-            // which requires taking s_storeLock, which we hold. This would cause a deadlock.
-            tree->applyPendingChangesUnlessQueuedForDestruction();
+    // Snapshot all live trees while holding the lock, then release it before
+    // calling applyPendingChangesOrTearDown. This is necessary because
+    // applyCommittedChanges can call attachPlatformWrapper ->
+    // crossFrameChildObject -> treeForFrameID, which needs to acquire
+    // s_storeLock. Holding s_storeLock across that call would self-deadlock.
+    Vector<std::pair<AXTreeID, Ref<AXIsolatedTree>>> trees;
+    {
+        Locker locker { AXTreeStore<AXIsolatedTree>::s_storeLock };
+        for (auto& entry : AXTreeStore<AXIsolatedTree>::isolatedTreeMap()) {
+            if (RefPtr tree = entry.value.get())
+                trees.append({ entry.key, tree.releaseNonNull() });
         }
     }
+
+    Vector<AXTreeID> treesToRemove;
+    for (auto& [treeID, tree] : trees) {
+        if (tree->applyPendingChangesOrTearDown() == DidTearDown::Yes)
+            treesToRemove.append(treeID);
+    }
+
+    if (!treesToRemove.isEmpty()) {
+        Locker locker { AXTreeStore<AXIsolatedTree>::s_storeLock };
+        auto& map = AXTreeStore<AXIsolatedTree>::isolatedTreeMap();
+        for (auto& treeID : treesToRemove)
+            map.remove(treeID);
+    }
+
+    AXIsolatedTree::clearAnyTreeNeedsTearDown();
 }
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 

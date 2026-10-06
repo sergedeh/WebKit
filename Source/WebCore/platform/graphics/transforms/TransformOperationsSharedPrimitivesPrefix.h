@@ -43,7 +43,7 @@ public:
     void update(const auto&);
 
     bool hadIncompatibleTransformFunctions() { return m_indexOfFirstMismatch.has_value(); }
-    const Vector<PrimitiveType>& primitives() const { return m_primitives; }
+    const Vector<PrimitiveType>& primitives() const LIFETIME_BOUND { return m_primitives; }
 
 private:
     std::optional<size_t> m_indexOfFirstMismatch;
@@ -58,7 +58,7 @@ void TransformOperationsSharedPrimitivesPrefix<PrimitiveType>::update(const auto
         maxIteration = std::min(*m_indexOfFirstMismatch, maxIteration);
 
     for (size_t i = 0; i < maxIteration; ++i) {
-        auto operation = operations[i];
+        RefPtr operation = operations[i].operator->();
 
         // If we haven't seen an operation at this index before, we can simply use our primitive type.
         if (i >= m_primitives.size()) {

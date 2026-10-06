@@ -52,16 +52,16 @@ private:
 
     struct EntryPretty {
         float accumulatedCost { std::numeric_limits<float>::infinity() };
+        InlineLayoutUnit lastLineWidth { 0 };
         size_t previousBreakIndex { 0 };
         size_t lineIndex { 0 };
-        InlineLayoutUnit lastLineWidth { 0 };
         InlineItemPosition lineEnd { };
         std::optional<PreviousLine> previousLine { };
     };
 
     void initialize();
     void updateCachedWidths();
-    void checkCanConstrainInlineItems();
+    void NODELETE checkCanConstrainInlineItems();
     EntryPretty layoutSingleLineForPretty(InlineItemRange layoutRange, InlineLayoutUnit idealLineWidth, EntryPretty lastValidEntry, size_t previousBreakIndex);
 
     std::optional<Vector<LayoutUnit>> balanceRangeWithLineRequirement(InlineItemRange, InlineLayoutUnit idealLineWidth, size_t numberOfLines, bool isFirstChunk);
@@ -74,7 +74,7 @@ private:
     Vector<size_t> computeBreakOpportunities(InlineItemRange) const;
     Vector<LayoutUnit> computeLineWidthsFromBreaks(InlineItemRange, const Vector<size_t>& breaks, bool isFirstChunk) const;
     InlineLayoutUnit computeMaxTextIndent() const;
-    InlineLayoutUnit computedTextIndent(IsFirstFormattedLine, std::optional<InlineFormattingUtils::LineEndsWithLineBreak> previousLineEndsWithLineBreak) const;
+    InlineLayoutUnit computedTextIndent(IsFirstFormattedLine, std::optional<InlineFormattingUtils::PreviousLineEndsParagraph>) const;
 
     InlineFormattingContext& m_inlineFormattingContext;
     const InlineItemList& m_inlineItemList;
@@ -84,6 +84,7 @@ private:
     Vector<LayoutUnit> m_originalLineConstraints;
     LayoutUnit m_maximumLineWidthConstraint { 0 };
     Vector<bool> m_originalLineEndsWithForcedBreak;
+    Vector<bool> m_originalLineIsBlockContent;
     InlineLayoutUnit m_inlineItemWidthsMax { 0 };
     Vector<InlineLayoutUnit> m_inlineItemWidths;
     Vector<InlineLayoutUnit> m_firstLineStyleInlineItemWidths;
@@ -96,7 +97,7 @@ private:
 
 struct SlidingWidth {
     SlidingWidth(const InlineContentConstrainer&, const InlineItemList&, size_t start, size_t end, bool useFirstLineStyle, bool isFirstLineInChunk);
-    InlineLayoutUnit width();
+    InlineLayoutUnit NODELETE width();
     void advanceStart();
     void advanceStartTo(size_t newStart);
     void advanceEnd();

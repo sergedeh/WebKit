@@ -62,7 +62,7 @@ public:
     static String audioTimePitchAlgorithmForMediaPlayerPitchCorrectionAlgorithm(MediaPlayerPitchCorrectionAlgorithm, bool preservesPitch, double rate);
 
 protected:
-    explicit MediaSessionManagerCocoa(PageIdentifier);
+    explicit MediaSessionManagerCocoa(std::optional<PageIdentifier>);
 
     void updateSessionState() override;
     void beginInterruption(PlatformMediaSession::InterruptionType) final;
@@ -80,14 +80,16 @@ protected:
     void scheduleSessionStatusUpdate() final;
     void updateNowPlayingInfo() final;
     void setNowPlayingUpdateInterval(double) final;
+    double nowPlayingUpdateInterval() final;
     void updateActiveNowPlayingSession(RefPtr<PlatformMediaSessionInterface>);
+    virtual void activeNowPlayingSessionChanged(PlatformMediaSessionInterface*);
     bool shouldUpdateNowPlaying(const NowPlayingInfo&);
 
     void removeSession(PlatformMediaSessionInterface&) override;
     void addSession(PlatformMediaSessionInterface&) override;
     void setCurrentSession(PlatformMediaSessionInterface&) override;
 
-    void sessionWillBeginPlayback(PlatformMediaSessionInterface&, CompletionHandler<void(bool)>&&) override;
+    void sessionDidCompleteAdmission(PlatformMediaSessionInterface&) override;
     void sessionWillEndPlayback(PlatformMediaSessionInterface&, DelayCallingUpdateNowPlaying) override;
     void sessionDidEndRemoteScrubbing(PlatformMediaSessionInterface&) final;
     void clientCharacteristicsChanged(PlatformMediaSessionInterface&, bool) final;
@@ -115,11 +117,11 @@ private:
 
     void possiblyChangeAudioCategory();
 
-    std::optional<bool> supportsSpatialAudioPlaybackForConfiguration(const MediaConfiguration&) final;
-
 #if USE(NOW_PLAYING_ACTIVITY_SUPPRESSION)
     static void updateNowPlayingSuppression(const NowPlayingInfo*);
 #endif
+
+    void adjustNowPlayingUpdateInterval();
 
 #if !RELEASE_LOG_DISABLED
     ASCIILiteral logClassName() const override;
@@ -136,6 +138,7 @@ private:
     Markable<MediaUniqueIdentifier> m_lastUpdatedNowPlayingInfoUniqueIdentifier;
 
     std::optional<NowPlayingInfo> m_nowPlayingInfo;
+    std::optional<NowPlayingCandidateState> m_lastSentNowPlayingCandidateState;
     const std::unique_ptr<NowPlayingManager> m_nowPlayingManager;
     RunLoop::Timer m_nowPlayingUpdateTimer;
     Seconds m_nowPlayingUpdateInterval { 5_s };

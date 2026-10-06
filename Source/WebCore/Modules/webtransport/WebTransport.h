@@ -41,11 +41,13 @@ namespace WebCore {
 
 enum class WebTransportCongestionControl : uint8_t;
 
+class BufferSource;
 class DOMException;
 class DOMPromise;
 class DatagramSource;
 class DeferredPromise;
 class Exception;
+class FetchHeaders;
 class JSDOMGlobalObject;
 class ReadableStream;
 class ReadableStreamSource;
@@ -55,6 +57,7 @@ class WebTransportBidirectionalStreamSource;
 class WebTransportDatagramDuplexStream;
 class WebTransportDatagramsWritable;
 class WebTransportError;
+class WebTransportReceiveStreamByteSource;
 class WebTransportReceiveStreamSource;
 class WebTransportSendGroup;
 class WebTransportSendStream;
@@ -64,6 +67,7 @@ class WorkerWebTransportSession;
 class WritableStream;
 
 struct WebTransportCloseInfo;
+struct WebTransportConnectionInfo;
 struct WebTransportOptions;
 struct WebTransportSendStreamOptions;
 struct WebTransportHash;
@@ -80,41 +84,42 @@ public:
     void deref() const final { WebTransportSessionClient::deref(); }
 
     void getStats(ScriptExecutionContext&, Ref<DeferredPromise>&&);
-    DOMPromise& ready();
-    WebTransportReliabilityMode reliability();
-    WebTransportCongestionControl congestionControl();
-    std::optional<uint16_t> anticipatedConcurrentIncomingUnidirectionalStreams();
-    void setAnticipatedConcurrentIncomingUnidirectionalStreams(std::optional<uint16_t>);
-    std::optional<uint16_t> anticipatedConcurrentIncomingBidirectionalStreams();
-    void setAnticipatedConcurrentIncomingBidirectionalStreams(std::optional<uint16_t>);
-    String& protocol();
-    DOMPromise& closed();
-    DOMPromise& draining();
+    void exportKeyingMaterial(ScriptExecutionContext&, BufferSource&& label, BufferSource&& context, uint32_t outputLength, Ref<DeferredPromise>&&);
+    DOMPromise& NODELETE ready();
+    WebTransportReliabilityMode NODELETE reliability();
+    WebTransportCongestionControl NODELETE congestionControl();
+    std::optional<uint16_t> NODELETE anticipatedConcurrentIncomingUnidirectionalStreams();
+    void NODELETE setAnticipatedConcurrentIncomingUnidirectionalStreams(std::optional<uint16_t>);
+    std::optional<uint16_t> NODELETE anticipatedConcurrentIncomingBidirectionalStreams();
+    void NODELETE setAnticipatedConcurrentIncomingBidirectionalStreams(std::optional<uint16_t>);
+    String& NODELETE protocol();
+    FetchHeaders* NODELETE responseHeaders();
+    DOMPromise& NODELETE closed();
+    DOMPromise& NODELETE draining();
     void close(WebTransportCloseInfo&&);
-    WebTransportDatagramDuplexStream& datagrams();
+    WebTransportDatagramDuplexStream& NODELETE datagrams();
     void createBidirectionalStream(ScriptExecutionContext&, WebTransportSendStreamOptions&&, Ref<DeferredPromise>&&);
-    ReadableStream& incomingBidirectionalStreams();
+    ReadableStream& NODELETE incomingBidirectionalStreams();
     void createUnidirectionalStream(ScriptExecutionContext&, WebTransportSendStreamOptions&&, Ref<DeferredPromise>&&);
-    ReadableStream& incomingUnidirectionalStreams();
+    ReadableStream& NODELETE incomingUnidirectionalStreams();
     Ref<WebTransportSendGroup> createSendGroup();
-    static bool supportsReliableOnly();
+    static bool NODELETE supportsReliableOnly();
 
-    RefPtr<WebTransportSession> session();
+    const Ref<WebTransportSession>& session() const { return m_session; };
     void datagramsWritableCreated(WebTransportDatagramsWritable&);
-    void cleanupContext(ScriptExecutionContext&);
+    void cleanupContext();
 
     void sendStreamClosed(WebTransportStreamIdentifier);
     void receiveStreamClosed(WebTransportStreamIdentifier);
 
 private:
-    WebTransport(ScriptExecutionContext&, JSDOMGlobalObject&, Ref<ReadableStream>&&, Ref<ReadableStream>&&, const WebTransportOptions&, Ref<WebTransportDatagramDuplexStream>&&, Ref<DatagramSource>&&, Ref<WebTransportReceiveStreamSource>&&, Ref<WebTransportBidirectionalStreamSource>&&);
+    WebTransport(ScriptExecutionContext&, JSDOMGlobalObject&, Ref<ReadableStream>&&, Ref<ReadableStream>&&, const WebTransportOptions&, Ref<WebTransportDatagramDuplexStream>&&, Ref<DatagramSource>&&, Ref<WebTransportReceiveStreamSource>&&, Ref<WebTransportBidirectionalStreamSource>&&, URL&&, Vector<KeyValuePair<String, String>>&&);
 
-    void initializeOverHTTP(SocketProvider&, ScriptExecutionContext&, URL&&, WebTransportOptions&&);
     void cleanup(Ref<DOMException>&&, std::optional<WebTransportCloseInfo>&&);
     void cleanupWithSessionError();
 
     // ActiveDOMObject.
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
     void suspend(ReasonForSuspension) final;
 
     void receiveDatagram(std::span<const uint8_t>, bool, std::optional<Exception>&&) final;
@@ -125,8 +130,6 @@ private:
     void streamSendError(WebTransportStreamIdentifier, uint64_t) final;
     void didFail(std::optional<uint32_t>&&, String&&) final;
     void didDrain() final;
-
-    RefPtr<WebTransportSession> protectedSession();
 
     ListHashSet<Ref<WritableStream>> m_sendStreams;
     ListHashSet<Ref<ReadableStream>> m_receiveStreams;
@@ -150,14 +153,15 @@ private:
     std::optional<uint16_t> m_anticipatedConcurrentIncomingUnidirectionalStreams;
     std::optional<uint16_t> m_anticipatedConcurrentIncomingBidirectionalStreams;
     String m_protocol;
+    const RefPtr<FetchHeaders> m_responseHeaders;
     const PromiseAndWrapper m_closed;
     const PromiseAndWrapper m_draining;
     const Ref<WebTransportDatagramDuplexStream> m_datagrams;
-    RefPtr<WebTransportSession> m_session;
+    const Ref<WebTransportSession> m_session;
     const Ref<DatagramSource> m_datagramSource;
     const Ref<WebTransportReceiveStreamSource> m_receiveStreamSource;
     const Ref<WebTransportBidirectionalStreamSource> m_bidirectionalStreamSource;
-    HashMap<WebTransportStreamIdentifier, Ref<WebTransportReceiveStreamSource>> m_readStreamSources;
+    HashMap<WebTransportStreamIdentifier, Ref<WebTransportReceiveStreamByteSource>> m_readStreamSources;
     HashMap<WebTransportStreamIdentifier, Ref<WebTransportSendStreamSink>> m_sendStreamSinks;
     WeakHashSet<WebTransportDatagramsWritable> m_datagramsWritables;
 };

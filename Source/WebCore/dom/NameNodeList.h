@@ -23,7 +23,8 @@
 
 #pragma once
 
-#include <WebCore/LiveNodeList.h>
+#include "LiveNodeList.h"
+#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
@@ -43,3 +44,5 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_LIVENODELIST(NameNodeList)

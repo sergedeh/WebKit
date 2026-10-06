@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include <WebCore/CSSGradient.h>
-#include <WebCore/StyleImage.h>
+#include "CSSGradient.h"
+#include "StyleImage.h"
 
 namespace WebCore {
 
@@ -43,7 +43,7 @@ public:
 
     String customCSSText(const CSS::SerializationContext&) const;
     bool equals(const CSSGradientValue&) const;
-    RefPtr<StyleImage> createStyleImage(const Style::BuilderState&) const;
+    RefPtr<Style::Image> createStyleImage(const Style::BuilderState&) const;
 
     IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>&) const;
 
@@ -62,7 +62,7 @@ private:
     }
 
     CSS::Gradient m_gradient;
-    mutable RefPtr<StyleImage> m_cachedStyleImage;
+    mutable RefPtr<Style::Image> m_cachedStyleImage;
 };
 
 } // namespace WebCore

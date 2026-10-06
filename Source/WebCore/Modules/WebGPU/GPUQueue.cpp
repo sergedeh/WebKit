@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,25 +31,32 @@
 #include "CanvasRenderingContext.h"
 #include "GPUBuffer.h"
 #include "GPUDevice.h"
+#include "GPUExternalTextureDescriptor.h"
 #include "GPUImageCopyExternalImage.h"
 #include "GPUTexture.h"
 #include "GPUTextureDescriptor.h"
+#include "GraphicsContext.h"
 #include "HTMLImageElement.h"
 #include "HTMLVideoElement.h"
 #include "ImageBuffer.h"
 #include "ImageData.h"
+#include "JSDOMConvertNull.h"
 #include "JSDOMPromiseDeferred.h"
 #include "OffscreenCanvas.h"
 #include "PixelBuffer.h"
+#include "PredefinedColorSpace.h"
 #include "SVGImage.h"
+#include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
 #include "VideoFrame.h"
 #include "WebCodecsVideoFrame.h"
-#include "WebGPUDevice.h"
+#include <JavaScriptCore/HeapCellInlines.h>
+#include <array>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/MallocSpan.h>
 
 #if PLATFORM(COCOA)
+#include "ColorSpaceCG.h"
 #include <Accelerate/Accelerate.h>
 #include <wtf/cf/VectorCF.h>
 
@@ -58,10 +65,21 @@
 
 namespace WebCore {
 
-GPUQueue::GPUQueue(Ref<WebGPU::Queue>&& backing, WebGPU::Device& device)
+GPUQueue::GPUQueue(Ref<WebGPU::Queue>&& backing, GPUDevice& device)
     : m_backing(WTF::move(backing))
-    , m_device(&device)
+    , m_device(device)
 {
+}
+
+bool GPUQueue::hasActiveInspectorCanvasCallTracer() const
+{
+    RefPtr device = m_device;
+    return device && device->hasActiveInspectorCanvasCallTracer();
+}
+
+GPUDevice* GPUQueue::device() const
+{
+    return m_device;
 }
 
 String GPUQueue::label() const
@@ -81,10 +99,10 @@ void GPUQueue::submit(Vector<Ref<GPUCommandBuffer>>&& commandBuffers)
     });
     m_backing->submit(WTF::move(result));
 
-    if (RefPtr device = m_device.get()) {
+    if (RefPtr device = m_device) {
         for (Ref commandBuffer : commandBuffers) {
             commandBuffer->setOverrideLabel(commandBuffer->label());
-            commandBuffer->setBacking(device->invalidCommandEncoder(), device->invalidCommandBuffer());
+            commandBuffer->setBacking(device->backing().invalidCommandEncoder(), device->backing().invalidCommandBuffer());
         }
     }
 }
@@ -92,16 +110,17 @@ void GPUQueue::submit(Vector<Ref<GPUCommandBuffer>>&& commandBuffers)
 void GPUQueue::onSubmittedWorkDone(OnSubmittedWorkDonePromise&& promise)
 {
     m_backing->onSubmittedWorkDone([promise = WTF::move(promise)]() mutable {
-        promise.resolve(nullptr);
+        promise.resolve();
     });
 }
 
 static GPUSize64 computeElementSize(const BufferSource& data)
 {
-    return WTF::switchOn(data.variant(),
-        [&](const RefPtr<JSC::ArrayBufferView>& bufferView) {
+    return data.switchOn(
+        [&](const Ref<JSC::ArrayBufferView>& bufferView) {
             return static_cast<GPUSize64>(JSC::elementSize(bufferView->getType()));
-        }, [&](const RefPtr<JSC::ArrayBuffer>&) {
+        },
+        [&](const Ref<JSC::ArrayBuffer>&) {
             return static_cast<GPUSize64>(1);
         }
     );
@@ -116,7 +135,7 @@ ExceptionOr<void> GPUQueue::writeBuffer(
 {
     auto elementSize = computeElementSize(data);
     auto dataOffset = elementSize * optionalDataOffset;
-    auto dataSize = data.length();
+    auto dataSize = data.byteLength();
     auto contentSize = optionalSize.has_value() ? (elementSize * optionalSize.value()) : (dataSize - dataOffset);
 
     if (dataOffset > dataSize || dataOffset + contentSize > dataSize || (contentSize % 4))
@@ -160,9 +179,7 @@ static size_t requiredBytesInCopy(const GPUImageCopyTexture& destination, const 
 {
     using namespace WebGPU;
 
-    auto texture = destination.texture;
-    if (!texture)
-        return 0;
+    Ref texture = destination.texture;
 
     auto aspectSpecificFormat = GPUTexture::aspectSpecificFormat(texture->format(), destination.aspect);
     uint32_t blockWidth = GPUTexture::texelBlockWidth(aspectSpecificFormat);
@@ -252,7 +269,7 @@ void GPUQueue::writeTexture(
 }
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO) && ENABLE(WEB_CODECS)
-static PixelFormat toPixelFormat(GPUTextureFormat textureFormat)
+static PixelFormat NODELETE toPixelFormat(GPUTextureFormat textureFormat)
 {
     switch (textureFormat) {
     case GPUTextureFormat::R8unorm:
@@ -378,7 +395,7 @@ static void getImageBytesFromImageBuffer(const RefPtr<ImageBuffer>& imageBuffer,
     if (!size.width() || !size.height())
         return callback({ }, 0, 0);
 
-    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Unpremultiplied, PixelFormat::RGBA8, DestinationColorSpace::SRGB() }, { { }, size });
+    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Unpremultiplied, PixelFormat::RGBA8, ColorSpace::SRGB() }, { { }, size });
     if (!pixelBuffer)
         return callback({ }, 0, 0);
 
@@ -411,17 +428,17 @@ static void clampDimension(WebGPU::Extent3D& extent3D, size_t dimension, WebGPU:
 
 static void getImageBytesFromVideoFrame(WebGPU::Queue& backing, const RefPtr<VideoFrame>& videoFrame, WebGPU::Extent3D& backingCopySize, NOESCAPE const ImageDataCallback& callback)
 {
-    if (!videoFrame.get())
+    if (!videoFrame)
         return callback({ }, 0, 0);
 
-    RefPtr<NativeImage> nativeImage = backing.getNativeImage(*videoFrame.get());
+    RefPtr<NativeImage> nativeImage = backing.getNativeImage(*videoFrame);
     if (!nativeImage)
         return callback({ }, 0, 0);
 
     RetainPtr platformImage = nativeImage->platformImage();
     if (!platformImage)
         return callback({ }, 0, 0);
-    RetainPtr pixelDataCfData = adoptCF(CGDataProviderCopyData(CGImageGetDataProvider(platformImage.get())));
+    RetainPtr pixelDataCfData = adoptCF(CGDataProviderCopyData(protect(CGImageGetDataProvider(platformImage.get()))));
     if (!pixelDataCfData)
         return callback({ }, 0, 0);
 
@@ -441,8 +458,8 @@ static void getImageBytesFromVideoFrame(WebGPU::Queue& backing, const RefPtr<Vid
         .width = width,
         .rowBytes = byteSpan.size() / height
     };
-    uint8_t permuteMap[4] = { 2, 1, 0, 3 };
-    vImagePermuteChannels_ARGB8888(&bgra, &bgra, permuteMap, kvImageNoFlags);
+    constexpr std::array<uint8_t, 4> permuteMap { 2, 1, 0, 3 };
+    vImagePermuteChannels_ARGB8888(&bgra, &bgra, permuteMap.data(), kvImageNoFlags);
 
     return callback(byteSpan.first(sizeInBytes), width, height);
 }
@@ -477,208 +494,430 @@ static void imageBytesForSource(WebGPU::Queue& backing, const GPUImageCopyExtern
 
     const auto& source = sourceDescriptor.source;
     using ResultType = void;
-    return WTF::switchOn(source, [&](const RefPtr<ImageBitmap>& imageBitmap) -> ResultType {
-        return getImageBytesFromImageBuffer(imageBitmap->buffer(), needsPremultipliedAlpha, callback);
+    return WTF::switchOn(source,
+        [&](const Ref<ImageBitmap>& imageBitmap) -> ResultType {
+            return getImageBytesFromImageBuffer(imageBitmap->buffer(), needsPremultipliedAlpha, callback);
+        },
 #if ENABLE(VIDEO) && ENABLE(WEB_CODECS)
-    }, [&](const RefPtr<ImageData> imageData) -> ResultType {
-        if (!imageData)
-            return callback({ }, 0, 0);
-        callback(imageData->byteArrayPixelBuffer()->bytes(), imageData->width(), imageData->height());
-    }, [&](const RefPtr<HTMLImageElement> imageElement) -> ResultType {
+        [&](const Ref<ImageData>& imageData) -> ResultType {
+            callback(imageData->byteArrayPixelBuffer()->bytes(), imageData->width(), imageData->height());
+        },
+        [&]([[maybe_unused]] const Ref<HTMLImageElement>& imageElement) -> ResultType {
 #if PLATFORM(COCOA)
-        if (!imageElement)
-            return callback({ }, 0, 0);
-        auto* cachedImage = imageElement->cachedImage();
-        if (!cachedImage)
-            return callback({ }, 0, 0);
-        RefPtr image = dynamicDowncast<BitmapImage>(cachedImage->image());
-        RefPtr<NativeImage> nativeImage;
-        bool isSVG = false;
-        if (image)
-            nativeImage = image->nativeImage();
-        else {
-            RefPtr svgImage = dynamicDowncast<SVGImage>(cachedImage->image());
-            RefPtr texturePtr = destination.texture.get();
-            if (texturePtr) {
-                nativeImage = svgImage->nativeImage(FloatSize(texturePtr->width(), texturePtr->height()));
-                isSVG = true;
-            }
-        }
-
-        if (!nativeImage)
-            return callback({ }, 0, 0);
-        RetainPtr platformImage = nativeImage->platformImage();
-        if (!platformImage)
-            return callback({ }, 0, 0);
-        RetainPtr pixelDataCfData = adoptCF(CGDataProviderCopyData(RetainPtr { CGImageGetDataProvider(platformImage.get()) }.get()));
-        if (!pixelDataCfData)
-            return callback({ }, 0, 0);
-
-        auto rawWidth = CGImageGetWidth(platformImage.get());
-        auto rawHeight = CGImageGetHeight(platformImage.get());
-        auto orientedWidth = isSVG ? rawWidth : imageElement->width();
-        auto orientedHeight = isSVG ? rawHeight : imageElement->height();
-
-        if (!orientedWidth || !orientedHeight || !rawWidth || !rawHeight)
-            return callback({ }, 0, 0);
-
-        auto sizeInBytes = rawHeight * CGImageGetBytesPerRow(platformImage.get());
-        auto bitsPerComponent = CGImageGetBitsPerComponent(platformImage.get());
-        auto byteSpan = span(pixelDataCfData.get());
-        Vector<uint8_t> byteSpanBacking;
-        if (bitsPerComponent != 8) {
-            clipTo8bitsPerChannel(byteSpan, bitsPerComponent, byteSpanBacking);
-            byteSpan = byteSpanBacking.span();
-            sizeInBytes = byteSpan.size();
-        }
-
-        auto requiredSize = orientedWidth * orientedHeight * 4;
-        auto alphaInfo = CGImageGetAlphaInfo(platformImage.get());
-        bool channelLayoutIsRGB = false;
-        bool isBGRA = toPixelFormat(destination.texture->format()) == PixelFormat::BGRA8;
-        bool hasAlpha = false;
-        static constexpr std::array channelsSVG1 { 0, 1, 2, 3 };
-        static constexpr std::array channelsSVG2 { 2, 1, 0, 3 };
-        static constexpr std::array channelsRGBX { 0, 1, 2, 3 };
-        static constexpr std::array channelsBGRX { 2, 1, 0, 3 };
-        static constexpr std::array channelsXRGB { 3, 0, 1, 2 };
-        static constexpr std::array channelsXBGR { 3, 2, 1, 0 };
-        auto& channels = [&] -> const std::array<int, 4>& {
-            if (isSVG)
-                return isBGRA ? channelsSVG1 : channelsSVG2;
-
-            switch (alphaInfo) {
-            case kCGImageAlphaPremultipliedLast:  /* For example, premultiplied RGBA */
-            case kCGImageAlphaLast:               /* For example, non-premultiplied RGBA */
-                hasAlpha = true;
-                [[fallthrough]];
-            case kCGImageAlphaNone:               /* For example, RGB. */
-            case kCGImageAlphaNoneSkipLast: {     /* For example, RGBX. */
-                channelLayoutIsRGB = true;
-                return isBGRA ? channelsBGRX : channelsRGBX;
-            }
-            case kCGImageAlphaPremultipliedFirst: /* For example, premultiplied ARGB */
-            case kCGImageAlphaFirst:              /* For example, non-premultiplied ARGB */
-            case kCGImageAlphaOnly:               /* No color data, alpha data only */
-                hasAlpha = true;
-                [[fallthrough]];
-            case kCGImageAlphaNoneSkipFirst: {      /* For example, XRGB. */
-                return isBGRA ? channelsXBGR : channelsXRGB;
-            }
-            }
-        }();
-
-        auto orientation = RefPtr { imageElement->image() }->orientation().orientation();
-        if (sizeInBytes == requiredSize && channelLayoutIsRGB && orientation == ImageOrientation::Orientation::OriginTopLeft)
-            return callback(byteSpan.first(sizeInBytes), rawWidth, rawHeight);
-
-        auto bytesPerRow = CGImageGetBytesPerRow(platformImage.get()) / (bitsPerComponent / 8);
-        Vector<uint8_t> tempBuffer(requiredSize, 255);
-        auto bytesPerPixel = sizeInBytes / (rawWidth * rawHeight);
-        bool flipY = sourceDescriptor.flipY;
-        needsYFlip = false;
-        int direction = flipY ? -1 : 1;
-        auto maxChannelIndex = bytesPerPixel - 1;
-        auto alphaIndex = 0;
-        if (hasAlpha && maxChannelIndex > 0) {
-            --maxChannelIndex;
-            alphaIndex = 1;
-        }
-
-        auto mapDestinationToSource = [&orientation, &rawWidth, &rawHeight](size_t x, size_t y) -> std::pair<size_t, size_t> {
-            switch (orientation) {
-            case ImageOrientation::Orientation::OriginTopRight:
-                return { rawWidth - 1 - x, y };
-            case ImageOrientation::Orientation::OriginBottomRight:
-                return { rawWidth - 1 - x, rawHeight - 1 - y };
-            case ImageOrientation::Orientation::OriginBottomLeft:
-                return { x, rawHeight - 1 - y };
-            case ImageOrientation::Orientation::OriginLeftTop:
-                return { y, x };
-            case ImageOrientation::Orientation::OriginRightTop:
-                return { y, rawHeight - 1 - x };
-            case ImageOrientation::Orientation::OriginRightBottom:
-                return { rawWidth - 1 - y, rawHeight - 1 - x };
-            case ImageOrientation::Orientation::OriginLeftBottom:
-                return { rawWidth - 1 - y, x };
-            default:
-                return { x, y };
-            }
-        };
-
-        for (size_t y = 0, y0 = flipY ? (orientedHeight - 1) : 0; y < orientedHeight; ++y, y0 += direction) {
-            for (size_t x = 0; x < orientedWidth; ++x) {
-                auto [sourceX, sourceY] = mapDestinationToSource(x, y);
-
-                for (size_t c = 0; c < 4; ++c) {
-                    if (channels[c] == 3 && bytesPerPixel < 4)
-                        tempBuffer[y0 * (orientedWidth * 4) + x * 4 + channels[c]] = hasAlpha ? byteSpan[sourceY * bytesPerRow + sourceX * bytesPerPixel + alphaIndex] : 255;
-                    else
-                        tempBuffer[y0 * (orientedWidth * 4) + x * 4 + channels[c]] = byteSpan[sourceY * bytesPerRow + sourceX * bytesPerPixel + std::min<size_t>(maxChannelIndex, c)];
+            RefPtr cachedImage = imageElement->cachedImage();
+            if (!cachedImage)
+                return callback({ }, 0, 0);
+            RefPtr image = dynamicDowncast<BitmapImage>(cachedImage->image());
+            RefPtr<NativeImage> nativeImage;
+            bool isSVG = false;
+            if (image)
+                nativeImage = image->nativeImage();
+            else {
+                RefPtr svgImage = dynamicDowncast<SVGImage>(cachedImage->image());
+                RefPtr texturePtr = destination.texture.get();
+                if (texturePtr) {
+                    nativeImage = svgImage->nativeImage(FloatSize(texturePtr->width(), texturePtr->height()));
+                    isSVG = true;
                 }
             }
+
+            if (!nativeImage)
+                return callback({ }, 0, 0);
+            RetainPtr platformImage = nativeImage->platformImage();
+            if (!platformImage)
+                return callback({ }, 0, 0);
+
+            if (CGColorSpaceGetModel(protect(CGImageGetColorSpace(platformImage.get()))) == kCGColorSpaceModelIndexed) {
+                auto indexedWidth = CGImageGetWidth(platformImage.get());
+                auto indexedHeight = CGImageGetHeight(platformImage.get());
+                RetainPtr bitmapContext = adoptCF(CGBitmapContextCreate(nullptr, indexedWidth, indexedHeight, 8, indexedWidth * 4, sRGBColorSpaceSingleton(), static_cast<uint32_t>(kCGImageAlphaPremultipliedLast) | static_cast<uint32_t>(kCGBitmapByteOrder32Big)));
+                if (!bitmapContext)
+                    return callback({ }, 0, 0);
+
+                CGContextSetBlendMode(bitmapContext.get(), kCGBlendModeCopy);
+                CGContextSetInterpolationQuality(bitmapContext.get(), kCGInterpolationNone);
+                CGContextDrawImage(bitmapContext.get(), CGRectMake(0, 0, indexedWidth, indexedHeight), platformImage.get());
+
+                platformImage = adoptCF(CGBitmapContextCreateImage(bitmapContext.get()));
+                if (!platformImage)
+                    return callback({ }, 0, 0);
+            }
+
+            RetainPtr pixelDataCfData = adoptCF(CGDataProviderCopyData(RetainPtr { CGImageGetDataProvider(platformImage.get()) }.get()));
+            if (!pixelDataCfData)
+                return callback({ }, 0, 0);
+
+            auto rawWidth = CGImageGetWidth(platformImage.get());
+            auto rawHeight = CGImageGetHeight(platformImage.get());
+
+            // We need to account for EXIF orientation which may swap width/height.
+            auto orientation = protect(imageElement->image())->orientation().orientation();
+            bool orientationSwapsDimensions = orientation == ImageOrientation::Orientation::OriginLeftTop
+                || orientation == ImageOrientation::Orientation::OriginRightTop
+                || orientation == ImageOrientation::Orientation::OriginRightBottom
+                || orientation == ImageOrientation::Orientation::OriginLeftBottom;
+
+            auto orientedWidth = orientationSwapsDimensions ? rawHeight : rawWidth;
+            auto orientedHeight = orientationSwapsDimensions ? rawWidth : rawHeight;
+
+            if (!orientedWidth || !orientedHeight || !rawWidth || !rawHeight)
+                return callback({ }, 0, 0);
+
+            auto sizeInBytes = rawHeight * CGImageGetBytesPerRow(platformImage.get());
+            auto bitsPerComponent = CGImageGetBitsPerComponent(platformImage.get());
+            auto byteSpan = span(pixelDataCfData.get());
+            Vector<uint8_t> byteSpanBacking;
+            if (bitsPerComponent != 8) {
+                clipTo8bitsPerChannel(byteSpan, bitsPerComponent, byteSpanBacking);
+                byteSpan = byteSpanBacking.span();
+                sizeInBytes = byteSpan.size();
+            }
+
+            auto requiredSize = orientedWidth * orientedHeight * 4;
+            auto alphaInfo = CGImageGetAlphaInfo(platformImage.get());
+            bool channelLayoutIsRGB = false;
+            bool isBGRA = toPixelFormat(destination.texture->format()) == PixelFormat::BGRA8;
+            bool hasAlpha = false;
+            static constexpr std::array channelsSVG1 { 0, 1, 2, 3 };
+            static constexpr std::array channelsSVG2 { 2, 1, 0, 3 };
+            static constexpr std::array channelsRGBX { 0, 1, 2, 3 };
+            static constexpr std::array channelsBGRX { 2, 1, 0, 3 };
+            static constexpr std::array channelsXRGB { 3, 0, 1, 2 };
+            static constexpr std::array channelsXBGR { 3, 2, 1, 0 };
+            auto& channels = [&] -> const std::array<int, 4>& {
+                if (isSVG)
+                    return isBGRA ? channelsSVG1 : channelsSVG2;
+
+                switch (alphaInfo) {
+                case kCGImageAlphaPremultipliedLast:  /* For example, premultiplied RGBA */
+                case kCGImageAlphaLast:               /* For example, non-premultiplied RGBA */
+                    hasAlpha = true;
+                    [[fallthrough]];
+                case kCGImageAlphaNone:               /* For example, RGB. */
+                case kCGImageAlphaNoneSkipLast: {     /* For example, RGBX. */
+                    channelLayoutIsRGB = true;
+                    return isBGRA ? channelsBGRX : channelsRGBX;
+                }
+                case kCGImageAlphaPremultipliedFirst: /* For example, premultiplied ARGB */
+                case kCGImageAlphaFirst:              /* For example, non-premultiplied ARGB */
+                case kCGImageAlphaOnly:               /* No color data, alpha data only */
+                    hasAlpha = true;
+                    [[fallthrough]];
+                case kCGImageAlphaNoneSkipFirst: {      /* For example, XRGB. */
+                    return isBGRA ? channelsXBGR : channelsXRGB;
+                }
+                }
+            }();
+
+            if (sizeInBytes == requiredSize && channelLayoutIsRGB && orientation == ImageOrientation::Orientation::OriginTopLeft)
+                return callback(byteSpan.first(sizeInBytes), rawWidth, rawHeight);
+
+            auto bytesPerRow = CGImageGetBytesPerRow(platformImage.get()) / (bitsPerComponent / 8);
+            Vector<uint8_t> tempBuffer(FillWith { }, requiredSize, 255);
+            auto bytesPerPixel = sizeInBytes / (rawWidth * rawHeight);
+            bool flipY = sourceDescriptor.flipY;
+            needsYFlip = false;
+            int direction = flipY ? -1 : 1;
+            auto maxChannelIndex = bytesPerPixel - 1;
+            auto alphaIndex = 0;
+            if (hasAlpha && maxChannelIndex > 0) {
+                --maxChannelIndex;
+                alphaIndex = 1;
+            }
+
+            auto mapDestinationToSource = [&orientation, &rawWidth, &rawHeight](size_t x, size_t y) -> std::pair<size_t, size_t> {
+                switch (orientation) {
+                case ImageOrientation::Orientation::OriginTopRight:
+                    return { rawWidth - 1 - x, y };
+                case ImageOrientation::Orientation::OriginBottomRight:
+                    return { rawWidth - 1 - x, rawHeight - 1 - y };
+                case ImageOrientation::Orientation::OriginBottomLeft:
+                    return { x, rawHeight - 1 - y };
+                case ImageOrientation::Orientation::OriginLeftTop:
+                    return { y, x };
+                case ImageOrientation::Orientation::OriginRightTop:
+                    return { y, rawHeight - 1 - x };
+                case ImageOrientation::Orientation::OriginRightBottom:
+                    return { rawWidth - 1 - y, rawHeight - 1 - x };
+                case ImageOrientation::Orientation::OriginLeftBottom:
+                    return { rawWidth - 1 - y, x };
+                default:
+                    return { x, y };
+                }
+            };
+
+            for (size_t y = 0, y0 = flipY ? (orientedHeight - 1) : 0; y < orientedHeight; ++y, y0 += direction) {
+                for (size_t x = 0; x < orientedWidth; ++x) {
+                    auto [sourceX, sourceY] = mapDestinationToSource(x, y);
+
+                    for (size_t c = 0; c < 4; ++c) {
+                        if (channels[c] == 3 && bytesPerPixel < 4)
+                            tempBuffer[y0 * (orientedWidth * 4) + x * 4 + channels[c]] = hasAlpha ? byteSpan[sourceY * bytesPerRow + sourceX * bytesPerPixel + alphaIndex] : 255;
+                        else
+                            tempBuffer[y0 * (orientedWidth * 4) + x * 4 + channels[c]] = byteSpan[sourceY * bytesPerRow + sourceX * bytesPerPixel + std::min<size_t>(maxChannelIndex, c)];
+                    }
+                }
+            }
+            callback(tempBuffer.span(), orientedWidth, orientedHeight);
+#else
+            return callback({ }, 0, 0);
+#endif
+        },
+        [&]([[maybe_unused]] const Ref<HTMLVideoElement>& videoElement) -> ResultType {
+#if PLATFORM(COCOA)
+            if (RefPtr player = videoElement->player(); player && player->isVideoPlayer())
+                return getImageBytesFromVideoFrame(backing, player->videoFrameForCurrentTime(), backingCopySize, callback);
+#endif
+            return callback({ }, 0, 0);
+        },
+        [&]([[maybe_unused]] const Ref<WebCodecsVideoFrame>& webCodecsFrame) -> ResultType {
+#if PLATFORM(COCOA)
+            return getImageBytesFromVideoFrame(backing, webCodecsFrame->internalFrame(), backingCopySize, callback);
+#else
+            return callback({ }, 0, 0);
+#endif
+        },
+#endif
+        [&](const Ref<HTMLCanvasElement>& canvasElement) -> ResultType {
+            return getImageBytesFromImageBuffer(canvasElement->makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect::No), needsPremultipliedAlpha, callback);
         }
-        callback(tempBuffer.span(), orientedWidth, orientedHeight);
-#else
-        UNUSED_PARAM(needsYFlip);
-        UNUSED_PARAM(imageElement);
-        return callback({ }, 0, 0);
-#endif
-    }, [&](const RefPtr<HTMLVideoElement> videoElement) -> ResultType {
-#if PLATFORM(COCOA)
-        if (RefPtr player = videoElement ? videoElement->player() : nullptr; player && player->isVideoPlayer())
-            return getImageBytesFromVideoFrame(backing, player->videoFrameForCurrentTime(), backingCopySize, callback);
-#else
-        UNUSED_PARAM(videoElement);
-#endif
-        return callback({ }, 0, 0);
-    }, [&](const RefPtr<WebCodecsVideoFrame> webCodecsFrame) -> ResultType {
-#if PLATFORM(COCOA)
-        return getImageBytesFromVideoFrame(backing, webCodecsFrame->internalFrame(), backingCopySize, callback);
-#else
-        UNUSED_PARAM(webCodecsFrame);
-        return callback({ }, 0, 0);
-#endif
-#endif
-    }, [&](const RefPtr<HTMLCanvasElement>& canvasElement) -> ResultType {
-        return getImageBytesFromImageBuffer(canvasElement->makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect::No), needsPremultipliedAlpha, callback);
-    }
 #if ENABLE(OFFSCREEN_CANVAS)
-    , [&](const RefPtr<OffscreenCanvas>& offscreenCanvasElement) -> ResultType {
-        return getImageBytesFromImageBuffer(offscreenCanvasElement->makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect::No), needsPremultipliedAlpha, callback);
-    }
+        , [&](const Ref<OffscreenCanvas>& offscreenCanvasElement) -> ResultType {
+            return getImageBytesFromImageBuffer(offscreenCanvasElement->makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect::No), needsPremultipliedAlpha, callback);
+        }
 #endif
     );
 }
 
-static bool isOriginClean(const auto& source, ScriptExecutionContext& context)
+#if HAVE(IOSURFACE)
+// Whether the backing queue can wrap an accelerated ImageBuffer of this pixel format in a texture.
+// Kept in sync with QueueImpl::copyExternalImageToTexture, which does the wrapping: a format it
+// cannot express has to be rejected here, while there is still a CPU path to fall back to.
+static bool isSupportedGPUSourcePixelFormat(PixelFormat pixelFormat)
 {
-    UNUSED_PARAM(context);
-    using ResultType = bool;
-    return WTF::switchOn(source, [&](const RefPtr<ImageBitmap>& imageBitmap) -> ResultType {
-        return imageBitmap->originClean();
-#if ENABLE(VIDEO) && ENABLE(WEB_CODECS)
-    }, [&](const RefPtr<ImageData>) -> ResultType {
+    switch (pixelFormat) {
+    case PixelFormat::RGBX8:
+    case PixelFormat::RGBA8:
+    case PixelFormat::BGRX8:
+    case PixelFormat::BGRA8:
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    case PixelFormat::RGBA16F:
+#endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case PixelFormat::RGBA16:
+#endif
         return true;
-    }, [&](const RefPtr<HTMLImageElement> imageElement) -> ResultType {
-        return imageElement->originClean(*context.protectedSecurityOrigin().get());
-    }, [&](const RefPtr<HTMLVideoElement> videoElement) -> ResultType {
-#if PLATFORM(COCOA)
-        return !videoElement->taintsOrigin(*context.protectedSecurityOrigin().get());
+#if ENABLE(PIXEL_FORMAT_RGB10)
+    case PixelFormat::RGB10:
+#endif
+#if ENABLE(PIXEL_FORMAT_RGB10A8)
+    case PixelFormat::RGB10A8:
+#endif
+#if ENABLE(PIXEL_FORMAT_RGB10) || ENABLE(PIXEL_FORMAT_RGB10A8)
+        // Packed 10-bit surfaces have no single-plane MTLPixelFormat equivalent.
+        return false;
+#endif
+    }
+
+    ASSERT_NOT_REACHED();
+    return false;
+}
+#endif // HAVE(IOSURFACE)
+
+// Returns the source's ImageBuffer when its pixels are already GPU-resident, so that
+// GPUQueue::copyExternalImageToTexture can hand the buffer to the GPU process and let Metal do the
+// copy. Sources which have no ImageBuffer, or whose ImageBuffer is unaccelerated and so has no
+// IOSurface to wrap in an MTLTexture, return null and take the CPU readback path below.
+struct GPUResidentSource {
+    RefPtr<ImageBuffer> imageBuffer;
+    // An ImageBitmap created with premultiplyAlpha: "none", and an ImageData, hold unpremultiplied
+    // pixels. Everything else here was composited by a 2D context, which premultiplies.
+    bool premultipliedAlpha { true };
+    // Set instead of imageBuffer when the source is a video: a decoded frame is not an ImageBuffer,
+    // it is a CVPixelBuffer the GPU process already holds.
+    std::optional<WebGPU::VideoSourceIdentifier> videoSource { };
+
+    bool isGPUResident() const { return imageBuffer || videoSource; }
+};
+
+#if HAVE(IOSURFACE) && ENABLE(VIDEO) && ENABLE(WEB_CODECS)
+// A video's current frame is decoded in the GPU process, so the copy only has to name it: either by
+// the media player which owns it, or - for a WebCodecs frame, which has no player - by the frame
+// itself, which reaches the GPU process through shared memory rather than being read back here. This
+// is the same identification importExternalTexture() performs, and the backing queue resolves it the
+// same way, by wrapping the frame's planes in textures.
+static GPUResidentSource gpuResidentSourceForVideo(const GPUVideoSource& source)
+{
+    auto videoSource = GPUExternalTextureDescriptor::mediaIdentifierForSource(source);
+
+    // A media element which is not backed by a video player, or has not decoded a frame yet, and a
+    // closed WebCodecs frame, all name nothing; there is nothing for either path to copy.
+    if (auto* mediaIdentifier = std::get_if<std::optional<MediaPlayerIdentifier>>(&videoSource); mediaIdentifier && !*mediaIdentifier)
+        return { };
+    if (auto* videoFrame = std::get_if<RefPtr<VideoFrame>>(&videoSource); videoFrame && !*videoFrame)
+        return { };
+
+    // A decoded frame is opaque, so premultiplied and unpremultiplied alpha describe the same
+    // pixels and the backing queue does not have to undo anything.
+    return { nullptr, true, WTF::move(videoSource) };
+}
+
+// An ImageData is a plain byte array, so it has to be moved into an accelerated buffer before Metal
+// can read it. Its channels go in unpremultiplied, exactly as the caller supplied them: 8-bit
+// channels do not survive being premultiplied here and unpremultiplied again in the shader.
+static GPUResidentSource gpuResidentSourceForImageData(ScriptExecutionContext& context, const ImageData& imageData)
+{
+    IntSize size { imageData.width(), imageData.height() };
+    RefPtr imageBuffer = ImageBitmap::createImageBuffer(context, size, toColorSpace(imageData.colorSpace()));
+    if (!imageBuffer)
+        return { };
+
+    imageBuffer->putPixelBuffer(imageData.byteArrayPixelBuffer().get(), { { }, size }, { }, AlphaPremultiplication::Unpremultiplied);
+    return { WTF::move(imageBuffer), false };
+}
+
+// A decoded image's pixels live in CoreGraphics' own decode buffer rather than an IOSurface, so they
+// have to be drawn into an accelerated buffer first. Doing it this way lets CoreGraphics resolve the
+// EXIF orientation, indexed palettes and the image's color space, which is what the CPU path below
+// hand-rolls. Only bitmap images come this way: a vector image has no pixels of its own, and the CPU
+// path rasterizes it at the destination texture's size.
+static GPUResidentSource gpuResidentSourceForImageElement(ScriptExecutionContext& context, HTMLImageElement& imageElement)
+{
+    RefPtr cachedImage = imageElement.cachedImage();
+    if (!cachedImage)
+        return { };
+
+    RefPtr image = dynamicDowncast<BitmapImage>(cachedImage->image());
+    if (!image)
+        return { };
+
+    // The source rectangle is in the image's own coordinate space, the destination in the space the
+    // orientation maps it onto, which is the one the copy's origin and size are expressed in.
+    auto sourceRect = FloatRect { { }, image->size(ImageOrientation::Orientation::None) };
+    auto destinationRect = FloatRect { { }, image->size() };
+    if (sourceRect.isEmpty() || destinationRect.isEmpty())
+        return { };
+
+    // The image is converted into sRGB rather than kept in its own color space, because that is the
+    // space copyExternalImageToTexture's destination is described relative to, and because the
+    // backing queue can only convert between sRGB and Display P3 itself.
+    RefPtr imageBuffer = ImageBitmap::createImageBuffer(context, destinationRect.size(), ColorSpace::SRGB());
+    if (!imageBuffer)
+        return { };
+
+    // CoreGraphics decodes to premultiplied alpha, so compositing over the buffer's transparent
+    // black leaves the decoded channels untouched; the copy is lossless for as long as the
+    // destination wants premultiplied alpha too.
+    imageBuffer->context().drawBitmapImage(*image, destinationRect, sourceRect, { CompositeOperator::Copy, ImageOrientation::Orientation::FromImage });
+    return { WTF::move(imageBuffer) };
+}
+#endif // HAVE(IOSURFACE) && ENABLE(VIDEO) && ENABLE(WEB_CODECS)
+
+static GPUResidentSource imageBufferForSource([[maybe_unused]] ScriptExecutionContext& context, const GPUImageCopyExternalImage::SourceType& source)
+{
+#if !HAVE(IOSURFACE)
+    UNUSED_PARAM(source);
+    return { };
 #else
-        UNUSED_PARAM(videoElement);
+    using ResultType = GPUResidentSource;
+    auto result = WTF::switchOn(source,
+        [&](const Ref<ImageBitmap>& imageBitmap) -> ResultType {
+            // bufferAlphaFormat(), because premultiplyAlpha() is what was asked for, not what is stored.
+            return { imageBitmap->buffer(), imageBitmap->bufferAlphaFormat() == AlphaPremultiplication::Premultiplied };
+        },
+#if ENABLE(VIDEO) && ENABLE(WEB_CODECS)
+        [&](const Ref<ImageData>& imageData) -> ResultType {
+            return gpuResidentSourceForImageData(context, imageData);
+        },
+        [&](const Ref<HTMLImageElement>& imageElement) -> ResultType {
+            return gpuResidentSourceForImageElement(context, imageElement);
+        },
+        [&](const Ref<HTMLVideoElement>& videoElement) -> ResultType {
+            return gpuResidentSourceForVideo(videoElement);
+        },
+        [&](const Ref<WebCodecsVideoFrame>& videoFrame) -> ResultType {
+            return gpuResidentSourceForVideo(videoFrame);
+        },
 #endif
-        return true;
-    }, [&](const RefPtr<WebCodecsVideoFrame>) -> ResultType {
-        return true;
-#endif
-    }, [&](const RefPtr<HTMLCanvasElement>& canvasElement) -> ResultType {
-        return canvasElement->originClean();
-    }
+        [&](const Ref<HTMLCanvasElement>& canvasElement) -> ResultType {
+            return { canvasElement->makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect::No) };
+        }
 #if ENABLE(OFFSCREEN_CANVAS)
-    , [&](const RefPtr<OffscreenCanvas>& offscreenCanvasElement) -> ResultType {
-        return offscreenCanvasElement->originClean();
-    }
+        , [&](const Ref<OffscreenCanvas>& offscreenCanvasElement) -> ResultType {
+            return { offscreenCanvasElement->makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect::No) };
+        }
+#endif
+    );
+
+    // A video source is a CVPixelBuffer rather than an ImageBuffer, so none of the checks below apply
+    // to it: it is not resampled, it has no unpremultiplied channels to preserve, and the backing
+    // queue converts out of its own color space using the matrices the frame itself carries.
+    if (result.videoSource)
+        return result;
+
+    RefPtr imageBuffer = result.imageBuffer;
+    if (!imageBuffer || imageBuffer->renderingMode() != RenderingMode::Accelerated)
+        return { };
+
+    auto size = imageBuffer->truncatedLogicalSize();
+    if (!size.width() || !size.height())
+        return { };
+
+    // The backing queue copies one surface texel per destination texel, so the surface has to be in the
+    // same coordinate space as the copy. A scaled backing store is not, and resampling it is what the
+    // CPU path below already does.
+    if (imageBuffer->resolutionScale() != 1)
+        return { };
+
+    if (!isSupportedGPUSourcePixelFormat(imageBuffer->pixelFormat()))
+        return { };
+
+    // The backing queue converts between sRGB and Display P3 only; anything else would need a color
+    // matrix it does not have.
+    auto colorSpace = imageBuffer->colorSpace();
+    bool isSupportedColorSpace = colorSpace == ColorSpace::SRGB();
+#if ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
+    isSupportedColorSpace = isSupportedColorSpace || colorSpace == ColorSpace::DisplayP3();
+#endif
+    if (!isSupportedColorSpace)
+        return { };
+
+    return result;
+#endif // HAVE(IOSURFACE)
+}
+
+static bool isOriginClean(const auto& source, [[maybe_unused]] ScriptExecutionContext& context)
+{
+    using ResultType = bool;
+    return WTF::switchOn(source,
+        [&](const Ref<ImageBitmap>& imageBitmap) -> ResultType {
+            return imageBitmap->originClean();
+        },
+#if ENABLE(VIDEO) && ENABLE(WEB_CODECS)
+        [&](const Ref<ImageData>&) -> ResultType {
+            return true;
+        },
+        [&](const Ref<HTMLImageElement>& imageElement) -> ResultType {
+            return imageElement->originClean(*protect(context.securityOrigin()));
+        },
+        [&]([[maybe_unused]] const Ref<HTMLVideoElement>& videoElement) -> ResultType {
+#if PLATFORM(COCOA)
+            return !videoElement->taintsOrigin(*protect(context.securityOrigin()));
+#else
+            return true;
+#endif
+        },
+        [&](const Ref<WebCodecsVideoFrame>&) -> ResultType {
+            return true;
+        },
+#endif
+        [&](const Ref<HTMLCanvasElement>& canvasElement) -> ResultType {
+            return canvasElement->originClean();
+        }
+#if ENABLE(OFFSCREEN_CANVAS)
+        , [&](const Ref<OffscreenCanvas>& offscreenCanvasElement) -> ResultType {
+            return offscreenCanvasElement->originClean();
+        }
 #endif
     );
 }
@@ -733,80 +972,86 @@ static bool isStateValid(const auto& source, const std::optional<GPUOrigin2D>& o
     uint32_t horizontalDimension = checkedHorizontalDimension.value();
     uint32_t verticalDimension = checkedVerticalDimension.value();
 
-    return WTF::switchOn(source, [&](const RefPtr<ImageBitmap>& imageBitmap) -> ResultType {
-        if (!imageBitmap->buffer()) {
-            errorCode = ExceptionCode::InvalidStateError;
-            return false;
-        }
-        if (horizontalDimension > imageBitmap->width() || verticalDimension > imageBitmap->height()) {
-            errorCode = ExceptionCode::OperationError;
-            return false;
-        }
-        return true;
+    return WTF::switchOn(source,
+        [&](const Ref<ImageBitmap>& imageBitmap) -> ResultType {
+            if (!imageBitmap->buffer()) {
+                errorCode = ExceptionCode::InvalidStateError;
+                return false;
+            }
+            if (horizontalDimension > imageBitmap->width() || verticalDimension > imageBitmap->height()) {
+                errorCode = ExceptionCode::OperationError;
+                return false;
+            }
+            return true;
+        },
 #if ENABLE(VIDEO) && ENABLE(WEB_CODECS)
-    }, [&](const RefPtr<ImageData> imageData) -> ResultType {
-        auto width = imageData->width();
-        auto height = imageData->height();
-        if (width < 0 || height < 0 || horizontalDimension > static_cast<uint32_t>(width) || verticalDimension > static_cast<uint32_t>(height)) {
-            errorCode = ExceptionCode::OperationError;
-            return false;
-        }
-        auto size = width * height;
-        if (!size) {
-            errorCode = ExceptionCode::InvalidStateError;
-            return false;
-        }
-        return true;
-    }, [&](const RefPtr<HTMLImageElement> imageElement) -> ResultType {
-        if (!imageElement->cachedImage()) {
-            errorCode = ExceptionCode::InvalidStateError;
-            return false;
-        }
-        if (horizontalDimension > imageElement->width() || verticalDimension > imageElement->height()) {
-            errorCode = ExceptionCode::OperationError;
-            return false;
-        }
-        return true;
-    }, [&](const RefPtr<HTMLVideoElement>) -> ResultType {
-        return true;
-    }, [&](const RefPtr<WebCodecsVideoFrame>) -> ResultType {
-        return true;
+        [&](const Ref<ImageData>& imageData) -> ResultType {
+            auto width = imageData->width();
+            auto height = imageData->height();
+            if (width < 0 || height < 0 || horizontalDimension > static_cast<uint32_t>(width) || verticalDimension > static_cast<uint32_t>(height)) {
+                errorCode = ExceptionCode::OperationError;
+                return false;
+            }
+            auto size = width * height;
+            if (!size) {
+                errorCode = ExceptionCode::InvalidStateError;
+                return false;
+            }
+            return true;
+        },
+        [&](const Ref<HTMLImageElement>& imageElement) -> ResultType {
+            if (!imageElement->cachedImage()) {
+                errorCode = ExceptionCode::InvalidStateError;
+                return false;
+            }
+            if (horizontalDimension > imageElement->width() || verticalDimension > imageElement->height()) {
+                errorCode = ExceptionCode::OperationError;
+                return false;
+            }
+            return true;
+        },
+        [&](const Ref<HTMLVideoElement>&) -> ResultType {
+            return true;
+        },
+        [&](const Ref<WebCodecsVideoFrame>&) -> ResultType {
+            return true;
+        },
 #endif
-    }, [&](const RefPtr<HTMLCanvasElement>& canvas) -> ResultType {
-        if (!canvas->renderingContext()) {
-            errorCode = ExceptionCode::OperationError;
-            return false;
+        [&](const Ref<HTMLCanvasElement>& canvas) -> ResultType {
+            if (!canvas->renderingContext()) {
+                errorCode = ExceptionCode::OperationError;
+                return false;
+            }
+            if (canvas->renderingContext()->isPlaceholder()) {
+                errorCode = ExceptionCode::InvalidStateError;
+                return false;
+            }
+            if (horizontalDimension > canvas->width() || verticalDimension > canvas->height()) {
+                errorCode = ExceptionCode::OperationError;
+                return false;
+            }
+            return true;
         }
-        if (canvas->renderingContext()->isPlaceholder()) {
-            errorCode = ExceptionCode::InvalidStateError;
-            return false;
-        }
-        if (horizontalDimension > canvas->width() || verticalDimension > canvas->height()) {
-            errorCode = ExceptionCode::OperationError;
-            return false;
-        }
-        return true;
-    }
 #if ENABLE(OFFSCREEN_CANVAS)
-    , [&](const RefPtr<OffscreenCanvas>& offscreenCanvas) -> ResultType {
-        if (offscreenCanvas->isDetached()) {
-            errorCode = ExceptionCode::InvalidStateError;
-            return false;
+        , [&](const Ref<OffscreenCanvas>& offscreenCanvas) -> ResultType {
+            if (offscreenCanvas->isDetached()) {
+                errorCode = ExceptionCode::InvalidStateError;
+                return false;
+            }
+            if (!offscreenCanvas->renderingContext()) {
+                errorCode = ExceptionCode::OperationError;
+                return false;
+            }
+            if (offscreenCanvas->renderingContext()->isPlaceholder()) {
+                errorCode = ExceptionCode::InvalidStateError;
+                return false;
+            }
+            if (horizontalDimension > offscreenCanvas->width() || verticalDimension > offscreenCanvas->height()) {
+                errorCode = ExceptionCode::OperationError;
+                return false;
+            }
+            return true;
         }
-        if (!offscreenCanvas->renderingContext()) {
-            errorCode = ExceptionCode::OperationError;
-            return false;
-        }
-        if (offscreenCanvas->renderingContext()->isPlaceholder()) {
-            errorCode = ExceptionCode::InvalidStateError;
-            return false;
-        }
-        if (horizontalDimension > offscreenCanvas->width() || verticalDimension > offscreenCanvas->height()) {
-            errorCode = ExceptionCode::OperationError;
-            return false;
-        }
-        return true;
-    }
 #endif
     );
 }
@@ -814,7 +1059,7 @@ static bool isStateValid(const auto& source, const std::optional<GPUOrigin2D>& o
 // FIXME: https://bugs.webkit.org/show_bug.cgi?id=263692 - this code should be removed, it is to unblock
 // compiler <-> pipeline dependencies
 #if PLATFORM(COCOA)
-static uint32_t convertRGBA8888ToRGB10A2(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+static uint32_t NODELETE convertRGBA8888ToRGB10A2(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
     uint32_t r0 = (static_cast<uint32_t>(r) << 2) | (static_cast<uint32_t>(r) >> 6);
     uint32_t g0 = (static_cast<uint32_t>(g) << 2) | (static_cast<uint32_t>(g) >> 6);
@@ -1143,15 +1388,34 @@ ExceptionOr<void> GPUQueue::copyExternalImageToTexture(ScriptExecutionContext& c
     if (!isOriginClean(source.source, context))
         return Exception { ExceptionCode::SecurityError, "GPUQueue.copyExternalImageToTexture: Cross origin external images are not allowed in WebGPU"_s };
 
+    auto backingCopySize = convertToBacking(copySize);
+
+    // When the source is already GPU-resident, hand it to the backing queue: the copy is performed by
+    // wrapping the source's IOSurface, or the planes of a decoded video frame, in MTLTextures and
+    // rendering into the destination texture, so no pixels are read back and no format conversion
+    // happens on the CPU.
+    if (auto gpuResidentSource = imageBufferForSource(context, source.source); gpuResidentSource.isGPUResident()) {
+        // Drawing into a canvas source is still outstanding here: a 2D context hands back the buffer
+        // it is drawing into untouched, and WebGLRenderingContextBase::surfaceBufferToImageBuffer
+        // paints the drawing buffer into it *after* flushing it. The backing queue wraps the buffer's
+        // IOSurface rather than reading its pixels, so unlike the readback below nothing else forces
+        // those commands out. RemoteQueueProxy flushes again for the same reason, because there the
+        // source travels by identifier on a stream unordered against the rendering backend's; this
+        // call is what covers the in-process backing, which has no proxy to do it.
+        if (RefPtr sourceImageBuffer = gpuResidentSource.imageBuffer)
+            sourceImageBuffer->flushDrawingContext();
+        m_backing->copyExternalImageToTexture(source.convertToBacking(WTF::move(gpuResidentSource.imageBuffer), gpuResidentSource.premultipliedAlpha, WTF::move(gpuResidentSource.videoSource)), destination.convertToBacking(), backingCopySize);
+        return { };
+    }
+
     bool callbackScopeIsSafe { true };
     bool needsYFlip = source.flipY;
     bool needsPremultipliedAlpha = destination.premultipliedAlpha;
-    auto backingCopySize = convertToBacking(copySize);
     imageBytesForSource(m_backing.get(), source, destination, needsYFlip, needsPremultipliedAlpha, backingCopySize, [&](std::span<const uint8_t> imageBytes, size_t columns, size_t rows) {
         RELEASE_ASSERT(callbackScopeIsSafe);
         auto destinationTexture = destination.texture;
         auto sizeInBytes = imageBytes.size();
-        if (!imageBytes.data() || !sizeInBytes || !destinationTexture || (imageBytes.size() % 4))
+        if (!imageBytes.data() || !sizeInBytes || (imageBytes.size() % 4))
             return;
 
         bool supportedFormat;
@@ -1181,8 +1445,13 @@ ExceptionOr<void> GPUQueue::copyExternalImageToTexture(ScriptExecutionContext& c
 
         auto copyDestination = destination.convertToBacking();
 
-        // FIXME: https://bugs.webkit.org/show_bug.cgi?id=263692 - this code should be removed once copyExternalImageToTexture
-        // is implemented in the GPU process
+        // FIXME: https://bugs.webkit.org/show_bug.cgi?id=263692 - this code should be removed once
+        // every source takes the GPU process path above. The sources which still land here are the
+        // ones it turns away: an unaccelerated or scaled ImageBuffer, a 10-bit packed surface, a
+        // color space beyond sRGB and Display P3, a vector image, and every source at all on a port
+        // without IOSurface. Until then a request the CPU converter cannot satisfy is made to fail
+        // Metal validation, so that the destination texture is left untouched rather than written
+        // with the wrong bytes.
         if (!supportedFormat || !(destinationTexture->usage() & GPUTextureUsage::RENDER_ATTACHMENT))
             copyDestination.mipLevel = INT_MAX;
 
@@ -1191,6 +1460,11 @@ ExceptionOr<void> GPUQueue::copyExternalImageToTexture(ScriptExecutionContext& c
     callbackScopeIsSafe = false;
 
     return { };
+}
+
+ExceptionOr<void> GPUQueue::drawElementImageToTexture(const GPUDrawElementImageSource&, const GPUDrawElementImageDestination&)
+{
+    return Exception { ExceptionCode::InvalidStateError };
 }
 
 } // namespace WebCore

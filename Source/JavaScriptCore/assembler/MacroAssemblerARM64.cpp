@@ -38,6 +38,10 @@
 #include <sys/sysctl.h>
 #endif
 
+#if OS(WINDOWS)
+#include <processthreadsapi.h>
+#endif
+
 #if OS(LINUX)
 #include <asm/hwcap.h>
 #if __has_include(<sys/auxv.h>)
@@ -329,7 +333,11 @@ static_assert(JIT_PROBE_STACK_INITIALIZATION_FUNCTION_PTR_TAG == JITProbeStackIn
 // See https://bugs.webkit.org/show_bug.cgi?id=175512 for details.
 __asm__(
     ".text" "\n"
+#if OS(WINDOWS)
+    ".align 4" "\n"
+#else
     ".balign 16" "\n"
+#endif
     ".globl " SYMBOL_STRING(ctiMasmProbeTrampoline) "\n"
     HIDE_SYMBOL(ctiMasmProbeTrampoline) "\n"
     SYMBOL_STRING(ctiMasmProbeTrampoline) ":" "\n"
@@ -576,7 +584,9 @@ __asm__(
 #else
     "ret" "\n"
 #endif
+#if !OS(WINDOWS)
     ".previous" "\n"
+#endif
 );
 
 void MacroAssembler::probe(Probe::Function function, void* arg)
@@ -632,6 +642,14 @@ void MacroAssemblerARM64::collectCPUFeatures()
 #define HWCAP_JSCVT (1 << 13)
 #endif
 
+#if !defined(HWCAP_SHA3)
+#define HWCAP_SHA3 (1 << 17)
+#endif
+
+#if !defined(HWCAP_ASIMDDP)
+#define HWCAP_ASIMDDP (1 << 20)
+#endif
+
 #if !defined(HWCAP2_FRINT)
 #define HWCAP2_FRINT (1 << 8)
 #endif
@@ -640,6 +658,8 @@ void MacroAssemblerARM64::collectCPUFeatures()
         s_jscvtCheckState = (hwcaps & HWCAP_JSCVT) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
         s_float16CheckState = ((hwcaps & HWCAP_FPHP) && (hwcaps & HWCAP_ASIMDHP)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
         s_frintCheckState = (hwcaps2 & HWCAP2_FRINT) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+        s_sha3CheckState = (hwcaps & HWCAP_SHA3) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+        s_dotProdCheckState = (hwcaps & HWCAP_ASIMDDP) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
     });
 #endif
 
@@ -657,6 +677,36 @@ void MacroAssemblerARM64::collectCPUFeatures()
         s_jscvtCheckState = checkCPU("hw.optional.arm.FEAT_JSCVT");
         s_float16CheckState = checkCPU("hw.optional.arm.FEAT_FP16");
         s_frintCheckState = checkCPU("hw.optional.arm.FEAT_FRINTTS");
+        s_sha3CheckState = checkCPU("hw.optional.arm.FEAT_SHA3");
+        s_dotProdCheckState = checkCPU("hw.optional.arm.FEAT_DotProd");
+    });
+#endif
+
+#if OS(WINDOWS)
+    static std::once_flag onceKey;
+    std::call_once(onceKey, [] {
+        // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent
+#if !defined(PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE)
+#define PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE 34
+#endif
+#if !defined(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)
+#define PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE 43
+#endif
+#if !defined(PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE)
+#define PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE 44
+#endif
+#if !defined(PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE)
+#define PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE 64
+#endif
+#if !defined(PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE)
+#define PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE 67
+#endif
+        s_lseCheckState = IsProcessorFeaturePresent(PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+        s_jscvtCheckState = IsProcessorFeaturePresent(PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+        s_float16CheckState = IsProcessorFeaturePresent(PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+        s_sha3CheckState = IsProcessorFeaturePresent(PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+        s_dotProdCheckState = IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+        // FRINT has no Windows PF_ constant for now.
     });
 #endif
 
@@ -691,12 +741,22 @@ void MacroAssemblerARM64::collectCPUFeatures()
         s_frintCheckState = CPUIDCheckState::Clear;
 #endif
     }
+
+    if (s_sha3CheckState == CPUIDCheckState::NotChecked) {
+#if HAVE(SHA3_INSTRUCTION)
+        s_sha3CheckState = CPUIDCheckState::Set;
+#else
+        s_sha3CheckState = CPUIDCheckState::Clear;
+#endif
+    }
 }
 
 MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_lseCheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_jscvtCheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_float16CheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_frintCheckState = CPUIDCheckState::NotChecked;
+MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_sha3CheckState = CPUIDCheckState::NotChecked;
+MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_dotProdCheckState = CPUIDCheckState::NotChecked;
 
 } // namespace JSC
 

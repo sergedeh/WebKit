@@ -7,10 +7,7 @@
 //   Test EXT_blend_func_extended
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -31,17 +28,17 @@ template <int factor, int index>
 float Weight(const float /*dst*/[4], const float src[4], const float src1[4])
 {
     if (factor == GL_SRC_COLOR)
-        return src[index];
+        return ANGLE_UNSAFE_TODO(src[index]);
     if (factor == GL_SRC_ALPHA)
-        return src[3];
+        return ANGLE_UNSAFE_TODO(src[3]);
     if (factor == GL_SRC1_COLOR_EXT)
-        return src1[index];
+        return ANGLE_UNSAFE_TODO(src1[index]);
     if (factor == GL_SRC1_ALPHA_EXT)
-        return src1[3];
+        return ANGLE_UNSAFE_TODO(src1[3]);
     if (factor == GL_ONE_MINUS_SRC1_COLOR_EXT)
-        return 1.0f - src1[index];
+        return 1.0f - ANGLE_UNSAFE_TODO(src1[index]);
     if (factor == GL_ONE_MINUS_SRC1_ALPHA_EXT)
-        return 1.0f - src1[3];
+        return 1.0f - ANGLE_UNSAFE_TODO(src1[3]);
     return 0.0f;
 }
 
@@ -59,9 +56,12 @@ void BlendEquationFuncAdd(const float dst[4],
 {
     float r[4];
     r[0] = src[0] * Weight<RGBs, 0>(dst, src, src1) + dst[0] * Weight<RGBd, 0>(dst, src, src1);
-    r[1] = src[1] * Weight<RGBs, 1>(dst, src, src1) + dst[1] * Weight<RGBd, 1>(dst, src, src1);
-    r[2] = src[2] * Weight<RGBs, 2>(dst, src, src1) + dst[2] * Weight<RGBd, 2>(dst, src, src1);
-    r[3] = src[3] * Weight<As, 3>(dst, src, src1) + dst[3] * Weight<Ad, 3>(dst, src, src1);
+    r[1] = ANGLE_UNSAFE_TODO(src[1]) * Weight<RGBs, 1>(dst, src, src1) +
+           ANGLE_UNSAFE_TODO(dst[1]) * Weight<RGBd, 1>(dst, src, src1);
+    r[2] = ANGLE_UNSAFE_TODO(src[2]) * Weight<RGBs, 2>(dst, src, src1) +
+           ANGLE_UNSAFE_TODO(dst[2]) * Weight<RGBd, 2>(dst, src, src1);
+    r[3] = ANGLE_UNSAFE_TODO(src[3]) * Weight<As, 3>(dst, src, src1) +
+           ANGLE_UNSAFE_TODO(dst[3]) * Weight<Ad, 3>(dst, src, src1);
 
     result->R = ScaleChannel(r[0]);
     result->G = ScaleChannel(r[1]);
@@ -469,17 +469,16 @@ TEST_P(EXTBlendFuncExtendedDrawTest, FragColor)
 {
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_blend_func_extended"));
 
-    const char *kFragColorShader =
-        "#extension GL_EXT_blend_func_extended : require\n"
-        "precision mediump float;\n"
-        "uniform vec4 src0;\n"
-        "uniform vec4 src1;\n"
-        "void main() {\n"
-        "  gl_FragColor = src0;\n"
-        "  gl_SecondaryFragColorEXT = src1;\n"
-        "}\n";
+    constexpr char kFS[] = R"(#extension GL_EXT_blend_func_extended : require
+precision mediump float;
+uniform vec4 src0;
+uniform vec4 src1;
+void main() {
+  gl_FragColor = src0;
+  gl_SecondaryFragColorEXT = src1;
+})";
 
-    makeProgram(essl1_shaders::vs::Simple(), kFragColorShader);
+    makeProgram(essl1_shaders::vs::Simple(), kFS);
 
     drawTest();
 }
@@ -490,18 +489,17 @@ TEST_P(EXTBlendFuncExtendedDrawTest, FragColorBroadcast)
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_blend_func_extended"));
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_draw_buffers"));
 
-    const char *kFragColorShader =
-        "#extension GL_EXT_blend_func_extended : require\n"
-        "#extension GL_EXT_draw_buffers : require\n"
-        "precision mediump float;\n"
-        "uniform vec4 src0;\n"
-        "uniform vec4 src1;\n"
-        "void main() {\n"
-        "  gl_FragColor = src0;\n"
-        "  gl_SecondaryFragColorEXT = src1;\n"
-        "}\n";
+    constexpr char kFS[] = R"(#extension GL_EXT_blend_func_extended : require
+#extension GL_EXT_draw_buffers : require
+precision mediump float;
+uniform vec4 src0;
+uniform vec4 src1;
+void main() {
+  gl_FragColor = src0;
+  gl_SecondaryFragColorEXT = src1;
+})";
 
-    makeProgram(essl1_shaders::vs::Simple(), kFragColorShader);
+    makeProgram(essl1_shaders::vs::Simple(), kFS);
 
     drawTest();
 }
@@ -512,19 +510,64 @@ TEST_P(EXTBlendFuncExtendedDrawTest, FragData)
 {
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_blend_func_extended"));
 
-    const char *kFragColorShader =
-        "#extension GL_EXT_blend_func_extended : require\n"
-        "precision mediump float;\n"
-        "uniform vec4 src0;\n"
-        "uniform vec4 src1;\n"
-        "void main() {\n"
-        "  gl_FragData[0] = src0;\n"
-        "  gl_SecondaryFragDataEXT[0] = src1;\n"
-        "}\n";
+    constexpr char kFS[] = R"(#extension GL_EXT_blend_func_extended : require
+precision mediump float;
+uniform vec4 src0;
+uniform vec4 src1;
+void main() {
+  gl_FragData[0] = src0;
+  gl_SecondaryFragDataEXT[0] = src1;
+})";
 
-    makeProgram(essl1_shaders::vs::Simple(), kFragColorShader);
+    makeProgram(essl1_shaders::vs::Simple(), kFS);
 
     drawTest();
+}
+
+// Test that gl_MaxDualSourceDrawBuffersEXT is defined in ESSL 100 shaders.
+TEST_P(EXTBlendFuncExtendedDrawTest, MaxDualSourceDrawBuffers)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_blend_func_extended"));
+
+    constexpr char kFS[] = R"(#extension GL_EXT_blend_func_extended : require
+precision mediump float;
+void main() {
+  gl_FragColor = vec4(gl_MaxDualSourceDrawBuffersEXT / 10, 0, 0, 1);
+})";
+
+    GLint maxDualSourceDrawBuffers;
+    glGetIntegerv(GL_MAX_DUAL_SOURCE_DRAW_BUFFERS_EXT, &maxDualSourceDrawBuffers);
+    ASSERT_GE(maxDualSourceDrawBuffers, 1);
+
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.0);
+    EXPECT_PIXEL_COLOR_NEAR(
+        0, 0, GLColor(static_cast<uint32_t>(maxDualSourceDrawBuffers / 10.0), 0, 0, 255), 1);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that gl_MaxDualSourceDrawBuffersEXT is defined in ESSL 300 shaders.
+TEST_P(EXTBlendFuncExtendedDrawTestES3, MaxDualSourceDrawBuffers)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_blend_func_extended"));
+
+    constexpr char kFS[] = R"(#version 300 es
+#extension GL_EXT_blend_func_extended : require
+precision mediump float;
+layout(location = 0) out mediump vec4 fragColor;
+void main() {
+  fragColor = vec4(gl_MaxDualSourceDrawBuffersEXT / 10, 0, 0, 1);
+})";
+
+    GLint maxDualSourceDrawBuffers;
+    glGetIntegerv(GL_MAX_DUAL_SOURCE_DRAW_BUFFERS_EXT, &maxDualSourceDrawBuffers);
+    ASSERT_GE(maxDualSourceDrawBuffers, 1);
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.0);
+    EXPECT_PIXEL_COLOR_NEAR(
+        0, 0, GLColor(static_cast<uint32_t>(maxDualSourceDrawBuffers / 10.0), 0, 0, 255), 1);
+    ASSERT_GL_NO_ERROR();
 }
 
 // Test that min/max blending works correctly with SRC1 factors.
@@ -784,7 +827,9 @@ void main() {
         EXPECT_EQ(0, glGetFragDataIndexEXT(mProgram, "FragData"));
         EXPECT_EQ(kFragData0Location, glGetFragDataLocation(mProgram, "FragData[0]"));
         EXPECT_EQ(0, glGetFragDataIndexEXT(mProgram, "FragData[0]"));
-        EXPECT_EQ(kFragData1Location, glGetFragDataLocation(mProgram, "FragData[1]"));
+        // Binding FragData[1] to kFragData1Location ignored because indexing is ignored.
+        // It receives the consecutive location following FragData[0] (kFragData0Location + 1).
+        EXPECT_EQ(kFragData0Location + 1, glGetFragDataLocation(mProgram, "FragData[1]"));
         EXPECT_EQ(0, glGetFragDataIndexEXT(mProgram, "FragData[1]"));
         // Index bigger than the GLSL variable array length does not find anything.
         EXPECT_EQ(-1, glGetFragDataLocation(mProgram, "FragData[3]"));
@@ -824,6 +869,40 @@ void main() {
     glBindFragDataLocationEXT(mProgram, 0, "FragData");
     glBindFragDataLocationIndexedEXT(mProgram, 0, 1, "SecondaryFragData");
     LinkProgram();
+}
+
+// Test that glBindFragDataLocationEXT and glBindFragDataLocationIndexedEXT ignores names with '['
+// unless ending with '[0]'.
+TEST_P(EXTBlendFuncExtendedDrawTestES3, BindFragDataLocationBracketReject)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_blend_func_extended"));
+
+    constexpr char kFragDataShader[] = R"(#version 300 es
+#extension GL_EXT_blend_func_extended : require
+precision mediump float;
+uniform vec4 src;
+uniform vec4 src1;
+out vec4 FragData;
+out vec4 SecondaryFragData;
+void main() {
+    FragData = src;
+    SecondaryFragData = src1;
+})";
+
+    mProgram = CompileProgram(essl3_shaders::vs::Simple(), kFragDataShader, [](GLuint program) {
+        glBindFragDataLocationEXT(program, 0, "FragData");
+        // Bind invalid names with [1] suffix or multidimensional indices (should be ignored)
+        glBindFragDataLocationEXT(program, 2, "FragData[1]");
+        glBindFragDataLocationIndexedEXT(program, 0, 1, "SecondaryFragData[1]");
+        glBindFragDataLocationEXT(program, 2, "FragData[1][0]");
+        glBindFragDataLocationIndexedEXT(program, 0, 1, "SecondaryFragData[1][0]");
+    });
+
+    LinkProgram();
+
+    EXPECT_EQ(0, glGetFragDataLocation(mProgram, "FragData"));
+    EXPECT_EQ(-1, glGetFragDataLocation(mProgram, "FragData[1]"));
+    EXPECT_EQ(-1, glGetFragDataLocation(mProgram, "FragData[1][0]"));
 }
 
 // Test an ESSL 3.00 program with a link-time fragment output location conflict.

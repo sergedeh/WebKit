@@ -45,16 +45,16 @@ public:
     static RefPtr<PolyProtoAccessChain> tryCreate(JSGlobalObject*, JSCell* base, CacheableIdentifier, const PropertySlot&);
     static RefPtr<PolyProtoAccessChain> tryCreate(JSGlobalObject*, JSCell* base, CacheableIdentifier, JSObject* target);
 
-    const FixedVector<StructureID>& chain() const { return m_chain; }
+    const FixedVector<StructureID>& chain() const LIFETIME_BOUND { return m_chain; }
 
     void dump(Structure* baseStructure, PrintStream& out) const;
 
-    bool operator==(const PolyProtoAccessChain&) const;
+    bool NODELETE operator==(const PolyProtoAccessChain&) const;
 
-    bool needImpurePropertyWatchpoint(VM&) const;
+    bool NODELETE needImpurePropertyWatchpoint(VM&) const;
 
     template <typename Func>
-    void forEach(VM&, Structure* baseStructure, const Func& func) const
+    void forEach(VM&, Structure* baseStructure, NOESCAPE const Func& func) const
     {
         bool atEnd = !m_chain.size();
         func(baseStructure, atEnd);

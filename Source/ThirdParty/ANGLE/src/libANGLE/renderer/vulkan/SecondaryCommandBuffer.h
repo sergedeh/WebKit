@@ -11,10 +11,9 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_SECONDARYCOMMANDBUFFERVK_H_
 #define LIBANGLE_RENDERER_VULKAN_SECONDARYCOMMANDBUFFERVK_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
+#include "common/unsafe_buffers.h"
 #include "common/vulkan/vk_headers.h"
 #include "libANGLE/renderer/vulkan/AllocatorHelperPool.h"
 #include "libANGLE/renderer/vulkan/vk_command_buffer_utils.h"
@@ -52,6 +51,7 @@ enum class CommandID : uint16_t
     BindGraphicsPipeline,
     BindIndexBuffer,
     BindIndexBuffer2,
+    BindTileMemory,
     BindTransformFeedbackBuffers,
     BindVertexBuffers,
     BindVertexBuffers2,
@@ -110,6 +110,7 @@ enum class CommandID : uint16_t
     SetLineWidth,
     SetLogicOp,
     SetPrimitiveRestartEnable,
+    SetPrimitiveTopology,
     SetRasterizerDiscardEnable,
     SetScissor,
     SetStencilCompareMask,
@@ -245,6 +246,14 @@ struct BufferBarrier2Params
     VkBufferMemoryBarrier2 bufferMemoryBarrier2;
 };
 VERIFY_8_BYTE_ALIGNMENT(BufferBarrier2Params)
+
+struct BindTileMemoryParams
+{
+    CommandHeader header;
+    uint32_t padding;
+    VkDeviceMemory tileMemory;
+};
+VERIFY_8_BYTE_ALIGNMENT(BindTileMemoryParams)
 
 struct ClearAttachmentsParams
 {
@@ -610,7 +619,7 @@ struct SetBlendConstantsParams
     CommandHeader header;
 
     uint32_t padding;
-    float blendConstants[4];
+    std::array<float, 4> blendConstants;
 };
 VERIFY_8_BYTE_ALIGNMENT(SetBlendConstantsParams)
 
@@ -715,6 +724,14 @@ struct SetPrimitiveRestartEnableParams
     VkBool32 primitiveRestartEnable;
 };
 VERIFY_8_BYTE_ALIGNMENT(SetPrimitiveRestartEnableParams)
+
+struct SetPrimitiveTopologyParams
+{
+    CommandHeader header;
+
+    VkPrimitiveTopology primitiveTopology;
+};
+VERIFY_8_BYTE_ALIGNMENT(SetPrimitiveTopologyParams)
 
 struct SetRasterizerDiscardEnableParams
 {
@@ -827,13 +844,14 @@ ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
 template <typename DestT, typename T>
 ANGLE_INLINE DestT *Offset(T *ptr, size_t bytes)
 {
-    return reinterpret_cast<DestT *>((reinterpret_cast<uint8_t *>(ptr) + bytes));
+    return reinterpret_cast<DestT *>((ANGLE_UNSAFE_TODO(reinterpret_cast<uint8_t *>(ptr) + bytes)));
 }
 
 template <typename DestT, typename T>
 ANGLE_INLINE const DestT *Offset(const T *ptr, size_t bytes)
 {
-    return reinterpret_cast<const DestT *>((reinterpret_cast<const uint8_t *>(ptr) + bytes));
+    return reinterpret_cast<const DestT *>(
+        (ANGLE_UNSAFE_TODO(reinterpret_cast<const uint8_t *>(ptr) + bytes)));
 }
 
 class SecondaryCommandBuffer final : angle::NonCopyable
@@ -894,6 +912,8 @@ class SecondaryCommandBuffer final : angle::NonCopyable
                           VkDeviceSize offset,
                           VkDeviceSize size,
                           VkIndexType indexType);
+
+    void bindTileMemory(const DeviceMemory &tileMemory);
 
     void bindTransformFeedbackBuffers(uint32_t firstBinding,
                                       uint32_t bindingCount,
@@ -1105,6 +1125,7 @@ class SecondaryCommandBuffer final : angle::NonCopyable
     void setLineWidth(float lineWidth);
     void setLogicOp(VkLogicOp logicOp);
     void setPrimitiveRestartEnable(VkBool32 primitiveRestartEnable);
+    void setPrimitiveTopology(VkPrimitiveTopology primitiveTopology);
     void setRasterizerDiscardEnable(VkBool32 rasterizerDiscardEnable);
     void setScissor(uint32_t firstScissor, uint32_t scissorCount, const VkRect2D *scissors);
     void setStencilCompareMask(uint32_t compareFrontMask, uint32_t compareBackMask);
@@ -1287,8 +1308,8 @@ class SecondaryCommandBuffer final : angle::NonCopyable
         // |calculatePointerParameterSize|, and that satisfies this condition.
         ASSERT(size.allocateBytes == roundUpPow2<size_t>(size.copyBytes, 8u));
 
-        memcpy(writePointer, data, size.copyBytes);
-        return writePointer + size.allocateBytes;
+        ANGLE_UNSAFE_TODO(memcpy(writePointer, data, size.copyBytes));
+        return ANGLE_UNSAFE_TODO(writePointer + size.allocateBytes);
     }
 
     // Flag to indicate that commandBuffer is open for new commands. Initially open.
@@ -1429,6 +1450,13 @@ ANGLE_INLINE void SecondaryCommandBuffer::bindIndexBuffer2(const Buffer &buffer,
     paramStruct->offset    = offset;
     paramStruct->size      = size;
     paramStruct->indexType = indexType;
+}
+
+ANGLE_INLINE void SecondaryCommandBuffer::bindTileMemory(const DeviceMemory &tileMemory)
+{
+    BindTileMemoryParams *paramStruct =
+        initCommand<BindTileMemoryParams>(CommandID::BindTileMemory);
+    paramStruct->tileMemory = tileMemory.getHandle();
 }
 
 ANGLE_INLINE void SecondaryCommandBuffer::bindTransformFeedbackBuffers(uint32_t firstBinding,
@@ -2129,7 +2157,8 @@ ANGLE_INLINE void SecondaryCommandBuffer::setBlendConstants(const float blendCon
         initCommand<SetBlendConstantsParams>(CommandID::SetBlendConstants);
     for (uint32_t channel = 0; channel < 4; ++channel)
     {
-        paramStruct->blendConstants[channel] = blendConstants[channel];
+        ANGLE_UNSAFE_TODO(paramStruct->blendConstants[channel]) =
+            ANGLE_UNSAFE_TODO(blendConstants[channel]);
     }
 }
 
@@ -2200,7 +2229,7 @@ ANGLE_INLINE void SecondaryCommandBuffer::setFragmentShadingRate(
     SetBitField(paramStruct->fragmentWidth, fragmentSize->width);
     SetBitField(paramStruct->fragmentHeight, fragmentSize->height);
     SetBitField(paramStruct->vkFragmentShadingRateCombinerOp0, ops[0]);
-    SetBitField(paramStruct->vkFragmentShadingRateCombinerOp1, ops[1]);
+    ANGLE_UNSAFE_TODO(SetBitField(paramStruct->vkFragmentShadingRateCombinerOp1, ops[1]));
 }
 
 ANGLE_INLINE void SecondaryCommandBuffer::setFrontFace(VkFrontFace frontFace)
@@ -2226,6 +2255,14 @@ ANGLE_INLINE void SecondaryCommandBuffer::setPrimitiveRestartEnable(VkBool32 pri
     SetPrimitiveRestartEnableParams *paramStruct =
         initCommand<SetPrimitiveRestartEnableParams>(CommandID::SetPrimitiveRestartEnable);
     paramStruct->primitiveRestartEnable = primitiveRestartEnable;
+}
+
+ANGLE_INLINE void SecondaryCommandBuffer::setPrimitiveTopology(
+    VkPrimitiveTopology primitiveTopology)
+{
+    SetPrimitiveTopologyParams *paramStruct =
+        initCommand<SetPrimitiveTopologyParams>(CommandID::SetPrimitiveTopology);
+    paramStruct->primitiveTopology = primitiveTopology;
 }
 
 ANGLE_INLINE void SecondaryCommandBuffer::setRasterizerDiscardEnable(
@@ -2382,7 +2419,7 @@ ANGLE_INLINE void SecondaryCommandBuffer::writeTimestamp(VkPipelineStageFlagBits
                                                          const QueryPool &queryPool,
                                                          uint32_t query)
 {
-    ASSERT(pipelineStage == VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    ASSERT(pipelineStage == VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
 
     WriteTimestampParams *paramStruct =
         initCommand<WriteTimestampParams>(CommandID::WriteTimestamp);
@@ -2394,7 +2431,7 @@ ANGLE_INLINE void SecondaryCommandBuffer::writeTimestamp2(VkPipelineStageFlagBit
                                                           const QueryPool &queryPool,
                                                           uint32_t query)
 {
-    ASSERT(pipelineStage == VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    ASSERT(pipelineStage == VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
 
     WriteTimestampParams *paramStruct =
         initCommand<WriteTimestampParams>(CommandID::WriteTimestamp2);

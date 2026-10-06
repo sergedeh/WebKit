@@ -27,6 +27,7 @@
 #include "GraphicsContext.h"
 
 #include "BidiResolver.h"
+#include "BitmapImage.h"
 #include "DisplayList.h"
 #include "Filter.h"
 #include "FilterImage.h"
@@ -39,6 +40,7 @@
 #include "SystemImage.h"
 #include "TextRunIterator.h"
 #include "VideoFrame.h"
+#include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
@@ -121,9 +123,9 @@ FloatSize GraphicsContext::platformShadowOffset(const FloatSize& shadowOffset) c
     return shadowOffset;
 }
 
-void GraphicsContext::mergeLastChanges(const GraphicsContextState& state, const std::optional<GraphicsContextState>& lastDrawingState)
+void GraphicsContext::mergeLastChanges(const GraphicsContextState& state)
 {
-    m_state.mergeLastChanges(state, lastDrawingState);
+    m_state.mergeLastChanges(state);
     didUpdateState(m_state);
 }
 
@@ -174,13 +176,13 @@ FloatSize GraphicsContext::drawText(const FontCascade& font, const TextRun& run,
 
 void GraphicsContext::drawGlyphs(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
 {
-    FontCascade::drawGlyphs(*this, font, glyphs, advances, point, fontSmoothingMode);
+    drawGlyphsImmediate(font, glyphs, advances, point, fontSmoothingMode);
 }
 
-void GraphicsContext::drawGlyphsImmediate(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
+void GraphicsContext::drawGlyphsImmediate(const FontBase& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
 {
     // Called by implementations that transform drawGlyphs into drawGlyphsImmediate, drawImageBuffer, etc calls.
-    drawGlyphs(font, glyphs, advances, point, fontSmoothingMode);
+    FontCascade::drawGlyphs(*this, font, glyphs, advances, point, fontSmoothingMode);
 }
 
 void GraphicsContext::drawEmphasisMarks(const FontCascade& font, const TextRun& run, const AtomString& mark, const FloatPoint& point, unsigned from, std::optional<unsigned> to)
@@ -259,12 +261,17 @@ RenderingMode GraphicsContext::renderingModeForCompatibleBuffer() const
     return RenderingMode::Unaccelerated;
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createImageBuffer(const FloatSize& size, float resolutionScale, const DestinationColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod>, ImageBufferFormat pixelFormat) const
+RefPtr<ImageBuffer> GraphicsContext::createImageBuffer(const FloatSize& size, float resolutionScale, const ColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod>, ImageBufferFormat pixelFormat) const
 {
     return ImageBuffer::create(size, renderingMode.value_or(this->renderingModeForCompatibleBuffer()), RenderingPurpose::Unspecified, resolutionScale, colorSpace, pixelFormat);
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatSize& size, const FloatSize& scale, const DestinationColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod> renderingMethod) const
+RefPtr<ImageBuffer> GraphicsContext::createImageBuffer(const FloatSize& size, const ColorSpace& colorSpace, PixelFormat pixelFormat) const
+{
+    return createImageBuffer(size, 1, colorSpace, std::nullopt, std::nullopt, { pixelFormat });
+}
+
+RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatSize& size, const FloatSize& scale, const ColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod> renderingMethod) const
 {
     auto expandedScaledSize = scaledImageBufferSize(size, scale);
     if (expandedScaledSize.isEmpty())
@@ -284,7 +291,7 @@ RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatSize& si
     return imageBuffer;
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatRect& rect, const FloatSize& scale, const DestinationColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod> renderingMethod) const
+RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatRect& rect, const FloatSize& scale, const ColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod> renderingMethod) const
 {
     auto expandedScaledRect = scaledImageBufferRect(rect, scale);
     if (expandedScaledRect.isEmpty())
@@ -307,12 +314,12 @@ RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatRect& re
     return imageBuffer;
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatSize& size, const DestinationColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const
+RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatSize& size, const ColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const
 {
     return createScaledImageBuffer(size, scaleFactor(), colorSpace, renderingModeForCompatibleBuffer(), renderingMethod);
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatRect& rect, const DestinationColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const
+RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatRect& rect, const ColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const
 {
     return createScaledImageBuffer(rect, scaleFactor(), colorSpace, renderingModeForCompatibleBuffer(), renderingMethod);
 }
@@ -322,39 +329,35 @@ void GraphicsContext::drawSystemImage(SystemImage& systemImage, const FloatRect&
     systemImage.draw(*this, destinationRect);
 }
 
-ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatPoint& destination, ImagePaintingOptions imagePaintingOptions)
+ImageDrawResult GraphicsContext::drawImage(Image& image, ConcreteObjectSize concreteObjectSize, const FloatPoint& destination, ImagePaintingOptions options, const ImageDrawingExtras* extras)
 {
-    return drawImage(image, FloatRect(destination, image.size()), FloatRect(FloatPoint(), image.size()), imagePaintingOptions);
+    return drawImage(image, concreteObjectSize, FloatRect(destination, concreteObjectSize.size()), FloatRect({ }, concreteObjectSize.size()), options, extras);
 }
 
-ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destination, ImagePaintingOptions imagePaintingOptions)
+ImageDrawResult GraphicsContext::drawImage(Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, ImagePaintingOptions options, const ImageDrawingExtras* extras)
 {
-    FloatRect srcRect(FloatPoint(), image.size(imagePaintingOptions.orientation()));
-    return drawImage(image, destination, srcRect, imagePaintingOptions);
+    return drawImage(image, concreteObjectSize, destination, FloatRect({ }, concreteObjectSize.size()), options, extras);
 }
 
-ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options)
+ImageDrawResult GraphicsContext::drawImage(Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, const ImageDrawingExtras* extras)
 {
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
-    return image.draw(*this, destination, source, options);
+    return image.draw(*this, concreteObjectSize, destination, source, options, extras);
 }
 
-ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& destination, const FloatPoint& source, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options)
+ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatPoint& destination, ImagePaintingOptions imagePaintingOptions)
 {
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
-    return image.drawTiled(*this, destination, source, tileSize, spacing, options);
+    return drawBitmapImage(image, FloatRect(destination, image.size()), FloatRect(FloatPoint(), image.size()), imagePaintingOptions);
 }
 
-ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& destination, const FloatRect& source, const FloatSize& tileScaleFactor,
-    Image::TileRule hRule, Image::TileRule vRule, ImagePaintingOptions options)
+ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatRect& destination, ImagePaintingOptions imagePaintingOptions)
 {
-    if (hRule == Image::StretchTile && vRule == Image::StretchTile) {
-        // Just do a scale.
-        return drawImage(image, destination, source, options);
-    }
+    FloatRect source(FloatPoint(), image.size(imagePaintingOptions.orientation()));
+    return drawBitmapImage(image, destination, source, imagePaintingOptions);
+}
 
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
-    return image.drawTiled(*this, destination, source, tileScaleFactor, hRule, vRule, { options.compositeOperator() });
+ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions imagePaintingOptions)
+{
+    return image.draw(*this, ConcreteObjectSize::fixed(image.size()), destination, source, imagePaintingOptions);
 }
 
 RefPtr<NativeImage> GraphicsContext::nativeImageForDrawing(ImageBuffer& imageBuffer)
@@ -376,7 +379,6 @@ void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& desti
 
 void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options)
 {
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
     FloatRect sourceScaled = source;
     sourceScaled.scale(image.resolutionScale());
     if (auto nativeImage = nativeImageForDrawing(image))
@@ -404,7 +406,6 @@ void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const 
     if (!image)
         return;
     ASSERT(this != &image->context());
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
     FloatRect scaledSource = source;
     scaledSource.scale(image->resolutionScale());
     if (auto nativeImage = ImageBuffer::sinkIntoNativeImage(WTF::move(image)))
@@ -431,7 +432,7 @@ void GraphicsContext::drawPattern(ImageBuffer& image, const FloatRect& destRect,
     FloatRect scaledSource = source;
     scaledSource.scale(image.resolutionScale());
     if (auto nativeImage = nativeImageForDrawing(image))
-        drawPattern(*nativeImage, destRect, source, patternTransform, phase, spacing, options);
+        drawPattern(*nativeImage, destRect, scaledSource, patternTransform, phase, spacing, options);
 }
 
 void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle& style)
@@ -440,16 +441,19 @@ void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect&
 }
 
 #if ENABLE(VIDEO)
-void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ImageOrientation orientation, bool shouldDiscardAlpha)
+void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
 {
     RefPtr image = frame.copyNativeImage();
     if (!image)
         return;
     IntSize size = image->size();
-    if (orientation.usesWidthAsHeight())
+    if (options.orientation().usesWidthAsHeight())
         size = size.transposedSize();
-    auto compositeOperator = !shouldDiscardAlpha && image->hasAlpha() ? CompositeOperator::SourceOver : CompositeOperator::Copy;
-    drawNativeImage(*image, destination, { { }, size }, { compositeOperator, orientation });
+    // Copy is equivalent to SourceOver when the frame's alpha is not used, and cheaper.
+    // FIXME: This overrides whatever composite operator the caller asked for, so drawing a video
+    // frame into a canvas ignores its globalCompositeOperation.
+    auto compositeOperator = ((shouldDiscardAlpha == ShouldDiscardAlpha::No) && image->hasAlpha()) ? CompositeOperator::SourceOver : CompositeOperator::Copy;
+    drawNativeImage(*image, destination, { { }, size }, { options, compositeOperator });
 }
 #endif
 
@@ -462,7 +466,7 @@ void GraphicsContext::clipRoundedRect(const FloatRoundedRect& rect)
 
 void GraphicsContext::clipOutRoundedRect(const FloatRoundedRect& rect)
 {
-    if (!rect.isRounded()) {
+    if (!rect.hasNonZeroRadii()) {
         clipOut(rect.rect());
         return;
     }
@@ -485,18 +489,19 @@ void GraphicsContext::fillRect(const FloatRect& rect, Gradient& gradient)
 
 void GraphicsContext::fillRect(const FloatRect& rect, const Color& color, CompositeOperator op, BlendMode blendMode)
 {
-    CompositeOperator previousOperator = compositeOperation();
+    auto previousCompositeMode = compositeMode();
     setCompositeOperation(op, blendMode);
     fillRect(rect, color);
-    setCompositeOperation(previousOperator);
+    setCompositeMode(previousCompositeMode);
 }
 
 void GraphicsContext::fillRoundedRect(const FloatRoundedRect& rect, const Color& color, BlendMode blendMode)
 {
-    if (rect.isRounded()) {
+    if (rect.hasNonZeroRadii()) {
+        auto previousCompositeMode = compositeMode();
         setCompositeOperation(compositeOperation(), blendMode);
         fillRoundedRectImpl(rect, color);
-        setCompositeOperation(compositeOperation());
+        setCompositeMode(previousCompositeMode);
     } else
         fillRect(rect.rect(), color, compositeOperation(), blendMode);
 }
@@ -542,6 +547,17 @@ void GraphicsContext::drawPath(const Path& path)
     strokePath(path);
 }
 
+void GraphicsContext::strokeArc(const PathArc& arc)
+{
+    strokePath(Path({ PathSegment { arc } }));
+}
+
+void GraphicsContext::strokeLine(const PathDataLine& line)
+{
+    auto path = Path({ PathSegment { PathDataLine { { line.start() }, { line.end() } } } });
+    strokePath(path);
+}
+
 void GraphicsContext::fillEllipseAsPath(const FloatRect& ellipse)
 {
     Path path;
@@ -564,16 +580,17 @@ void GraphicsContext::drawLineForText(const FloatRect& rect, bool isPrinting, bo
 
 void GraphicsContext::drawDisplayList(const DisplayList::DisplayList& displayList)
 {
-    Ref controlFactory = ControlFactory::singleton();
-    drawDisplayList(displayList, controlFactory);
+    drawDisplayList(displayList, ControlFactory::singleton());
 }
 
 void GraphicsContext::drawDisplayList(const DisplayList::DisplayList& displayList, ControlFactory& controlFactory)
 {
+    AffineTransform baseTransform = getCTM();
+
     // FIXME: ControlFactory should be property of the context and not passed this way here.
     // Currently this mutates each ControlPart which is unsuitable for display lists.
     for (auto& item : displayList.items())
-        applyItem(*this, controlFactory, item);
+        applyItem(*this, baseTransform, controlFactory, item);
 }
 
 FloatRect GraphicsContext::computeUnderlineBoundsForText(const FloatRect& rect, bool printing)
@@ -602,11 +619,13 @@ FloatRect GraphicsContext::computeLineBoundsAndAntialiasingModeForText(const Flo
     }
 
     FloatPoint devicePoint = transform.mapPoint(rect.location());
-    // Visual overflow might occur here due to integral roundf/ceilf. visualOverflowForDecorations adjusts the overflow value for underline decoration.
-    FloatPoint deviceOrigin = FloatPoint(roundf(devicePoint.x()), ceilf(devicePoint.y()));
-    if (auto inverse = transform.inverse())
-        origin = inverse.value().mapPoint(deviceOrigin);
-    return FloatRect(origin, FloatSize(rect.width(), thickness));
+    // Visual overflow might occur here due to integral roundf/floorf/ceilf. visualOverflowForDecorations adjusts the overflow value for underline decoration.
+    if (auto inverse = transform.inverse()) {
+        // Snap away from the decorated text (toward increasing local y).
+        auto snappedDeviceY = transform.d() < 0 ? floorf(devicePoint.y()) : ceilf(devicePoint.y());
+        origin = inverse.value().mapPoint(FloatPoint { roundf(devicePoint.x()), snappedDeviceY });
+    }
+    return { origin, FloatSize { rect.width(), thickness } };
 }
 
 float GraphicsContext::dashedLineCornerWidthForStrokeWidth(float strokeWidth) const
@@ -702,11 +721,11 @@ auto GraphicsContext::computeRectsAndStrokeColorForLinesForText(const FloatPoint
             auto left = lineSegment.begin;
             auto width = lineSegment.length();
             auto doubleWidth = 2 * dashWidth;
-            auto quotient = static_cast<int>(left / doubleWidth);
+            auto quotient = truncateDoubleToInt32(left / doubleWidth);
             auto startOffset = left - quotient * doubleWidth;
             auto effectiveLeft = left + startOffset;
-            auto startParticle = static_cast<int>(std::floor(effectiveLeft / doubleWidth));
-            auto endParticle = static_cast<int>(std::ceil((left + width) / doubleWidth));
+            auto startParticle = truncateDoubleToInt32(std::floor(effectiveLeft / doubleWidth));
+            auto endParticle = truncateDoubleToInt32(std::ceil((left + width) / doubleWidth));
 
             for (auto j = startParticle; j < endParticle; ++j) {
                 auto actualDashWidth = dashWidth;

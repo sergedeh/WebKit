@@ -29,6 +29,7 @@
 #include "MessageSender.h"
 #include "SharedPreferencesForWebProcess.h"
 #include "WebPageProxyIdentifier.h"
+#include <WebCore/CrossOriginEmbedderPolicyValue.h>
 #include <WebCore/SharedWorkerIdentifier.h>
 #include <WebCore/SharedWorkerObjectIdentifier.h>
 #include <WebCore/Site.h>
@@ -59,17 +60,19 @@ struct SharedPreferencesForWebProcess;
 class WebSharedWorkerServerToContextConnection final : public IPC::MessageSender, public IPC::MessageReceiver, public RefCounted<WebSharedWorkerServerToContextConnection> {
     WTF_MAKE_TZONE_ALLOCATED(WebSharedWorkerServerToContextConnection);
 public:
-    static Ref<WebSharedWorkerServerToContextConnection> create(NetworkConnectionToWebProcess&, const WebCore::Site&, WebSharedWorkerServer&);
+    static Ref<WebSharedWorkerServerToContextConnection> create(NetworkConnectionToWebProcess&, const WebCore::Site&, WebSharedWorkerServer&, WebCore::CrossOriginEmbedderPolicyValue);
 
     ~WebSharedWorkerServerToContextConnection();
 
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    std::optional<WebCore::ProcessIdentifier> webProcessIdentifier() const;
-    const WebCore::RegistrableDomain& registrableDomain() const { return m_site.domain(); }
-    const WebCore::Site& site() const { return m_site; }
-    IPC::Connection* ipcConnection() const;
+    std::optional<WebCore::ProcessIdentifier> NODELETE webProcessIdentifier() const;
+    const WebCore::RegistrableDomain& registrableDomain() const LIFETIME_BOUND { return m_site.domain(); }
+    const WebCore::Site& site() const LIFETIME_BOUND { return m_site; }
+    IPC::Connection* NODELETE ipcConnection() const;
+
+    WebCore::CrossOriginEmbedderPolicyValue crossOriginEmbedderPolicyValue() const { return m_crossOriginEmbedderPolicyValue; }
 
     void terminateWhenPossible() { m_shouldTerminateWhenPossible = true; }
 
@@ -80,17 +83,17 @@ public:
     void suspendSharedWorker(WebCore::SharedWorkerIdentifier);
     void resumeSharedWorker(WebCore::SharedWorkerIdentifier);
 
-    const HashMap<WebCore::ProcessIdentifier, HashSet<WebCore::SharedWorkerObjectIdentifier>>& sharedWorkerObjects() const { return m_sharedWorkerObjects; }
+    const HashMap<WebCore::ProcessIdentifier, HashSet<WebCore::SharedWorkerObjectIdentifier>>& sharedWorkerObjects() const LIFETIME_BOUND { return m_sharedWorkerObjects; }
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
     void addSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier);
     void removeSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier);
 
-    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+    std::optional<SharedPreferencesForWebProcess> NODELETE sharedPreferencesForWebProcess() const;
 
 private:
-    WebSharedWorkerServerToContextConnection(NetworkConnectionToWebProcess&, const WebCore::Site&, WebSharedWorkerServer&);
+    WebSharedWorkerServerToContextConnection(NetworkConnectionToWebProcess&, const WebCore::Site&, WebSharedWorkerServer&, WebCore::CrossOriginEmbedderPolicyValue);
 
     void idleTerminationTimerFired();
     void connectionIsNoLongerNeeded();
@@ -109,6 +112,7 @@ private:
     HashMap<WebCore::ProcessIdentifier, HashSet<WebCore::SharedWorkerObjectIdentifier>> m_sharedWorkerObjects;
     WebCore::Timer m_idleTerminationTimer;
     bool m_shouldTerminateWhenPossible { false };
+    WebCore::CrossOriginEmbedderPolicyValue m_crossOriginEmbedderPolicyValue { WebCore::CrossOriginEmbedderPolicyValue::UnsafeNone };
 };
 
 } // namespace WebKit

@@ -41,6 +41,8 @@ BaselineJITPlan::BaselineJITPlan(CodeBlock* codeBlock)
 
 auto BaselineJITPlan::compileInThreadImpl(JITCompilationEffort effort) -> CompilationPath
 {
+    m_codeBlock->updatePredictionsConcurrently();
+
     // BaselineJITPlan can keep underlying CodeBlock alive while running.
     // So we do not need to suspend this compilation thread while running GC.
     Safepoint::Result result;
@@ -49,13 +51,9 @@ auto BaselineJITPlan::compileInThreadImpl(JITCompilationEffort effort) -> Compil
         safepoint.begin(false);
 
         if (Options::useLOLJIT()) {
-#if USE(JSVALUE64)
             LOL::LOLJIT jit(*m_vm, *this, m_codeBlock);
             auto jitCode = jit.compileAndLinkWithoutFinalizing(effort);
             m_jitCode = WTF::move(jitCode);
-#else
-            RELEASE_ASSERT_NOT_REACHED();
-#endif
         } else {
             JIT jit(*m_vm, *this, m_codeBlock);
             auto jitCode = jit.compileAndLinkWithoutFinalizing(effort);

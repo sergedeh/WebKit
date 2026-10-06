@@ -41,7 +41,6 @@ public:
     virtual ~CanvasRenderingContext2D();
 
     HTMLCanvasElement& canvas() const { return downcast<HTMLCanvasElement>(canvasBase()); }
-    Ref<HTMLCanvasElement> protectedCanvas() const { return canvas(); }
 
     void drawFocusIfNeeded(Element&);
     void drawFocusIfNeeded(Path2D&, Element&);
@@ -69,7 +68,7 @@ private:
 
     void drawFocusIfNeededInternal(const Path&, Element&);
 
-    TextDirection toTextDirection(CanvasRenderingContext2DBase::Direction, const RenderStyle** computedStyle = nullptr) const;
+    TextDirection toTextDirection(CanvasRenderingContext2DBase::Direction, const Style::ComputedStyle** = nullptr) const;
 };
 
 } // namespace WebCore

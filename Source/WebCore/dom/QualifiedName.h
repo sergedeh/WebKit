@@ -59,7 +59,7 @@ public:
 
         WEBCORE_EXPORT ~QualifiedNameImpl();
 
-        unsigned computeHash() const;
+        WEBCORE_EXPORT unsigned computeHash() const;
 
         mutable unsigned m_existingHash { 0 };
         Namespace m_namespace;
@@ -78,7 +78,7 @@ public:
     private:
         friend class QualifiedName;
 
-        QualifiedNameImpl(const AtomString& prefix, const AtomString& localName, const AtomString& namespaceURI);
+        WEBCORE_EXPORT QualifiedNameImpl(const AtomString& prefix, const AtomString& localName, const AtomString& namespaceURI);
     };
 
     WEBCORE_EXPORT QualifiedName(const AtomString& prefix, const AtomString& localName, const AtomString& namespaceURI);
@@ -90,15 +90,16 @@ public:
     friend bool operator==(const QualifiedName&, const QualifiedName&) = default;
 
     bool matches(const QualifiedName& other) const { return m_impl == other.m_impl || (localName() == other.localName() && namespaceURI() == other.namespaceURI()); }
+    bool hasLocalName(const AtomString& other) const { return localName() == other; }
 
     bool hasPrefix() const { return !m_impl->m_prefix.isNull(); }
     void setPrefix(const AtomString& prefix) { *this = QualifiedName(prefix, localName(), namespaceURI()); }
 
-    const AtomString& prefix() const { return m_impl->m_prefix; }
-    const AtomString& localName() const { return m_impl->m_localName; }
-    const AtomString& namespaceURI() const { return m_impl->m_namespaceURI; }
-    const AtomString& localNameLowercase() const { return m_impl->m_localNameLower; }
-    const AtomString& localNameUppercase() const;
+    const AtomString& prefix() const LIFETIME_BOUND { return m_impl->m_prefix; }
+    const AtomString& localName() const LIFETIME_BOUND { return m_impl->m_localName; }
+    const AtomString& namespaceURI() const LIFETIME_BOUND { return m_impl->m_namespaceURI; }
+    const AtomString& localNameLowercase() const LIFETIME_BOUND { return m_impl->m_localNameLower; }
+    const AtomString& localNameUppercase() const LIFETIME_BOUND;
 
     NodeName nodeName() const { return m_impl->m_nodeName; }
     Namespace nodeNamespace() const { return m_impl->m_namespace; }
@@ -130,14 +131,11 @@ inline void add(Hasher& hasher, const QualifiedName& name)
     add(hasher, std::bit_cast<uintptr_t>(name.impl()));
 }
 
-extern LazyNeverDestroyed<const QualifiedName> anyName;
+WEBCORE_EXPORT extern LazyNeverDestroyed<const QualifiedName> anyName;
 inline const QualifiedName& anyQName() { return anyName; }
 
-extern LazyNeverDestroyed<const QualifiedName> nullName;
+WEBCORE_EXPORT extern LazyNeverDestroyed<const QualifiedName> nullName;
 inline const QualifiedName& nullQName() { return nullName; }
-
-inline bool operator==(const AtomString& a, const QualifiedName& q) { return a == q.localName(); }
-inline bool operator==(const QualifiedName& q, const AtomString& a) { return a == q.localName(); }
 
 struct QualifiedNameHash {
     static unsigned hash(const QualifiedName& name) { return hash(name.impl()); }

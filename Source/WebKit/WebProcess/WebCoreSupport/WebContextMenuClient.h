@@ -54,7 +54,7 @@ private:
     bool supportsLookUpInImages() final { return true; }
 #endif
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     bool supportsCopySubject() final { return true; }
 #endif
 
@@ -69,8 +69,6 @@ private:
 #if USE(ACCESSIBILITY_CONTEXT_MENUS)
     void showContextMenu() override;
 #endif
-
-    RefPtr<WebPage> protectedPage() const;
 
     WeakPtr<WebPage> m_page;
 };

@@ -26,9 +26,14 @@
 #pragma once
 
 #include <WebCore/Image.h>
+#include <WebCore/MediaPlayerEnums.h>
+#include <WebCore/MediaSessionIdentifier.h>
 #include <WebCore/MediaUniqueIdentifier.h>
+#include <WebCore/PageIdentifier.h>
+#include <WebCore/PlatformMediaSessionTypes.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
+#include <wtf/WallTime.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -65,8 +70,20 @@ struct NowPlayingInfo {
     bool isPlaying { false };
     bool allowsNowPlayingControlsVisibility { false };
     bool isVideo { false };
+    MediaPlayerEnums::VideoFullscreenMode fullscreenMode { MediaPlayerEnums::VideoFullscreenModeNone };
 
     friend bool operator==(const NowPlayingInfo&, const NowPlayingInfo&) = default;
+};
+
+struct NowPlayingCandidateState {
+    std::optional<PageIdentifier> pageIdentifier;
+    std::optional<WallTime> mostRecentUserInteractionTime;
+    MediaSessionIdentifier sessionIdentifier;
+    PlatformMediaSessionMediaType presentationType { PlatformMediaSessionMediaType::None };
+    bool isLargeEnoughForMainContent { false };
+    bool isPlaying { false };
+
+    friend bool operator==(const NowPlayingCandidateState&, const NowPlayingCandidateState&) = default;
 };
 
 } // namespace WebCore

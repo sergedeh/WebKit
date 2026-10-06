@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "BlockFormattingState.h"
 #include "InlineDamage.h"
 #include "InlineFormattingConstraints.h"
 #include "InlineFormattingContext.h"
@@ -49,6 +50,7 @@ class RenderBlockFlow;
 class RenderBox;
 class RenderBoxModelObject;
 class RenderInline;
+class RenderListOutsideMarker;
 struct PaintInfo;
 
 namespace Layout {
@@ -69,61 +71,68 @@ public:
     LineLayout(RenderBlockFlow&);
     ~LineLayout();
 
-    static RenderBlockFlow* blockContainer(const RenderObject&);
+    static RenderBlockFlow* NODELETE blockContainer(const RenderObject&);
     static LineLayout* containing(RenderObject&);
     static const LineLayout* containing(const RenderObject&);
 
-    static bool canUseFor(const RenderBlockFlow&);
-    static bool canUseForPreferredWidthComputation(const RenderBlockFlow&);
+    static bool NODELETE canUseFor(const RenderBlockFlow&);
+    static bool canUseForIntrinsicWidthComputation(const RenderBlockFlow&);
     static bool shouldInvalidateLineLayoutAfterContentChange(const RenderBlockFlow& parent, const RenderObject& rendererWithNewContent, const LineLayout&);
     static bool shouldInvalidateLineLayoutAfterTreeMutation(const RenderBlockFlow& parent, const RenderObject& renderer, const LineLayout&, bool isRemoval);
 
-    void updateFormattingContexGeometries(LayoutUnit availableLogicalWidth);
-    void updateOverflow();
+    void updateFormattingContextGeometries(LayoutUnit availableLogicalWidth);
+
+    std::optional<LayoutRect> updateOverflow();
+
     static void updateStyle(const RenderObject&);
 
     // Partial invalidation.
     bool insertedIntoTree(const RenderElement& parent, RenderObject& child);
     bool removedFromTree(const RenderElement& parent, RenderObject& child);
     bool updateTextContent(const RenderText&, std::optional<size_t> offset, size_t oldLength);
-    bool rootStyleWillChange(const RenderBlockFlow&, const RenderStyle& newStyle);
-    bool styleWillChange(const RenderElement&, const RenderStyle& newStyle, Style::Difference);
+    bool rootStyleWillChange(const RenderBlockFlow&, const Style::ComputedStyle& newStyle);
+    bool styleWillChange(const RenderElement&, const Style::ComputedStyle& newStyle, Style::Difference);
     bool boxContentWillChange(const RenderBox&);
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicWidthConstraints();
 
     enum class ForceFullLayout : bool { No, Yes };
     std::optional<LayoutRect> layout(RenderBlockFlow::MarginInfo&, ForceFullLayout = ForceFullLayout::No);
-    void paint(PaintInfo&, const LayoutPoint& paintOffset, const RenderInline* layerRenderer = nullptr);
-    bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& accumulatedOffset, HitTestAction, const RenderInline* layerRenderer = nullptr);
+    void paint(PaintInfo&, const LayoutPoint& paintOffset, const RenderBoxModelObject* layerRenderer = nullptr);
+    bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& accumulatedOffset, HitTestAction, const RenderBoxModelObject* layerRenderer = nullptr);
     void adjustForPagination();
-    void shiftLinesBy(LayoutUnit blockShift);
+    void shiftLinesByInBlockDirection(LayoutUnit blockShift);
 
     void collectOverflow();
-    LayoutRect inkOverflowBoundingBoxRectFor(const RenderInline&) const;
-    Vector<FloatRect> collectInlineBoxRects(const RenderInline&) const;
+    LayoutRect inkOverflowBoundingBoxRectFor(const RenderBoxModelObject&) const;
+    Vector<FloatRect> collectInlineBoxRects(const RenderBoxModelObject&) const;
 
     LayoutUnit contentLogicalHeight() const;
     std::optional<LayoutUnit> clampedContentLogicalHeight() const;
-    bool hasEllipsisInBlockDirectionOnLastFormattedLine() const;
+    bool NODELETE hasEllipsisInBlockDirectionOnLastFormattedLine() const;
+    bool contentFitsWithinMaximumLines() const { return m_inlineContent && m_inlineContent->contentFitsWithinMaximumLines(); }
     bool contains(const RenderElement& renderer) const;
 
-    bool isPaginated() const;
-    size_t lineCount() const;
-    bool hasContentfulInlineOrBlockLine() const;
-    bool hasContentfulInlineLine() const;
+    bool NODELETE isPaginated() const;
+    size_t NODELETE lineCount() const;
+    size_t NODELETE lineCountIgnoringBlockLevelBoxes() const;
+    // Lines with contentful inline content (block-in-inline and empty lines don't count) ending within logicalHeight from the border box top, and whether any ends past it.
+    std::pair<size_t, bool> NODELETE lineCountForHeight(LayoutUnit logicalHeight) const;
+    bool hasContent() const { return !!m_inlineContent; }
+    bool NODELETE hasContentfulInlineOrBlockLine() const;
+    bool NODELETE hasContentfulInlineLine() const;
     bool isSelfCollapsingContent() const;
-    bool hasInkOverflow() const;
+    bool NODELETE hasInkOverflow() const;
     std::optional<LayoutUnit> firstLineBaseline() const;
     std::optional<LayoutUnit> lastLineBaseline() const;
-    LayoutRect firstInlineBoxRect(const RenderInline&) const;
-    LayoutRect enclosingBorderBoxRectFor(const RenderInline&) const;
+    LayoutRect firstInlineBoxRect(const RenderBoxModelObject&) const;
+    LayoutRect enclosingBorderBoxRectFor(const RenderBoxModelObject&) const;
 
     InlineIterator::TextBoxIterator textBoxesFor(const RenderText&) const;
     InlineIterator::LeafBoxIterator boxFor(const RenderElement&) const;
-    InlineIterator::InlineBoxIterator firstInlineBoxFor(const RenderInline&) const;
+    InlineIterator::InlineBoxIterator firstInlineBoxFor(const RenderBoxModelObject&) const;
     InlineIterator::InlineBoxIterator firstRootInlineBox() const;
-    InlineIterator::InlineBoxIterator lastRootInlineBox() const;
+    InlineIterator::BoxIterator lastBox() const;
     InlineIterator::LineBoxIterator firstLineBox() const;
     InlineIterator::LineBoxIterator lastLineBox() const;
 
@@ -137,16 +146,16 @@ public:
 #endif
 
     // This is temporary, required by partial bailout check.
-    bool contentNeedsVisualReordering() const;
+    bool NODELETE contentNeedsVisualReordering() const;
     bool isDamaged() const { return !!m_lineDamage; }
-    const Layout::InlineDamage* damage() const { return m_lineDamage.get(); }
+    const Layout::InlineDamage* damage() const LIFETIME_BOUND { return m_lineDamage.get(); }
 #ifndef NDEBUG
     bool hasDetachedContent() const { return m_lineDamage && m_lineDamage->hasDetachedContent(); }
 #endif
 
     FloatRect applySVGTextFragments(SVGTextFragmentMap&&);
 
-    bool hasBlocks() const;
+    bool NODELETE hasBlocks() const;
 
 private:
     void preparePlacedFloats();
@@ -154,21 +163,25 @@ private:
     Vector<LineAdjustment> adjustContentForPagination(const Layout::BlockLayoutState&, bool isPartialLayout);
     void updateRenderTreePositions(const Vector<LineAdjustment>&, const Layout::InlineLayoutState&, bool didDiscardContent);
 
-    InlineContent& ensureInlineContent();
+    InlineContent& ensureInlineContent() LIFETIME_BOUND;
 
-    Layout::LayoutState& layoutState() { return *m_layoutState; }
-    const Layout::LayoutState& layoutState() const { return *m_layoutState; }
+    Layout::LayoutState& layoutState() LIFETIME_BOUND { return *m_layoutState; }
+    const Layout::LayoutState& layoutState() const LIFETIME_BOUND { return *m_layoutState; }
 
-    Layout::InlineDamage& ensureLineDamage();
+    Layout::InlineDamage& ensureLineDamage() LIFETIME_BOUND;
 
     const Layout::ElementBox& rootLayoutBox() const { return *m_rootLayoutBox; }
     Layout::ElementBox& rootLayoutBox() { return *m_rootLayoutBox; }
     void clearInlineContent();
     void releaseCachesAndResetDamage();
 
-    LayoutUnit baselineForLine(const InlineDisplay::Line&) const;
+    LayoutUnit NODELETE baselineForLine(const InlineDisplay::Line&) const;
 
-    bool isContentConsideredStale() const;
+    bool NODELETE isContentConsideredStale() const;
+
+    using ExcludedMarkerList = Vector<CheckedPtr<RenderListOutsideMarker>>;
+    ExcludedMarkerList excludedMarkersForFirstFormattedLine(Layout::InlineLayoutState&);
+    void setExcludedMarkerPositions(const ExcludedMarkerList&);
 
 private:
     CheckedPtr<Layout::ElementBox> m_rootLayoutBox;

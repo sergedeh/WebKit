@@ -100,7 +100,7 @@ bool deserializeIDBKeyPath(std::span<const uint8_t> data, std::optional<IDBKeyPa
     return true;
 }
 
-static bool isLegacySerializedIDBKeyData(std::span<const uint8_t> data)
+static bool NODELETE isLegacySerializedIDBKeyData(std::span<const uint8_t> data)
 {
 #if USE(CF)
     // This is the magic character that begins serialized PropertyLists, and tells us whether
@@ -185,33 +185,12 @@ static SIDBKeyType serializedTypeForKeyType(IndexedDB::KeyType type)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-#if CPU(BIG_ENDIAN) || CPU(MIDDLE_ENDIAN) || CPU(NEEDS_ALIGNED_ACCESS)
-template <typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
-{
-    for (unsigned i = 0; i < sizeof(T); i++) {
-        buffer.append(value & 0xFF);
-        value >>= 8;
-    }
-}
-
-template <typename T> static bool readLittleEndian(std::span<const uint8_t>& data, T& value)
-{
-    if (data.size() < sizeof(value))
-        return false;
-
-    value = 0;
-    for (size_t i = 0; i < sizeof(T); i++)
-        value += ((T)data[i]) << (i * 8);
-    skip(data, sizeof(T));
-    return true;
-}
-#else
 template <typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
 {
     buffer.append(asByteSpan(value));
 }
 
-template <typename T> static bool readLittleEndian(std::span<const uint8_t>& data, T& value)
+template <typename T> static bool NODELETE readLittleEndian(std::span<const uint8_t>& data, T& value)
 {
     if (data.size() < sizeof(value))
         return false;
@@ -219,14 +198,13 @@ template <typename T> static bool readLittleEndian(std::span<const uint8_t>& dat
     value = consumeAndReinterpretCastTo<const T>(data);
     return true;
 }
-#endif
 
 static void writeDouble(Vector<uint8_t>& data, double d)
 {
     writeLittleEndian(data, *reinterpret_cast<uint64_t*>(&d));
 }
 
-static bool readDouble(std::span<const uint8_t>& data, double& d)
+static bool NODELETE readDouble(std::span<const uint8_t>& data, double& d)
 {
     return readLittleEndian(data, *reinterpret_cast<uint64_t*>(&d));
 }
@@ -323,7 +301,7 @@ RefPtr<SharedBuffer> serializeIDBKeyData(const IDBKeyData& key)
         if (!readLittleEndian(data, length))
             return false;
 
-        if (data.size() < length * 2)
+        if (data.size() < static_cast<size_t>(length) * 2)
             return false;
 
         Vector<char16_t> buffer;
@@ -351,7 +329,7 @@ RefPtr<SharedBuffer> serializeIDBKeyData(const IDBKeyData& key)
             return false;
 
         size_t size = static_cast<size_t>(size64);
-        Vector<uint8_t> dataVector(data);
+        Vector<uint8_t> dataVector(data.first(size));
         skip(data, size);
 
         result.setBinaryValue(ThreadSafeDataBuffer::create(WTF::move(dataVector)));

@@ -27,6 +27,7 @@ import argparse
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -629,15 +630,40 @@ class CSSSelectorInlinesGenerator:
     def format_enablement_condition(self, settings_flag, is_internal):
         conditions = []
         if settings_flag is not None:
-            if settings_flag.startswith('DeprecatedGlobalSettings::'):
-                conditions.append(f'{settings_flag}()')
-            else:
-                conditions.append(f'context.{settings_flag}')
+            conditions.append(self.format_settings_flag(settings_flag))
 
         if is_internal:
             conditions.append('isUASheetBehavior(context.mode)')
 
         return ' && '.join(conditions)
+
+    def format_settings_flag(self, settings_flag):
+        parts = re.split(r' (\&\&|\|\|) ', settings_flag)
+
+        # parts is e.g. ['flagA', '&&', 'flagB', '||', 'flagC']
+        result = self.format_single_flag(parts[0])
+        for i in range(1, len(parts), 2):
+            operator = parts[i]
+            flag = parts[i + 1]
+            result += f' {operator} {self.format_single_flag(flag)}'
+        if len(parts) > 1:
+            result = f'({result})'
+        return result
+
+    def format_single_flag(self, flag):
+        flag = flag.strip()
+        negated = flag.startswith('!')
+        if negated:
+            flag = flag[1:]
+
+        if flag.startswith('DeprecatedGlobalSettings::'):
+            formatted = f'{flag}()'
+        else:
+            formatted = f'context.{flag}'
+
+        if negated:
+            return f'!{formatted}'
+        return formatted
 
     def write_is_pseudo_class_enabled(self, writer, values):
         writer.write_block("""
@@ -718,7 +744,7 @@ class CSSSelectorInlinesGenerator:
                     writer.write(f'#if {conditional}')
 
                 with writer.indent(), writer.indent():
-                    if ' && ' in enablement_condition:
+                    if ' && ' in enablement_condition or ' || ' in enablement_condition:
                         enablement_condition = f'({enablement_condition})'
 
                     writer.write(f'if (!{enablement_condition} && equalLettersIgnoringASCIICase(name, "{pseudo_name}"_s))')
@@ -912,16 +938,25 @@ class UserAgentPartsGenerator():
 
 # - MARK: Script entry point.
 
+def merge_defines(defines, defines_file):
+    names = (defines or '').split()
+    if defines_file:
+        with open(defines_file) as f:
+            names += f.read().split()
+    return ' '.join(names)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Process CSS pseudo-class & pseudo-element definitions.')
     parser.add_argument('--selectors', default='CSSPseudoSelectors.json')
     parser.add_argument('--gperf-executable')
     parser.add_argument('--defines')
+    parser.add_argument('--defines-file')
     args = parser.parse_args()
 
     input_file = open(args.selectors, 'r', encoding='utf-8')
     input_data = json.load(input_file)
-    webcore_defines = [i.strip() for i in args.defines.split(' ')]
+    webcore_defines = merge_defines(args.defines, args.defines_file).split()
 
     InputValidator(input_data)
     GPerfGenerator(input_data, args.gperf_executable, webcore_defines)

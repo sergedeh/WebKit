@@ -13,9 +13,9 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkSafe32.h"
-#include "include/private/base/SkTFitsIn.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkSafe32.h"
+#include "include/private/SkTFitsIn.h"
 
 #include <algorithm>
 #include <array>
@@ -950,18 +950,6 @@ struct SK_API SkRect {
      * example: https://fiddle.skia.org/c/@Rect_setBoundsNoCheck
      */
     void setBoundsNoCheck(SkSpan<const SkPoint> pts);
-
-#ifdef SK_SUPPORT_UNSPANNED_APIS
-    void setBounds(const SkPoint pts[], int count) {
-        this->setBounds({pts, count});
-    }
-    void setBoundsNoCheck(const SkPoint pts[], int count) {
-        this->setBoundsNoCheck({pts, count});
-    }
-    bool setBoundsCheck(const SkPoint pts[], int count) {
-        return this->setBoundsCheck({pts, count});
-    }
-#endif
 
     /** Sets bounds to the smallest SkRect enclosing SkPoint p0 and p1. The result is
         sorted and may be empty. Does not check to see if values are finite.

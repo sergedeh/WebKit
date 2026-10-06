@@ -108,6 +108,7 @@ public:
             std::optional<bool> suppressICECandidateFiltering;
             std::optional<bool> alwaysAllowAutoplay;
             std::optional<bool> siteIsolationEnabled;
+            std::optional<bool> controlledByExternalAgent;
 #endif
         };
 
@@ -124,13 +125,13 @@ public:
     };
 
 #if PLATFORM(COCOA)
-    JS_EXPORT_PRIVATE static void setNeedMachSandboxExtension(bool needExtension);
+    JS_EXPORT_PRIVATE static void NODELETE setNeedMachSandboxExtension(bool needExtension);
 #endif
 #if USE(GLIB)
-    JS_EXPORT_PRIVATE static void setInspectorServerAddress(CString&&);
-    JS_EXPORT_PRIVATE static const CString& inspectorServerAddress();
+    JS_EXPORT_PRIVATE static void setInspectorServerAddress(UTF8CString&&);
+    JS_EXPORT_PRIVATE static const UTF8CString& inspectorServerAddress();
 #endif
-    JS_EXPORT_PRIVATE static void startDisabled();
+    JS_EXPORT_PRIVATE static void NODELETE startDisabled();
     JS_EXPORT_PRIVATE static RemoteInspector& singleton();
     friend class LazyNeverDestroyed<RemoteInspector>;
 
@@ -224,7 +225,7 @@ private:
 
     void updateTargetListing(const RemoteControllableTarget&);
 
-    void updateHasActiveDebugSession();
+    void NODELETE updateHasActiveDebugSession();
     void updateClientCapabilities();
 
     void sendAutomaticInspectionCandidateMessage(TargetID) WTF_REQUIRES_LOCK(m_mutex);
@@ -245,7 +246,7 @@ private:
     void receivedAutomaticInspectionConfigurationMessage(NSDictionary *userInfo) WTF_REQUIRES_LOCK(m_mutex);
     void receivedAutomaticInspectionRejectMessage(NSDictionary *userInfo) WTF_REQUIRES_LOCK(m_mutex);
     void receivedAutomationSessionRequestMessage(NSDictionary *userInfo) WTF_REQUIRES_LOCK(m_mutex);
-    void receivedPingSuccessMessage() WTF_REQUIRES_LOCK(m_mutex);
+    void NODELETE receivedPingSuccessMessage() WTF_REQUIRES_LOCK(m_mutex);
 #endif
 #if USE(INSPECTOR_SOCKET_SERVER)
     HashMap<String, CallHandler>& dispatchMap() final;
@@ -268,7 +269,7 @@ private:
     static std::atomic<bool> needMachSandboxExtension;
 #endif
 #if USE(GLIB)
-    static CString s_inspectorServerAddress;
+    static UTF8CString s_inspectorServerAddress;
 #endif
 
     // Targets can be registered from any thread at any time.

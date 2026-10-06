@@ -29,17 +29,21 @@
 #include "InlineFormattingContext.h"
 #include "InlineLineBuilder.h"
 #include "LayoutElementBox.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 #include "TextOnlySimpleLineBuilder.h"
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 namespace Layout {
 
-static bool isBoxEligibleForNonLineBuilderMinimumWidth(const ElementBox& box)
+static bool NODELETE isBoxEligibleForNonLineBuilderMinimumWidth(const ElementBox& box)
 {
     // Note that hanging trailing content needs line builder (combination of wrapping is allowed but whitespace is preserved).
     auto& style = box.style();
+    // 'white-space-trim' discards some inline items, which this character-walking fast path (it iterates the text content directly, not the inline items) can't account for.
+    if (!style.whiteSpaceTrim().isNone())
+        return false;
     return TextUtil::isWrappingAllowed(style) && (style.lineBreak() == LineBreak::Anywhere || style.wordBreak() == WordBreak::BreakAll || style.wordBreak() == WordBreak::BreakWord) && style.whiteSpaceCollapse() != WhiteSpaceCollapse::Preserve;
 }
 
@@ -52,7 +56,7 @@ static bool isContentEligibleForNonLineBuilderMaximumWidth(const ElementBox& roo
     return inlineTextItem && !inlineTextItem->isWhitespace();
 }
 
-static bool isSubtreeEligibleForNonLineBuilderMinimumWidth(const ElementBox& root)
+static bool NODELETE isSubtreeEligibleForNonLineBuilderMinimumWidth(const ElementBox& root)
 {
     auto isSimpleBreakableContent = isBoxEligibleForNonLineBuilderMinimumWidth(root);
     for (auto* child = root.firstChild(); child && isSimpleBreakableContent; child = child->nextSibling()) {
@@ -67,12 +71,33 @@ static bool isSubtreeEligibleForNonLineBuilderMinimumWidth(const ElementBox& roo
     return isSimpleBreakableContent;
 }
 
-static bool isContentEligibleForNonLineBuilderMinimumWidth(const ElementBox& rootBox, bool mayUseSimplifiedTextOnlyInlineLayout)
+static bool NODELETE isContentEligibleForNonLineBuilderMinimumWidth(const ElementBox& rootBox, const InlineContentCache::InlineItems& inlineItems, bool mayUseSimplifiedTextOnlyInlineLayout)
 {
-    return (mayUseSimplifiedTextOnlyInlineLayout && isBoxEligibleForNonLineBuilderMinimumWidth(rootBox)) || (!mayUseSimplifiedTextOnlyInlineLayout && isSubtreeEligibleForNonLineBuilderMinimumWidth(rootBox));
+    auto isEligible = (mayUseSimplifiedTextOnlyInlineLayout && isBoxEligibleForNonLineBuilderMinimumWidth(rootBox)) || (!mayUseSimplifiedTextOnlyInlineLayout && isSubtreeEligibleForNonLineBuilderMinimumWidth(rootBox));
+    if (!isEligible || !mayUseSimplifiedTextOnlyInlineLayout || !inlineItems.hasInlineBoxes())
+        return isEligible;
+
+    // Text only content in range e.g. <span>text content</span> or <span><span>text content</span></span>. Check if enclosing inline box is eligible.
+    auto& inlineItemList = inlineItems.content();
+    auto inlineBoxIndex = std::optional<size_t> { };
+    for (size_t index = 0; index < inlineItemList.size(); ++index) {
+        auto& inlineItem = inlineItemList[index];
+        if (inlineItem.isInlineBoxStart()) {
+            inlineBoxIndex = index;
+            continue;
+        }
+
+        if (inlineItem.isText() && inlineBoxIndex)
+            return isBoxEligibleForNonLineBuilderMinimumWidth(downcast<ElementBox>(inlineItemList[*inlineBoxIndex].layoutBox()));
+
+        // This is unexpected content. We should always find inline box(es) followed by text content.
+        break;
+    }
+    ASSERT_NOT_REACHED();
+    return false;
 }
 
-static bool mayUseContentWidthBetweenLineBreaksAsMaximumSize(const ElementBox& rootBox, const InlineItemList& inlineItemList)
+static bool NODELETE mayUseContentWidthBetweenLineBreaksAsMaximumSize(const ElementBox& rootBox, const InlineItemList& inlineItemList)
 {
     if (!TextUtil::shouldPreserveSpacesAndTabs(rootBox))
         return false;
@@ -115,7 +140,8 @@ IntrinsicWidthHandler::IntrinsicWidthHandler(InlineFormattingContext& inlineForm
         for (size_t index = 0; index < inlineBoxCount; ++index) {
             auto& inlineItem = inlineItemList[index];
             auto isNestingInlineBox = inlineItem.isInlineBoxStart() && inlineItemList[inlineItems.size() - 1 - index].isInlineBoxEnd();
-            m_mayUseSimplifiedTextOnlyInlineLayoutInRange = isNestingInlineBox && !formattingContext().geometryForBox(inlineItem.layoutBox()).horizontalMarginBorderAndPadding() && TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(inlineItem.layoutBox());
+            auto& inlineBoxGeometry = formattingContext().geometryForBox(inlineItem.layoutBox());
+            m_mayUseSimplifiedTextOnlyInlineLayoutInRange = isNestingInlineBox && !inlineBoxGeometry.horizontalMarginBorderAndPadding() && inlineBoxGeometry.marginStart() >= 0 && inlineBoxGeometry.marginEnd() >= 0 && TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(inlineItem.layoutBox());
             if (!m_mayUseSimplifiedTextOnlyInlineLayoutInRange)
                 return;
         }
@@ -124,21 +150,109 @@ IntrinsicWidthHandler::IntrinsicWidthHandler(InlineFormattingContext& inlineForm
     initializeRangeAndTextOnlyBuilderEligibility();
 }
 
-InlineLayoutUnit IntrinsicWidthHandler::minimumContentSize()
-{
-    auto minimumContentSize = InlineLayoutUnit { };
+struct ContentWidthBetweenLineBreaks {
+    InlineLayoutUnit maximum { };
+    InlineLayoutUnit current { };
+};
 
-    if (isContentEligibleForNonLineBuilderMinimumWidth(formattingContextRoot(), m_mayUseSimplifiedTextOnlyInlineLayoutInRange))
-        minimumContentSize = simplifiedMinimumWidth(formattingContextRoot());
-    else if (m_mayUseSimplifiedTextOnlyInlineLayoutInRange) {
-        auto simplifiedLineBuilder = TextOnlySimpleLineBuilder { formattingContext(), lineBuilerRoot(), { }, inlineItemList() };
-        minimumContentSize = computedIntrinsicWidthForConstraint(IntrinsicWidthMode::Minimum, simplifiedLineBuilder, MayCacheLayoutResult::No);
-    } else {
-        auto lineBuilder = LineBuilder { formattingContext(), { }, inlineItemList() };
-        minimumContentSize = computedIntrinsicWidthForConstraint(IntrinsicWidthMode::Minimum, lineBuilder, MayCacheLayoutResult::No);
+std::optional<InlineLayoutUnit> IntrinsicWidthHandler::minimumContentSizeForBreakSpaces()
+{
+    if (!m_mayUseSimplifiedTextOnlyInlineLayoutInRange)
+        return { };
+
+    auto& lineBuilderRoot = this->lineBuilderRoot();
+    auto& lineBuilderRootStyle = lineBuilderRoot.style();
+    auto isEligibleForBreakSpacesFastPath = [&] {
+        if (lineBuilderRootStyle.whiteSpaceCollapse() != WhiteSpaceCollapse::BreakSpaces)
+            return false;
+        if (&lineBuilderRootStyle != &lineBuilderRoot.firstLineStyle())
+            return false;
+        if (!TextUtil::isWrappingAllowed(lineBuilderRootStyle))
+            return false;
+        if (m_inlineItemRange.isEmpty())
+            return false;
+        if (!TextUtil::wordBreakBehavior(lineBuilderRootStyle, false, TextUtil::IsMinimumInIntrinsicWidthMode::Yes, TextUtil::HyphenationIsDisabled::No).isEmpty())
+            return false;
+        return true;
+    };
+
+    if (!isEligibleForBreakSpacesFastPath())
+        return { };
+
+    auto& inlineItemList = this->inlineItemList();
+
+    auto maximumUnbreakableWidth = InlineLayoutUnit { };
+    auto currentUnbreakableWidth = InlineLayoutUnit { };
+    auto contentWidthBetweenLineBreaks = ContentWidthBetweenLineBreaks { };
+    auto layoutRange = m_inlineItemRange;
+
+    auto recordUnbreakableWidth = [](auto& currentUnbreakableWidth, auto& maximumUnbreakableWidth, auto& contentWidthBetweenLineBreaks) {
+        maximumUnbreakableWidth = std::max(maximumUnbreakableWidth, currentUnbreakableWidth);
+        contentWidthBetweenLineBreaks.current += currentUnbreakableWidth;
+        currentUnbreakableWidth = { };
+    };
+
+    for (size_t index = layoutRange.startIndex(); index < layoutRange.endIndex(); ++index) {
+        auto& inlineItem = inlineItemList[index];
+        if (inlineItem.isLineBreak()) {
+            recordUnbreakableWidth(currentUnbreakableWidth, maximumUnbreakableWidth, contentWidthBetweenLineBreaks);
+            contentWidthBetweenLineBreaks.maximum = std::max(contentWidthBetweenLineBreaks.maximum, contentWidthBetweenLineBreaks.current);
+            contentWidthBetweenLineBreaks.current = { };
+            continue;
+        }
+
+        auto& inlineTextItem = downcast<InlineTextItem>(inlineItem);
+        auto width = inlineTextItem.width();
+        if (!width)
+            width = TextOnlySimpleLineBuilder::measuredInlineTextItem(inlineTextItem, lineBuilderRootStyle, currentUnbreakableWidth);
+
+        bool isAtSoftWrapOpportunityOrContentEnd = TextOnlySimpleLineBuilder::isAtSoftWrapOpportunityOrContentEnd(inlineTextItem, inlineItemList, index + 1, layoutRange, lineBuilderRootStyle);
+        if (inlineTextItem.hasTrailingSoftHyphen() && isAtSoftWrapOpportunityOrContentEnd && !TextOnlySimpleLineBuilder::isAtContentEnd(inlineItemList, index + 1, layoutRange))
+            *width += TextUtil::hyphenWidth(lineBuilderRootStyle);
+
+        currentUnbreakableWidth += *width;
+        if (isAtSoftWrapOpportunityOrContentEnd)
+            recordUnbreakableWidth(currentUnbreakableWidth, maximumUnbreakableWidth, contentWidthBetweenLineBreaks);
+    }
+    // Summing the widths of unbreakable InlineItems between forced breaks is the unwrapped width, so this is a max-content value.
+    // maximumContentSize() returns it instead of running its own line layout.
+    m_maximumContentWidthBetweenLineBreaks = std::max(contentWidthBetweenLineBreaks.current, contentWidthBetweenLineBreaks.maximum);
+    return maximumUnbreakableWidth;
+}
+
+InlineLayoutUnit IntrinsicWidthHandler::lineBuilderMinimumContentSize()
+{
+    if (m_mayUseSimplifiedTextOnlyInlineLayoutInRange) {
+        auto simplifiedLineBuilder = TextOnlySimpleLineBuilder { formattingContext(), lineBuilderRoot(), { }, inlineItemList() };
+        return computedIntrinsicWidthForConstraint(IntrinsicWidthMode::Minimum, simplifiedLineBuilder, MayCacheLayoutResult::No);
     }
 
-    return minimumContentSize;
+    auto lineBuilder = LineBuilder { formattingContext(), { }, inlineItemList() };
+    return computedIntrinsicWidthForConstraint(IntrinsicWidthMode::Minimum, lineBuilder, MayCacheLayoutResult::No);
+}
+
+InlineLayoutUnit IntrinsicWidthHandler::minimumContentSize()
+{
+    if (isContentEligibleForNonLineBuilderMinimumWidth(formattingContextRoot(), m_inlineItems, m_mayUseSimplifiedTextOnlyInlineLayoutInRange))
+        return simplifiedMinimumWidth(formattingContextRoot());
+
+    if (auto minimumContentSize = minimumContentSizeForBreakSpaces()) {
+#ifndef NDEBUG
+        {
+            auto nonLineBuilderContentWidthBetweenLineBreaks = m_maximumContentWidthBetweenLineBreaks;
+            auto lineBuilderContentSize = lineBuilderMinimumContentSize();
+            ASSERT(ceiledLayoutUnit(*minimumContentSize) == ceiledLayoutUnit(lineBuilderContentSize));
+            ASSERT(m_maximumContentWidthBetweenLineBreaks && nonLineBuilderContentWidthBetweenLineBreaks);
+            ASSERT(std::abs(*m_maximumContentWidthBetweenLineBreaks - *nonLineBuilderContentWidthBetweenLineBreaks) < 1);
+            // computedIntrinsicWidthForConstraint overwrote the member. Restore the fast path's value so maximumContentSize()
+            // returns the same value in debug as it would in release.
+            m_maximumContentWidthBetweenLineBreaks = nonLineBuilderContentWidthBetweenLineBreaks;
+        }
+#endif
+        return *minimumContentSize;
+    }
+
+    return lineBuilderMinimumContentSize();
 }
 
 InlineLayoutUnit IntrinsicWidthHandler::maximumContentSize()
@@ -152,11 +266,11 @@ InlineLayoutUnit IntrinsicWidthHandler::maximumContentSize()
         if (m_maximumContentWidthBetweenLineBreaks && mayUseContentWidthBetweenLineBreaksAsMaximumSize(formattingContextRoot(), inlineItemList())) {
             maximumContentSize = *m_maximumContentWidthBetweenLineBreaks;
 #ifndef NDEBUG
-            auto simplifiedLineBuilder = TextOnlySimpleLineBuilder { formattingContext(), lineBuilerRoot(), { }, inlineItemList() };
+            auto simplifiedLineBuilder = TextOnlySimpleLineBuilder { formattingContext(), lineBuilderRoot(), { }, inlineItemList() };
             ASSERT(std::abs(maximumContentSize - computedIntrinsicWidthForConstraint(IntrinsicWidthMode::Maximum, simplifiedLineBuilder, MayCacheLayoutResult::No)) < 1);
 #endif
         } else {
-            auto simplifiedLineBuilder = TextOnlySimpleLineBuilder { formattingContext(), lineBuilerRoot(), { }, inlineItemList() };
+            auto simplifiedLineBuilder = TextOnlySimpleLineBuilder { formattingContext(), lineBuilderRoot(), { }, inlineItemList() };
             maximumContentSize = computedIntrinsicWidthForConstraint(IntrinsicWidthMode::Maximum, simplifiedLineBuilder, mayCacheLayoutResult);
         }
     } else {
@@ -175,10 +289,6 @@ InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(Intr
 
     auto availableWidth = intrinsicWidthMode == IntrinsicWidthMode::Maximum ? maxInlineLayoutUnit() : 0.f;
     auto maximumContentWidth = InlineLayoutUnit { };
-    struct ContentWidthBetweenLineBreaks {
-        InlineLayoutUnit maximum { };
-        InlineLayoutUnit current { };
-    };
     auto contentWidthBetweenLineBreaks = ContentWidthBetweenLineBreaks { };
     auto previousLineEnd = std::optional<InlineItemPosition> { };
     auto previousLine = std::optional<PreviousLine> { };
@@ -207,7 +317,7 @@ InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(Intr
             if (lineLayoutResult.runs.isEmpty())
                 return contentWidth;
             auto& leadingRun = lineLayoutResult.runs.first();
-            if (leadingRun.isListMarkerOutside())
+            if (leadingRun.isListMarker())
                 contentWidth -= leadingRun.logicalRight();
             return contentWidth;
         }();
@@ -216,7 +326,7 @@ InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(Intr
         if (lineLayoutResult.endsWithLineBreak())
             contentWidthBetweenLineBreaks = { std::max(contentWidthBetweenLineBreaks.maximum, contentWidthBetweenLineBreaks.current), { } };
 
-        layoutRange.start = InlineFormattingUtils::leadingInlineItemPositionForNextLine(lineLayoutResult.inlineItemRange.end, previousLineEnd, !lineLayoutResult.floatContent.hasIntrusiveFloat.isEmpty() || !lineLayoutResult.floatContent.placedFloats.isEmpty(), layoutRange.end);
+        layoutRange.start = InlineFormattingUtils::leadingInlineItemPositionForNextLine(lineLayoutResult, previousLineEnd, layoutRange.end);
         if (layoutRange.isEmpty()) {
             auto cacheLineBreakingResultForSubsequentLayoutIfApplicable = [&] {
                 m_maximumIntrinsicWidthResultForSingleLine = { };
@@ -231,7 +341,7 @@ InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(Intr
         // Support single line only.
         mayCacheLayoutResult = MayCacheLayoutResult::No;
         previousLineEnd = layoutRange.start;
-        previousLine = PreviousLine { lineIndex++, lineLayoutResult.contentGeometry.trailingOverflowingContentWidth, lineLayoutResult.endsWithLineBreak(), { }, WTF::move(lineLayoutResult.floatContent.suspendedFloats) };
+        previousLine = PreviousLine { lineIndex++, lineLayoutResult.contentGeometry.trailingOverflowingContentWidth, lineLayoutResult.endsWithLineBreak() || lineLayoutResult.isBlockContent(), lineLayoutResult.hasContentfulInFlowContent(), { }, WTF::move(lineLayoutResult.floatContent.suspendedFloats) };
         isFirstFormattedLineCandidate &= !lineLayoutResult.hasContentfulInFlowContent();
     }
     m_maximumContentWidthBetweenLineBreaks = std::max(contentWidthBetweenLineBreaks.current, contentWidthBetweenLineBreaks.maximum);
@@ -330,7 +440,7 @@ const ElementBox& IntrinsicWidthHandler::formattingContextRoot() const
     return m_inlineFormattingContext.root();
 }
 
-const ElementBox& IntrinsicWidthHandler::lineBuilerRoot() const
+const ElementBox& IntrinsicWidthHandler::lineBuilderRoot() const
 {
     if (!m_inlineItemRange.startIndex())
         return formattingContextRoot();

@@ -58,7 +58,7 @@ protected:
 
     void addResource(CachedResourceClient& client)
     {
-        m_resource->addClient(client);
+        protect(m_resource)->addClient(client);
     }
 
     void clearResource(CachedResourceClient& client)
@@ -66,7 +66,7 @@ protected:
         if (!m_resource)
             return;
 
-        m_resource->removeClient(client);
+        protect(m_resource)->removeClient(client);
         m_resource = nullptr;
     }
 
@@ -120,11 +120,10 @@ private:
         addResource(*this);
     }
 
-    void setCSSStyleSheet(const String&, const URL&, ASCIILiteral, const CachedCSSStyleSheet* resource) final
+    void setCSSStyleSheet(const String&, const URL&, ASCIILiteral, const CachedCSSStyleSheet& resource) final
     {
-        ASSERT(resource);
-        ASSERT(ownedResource() == resource);
-        triggerEvents(*resource);
+        ASSERT(ownedResource() == &resource);
+        triggerEvents(resource);
     }
 
     void clear() final { clearResource(*this); }

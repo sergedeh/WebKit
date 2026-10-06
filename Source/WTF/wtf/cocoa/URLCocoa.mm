@@ -23,14 +23,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
+#if !__has_feature(objc_arc)
+#error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+#endif
+
 #import "config.h"
 #import <wtf/URL.h>
 
-#import <wtf/URLParser.h>
 #import <wtf/cf/CFURLExtras.h>
-#import <wtf/cocoa/NSURLExtras.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
-#import <wtf/text/CString.h>
 
 @interface NSString (WTFNSURLExtras)
 - (BOOL)_web_looksLikeIPAddress;

@@ -19,13 +19,14 @@
  */
 #pragma once
 
-#include <WebCore/DestinationColorSpace.h>
+#include <WebCore/ColorSpace.h>
 #include <WebCore/FloatPoint3D.h>
 #include <WebCore/GraphicsTypesGL.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/IntSize.h>
 #include <WebCore/TransformationMatrix.h>
 #include <memory>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
 #include <wtf/Platform.h>
@@ -49,17 +50,13 @@
 #endif
 
 #if ENABLE(WEBXR_HIT_TEST)
+#include "XRHitTestSourceIdentifier.h"
 #include <WebCore/ExceptionOr.h>
 #endif
 
-namespace PlatformXR {
-class TrackingAndRenderingClient;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<PlatformXR::TrackingAndRenderingClient> : std::true_type { };
-}
+#if ENABLE(WEBXR_LAYERS)
+#include <WebCore/FloatSize.h>
+#endif
 
 namespace WebCore {
 enum class XRHitTestTrackableType : uint8_t;
@@ -110,8 +107,10 @@ enum class VisibilityState : uint8_t {
 using LayerHandle = int;
 
 #if ENABLE(WEBXR)
-using HitTestSource = unsigned;
-using TransientInputHitTestSource = unsigned;
+#if ENABLE(WEBXR_HIT_TEST)
+using HitTestSource = WebCore::XRHitTestSourceIdentifier;
+using TransientInputHitTestSource = WebCore::XRHitTestSourceIdentifier;
+#endif
 using InputSourceHandle = int;
 
 // https://immersive-web.github.io/webxr/#enumdef-xrhandedness
@@ -175,30 +174,30 @@ inline SessionFeature sessionFeatureFromReferenceSpaceType(ReferenceSpaceType re
 
 inline std::optional<SessionFeature> parseSessionFeatureDescriptor(StringView string)
 {
-    auto feature = string.trim(isUnicodeCompatibleASCIIWhitespace<char16_t>).convertToASCIILowercase();
+    auto feature = string.trim(isUnicodeCompatibleASCIIWhitespace<char16_t>);
 
-    if (feature == "viewer"_s)
+    if (equalLettersIgnoringASCIICase(feature, "viewer"_s))
         return SessionFeature::ReferenceSpaceTypeViewer;
-    if (feature == "local"_s)
+    if (equalLettersIgnoringASCIICase(feature, "local"_s))
         return SessionFeature::ReferenceSpaceTypeLocal;
-    if (feature == "local-floor"_s)
+    if (equalLettersIgnoringASCIICase(feature, "local-floor"_s))
         return SessionFeature::ReferenceSpaceTypeLocalFloor;
-    if (feature == "bounded-floor"_s)
+    if (equalLettersIgnoringASCIICase(feature, "bounded-floor"_s))
         return SessionFeature::ReferenceSpaceTypeBoundedFloor;
-    if (feature == "unbounded"_s)
+    if (equalLettersIgnoringASCIICase(feature, "unbounded"_s))
         return SessionFeature::ReferenceSpaceTypeUnbounded;
 #if ENABLE(WEBXR_HANDS)
-    if (feature == "hand-tracking"_s)
+    if (equalLettersIgnoringASCIICase(feature, "hand-tracking"_s))
         return SessionFeature::HandTracking;
 #endif
 #if ENABLE(WEBXR_HIT_TEST)
-    if (feature == "hit-test"_s)
+    if (equalLettersIgnoringASCIICase(feature, "hit-test"_s))
         return SessionFeature::HitTest;
 #endif
-    if (feature == "webgpu"_s)
+    if (equalLettersIgnoringASCIICase(feature, "webgpu"_s))
         return SessionFeature::WebGPU;
 #if ENABLE(WEBXR_LAYERS)
-    if (feature == "layers"_s)
+    if (equalLettersIgnoringASCIICase(feature, "layers"_s))
         return SessionFeature::Layers;
 #endif
     return std::nullopt;
@@ -280,6 +279,7 @@ struct DepthRange {
 struct RequestData {
     bool isPassthroughFullyObscured;
     DepthRange depthRange;
+    Vector<LayerHandle> activeLayerHandles;
 };
 
 struct RateMapDescription {
@@ -289,6 +289,12 @@ struct RateMapDescription {
     // Vertical samples is shared by both horizontalSamples
     Vector<float> verticalSamples;
 };
+
+struct LayerInfo {
+    LayerHandle handle;
+    size_t numImages { 1 };
+};
+
 
 #if ENABLE(WEBXR_HIT_TEST)
 struct Ray {
@@ -361,6 +367,9 @@ struct FrameData {
     static constexpr auto LayerSetupSizeMax = std::numeric_limits<uint16_t>::max();
     struct LayerSetupData {
         std::array<std::array<uint16_t, 2>, 2> physicalSize;
+#if PLATFORM(COCOA)
+        std::array<std::array<uint16_t, 2>, 2> actualSize;
+#endif
         std::array<WebCore::IntRect, 2> viewports;
         RateMapDescription foveationRateMapDesc;
 #if PLATFORM(COCOA)
@@ -400,7 +409,7 @@ struct FrameData {
         std::optional<LayerSetupData> layerSetup = { std::nullopt };
         uint64_t renderingFrameIndex { 0 };
         std::optional<ExternalTextureData> textureData;
-        // FIXME: <rdar://134998122> Remove when new CC lands.
+        // FIXME: <rdar://182368025> Is this still necessary?
         bool requestDepth { false };
         bool isForTesting { false };
     };
@@ -469,6 +478,64 @@ struct FrameData {
     FrameData copy() const;
 };
 
+#if ENABLE(WEBXR_LAYERS)
+enum class CompositionLayerType : uint8_t {
+    Quad,
+    Equirect,
+    Cylinder,
+    Cube,
+};
+
+enum class LayerLayout : uint8_t {
+    Mono,
+    Stereo,
+    StereoLeftRight,
+    StereoTopBottom,
+};
+#endif
+
+struct DeviceLayer {
+    struct LayerView {
+        Eye eye { Eye::None };
+        WebCore::IntRect viewport;
+    };
+    LayerHandle handle { 0 };
+    bool visible { true };
+    Vector<LayerView> views;
+#if USE(OPENXR)
+    WTF::UnixFileDescriptor fenceFD;
+#endif
+#if ENABLE(WEBXR_LAYERS)
+    bool blendTextureSourceAlpha { false };
+    bool forceMonoPresentation { false };
+    struct QuadLayerData {
+        WebCore::FloatSize worldSize;
+        FrameData::Pose poseInLocalSpace;
+    };
+    std::optional<QuadLayerData> quadLayerData;
+    struct EquirectLayerData {
+        float radius;
+        float centralHorizontalAngle;
+        float upperVerticalAngle;
+        float lowerVerticalAngle;
+        FrameData::Pose poseInLocalSpace;
+    };
+    std::optional<EquirectLayerData> equirectLayerData;
+    struct CylinderLayerData {
+        float radius;
+        float centralAngle;
+        float aspectRatio;
+        FrameData::Pose poseInLocalSpace;
+    };
+    std::optional<CylinderLayerData> cylinderLayerData;
+    struct CubeLayerData {
+        // Cube layers are mono and positioned solely by their orientation relative to the layer's space.
+        FrameData::FloatQuaternion orientation;
+    };
+    std::optional<CubeLayerData> cubeLayerData;
+#endif
+};
+
 class Device : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<Device> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(Device);
     WTF_MAKE_NONCOPYABLE(Device);
@@ -506,7 +573,10 @@ public:
     // when the platform has completed all steps to shut down the XR session.
     virtual bool supportsSessionShutdownNotification() const { return false; }
     virtual void initializeReferenceSpace(ReferenceSpaceType) = 0;
-    virtual std::optional<LayerHandle> createLayerProjection(uint32_t width, uint32_t height, bool alpha) = 0;
+    virtual std::optional<LayerInfo> createLayerProjection(uint32_t width, uint32_t height, bool alpha) = 0;
+#if ENABLE(WEBXR_LAYERS)
+    virtual std::optional<LayerInfo> createCompositionLayer(CompositionLayerType, WebCore::IntSize, LayerLayout) = 0;
+#endif
     virtual void deleteLayer(LayerHandle) = 0;
 
 #if ENABLE(WEBXR_HIT_TEST)
@@ -515,20 +585,6 @@ public:
     virtual void requestTransientInputHitTestSource(const TransientInputHitTestOptions&, CompletionHandler<void(WebCore::ExceptionOr<TransientInputHitTestSource>)>&&) = 0;
     virtual void deleteTransientInputHitTestSource(TransientInputHitTestSource) = 0;
 #endif
-
-    struct LayerView {
-        Eye eye { Eye::None };
-        WebCore::IntRect viewport;
-    };
-
-    struct Layer {
-        LayerHandle handle { 0 };
-        bool visible { true };
-        Vector<LayerView> views;
-#if USE(OPENXR)
-        WTF::UnixFileDescriptor fenceFD;
-#endif
-    };
 
     struct ViewData {
         bool active { false };
@@ -539,7 +595,12 @@ public:
 
     using RequestFrameCallback = Function<void(FrameData&&)>;
     virtual void requestFrame(std::optional<RequestData>&&, RequestFrameCallback&&) = 0;
-    virtual void submitFrame(Vector<Layer>&&) { };
+    virtual void submitFrame(Vector<DeviceLayer>&&) { };
+
+#if ENABLE(WEBXR_LAYERS)
+    unsigned maxRenderLayers() const { return m_maxRenderLayers; }
+#endif
+
 protected:
     Device() = default;
 
@@ -553,11 +614,15 @@ protected:
     bool m_supportsOrientationTracking { false };
     bool m_supportsViewportScaling { false };
     WeakPtr<TrackingAndRenderingClient> m_trackingAndRenderingClient;
+
+#if ENABLE(WEBXR_LAYERS)
+    unsigned m_maxRenderLayers { 1 };
+#endif
 };
 
 using DeviceList = Vector<Ref<Device>>;
 
-class TrackingAndRenderingClient : public CanMakeWeakPtr<TrackingAndRenderingClient> {
+class TrackingAndRenderingClient : public AbstractRefCountedAndCanMakeWeakPtr<TrackingAndRenderingClient> {
 public:
     virtual ~TrackingAndRenderingClient() = default;
 
@@ -567,6 +632,7 @@ public:
     virtual void sessionDidInitializeInputSources(Vector<FrameData::InputSource>&&) = 0;
     virtual void sessionDidEnd() = 0;
     virtual void updateSessionVisibilityState(VisibilityState) = 0;
+    virtual void sessionDidInitializeRendering(uint32_t /* width */, uint32_t /* height */, uint32_t /* arrayLength */) { }
     // FIXME: handle frame update
 };
 

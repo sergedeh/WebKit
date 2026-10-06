@@ -47,8 +47,11 @@ namespace WebCore {
 class EventRegion;
 class Path;
 class RenderObject;
-class RenderStyle;
 enum class TrackingType : uint8_t;
+
+namespace Style {
+class ComputedStyle;
+}
 
 class EventRegionContext final : public RegionContext {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(EventRegionContext, WEBCORE_EXPORT);
@@ -59,13 +62,14 @@ public:
 
     bool isEventRegionContext() const final { return true; }
 
-    WEBCORE_EXPORT void unite(const FloatRoundedRect&, const RenderObject&, const RenderStyle&, bool overrideUserModifyIsEditable = false);
+    enum class ContributeToInteractionRegions : bool { No, Yes };
+    WEBCORE_EXPORT void unite(const FloatRoundedRect&, const RenderObject&, const Style::ComputedStyle&, bool overrideUserModifyIsEditable = false, ContributeToInteractionRegions = ContributeToInteractionRegions::Yes);
     bool contains(const IntRect&) const;
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
     void uniteInteractionRegions(const RenderObject&, const FloatRect&, const FloatSize&, const std::optional<AffineTransform>&);
     bool shouldConsolidateInteractionRegion(const RenderObject&, const IntRect&, const NodeIdentifier&);
-    void convertGuardContainersToInterationIfNeeded(float minimumCornerRadius);
+    void convertGuardContainersToInteractionIfNeeded(float minimumCornerRadius);
     void removeSuperfluousInteractionRegions();
     void shrinkWrapInteractionRegions();
     void copyInteractionRegionsToEventRegion(float minimumCornerRadius);
@@ -130,29 +134,29 @@ public:
 
     friend bool operator==(const EventRegion&, const EventRegion&) = default;
 
-    void unite(const Region&, const RenderObject&, const RenderStyle&, bool overrideUserModifyIsEditable = false);
-    void translate(const IntSize&);
+    void unite(const Region&, const RenderObject&, const Style::ComputedStyle&, bool overrideUserModifyIsEditable = false);
+    void NODELETE translate(const IntSize&);
 
     bool contains(const IntPoint& point) const { return m_region.contains(point); }
     bool contains(const IntRect& rect) const { return m_region.contains(rect); }
     bool intersects(const IntRect& rect) const { return m_region.intersects(rect); }
 
-    const Region& region() const { return m_region; }
+    const Region& region() const LIFETIME_BOUND { return m_region; }
 
 #if ENABLE(TOUCH_ACTION_REGIONS)
     bool hasTouchActions() const { return !m_touchActionRegions.isEmpty(); }
     WEBCORE_EXPORT OptionSet<TouchAction> touchActionsForPoint(const IntPoint&) const;
-    const Region* regionForTouchAction(TouchAction) const;
+    const Region* regionForTouchAction(TouchAction) const LIFETIME_BOUND;
 #endif
 
 #if ENABLE(TOUCH_EVENT_REGIONS)
     WEBCORE_EXPORT TrackingType eventTrackingTypeForPoint(EventTrackingRegionsEventType, const IntPoint&) const;
-    const EventTrackingRegions& touchEventListenerRegion() const { return m_touchEventListenerRegion; }
+    const EventTrackingRegions& touchEventListenerRegion() const LIFETIME_BOUND { return m_touchEventListenerRegion; }
 #endif
 
 #if ENABLE(WHEEL_EVENT_REGIONS)
-    WEBCORE_EXPORT OptionSet<EventListenerRegionType> eventListenerRegionTypesForPoint(const IntPoint&) const;
-    const Region& eventListenerRegionForType(EventListenerRegionType) const;
+    WEBCORE_EXPORT OptionSet<EventListenerRegionType> NODELETE eventListenerRegionTypesForPoint(const IntPoint&) const;
+    const Region& NODELETE eventListenerRegionForType(EventListenerRegionType) const LIFETIME_BOUND;
 #endif
 
 #if ENABLE(EDITABLE_REGION)
@@ -165,7 +169,7 @@ public:
     void dump(TextStream&) const;
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
-    const Vector<InteractionRegion>& interactionRegions() const { return m_interactionRegions; }
+    const Vector<InteractionRegion>& interactionRegions() const LIFETIME_BOUND { return m_interactionRegions; }
     void appendInteractionRegions(const Vector<InteractionRegion>&);
     void clearInteractionRegions();
 #endif
@@ -174,6 +178,7 @@ private:
     friend struct IPC::ArgumentCoder<EventRegion>;
 #if ENABLE(TOUCH_ACTION_REGIONS)
     void uniteTouchActions(const Region&, OptionSet<TouchAction>);
+    void subtractAutoFromTouchActions(const Region&);
 #endif
     void uniteEventListeners(const Region&, OptionSet<EventListenerRegionType>);
 

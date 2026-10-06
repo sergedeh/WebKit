@@ -48,8 +48,8 @@ private:
     Vector<std::pair<size_t, size_t>> collectShapeRanges(const LineCandidate&) const;
     void applyShapingOnRunRange(LineCandidate&, std::pair<size_t, size_t> range) const;
     void shapePartialLineCandidate(LineCandidate&, size_t trailingRunIndex) const;
-    InlineLayoutUnit leadingPunctuationWidthForLineCandiate(const LineCandidate&) const;
-    InlineLayoutUnit trailingPunctuationOrStopOrCommaWidthForLineCandiate(const LineCandidate&, size_t startIndexAfterCandidateContent,  size_t layoutRangeEnd) const;
+    InlineLayoutUnit leadingPunctuationWidthForLineCandidate(const LineCandidate&) const;
+    InlineLayoutUnit trailingPunctuationOrStopOrCommaWidthForLineCandidate(const LineCandidate&, size_t startIndexAfterCandidateContent,  size_t layoutRangeEnd) const;
 
     struct Result {
         InlineContentBreaker::IsEndOfLine isEndOfLine { InlineContentBreaker::IsEndOfLine::No };
@@ -73,11 +73,13 @@ private:
     RectAndFloatConstraints floatAvoidingRect(const InlineRect& lineLogicalRect, InlineLayoutUnit lineMarginStart) const;
     RectAndFloatConstraints adjustedLineRectWithCandidateInlineContent(const LineCandidate&) const;
 
-    Result tryPlacingCandidateInlineContentOnLine(const InlineItemRange& needsLayoutRange, LineCandidate&);
     void commitCandidateContent(LineCandidate&, std::optional<InlineContentBreaker::Result::PartialTrailingContent>);
     size_t rebuildLineWithInlineContent(const InlineItemRange& needsLayoutRange, const InlineItem& lastInlineItemToAdd);
+    bool unplaceFloatBox(const Box&);
     size_t rebuildLineForTrailingSoftHyphen(const InlineItemRange& layoutRange);
-    void initialize(const InlineRect& initialLineLogicalRect, const InlineItemRange& needsLayoutRange, const std::optional<PreviousLine>&, bool isFirstFormattedLineCandidate);
+    void revertLineToStart(const InlineItemRange& layoutRange, size_t placedInlineItemEnd);
+    void initialize(const InlineRect& initialLineLogicalRect, const InlineItemRange& needsLayoutRange, const std::optional<BlockOverflowEllipsis>&, const std::optional<PreviousLine>&, bool isFirstFormattedLineCandidate);
+    void createLineSpanningInlineBoxes(const InlineItemRange& needsLayoutRange);
     UniqueRef<LineContent> placeInlineAndFloatContent(const InlineItemRange&);
     struct InitialLetterOffsets {
         LayoutUnit capHeightOffset;
@@ -85,6 +87,7 @@ private:
     };
     std::optional<InitialLetterOffsets> adjustLineRectForInitialLetterIfApplicable(const Box& floatBox);
     bool isLastLineWithInlineContent(const LineContent&, size_t needsLayoutEnd, const Line::RunList&) const;
+    const InlineItem* nextContentfulInlineItem(size_t index, size_t needsLayoutEnd) const;
     InlineContentBreaker::Result handleInlineContentWithClonedDecoration(const LineCandidate&, InlineContentBreaker::LineStatus);
     InlineLayoutUnit clonedDecorationAtBreakingPosition(const InlineContentBreaker::ContinuousContent::RunList&, const InlineContentBreaker::Result::PartialTrailingContent&) const;
     InlineLayoutUnit placedClonedDecorationWidth(const InlineContentBreaker::ContinuousContent::RunList&) const;
@@ -93,12 +96,13 @@ private:
     bool shouldTryToPlaceFloatBox(const Box& floatBox, LayoutUnit floatBoxMarginBoxWidth, MayOverConstrainLine) const;
 
     bool isLineConstrainedByFloat() const { return !m_lineIsConstrainedByFloat.isEmpty(); }
-    const FloatingContext& floatingContext() const { return m_floatingContext; }
+    const FloatingContext& floatingContext() const LIFETIME_BOUND { return m_floatingContext; }
 
 private:
     const FloatingContext& m_floatingContext;
     InlineRect m_lineInitialLogicalRect;
     InlineLayoutUnit m_lineMarginStart { 0.f };
+    InlineLayoutUnit m_lineContentEdgeOffset { 0.f };
     InlineLayoutUnit m_initialIntrusiveFloatsWidth { 0.f };
     InlineLayoutUnit m_candidateContentMaximumHeight { 0.f };
     LineLayoutResult::PlacedFloatList m_placedFloats;
@@ -108,6 +112,12 @@ private:
     OptionSet<UsedFloat> m_lineIsConstrainedByFloat { };
     std::optional<InlineLayoutUnit> m_initialLetterClearGap;
     TextSpacingContext m_textSpacingContext { };
+    struct LineClamp {
+        std::optional<BlockOverflowEllipsis> blockEllipsis;
+        bool blockEllipsisContentOnly { false };
+        bool isLastLineWithoutBlockEllipsis { false };
+    };
+    LineClamp m_lineClamp;
 };
 
 }

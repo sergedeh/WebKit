@@ -130,7 +130,7 @@ void Download::didReceiveChallenge(const WebCore::AuthenticationChallenge& chall
         return;
     }
 
-    m_client->protectedDownloadsAuthenticationManager()->didReceiveAuthenticationChallenge(*this, challenge, WTF::move(completionHandler));
+    protect(m_client->downloadsAuthenticationManager())->didReceiveAuthenticationChallenge(*this, challenge, WTF::move(completionHandler));
 }
 
 void Download::didCreateDestination(const String& path)
@@ -145,7 +145,7 @@ void Download::didReceiveData(uint64_t bytesWritten, uint64_t totalBytesWritten,
         m_hasReceivedData = true;
     }
     
-    protectedMonitor()->downloadReceivedBytes(bytesWritten);
+    protect(m_monitor)->downloadReceivedBytes(bytesWritten);
 
 #if HAVE(MODERN_DOWNLOADPROGRESS)
     updateProgress(totalBytesWritten, totalBytesExpectedToWrite);

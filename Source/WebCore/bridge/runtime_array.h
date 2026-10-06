@@ -27,8 +27,9 @@
 #define RUNTIME_ARRAY_H_
 
 #include "BridgeJSC.h"
-#include "JSDOMBinding.h"
+#include "JSDOMWrapperCache.h"
 #include <JavaScriptCore/ArrayPrototype.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 
 namespace JSC {
     
@@ -65,8 +66,8 @@ public:
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool putByIndex(JSCell*, JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow);
     
-    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
-    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
+    static bool NODELETE deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+    static bool NODELETE deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     
     unsigned getLength() const { return m_array->getLength(); }
     
@@ -88,7 +89,7 @@ private:
     RuntimeArray(VM&, Structure*);
     void finishCreation(VM&, Bindings::Array*);
 
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
+    static JSC::GCClient::IsoSubspace* NODELETE subspaceForImpl(JSC::VM&);
 
     BindingsArray* m_array;
 };

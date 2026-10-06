@@ -31,11 +31,12 @@
 #include "DocumentPage.h"
 #include "InspectorInstrumentation.h"
 #include "KeyframeEffectStack.h"
+#include "PseudoElementUtilitiesInlines.h"
 #include "RenderElement.h"
 #include "RenderImage.h"
 #include "RenderQuote.h"
-#include "RenderStyle+GettersInlines.h"
-#include "StylableInlines.h"
+#include "StyleableInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleResolver.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -67,23 +68,23 @@ Ref<PseudoElement> PseudoElement::create(Element& host, PseudoElementType pseudo
 {
     Ref pseudoElement = adoptRef(*new PseudoElement(host, pseudoElementType));
 
-    InspectorInstrumentation::pseudoElementCreated(host.document().protectedPage().get(), pseudoElement.get());
+    InspectorInstrumentation::pseudoElementCreated(protect(host.document().page()).get(), pseudoElement.get());
 
     return pseudoElement;
 }
 
 void PseudoElement::clearHostElement()
 {
-    InspectorInstrumentation::pseudoElementDestroyed(document().protectedPage().get(), *this);
+    InspectorInstrumentation::pseudoElementDestroyed(protect(document().page()).get(), *this);
 
     Styleable::fromElement(*this).elementWasRemoved();
 
     m_hostElement = nullptr;
 }
 
-bool PseudoElement::rendererIsNeeded(const RenderStyle& style)
+bool PseudoElement::rendererIsNeeded(const Style::ComputedStyle& style)
 {
-    if (pseudoElementRendererIsNeeded(&style))
+    if (Style::pseudoElementRendererIsNeeded(style))
         return true;
 
     if (RefPtr element = m_hostElement.get()) {

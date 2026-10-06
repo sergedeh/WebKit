@@ -11,11 +11,11 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkCPUTypes.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTPin.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkCPUTypes.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTPin.h"
+#include "include/private/SkTo.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -39,7 +39,7 @@ static inline unsigned SkAlpha255To256(U8CPU alpha) {
 #define SkAlphaMul(value, alpha256)     (((value) * (alpha256)) >> 8)
 
 static inline U8CPU SkUnitScalarClampToByte(SkScalar x) {
-    return static_cast<U8CPU>(SkTPin(x, 0.0f, 1.0f) * 255 + 0.5);
+    return static_cast<U8CPU>(SkTPin(x, 0.0f, 1.0f) * 255 + 0.5f);
 }
 
 #define SK_A32_BITS     8

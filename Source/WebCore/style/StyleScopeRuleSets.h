@@ -27,6 +27,7 @@
 #include "UserAgentStyle.h"
 #include <memory>
 #include <wtf/HashMap.h>
+#include <wtf/OptionSet.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Vector.h>
 
@@ -46,6 +47,20 @@ enum class DeclarationOrigin : uint8_t;
 class InspectorCSSOMWrappers;
 class Resolver;
 
+// Properties of a :has() argument used to limit sibling-combinator invalidation visits.
+enum class HasArgumentProperty : uint8_t {
+    // The argument depends on sibling order/position (a sibling combinator or a sibling-relative pseudo-class
+    // anywhere). Order-insensitive arguments don't need sibling-combinator invalidation visits — the changed
+    // element's own SelfOrDescendant traversal covers them — so they are skipped there to avoid re-walking the
+    // bearer subtree on every mutation.
+    OrderSensitive = 1 << 0,
+    // The order-sensitivity is *purely* structural sibling combinators (+/~) with no positional or stateful
+    // pseudo-classes (recursing into :is()/:where()/:not()). For these an element's match depends only on itself
+    // and its preceding siblings, so the hasAlreadyMatchedAndMutationIsIrrelevant short-circuit can be applied on
+    // sibling-combinator visits when the mutation is at the end of the element list.
+    StructuralSibling = 1 << 1,
+};
+
 struct InvalidationRuleSet {
     RefPtr<RuleSet> ruleSet;
     // Invalidation selectors are used for attribute selector and :has() invalidation.
@@ -55,6 +70,13 @@ struct InvalidationRuleSet {
     CSSSelectorList invalidationSelectors;
     MatchElement matchElement;
     IsNegation isNegation;
+    OptionSet<HasArgumentProperty> hasArgumentProperties;
+    // Selector for the :has() scope element, used to bound invalidation traversal.
+    //   - Specific selectors: strong scope.
+    //   - Universal `*`: weak scope (bearer has no compound peer); scope element is still
+    //     DOM-identifiable relative to a changed element.
+    //   - Null: scope-breaking (nested :is()/:not() reaches outside the scope).
+    RefPtr<const RefCountedCSSSelectorList> scopeSelector;
 };
 
 enum class SelectorsForStyleAttribute : uint8_t { None, SubjectPositionOnly, NonSubjectPosition };
@@ -66,21 +88,20 @@ public:
 
     bool isAuthorStyleDefined() const { return m_isAuthorStyleDefined; }
     RuleSet* userAgentMediaQueryStyle() const;
-    RuleSet* dynamicViewTransitionsStyle() const;
+    RuleSet* NODELETE dynamicViewTransitionsStyle() const;
     RuleSet& authorStyle() const { return *m_authorStyle; }
     RuleSet* userStyle() const;
     RuleSet* styleForDeclarationOrigin(DeclarationOrigin);
 
-    const RuleFeatureSet& features() const;
-    RuleSet* scopeBreakingHasPseudoClassInvalidationRuleSet() const { return m_scopeBreakingHasPseudoClassInvalidationRuleSet.get(); }
+    const RuleFeatureSet& features() const LIFETIME_BOUND;
 
-    const Vector<InvalidationRuleSet>* idInvalidationRuleSets(const AtomString&) const;
-    const Vector<InvalidationRuleSet>* classInvalidationRuleSets(const AtomString&) const;
-    const Vector<InvalidationRuleSet>* attributeInvalidationRuleSets(const AtomString&) const;
-    const Vector<InvalidationRuleSet>* pseudoClassInvalidationRuleSets(const PseudoClassInvalidationKey&) const;
-    const Vector<InvalidationRuleSet>* hasPseudoClassInvalidationRuleSets(const PseudoClassInvalidationKey&) const;
+    const Vector<InvalidationRuleSet>* idInvalidationRuleSets(const AtomString&) const LIFETIME_BOUND;
+    const Vector<InvalidationRuleSet>* classInvalidationRuleSets(const AtomString&) const LIFETIME_BOUND;
+    const Vector<InvalidationRuleSet>* attributeInvalidationRuleSets(const AtomString&) const LIFETIME_BOUND;
+    const Vector<InvalidationRuleSet>* pseudoClassInvalidationRuleSets(const PseudoClassInvalidationKey&) const LIFETIME_BOUND;
+    const Vector<InvalidationRuleSet>* hasPseudoClassInvalidationRuleSets(const PseudoClassInvalidationKey&) const LIFETIME_BOUND;
 
-    const HashSet<AtomString>& customPropertyNamesInStyleContainerQueries() const;
+    const HashSet<AtomString>& customPropertyNamesInStyleContainerQueries() const LIFETIME_BOUND;
 
     SelectorsForStyleAttribute selectorsForStyleAttribute() const;
 
@@ -92,22 +113,20 @@ public:
 
     void resetUserAgentMediaQueryStyle();
 
-    bool hasViewportDependentMediaQueries() const;
-    bool hasContainerQueries() const;
-    bool hasScopeRules() const;
+    bool NODELETE hasViewportDependentMediaQueries() const;
+    bool NODELETE hasContainerQueries() const;
+    bool NODELETE hasScopeRules() const;
 
-    RefPtr<StyleRuleViewTransition> viewTransitionRule() const;
+    RefPtr<StyleRuleViewTransition> NODELETE viewTransitionRule() const;
 
     std::optional<DynamicMediaQueryEvaluationChanges> evaluateDynamicMediaQueryRules(const MQ::MediaQueryEvaluator&);
-
-    RuleFeatureSet& mutableFeatures();
 
     void setDynamicViewTransitionsStyle(RuleSet* ruleSet)
     {
         m_dynamicViewTransitionsStyle = ruleSet;
     }
 
-    bool& isInvalidatingStyleWithRuleSets() { return m_isInvalidatingStyleWithRuleSets; }
+    bool& isInvalidatingStyleWithRuleSets() LIFETIME_BOUND { return m_isInvalidatingStyleWithRuleSets; }
 
     bool hasMatchingUserOrAuthorStyle(NOESCAPE const WTF::Function<bool(RuleSet&)>&);
 
@@ -123,7 +142,6 @@ private:
 
     Resolver& m_styleResolver;
     mutable RuleFeatureSet m_features;
-    mutable RefPtr<RuleSet> m_scopeBreakingHasPseudoClassInvalidationRuleSet;
     mutable HashMap<AtomString, std::unique_ptr<Vector<InvalidationRuleSet>>> m_idInvalidationRuleSets;
     mutable HashMap<AtomString, std::unique_ptr<Vector<InvalidationRuleSet>>> m_classInvalidationRuleSets;
     mutable HashMap<AtomString, std::unique_ptr<Vector<InvalidationRuleSet>>> m_attributeInvalidationRuleSets;
@@ -145,14 +163,6 @@ private:
 };
 
 inline const RuleFeatureSet& ScopeRuleSets::features() const
-{
-    if (m_defaultStyleVersionOnFeatureCollection < UserAgentStyle::defaultStyleVersion)
-        collectFeatures();
-    return m_features;
-}
-
-// FIXME: There should be just the const version.
-inline RuleFeatureSet& ScopeRuleSets::mutableFeatures()
 {
     if (m_defaultStyleVersionOnFeatureCollection < UserAgentStyle::defaultStyleVersion)
         collectFeatures();

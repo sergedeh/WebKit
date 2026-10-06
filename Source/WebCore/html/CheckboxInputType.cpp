@@ -50,12 +50,15 @@
 #include "LocalizedStrings.h"
 #include "MouseEvent.h"
 #include "NodeDocument.h"
+#include "NodeInlines.h"
+#include "PlatformRenderTheme.h"
+#include "RenderBoxInlines.h"
 #include "RenderElement.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderTheme.h"
 #include "ScopedEventQueue.h"
 #include "ScriptDisallowedScope.h"
 #include "ShadowRoot.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "UserAgentParts.h"
 #include "UserGestureIndicator.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -73,7 +76,7 @@ const AtomString& CheckboxInputType::formControlType() const
     return InputTypeNames::checkbox();
 }
 
-bool CheckboxInputType::valueMissing(const String&) const
+bool CheckboxInputType::valueMissing(StringView) const
 {
     ASSERT(element());
     return element()->isRequired() && !element()->checked();
@@ -99,13 +102,13 @@ void CheckboxInputType::createShadowSubtree()
     Ref track = HTMLDivElement::create(document);
     {
         ScriptDisallowedScope::EventAllowedScope eventAllowedScopeBeforeAppend { track };
-        track->setUserAgentPart(UserAgentParts::track());
+        track->setUserAgentPart(UserAgentParts::sliderTrack());
     }
     shadowRoot->appendChild(ContainerNode::ChildChange::Source::Parser, track);
     Ref thumb = HTMLDivElement::create(document);
     {
         ScriptDisallowedScope::EventAllowedScope eventAllowedScopeBeforeAppend { thumb };
-        thumb->setUserAgentPart(UserAgentParts::thumb());
+        thumb->setUserAgentPart(UserAgentParts::sliderThumb());
     }
     shadowRoot->appendChild(ContainerNode::ChildChange::Source::Parser, thumb);
 }
@@ -138,7 +141,7 @@ void CheckboxInputType::handleMouseMoveEvent(MouseEvent& event)
     ASSERT(element());
     ASSERT(!element()->isDisabledFormControl());
 
-    if (!event.isTrusted() || !isSwitch() || !protectedElement()->renderer()) {
+    if (!event.isTrusted() || !isSwitch() || !element()->renderer()) {
         stopSwitchPointerTracking();
         return;
     }
@@ -191,12 +194,12 @@ void CheckboxInputType::handleTouchEvent(TouchEvent& event)
 
         m_switchPointerTrackingTouchIdentifier = touch->identifier();
         if (!m_switchHeldTimer) {
-            m_switchHeldTimer = makeUnique<Timer>([protectedThis = Ref { *this }, touch] {
+            lazyInitialize(m_switchHeldTimer, makeUnique<Timer>([protectedThis = Ref { *this }, touch] {
                 if (!protectedThis->isSwitch() || !protectedThis->element() || !protectedThis->element()->renderer())
                     return;
                 protectedThis->startSwitchPointerTracking({ static_cast<float>(touch->pageX()), static_cast<float>(touch->pageY()) });
                 protectedThis->setIsSwitchHeld(true);
-            });
+            }));
         }
         constexpr Seconds switchHeldDelay = 200_ms;
         m_switchHeldTimer->startOneShot(switchHeldDelay);
@@ -271,7 +274,7 @@ static int switchPointerTrackingLogicalLeftPosition(Element& element, LayoutPoin
 {
     CheckedRef renderer = *element.renderer();
     auto isVertical = !renderer->writingMode().isHorizontal();
-    auto localLocation = renderer->absoluteToLocal(absoluteLocation, UseTransforms);
+    auto localLocation = renderer->absoluteToLocal(absoluteLocation, MapCoordinatesMode::UseTransforms);
     return isVertical ? localLocation.y() : localLocation.x();
 }
 
@@ -280,7 +283,7 @@ void CheckboxInputType::startSwitchPointerTracking(LayoutPoint absoluteLocation)
     ASSERT(element());
     Ref element = *this->element();
     ASSERT(element->renderer());
-    if (RefPtr frame = element->protectedDocument()->frame()) {
+    if (RefPtr frame = element->document().frame()) {
         frame->eventHandler().setCapturingMouseEventsElement(element.ptr());
         m_isSwitchVisuallyOn = element->checked();
         m_switchPointerTrackingLogicalLeftPositionStart = switchPointerTrackingLogicalLeftPosition(element.get(), absoluteLocation);
@@ -293,7 +296,7 @@ void CheckboxInputType::stopSwitchPointerTracking()
     if (!isSwitchPointerTracking())
         return;
 
-    if (RefPtr frame = protectedElement()->protectedDocument()->frame())
+    if (RefPtr frame = element()->document().frame())
         frame->eventHandler().setCapturingMouseEventsElement(nullptr);
     m_hasSwitchVisuallyOnChanged = false;
     m_switchPointerTrackingLogicalLeftPositionStart = { };
@@ -316,7 +319,7 @@ void CheckboxInputType::disabledStateChanged()
         return;
 
     ASSERT(element());
-    if (protectedElement()->isDisabledFormControl()) {
+    if (element()->isDisabledFormControl()) {
         stopSwitchAnimation(SwitchAnimationType::VisuallyOn);
         stopSwitchAnimation(SwitchAnimationType::Held);
         stopSwitchPointerTracking();
@@ -324,7 +327,7 @@ void CheckboxInputType::disabledStateChanged()
 
 #if ENABLE(TOUCH_EVENTS)
     if (isSwitch())
-        protectedElement()->updateTouchEventHandler();
+        protect(element())->updateTouchEventHandler();
 #endif
 }
 
@@ -342,7 +345,7 @@ void CheckboxInputType::willUpdateCheckedness(bool, WasSetByJavaScript wasChecke
 // ask a more knowledgable system for a refresh callback (perhaps passing a desired FPS).
 static Seconds switchAnimationUpdateInterval(HTMLInputElement& element)
 {
-    if (RefPtr page = element.protectedDocument()->page())
+    if (RefPtr page = element.document().page())
         return page->preferredRenderingUpdateInterval();
     return 0_s;
 }
@@ -388,7 +391,7 @@ void CheckboxInputType::performSwitchAnimation(SwitchAnimationType type)
     if (!m_switchAnimationTimer) {
         if (!(duration > 0_s && updateInterval > 0_s))
             return;
-        m_switchAnimationTimer = makeUnique<Timer>(*this, &CheckboxInputType::switchAnimationTimerFired);
+        lazyInitialize(m_switchAnimationTimer, makeUnique<Timer>(*this, &CheckboxInputType::switchAnimationTimerFired));
     }
     ASSERT(duration > 0_s);
     ASSERT(updateInterval > 0_s);
@@ -470,21 +473,23 @@ bool CheckboxInputType::isSwitchHeld() const
 void CheckboxInputType::updateIsSwitchVisuallyOnFromAbsoluteLocation(LayoutPoint absoluteLocation)
 {
     Ref element = *this->element();
+    CheckedPtr renderer = element->renderBox();
+    if (!renderer)
+        return;
     auto logicalLeftPosition = switchPointerTrackingLogicalLeftPosition(element.get(), absoluteLocation);
     auto isSwitchVisuallyOn = m_isSwitchVisuallyOn;
-    auto isRTL = element->computedStyle()->writingMode().isBidiRTL();
+    auto isRTL = renderer->writingMode().isBidiRTL();
     auto switchThumbIsLogicallyLeft = (!isRTL && !isSwitchVisuallyOn) || (isRTL && isSwitchVisuallyOn);
-    auto switchTrackRect = element->checkedRenderer()->absoluteBoundingBoxRect();
-    auto switchThumbLength = switchTrackRect.height();
-    auto switchTrackWidth = switchTrackRect.width();
+    auto switchThumbLogicalLength = renderer->logicalHeight();
+    auto switchTrackLogicalWidth = renderer->logicalWidth();
 
-    auto changePosition = switchTrackWidth / 2;
+    auto changePosition = switchTrackLogicalWidth / 2;
     if (!m_hasSwitchVisuallyOnChanged) {
-        auto switchTrackNoThumbWidth = switchTrackWidth - switchThumbLength;
-        auto changeOffset = switchTrackWidth * RenderTheme::singleton().switchPointerTrackingMagnitudeProportion();
-        if (switchThumbIsLogicallyLeft && *m_switchPointerTrackingLogicalLeftPositionStart > switchTrackNoThumbWidth)
+        auto switchTrackNoThumbLogicalWidth = switchTrackLogicalWidth - switchThumbLogicalLength;
+        auto changeOffset = switchTrackLogicalWidth * RenderTheme::singleton().switchPointerTrackingMagnitudeProportion();
+        if (switchThumbIsLogicallyLeft && *m_switchPointerTrackingLogicalLeftPositionStart > switchTrackNoThumbLogicalWidth)
             changePosition = *m_switchPointerTrackingLogicalLeftPositionStart + changeOffset;
-        else if (!switchThumbIsLogicallyLeft && *m_switchPointerTrackingLogicalLeftPositionStart < switchTrackNoThumbWidth)
+        else if (!switchThumbIsLogicallyLeft && *m_switchPointerTrackingLogicalLeftPositionStart < switchTrackNoThumbLogicalWidth)
             changePosition = *m_switchPointerTrackingLogicalLeftPositionStart - changeOffset;
     }
 
@@ -522,7 +527,7 @@ void CheckboxInputType::switchAnimationTimerFired()
             stopSwitchAnimation(SwitchAnimationType::Held);
     }
 
-    element->checkedRenderer()->repaint();
+    protect(element->renderer())->repaint();
 }
 
 } // namespace WebCore

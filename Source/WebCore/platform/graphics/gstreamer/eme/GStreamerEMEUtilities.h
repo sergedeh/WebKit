@@ -34,6 +34,12 @@
 
 GST_DEBUG_CATEGORY_EXTERN(webkit_media_common_encryption_decrypt_debug_category);
 
+enum DecryptionResult {
+    Success,
+    Failure,
+    NoKey
+};
+
 namespace WebCore {
 class InitData {
 public:
@@ -44,7 +50,7 @@ public:
     {
         auto mappedInitData = GstMappedOwnedBuffer::create(initData);
         if (!mappedInitData) {
-            GST_CAT_LEVEL_LOG(webkit_media_common_encryption_decrypt_debug_category, GST_LEVEL_ERROR, nullptr, "cannot map %s protection data", systemId.utf8().data());
+            GST_CAT_LEVEL_LOG(webkit_media_common_encryption_decrypt_debug_category, GST_LEVEL_ERROR, nullptr, "cannot map %s protection data", systemId.utf8());
             ASSERT_NOT_REACHED();
         }
         m_payload = extractCencIfNeeded(mappedInitData->createSharedBuffer());
@@ -58,7 +64,7 @@ public:
     }
 
     RefPtr<SharedBuffer> payload() const { return m_payload; }
-    const String& systemId() const { return m_systemId; }
+    const String& systemId() const LIFETIME_BOUND { return m_systemId; }
     String payloadContainerType() const
     {
         if (m_systemId == GST_PROTECTION_UNSPECIFIED_SYSTEM_ID ""_s)
@@ -77,8 +83,8 @@ public:
     using EventVector = Vector<GRefPtr<GstEvent>>;
 
     explicit ProtectionSystemEvents(GstMessage*);
-    const EventVector& events() const { return m_events; }
-    const Vector<String>& availableSystems() const { return m_availableSystems; }
+    const EventVector& events() const LIFETIME_BOUND { return m_events; }
+    const Vector<String>& availableSystems() const LIFETIME_BOUND { return m_availableSystems; }
 
 private:
     EventVector m_events;
@@ -98,8 +104,8 @@ public:
     static constexpr auto s_unspecifiedUUID = GST_PROTECTION_UNSPECIFIED_SYSTEM_ID ""_s;
     static constexpr auto s_unspecifiedKeySystem = GST_PROTECTION_UNSPECIFIED_SYSTEM_ID ""_s;
 
-    static constexpr std::array<ASCIILiteral, 11> s_cencEncryptionMediaTypes = { "video/mp4"_s, "audio/mp4"_s, "video/x-h264"_s, "video/x-h265"_s, "audio/mpeg"_s,
-        "audio/x-eac3"_s, "audio/x-ac3"_s, "audio/x-flac"_s, "audio/x-opus"_s, "video/x-vp9"_s, "video/x-av1"_s };
+    static constexpr std::array<ASCIILiteral, 12> s_cencEncryptionMediaTypes = { "video/mp4"_s, "audio/mp4"_s, "video/x-h264"_s, "video/x-h265"_s, "audio/mpeg"_s,
+        "audio/x-eac3"_s, "audio/x-ac3"_s, "audio/x-ac4"_s, "audio/x-flac"_s, "audio/x-opus"_s, "video/x-vp9"_s, "video/x-av1"_s };
     static constexpr std::array<ASCIILiteral, 7> s_webmEncryptionMediaTypes = { "video/webm"_s, "audio/webm"_s, "video/x-vp9"_s, "video/x-av1"_s, "audio/x-opus"_s, "audio/x-vorbis"_s, "video/x-vp8"_s };
 
     static bool isClearKeyKeySystem(const String& keySystem)
@@ -107,7 +113,7 @@ public:
         return equalIgnoringASCIICase(keySystem, s_ClearKeyKeySystem);
     }
 
-    static bool isClearKeyUUID(CStringView uuid)
+    static bool isClearKeyUUID(UTF8CStringView uuid)
     {
         return equalIgnoringASCIICase(uuid.span(), s_ClearKeyUUID);
     }
@@ -117,7 +123,7 @@ public:
         return equalIgnoringASCIICase(keySystem, s_WidevineKeySystem);
     }
 
-    static bool isWidevineUUID(CStringView uuid)
+    static bool isWidevineUUID(UTF8CStringView uuid)
     {
         return equalIgnoringASCIICase(uuid.span(), s_WidevineUUID);
     }
@@ -127,7 +133,7 @@ public:
         return equalIgnoringASCIICase(keySystem, s_PlayReadyKeySystems[0]) || equalIgnoringASCIICase(keySystem, s_PlayReadyKeySystems[1]);
     }
 
-    static bool isPlayReadyUUID(CStringView uuid)
+    static bool isPlayReadyUUID(UTF8CStringView uuid)
     {
         return equalIgnoringASCIICase(uuid.span(), s_PlayReadyUUID);
     }
@@ -137,7 +143,7 @@ public:
         return equalIgnoringASCIICase(keySystem, s_unspecifiedKeySystem);
     }
 
-    static bool isUnspecifiedUUID(CStringView uuid)
+    static bool isUnspecifiedUUID(UTF8CStringView uuid)
     {
         return equalIgnoringASCIICase(uuid.span(), s_unspecifiedUUID);
     }
@@ -160,7 +166,7 @@ public:
         return { };
     }
 
-    static ASCIILiteral uuidToKeySystem(CStringView uuid)
+    static ASCIILiteral uuidToKeySystem(UTF8CStringView uuid)
     {
         if (isClearKeyUUID(uuid))
             return s_ClearKeyKeySystem;

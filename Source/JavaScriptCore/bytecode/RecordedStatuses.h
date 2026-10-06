@@ -51,13 +51,13 @@ struct RecordedStatuses {
     DECLARE_VISIT_AGGREGATE;
     template<typename Visitor> void markIfCheap(Visitor&);
     
-    void finalizeWithoutDeleting(VM&);
-    void finalize(VM&);
+    void reconcileWeakReferencesWithoutDeleting(VM&);
+    void reconcileWeakReferences(VM&);
     
     void shrinkToFit();
     
     template<typename Func>
-    void forEachVector(const Func& func)
+    void forEachVector(NOESCAPE const Func& func)
     {
         func(calls);
         func(gets);

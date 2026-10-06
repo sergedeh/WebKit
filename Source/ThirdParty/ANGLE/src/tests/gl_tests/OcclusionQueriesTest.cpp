@@ -4,10 +4,9 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 #include "util/EGLWindow.h"
@@ -396,8 +395,8 @@ TEST_P(OcclusionQueriesTest, FramebufferBindingChange)
     constexpr GLsizei kSize = 4;
 
     // Create two framebuffers, and make sure they are synced.
-    GLFramebuffer fbo[2];
-    GLTexture color[2];
+    std::array<GLFramebuffer, 2> fbo;
+    std::array<GLTexture, 2> color;
 
     for (size_t index = 0; index < 2; ++index)
     {
@@ -573,9 +572,6 @@ TEST_P(OcclusionQueriesTest, MultiQueries)
 
     // http://anglebug.com/42263499
     ANGLE_SKIP_TEST_IF(IsOpenGL() || IsD3D11());
-
-    // TODO(anglebug.com/40096747): Failing on ARM-based Apple DTKs.
-    ANGLE_SKIP_TEST_IF(IsMac() && IsARM64() && IsDesktopOpenGL());
 
     GLQueryEXT query[5];
 
@@ -782,7 +778,7 @@ TEST_P(OcclusionQueriesTest, MultiContext)
         EGLContext context;
         GLuint program;
         GLuint query;
-        bool visiblePasses[passCount];
+        std::array<bool, passCount> visiblePasses;
         bool shouldPass;
     };
 
@@ -1160,6 +1156,423 @@ TEST_P(OcclusionQueriesNoSurfaceTestES3, SwitchingContextsWithQuery)
         ASSERT_EGL_TRUE(eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
         ASSERT_EGL_TRUE(eglDestroyContext(display, context));
         EXPECT_EGL_SUCCESS();
+    }
+}
+
+// This test provoked a bug in the Metal backend where a command buffer flush during query
+// preparation would recursively clear mAllocatedQueries, causing fillBuffer to be called with
+// size 0, resulting in a Metal validation error (when run with MTL_DEBUG_LAYER=1).
+TEST_P(OcclusionQueriesTestES3, TextureResizeWithQueryReuse)
+{
+    // The Metal backend flushes command buffers after this many render passes
+    // (defined in src/libANGLE/renderer/metal/mtl_common.h)
+    constexpr int kMaxRenderPassesPerCommandBuffer = 16;
+
+    GLQueryEXT query;
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 2, 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+    EXPECT_GL_NO_ERROR();
+
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, query);
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+    EXPECT_GL_NO_ERROR();
+
+    // Call texImage2D enough times to accumulate render passes up to the flush limit.
+    const int numTexImageCalls = kMaxRenderPassesPerCommandBuffer - 1;
+    for (int i = 0; i < numTexImageCalls; i++)
+    {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 2, 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE,
+                     nullptr);
+        EXPECT_GL_NO_ERROR();
+    }
+
+    // Begin query again with the SAME query object.
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, query);
+    EXPECT_GL_NO_ERROR();
+
+    // This texImage2D is the 16th render pass, triggering a command buffer flush.
+    // Without a fix, prepareRenderPassVisibilityPoolBuffer would call fillBuffer with size 0
+    // because mAllocatedQueries gets cleared during the recursive flush.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 2, 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+    EXPECT_GL_NO_ERROR();
+
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+    EXPECT_GL_NO_ERROR();
+
+    GLuint result = GL_TRUE;
+    glGetQueryObjectuiv(query, GL_QUERY_RESULT, &result);
+    EXPECT_GL_NO_ERROR();
+
+    // Result should be false since no draw calls were made.
+    EXPECT_GL_FALSE(result);
+}
+
+// Test query reuse with render pass accumulation using draw calls to distinct FBOs.
+TEST_P(OcclusionQueriesTestES3, QueryReuseWithMultipleFBOs)
+{
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    constexpr int kNumRenderPasses = 16;
+    std::vector<GLTexture> textures(kNumRenderPasses);
+    std::vector<GLFramebuffer> fbos(kNumRenderPasses);
+
+    for (int i = 0; i < kNumRenderPasses; i++)
+    {
+        glBindTexture(GL_TEXTURE_2D, textures[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbos[i]);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[i], 0);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    }
+
+    GLQueryEXT query;
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, query);
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+
+    for (int i = 0; i < kNumRenderPasses - 1; i++)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, fbos[i]);
+        drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    }
+
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, query);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbos[kNumRenderPasses - 1]);
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+
+    GLuint result = GL_FALSE;
+    glGetQueryObjectuiv(query, GL_QUERY_RESULT, &result);
+    EXPECT_GL_TRUE(result);
+}
+
+// Test that deleting an occlusion query after a failed begin does not cause use-after-free.
+// A prior query primes the pool. The second query triggers pool doubling which under fault
+// injection fails with OOM. Deleting the query and flushing must not crash.
+TEST_P(OcclusionQueriesTestES3, OcclusionQueryDeleteAfterFailedBeginNoUAF)
+{
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::SimpleForPoints(), essl1_shaders::fs::Green());
+    glUseProgram(program);
+    glViewport(0, 0, getWindowWidth(), getWindowHeight());
+
+    // Start render pass and prime the pool with a successful query.
+    glDrawArrays(GL_POINTS, 0, 1);
+    GLQuery q1;
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, q1);
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+    ASSERT_GL_NO_ERROR();
+
+    // Second query triggers pool doubling. Under fault injection this fails with OOM.
+    GLuint q2;
+    glGenQueries(1, &q2);
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, q2);
+    GLenum err = glGetError();
+    if (err == GL_OUT_OF_MEMORY)
+    {
+        // To get here, a OOM must be injected by hand in visibility buffer doubling.
+        fprintf(stderr, "got expected out of memory\n");
+    }
+    // Delete the query and flush — must not crash.
+    glDeleteQueries(1, &q2);
+    glFinish();
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+    EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2 - 1, getWindowHeight() / 2, GLColor::green);
+}
+
+// Test deleting a occlusion query while it is active.
+TEST_P(OcclusionQueriesTestES3, DeleteActiveOcclusionQueryLeavesValidState)
+{
+    GLuint queryId = 0;
+    glGenQueries(1, &queryId);
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, queryId);
+    drawQuad(mProgram, essl1_shaders::PositionAttrib(), 0.5f);
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+    ASSERT_GL_NO_ERROR();
+
+    GLuint queryResult = 0;
+    glGetQueryObjectuiv(queryId, GL_QUERY_RESULT, &queryResult);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_EQ(queryResult, static_cast<GLuint>(GL_TRUE));
+
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, queryId);
+    EXPECT_GL_NO_ERROR();
+
+    drawQuad(mProgram, essl1_shaders::PositionAttrib(), 0.5f);
+    ASSERT_GL_NO_ERROR();
+
+    GLint activeQueryId = 0;
+    glGetQueryiv(GL_ANY_SAMPLES_PASSED, GL_CURRENT_QUERY, &activeQueryId);
+    EXPECT_GL_NO_ERROR();
+    EXPECT_EQ(static_cast<GLuint>(activeQueryId), queryId);
+
+    glDeleteQueries(1, &queryId);
+    EXPECT_GL_NO_ERROR();
+
+    EXPECT_GL_FALSE(glIsQuery(queryId));
+
+    // NOTE: This is unspecified and confusing: what should the return value be
+    // if the query has been deleted? If 0, then it's confusing because EndQuery
+    // doesn't fail. If non-zero, how can it return deleted value?
+    // If EndQuery should fail and return should be 0?
+    GLint activeQueryAfterDelete = 0;
+    glGetQueryiv(GL_ANY_SAMPLES_PASSED, GL_CURRENT_QUERY, &activeQueryAfterDelete);
+    EXPECT_GL_NO_ERROR();
+    EXPECT_EQ(static_cast<GLuint>(activeQueryAfterDelete), queryId);
+
+    drawQuad(mProgram, essl1_shaders::PositionAttrib(), 0.8f);
+    EXPECT_GL_NO_ERROR();
+
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+    EXPECT_GL_NO_ERROR();  // NOTE: This is unspecified and confusing.
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    EXPECT_GL_NO_ERROR();
+}
+
+// Test that a query spanning two render passes (broken by glClear) accumulates results correctly.
+// First draw fails depth test (no samples pass), then glClear breaks the render pass, then
+// second draw passes. Query result must be TRUE.
+TEST_P(OcclusionQueriesTestES3, QuerySpansRenderPassBreak)
+{
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::SimpleForPoints(), essl1_shaders::fs::Green());
+    glUseProgram(program);
+    glViewport(0, 0, getWindowWidth(), getWindowHeight());
+
+    glEnable(GL_DEPTH_TEST);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    
+    // Draw with GL_NEVER does not pass samples.
+    glDepthFunc(GL_NEVER);
+
+    GLQuery query;
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, query);
+    glDrawArrays(GL_POINTS, 0, 1);
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+    GLuint result = GL_FALSE;
+    glGetQueryObjectuiv(query, GL_QUERY_RESULT, &result);
+    EXPECT_GL_NO_ERROR();
+
+    // Test setup validation: draw with GL_NEVER does not pass samples.
+    EXPECT_GL_FALSE(result);
+    EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2 - 1, getWindowHeight() / 2, GLColor::black);
+
+    // Test the sample accumulation across render passes:
+    // Draw with GL_NEVER -> no samples pass yet.
+    // Break render pass
+    // Draw with GL_ALWAYS -> samples pass.
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, query);
+    glDrawArrays(GL_POINTS, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDepthFunc(GL_ALWAYS);
+    glDrawArrays(GL_POINTS, 0, 1);
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+    EXPECT_GL_NO_ERROR();
+
+    // Query should report TRUE because the second draw passed samples.
+    result = GL_FALSE;
+    glGetQueryObjectuiv(query, GL_QUERY_RESULT, &result);
+    EXPECT_GL_NO_ERROR();
+    EXPECT_GL_TRUE(result);
+
+    EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2 - 1, getWindowHeight() / 2, GLColor::green);
+}
+
+// Test that deleting an FBO while a query result on that FBO is pending does not crash the driver
+// when calling glGetQueryObjectuiv.
+TEST_P(OcclusionQueriesTestES3, DeleteFBOWithPendingQuery)
+{
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glViewport(0, 0, 64, 64);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    GLQueryEXT query;
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, query);
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+
+    // Delete the FBO on which the query was executed, while result is still pending
+    fbo.reset();
+
+    // Retrieve query result - flushes pending jobs referencing the deleted FBO
+    GLuint result = GL_FALSE;
+    glGetQueryObjectuiv(query, GL_QUERY_RESULT, &result);
+    EXPECT_GL_NO_ERROR();
+    EXPECT_GL_TRUE(result);
+}
+
+// Test that unbinding an FBO while a query result on that FBO is pending does not crash the driver
+// when calling glGetQueryObjectuiv.
+TEST_P(OcclusionQueriesTestES3, UnbindFBOWithPendingQuery)
+{
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glViewport(0, 0, 64, 64);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    GLQueryEXT query;
+    glBeginQuery(GL_ANY_SAMPLES_PASSED, query);
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    glEndQuery(GL_ANY_SAMPLES_PASSED);
+
+    // Unbind user FBO by switching back to default framebuffer (0)
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // FORCE the driver to commit the unbind and end the previous render pass.
+    // Because drivers often optimize glClear, issuing geometry (drawQuad)
+    // strictly guarantees a new render pass is initiated in the hardware.
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+
+    // Retrieve query result
+    GLuint result = GL_FALSE;
+    glGetQueryObjectuiv(query, GL_QUERY_RESULT, &result);
+    EXPECT_GL_NO_ERROR();
+    EXPECT_GL_TRUE(result);
+}
+
+// Test that a very large number of scissored clears while an occlusion query is active still
+// yields a correct query result. On backends that emulate scissored clears with draws, each clear
+// pauses and resumes the query in the same render pass; the render pass must be split before the
+// backend's per-pass visibility offset limit is reached.
+TEST_P(OcclusionQueriesTest, ManyScissoredClearsInsideQuery)
+{
+    ANGLE_SKIP_TEST_IF(getClientMajorVersion() < 3 &&
+                       !IsGLExtensionEnabled("GL_EXT_occlusion_query_boolean"));
+
+    // Metal allows at most 32768 visibility result slots per render pass.
+    constexpr int kClearCount = 35000;
+
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    EXPECT_GL_NO_ERROR();
+
+    GLQueryEXT query;
+    glBeginQueryEXT(GL_ANY_SAMPLES_PASSED_EXT, query);
+
+    // this quad should not be occluded
+    drawQuad(mProgram, essl1_shaders::PositionAttrib(), 0.8f);
+
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(0, 0, 1, 1);
+    for (int i = 0; i < kClearCount; ++i)
+    {
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    glDisable(GL_SCISSOR_TEST);
+
+    // this quad should not be occluded
+    drawQuad(mProgram, essl1_shaders::PositionAttrib(), 0.8f);
+
+    glEndQueryEXT(GL_ANY_SAMPLES_PASSED_EXT);
+    EXPECT_GL_NO_ERROR();
+
+    GLuint result = GL_FALSE;
+    glGetQueryObjectuivEXT(query, GL_QUERY_RESULT_EXT,
+                           &result);  // will block waiting for result
+    EXPECT_GL_NO_ERROR();
+
+    EXPECT_GL_TRUE(result);
+}
+
+// Test that a very large number of distinct queries and draw calls in a single render pass
+// still works and yields correct query results when exceeding the backend's per-pass
+// visibility offset limit.
+TEST_P(OcclusionQueriesTest, ExcessiveNumberOfQueries)
+{
+    ANGLE_SKIP_TEST_IF(getClientMajorVersion() < 3 &&
+                       !IsGLExtensionEnabled("GL_EXT_occlusion_query_boolean"));
+
+    constexpr int kQueryCount = 35000;
+
+    glDisable(GL_DEPTH_TEST);
+    glClear(GL_COLOR_BUFFER_BIT);
+    EXPECT_GL_NO_ERROR();
+
+    constexpr char kVS[] =
+        "attribute vec4 a_position;\n"
+        "attribute vec4 a_color;\n"
+        "varying vec4 v_color;\n"
+        "void main() {\n"
+        "    gl_Position  = a_position;\n"
+        "    gl_PointSize = 4.0;\n"
+        "    v_color      = a_color;\n"
+        "}\n";
+
+    constexpr char kFS[] =
+        "precision mediump float;\n"
+        "varying vec4 v_color;\n"
+        "void main() {\n"
+        "    gl_FragColor = v_color;\n"
+        "}\n";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+
+    GLint posLoc   = glGetAttribLocation(program, "a_position");
+    GLint colorLoc = glGetAttribLocation(program, "a_color");
+    ASSERT_NE(-1, posLoc);
+    ASSERT_NE(-1, colorLoc);
+
+    glDisableVertexAttribArray(posLoc);
+    glDisableVertexAttribArray(colorLoc);
+
+    std::vector<GLQueryEXT> queries(kQueryCount);
+
+    for (int i = 0; i < kQueryCount; ++i)
+    {
+        glBeginQueryEXT(GL_ANY_SAMPLES_PASSED_EXT, queries[i]);
+        if (i % 2 != 0)
+        {
+            int idx   = i / 2;
+            GLfloat x = (static_cast<GLfloat>(idx % 30) / 30.0f) * 1.8f - 0.9f;
+            GLfloat y = (static_cast<GLfloat>((idx / 30) % 30) / 30.0f) * 1.8f - 0.9f;
+            glVertexAttrib3f(posLoc, x, y, 0.0f);
+
+            GLfloat r = static_cast<GLfloat>(i % 256) / 255.0f;
+            GLfloat g = static_cast<GLfloat>((i * 7) % 256) / 255.0f;
+            GLfloat b = static_cast<GLfloat>((i * 13) % 256) / 255.0f;
+            glVertexAttrib4f(colorLoc, r, g, b, 1.0f);
+            glDrawArrays(GL_POINTS, 0, 1);
+        }
+        glEndQueryEXT(GL_ANY_SAMPLES_PASSED_EXT);
+    }
+    EXPECT_GL_NO_ERROR();
+
+    for (int i = 0; i < kQueryCount; ++i)
+    {
+        GLuint result = GL_FALSE;
+        glGetQueryObjectuivEXT(queries[i], GL_QUERY_RESULT_EXT, &result);
+        EXPECT_GL_NO_ERROR();
+        if (i % 2 != 0)
+        {
+            EXPECT_GL_TRUE(result) << " at query index " << i;
+        }
+        else
+        {
+            EXPECT_GL_FALSE(result) << " at query index " << i;
+        }
     }
 }
 

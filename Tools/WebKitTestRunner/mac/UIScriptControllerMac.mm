@@ -42,12 +42,14 @@
 #import <JavaScriptCore/JSValue.h>
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <JavaScriptCore/OpaqueJSString.h>
+#import <WebCore/FloatRect.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebViewPrivateForTesting.h>
 #import <mach/mach_time.h>
 #import <pal/spi/mac/NSApplicationSPI.h>
 #import <pal/spi/mac/NSSpellCheckerSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Deque.h>
 #import <wtf/WorkQueue.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
@@ -123,6 +125,24 @@ bool UIScriptControllerMac::isShowingDateTimePicker() const
     return false;
 }
 
+JSObjectRef UIScriptControllerMac::dateTimePickerRect() const
+{
+    for (NSWindow *childWindow in webView().window.childWindows) {
+        if ([childWindow isKindOfClass:NSClassFromString(@"WKDateTimePickerWindow")]) {
+            auto dateTimePickerFrame = [webView() convertRect:[webView().window convertRectFromScreen:[childWindow frame]] fromView:nil];
+            WebCore::FloatRect rect {
+                static_cast<float>(dateTimePickerFrame.origin.x),
+                static_cast<float>(dateTimePickerFrame.origin.y),
+                static_cast<float>(dateTimePickerFrame.size.width),
+                static_cast<float>(dateTimePickerFrame.size.height)
+            };
+            return m_context->objectFromRect(rect);
+        }
+    }
+
+    return nullptr;
+}
+
 double UIScriptControllerMac::dateTimePickerValue() const
 {
     for (NSWindow *childWindow in webView().window.childWindows) {
@@ -178,6 +198,17 @@ void UIScriptControllerMac::activateDataListSuggestion(unsigned index, JSValueRe
     });
 }
 
+void UIScriptControllerMac::setSelectedColorForColorPicker(double red, double green, double blue)
+{
+    RetainPtr color = [NSColor colorWithSRGBRed:red green:green blue:blue alpha:1.0];
+    [webView() _setSelectedColorForColorPicker:color.get()];
+}
+
+bool UIScriptControllerMac::isShowingColorPicker() const
+{
+    return [findAllViewsInHierarchyOfType(webView().window.contentView, NSClassFromString(@"WKPopoverColorWell")) count];
+}
+
 NSTableView *UIScriptControllerMac::dataListSuggestionsTableView() const
 {
     for (NSWindow *childWindow in webView().window.childWindows) {
@@ -215,15 +246,25 @@ void UIScriptControllerMac::chooseMenuAction(JSStringRef jsAction, JSValueRef ca
     unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
 
     auto action = adoptCF(JSStringCopyCFString(kCFAllocatorDefault, jsAction));
-    __block NSUInteger matchIndex = NSNotFound;
     auto activeMenu = retainPtr(webView()._activeMenu);
-    [[activeMenu itemArray] enumerateObjectsUsingBlock:^(NSMenuItem *item, NSUInteger index, BOOL *stop) {
-        if ([item.title isEqualToString:(__bridge NSString *)action.get()])
-            matchIndex = index;
-    }];
 
-    if (matchIndex != NSNotFound) {
-        [activeMenu performActionForItemAtIndex:matchIndex];
+    RetainPtr<NSMenuItem> matchItem;
+    Deque<RetainPtr<NSMenu>> queue;
+    queue.append(activeMenu.get());
+    while (!queue.isEmpty() && !matchItem) {
+        auto menu = queue.takeFirst();
+        for (NSMenuItem *item in menu.get().itemArray) {
+            if ([item.title isEqualToString:(__bridge NSString *)action.get()]) {
+                matchItem = item;
+                break;
+            }
+            if (item.hasSubmenu)
+                queue.append(item.submenu);
+        }
+    }
+
+    if (matchItem) {
+        [matchItem.get().menu performActionForItemAtIndex:[matchItem.get().menu indexOfItem:matchItem.get()]];
         [activeMenu removeAllItems];
         [activeMenu update];
         [activeMenu cancelTracking];
@@ -234,6 +275,43 @@ void UIScriptControllerMac::chooseMenuAction(JSStringRef jsAction, JSValueRef ca
             return;
         m_context->asyncTaskComplete(callbackID);
     });
+}
+
+static RetainPtr<NSPopUpButtonCell> popUpButtonCellForMenu(NSMenu *menu)
+{
+    if (RetainPtr cell = dynamic_objc_cast<NSPopUpButtonCell>(menu.delegate))
+        return cell;
+    for (NSMenuItem *item in menu.itemArray) {
+        if (RetainPtr cell = dynamic_objc_cast<NSPopUpButtonCell>(item.target))
+            return cell;
+    }
+    return nullptr;
+}
+
+void UIScriptControllerMac::dismissFormAccessoryView()
+{
+    RetainPtr menu = [webView() _activeMenu];
+    if (popUpButtonCellForMenu(menu.get()))
+        [menu cancelTracking];
+}
+
+void UIScriptControllerMac::selectFormAccessoryPickerRow(long rowIndex)
+{
+    RetainPtr menu = [webView() _activeMenu];
+    RetainPtr cell = popUpButtonCellForMenu(menu.get());
+    if (!cell)
+        return;
+
+    [cell selectItemAtIndex:rowIndex];
+    [menu cancelTracking];
+}
+
+bool UIScriptControllerMac::selectFormAccessoryHasCheckedItemAtRow(long rowIndex) const
+{
+    RetainPtr menu = [webView() _activeMenu];
+    if (!popUpButtonCellForMenu(menu.get()) || rowIndex < 0 || rowIndex >= [menu numberOfItems])
+        return false;
+    return [menu itemAtIndex:rowIndex].state == NSControlStateValueOn;
 }
 
 void UIScriptControllerMac::beginBackSwipe(JSValueRef callback)
@@ -408,7 +486,7 @@ void UIScriptControllerMac::sendEventStream(JSStringRef eventsJSON, JSValueRef c
 
         id eventType = event[EventTypeKey];
         if (!event[EventTypeKey]) {
-            WTFLogAlways("Missing event type");
+            WTFLogAlways("Failed to find `%@` key in %@", EventTypeKey, event);
             break;
         }
         
@@ -464,9 +542,9 @@ void UIScriptControllerMac::sendEventStream(JSStringRef eventsJSON, JSValueRef c
     });
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerMac::scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, bool isVertical) const
+RefPtr<OpaqueJSString> UIScriptControllerMac::scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, bool isVertical) const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef) [webView() _scrollbarStateForScrollingNodeID:scrollingNodeID processID:processID isVertical:isVertical]));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef) [webView() _scrollbarStateForScrollingNodeID:scrollingNodeID processID:processID isVertical:isVertical]));
 }
 
 void UIScriptControllerMac::setAppAccentColor(unsigned short red, unsigned short green, unsigned short blue)

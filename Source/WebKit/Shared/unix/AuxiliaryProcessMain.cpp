@@ -31,11 +31,22 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/text/StringView.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/unix/UnixFileDescriptor.h>
 
 #if ENABLE(BREAKPAD)
 #include "unix/BreakpadExceptionHandler.h"
+#endif
+
+#if USE(GLIB)
+#include <glib-unix.h>
+#endif
+
+#if ENABLE(LLVM_PROFILE_GENERATION)
+__attribute__((weak)) extern "C" int __llvm_profile_dump(void);
 #endif
 
 namespace WebKit {
@@ -48,35 +59,34 @@ AuxiliaryProcessMainCommon::AuxiliaryProcessMainCommon()
 }
 
 // The command line is constructed in ProcessLauncher::launchProcess.
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // Unix port
 bool AuxiliaryProcessMainCommon::parseCommandLine(int argc, char** argv)
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 {
     int argIndex = 1; // Start from argv[1], since argv[0] is the program name.
+    std::span argvSpan = unsafeMakeSpan(argv, argc);
 
     // Ensure we have enough arguments for processIdentifier and connectionIdentifier
     if (argc < argIndex + 2)
         return false;
 
-    if (auto processIdentifier = parseInteger<uint64_t>(unsafeSpan(argv[argIndex++]))) {
+    if (auto processIdentifier = parseInteger<uint64_t>(StringView::fromLatin1(argvSpan[argIndex++]))) {
         if (!ObjectIdentifier<WebCore::ProcessIdentifierType>::isValidIdentifier(*processIdentifier))
             return false;
         m_parameters.processIdentifier = ObjectIdentifier<WebCore::ProcessIdentifierType>(*processIdentifier);
     } else
         return false;
 
-    if (auto connectionIdentifier = parseInteger<int>(unsafeSpan(argv[argIndex++])))
+    if (auto connectionIdentifier = parseInteger<int>(StringView::fromLatin1(argvSpan[argIndex++])))
         m_parameters.connectionIdentifier = IPC::Connection::Identifier { { *connectionIdentifier, UnixFileDescriptor::Adopt } };
     else
         return false;
 
-    if (!m_parameters.processIdentifier->toRawValue() || m_parameters.connectionIdentifier.handle.value() <= 0)
+    if (!m_parameters.processIdentifier->toUInt64() || m_parameters.connectionIdentifier.handle.value() <= 0)
         return false;
 
 #if ENABLE(DEVELOPER_MODE)
     // Check last remaining options for JSC testing
-    for (; argIndex < argc; ++argIndex) {
-        if (argv[argIndex] && !strcmp(argv[argIndex], "--configure-jsc-for-testing"))
+    for (auto& arg : argvSpan.subspan(argIndex)) {
+        if (UTF8CStringView::unsafeFromUTF8(arg) == "--configure-jsc-for-testing"_s)
             JSC::Config::configureForTesting();
     }
 #endif
@@ -84,15 +94,23 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     return true;
 }
 
-IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
 void AuxiliaryProcess::platformInitialize(const AuxiliaryProcessInitializationParameters&)
 {
-    struct sigaction signalAction;
-    memset(&signalAction, 0, sizeof(signalAction));
+    struct sigaction signalAction { };
     RELEASE_ASSERT(!sigemptyset(&signalAction.sa_mask));
     signalAction.sa_handler = SIG_IGN;
     RELEASE_ASSERT(!sigaction(SIGPIPE, &signalAction, nullptr));
+#if ENABLE(LLVM_PROFILE_GENERATION) && USE(GLIB)
+    // __llvm_profile_dump() is not async-signal-safe but losing profile
+    // data from auxiliary processes would make PGO collection impractical.
+    if (__llvm_profile_dump) {
+        g_unix_signal_add(SIGTERM, [](void* data) -> gboolean {
+            __llvm_profile_dump();
+            static_cast<AuxiliaryProcess*>(data)->terminate();
+            return G_SOURCE_REMOVE;
+        }, this);
+    }
+#endif
 }
-IGNORE_CLANG_WARNINGS_END
 
 } // namespace WebKit

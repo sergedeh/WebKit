@@ -118,7 +118,7 @@ WI.Setting = class Setting extends WI.Object
         if (!window.InspectorTest && window.localStorage) {
             let key = WI.Setting._localStorageKeyPrefix + this._name;
             try {
-                if (Object.shallowEqual(this._value, this._defaultValue))
+                if (this._value === this._defaultValue || Object.shallowEqual(this._value, this._defaultValue))
                     window.localStorage.removeItem(key);
                 else
                     window.localStorage.setItem(key, JSON.stringify(this._value));
@@ -189,6 +189,7 @@ WI.settings = {
     canvasRecordingAutoCaptureFrameCount: new WI.Setting("canvas-recording-auto-capture-frame-count", 1),
     consoleAutoExpandTrace: new WI.Setting("console-auto-expand-trace", true),
     consoleClearAPIEnabled: new WI.Setting("console-clear-api-enabled", true),
+    consoleEvaluationPreviewEnabled: new WI.Setting("console-evaluation-preview-enabled", true),
     consoleSavedResultAlias: new WI.Setting("console-saved-result-alias", ""),
     cssChangesPerNode: new WI.Setting("css-changes-per-node", false),
     clearLogOnNavigate: new WI.Setting("clear-log-on-navigate", true),
@@ -208,7 +209,7 @@ WI.settings = {
     gridOverlayShowLineNumbers: new WI.Setting("grid-overlay-show-line-numbers", true),
     gridOverlayShowOrderNumbers: new WI.Setting("grid-overlay-show-order-numbers", false),
     gridOverlayShowTrackSizes: new WI.Setting("grid-overlay-show-track-sizes", true),
-    groupMediaRequestsByDOMNode: new WI.Setting("group-media-requests-by-dom-node", WI.Setting.migrateValue("group-by-dom-node") || false),
+    groupMediaRequestsByDOMNode: new WI.Setting("group-media-requests-by-dom-node", false),
     indentUnit: new WI.Setting("indent-unit", 4),
     indentWithTabs: new WI.Setting("indent-with-tabs", false),
     resourceCachingDisabled: new WI.Setting("disable-resource-caching", false),
@@ -216,6 +217,7 @@ WI.settings = {
     searchFromSelection: new WI.Setting("search-from-selection", false),
     searchRegularExpression: new WI.Setting("search-regular-expression", false),
     selectedNetworkDetailContentViewIdentifier: new WI.Setting("network-detail-content-view-identifier", "preview"),
+    resourceContentViewIdentifierForMIMEType: new WI.Setting("resource-content-view-identifier-for-mime-type", {}),
     sourceMapsEnabled: new WI.Setting("source-maps-enabled", true),
     showConsoleMessageTimestamps: new WI.Setting("show-console-message-timestamps", false),
     showCSSPropertySyntaxInDocumentationPopover: new WI.Setting("show-css-property-syntax-in-documentation-popover", false),
@@ -223,7 +225,7 @@ WI.settings = {
     showFlexOverlayDuringElementSelection: new WI.Setting("show-grid-overlay-during-element-selection", true),
     showGridOverlayDuringElementSelection: new WI.Setting("show-flex-overlay-during-element-selection", true),
     showImageGrid: new WI.Setting("show-image-grid", true),
-    showInvisibleCharacters: new WI.Setting("show-invisible-characters", !!WI.Setting.migrateValue("show-invalid-characters")),
+    showInvisibleCharacters: new WI.Setting("show-invisible-characters", false),
     showJavaScriptTypeInformation: new WI.Setting("show-javascript-type-information", false),
     showRulers: new WI.Setting("show-rulers", false),
     showRulersDuringElementSelection: new WI.Setting("show-rulers-during-element-selection", true),
@@ -242,7 +244,6 @@ WI.settings = {
     experimentalCSSSortPropertyNameAutocompletionByUsage: new WI.Setting("experimental-css-sort-property-name-autocompletion-by-usage", true),
     experimentalEnableNetworkEmulatedCondition: new WI.Setting("experimental-enable-network-emulated-condition", false),
     experimentalGroupSourceMapErrors: new WI.Setting("experimental-group-source-map-errors", true),
-    experimentalShowCaseSensitiveAutocomplete: new WI.Setting("experimental-show-case-sensitive-auto-complete", false),
     experimentalLimitSourceCodeHighlighting: new WI.Setting("engineering-limit-source-code-highlighting", false),
     experimentalUseFuzzyMatchingForCSSCodeCompletion: new WI.Setting("experimental-use-fuzzy-matching-for-css-code-completion", true),
     experimentalUseStrictCheckForGlobMatching: new WI.Setting("experimental-use-strict-check-for-glob-matching", false),
@@ -251,7 +252,6 @@ WI.settings = {
     // Protocol
     protocolLogAsText: new WI.Setting("protocol-log-as-text", false),
     protocolAutoLogMessages: new WI.Setting("protocol-auto-log-messages", false),
-    protocolAutoLogTimeStats: new WI.Setting("protocol-auto-log-time-stats", false),
     protocolFilterMultiplexingBackendMessages: new WI.Setting("protocol-filter-multiplexing-backend-messages", true),
 
     // Engineering

@@ -37,12 +37,12 @@ class RenderTextLineBoxes {
 public:
     RenderTextLineBoxes();
 
-    LegacyInlineTextBox* first() const { return m_first; }
-    LegacyInlineTextBox* last() const { return m_last; }
+    LegacyInlineTextBox* first() const LIFETIME_BOUND { return m_first; }
+    LegacyInlineTextBox* last() const LIFETIME_BOUND { return m_last; }
 
     LegacyInlineTextBox* createAndAppendLineBox(RenderSVGInlineText&);
 
-    void remove(LegacyInlineTextBox&);
+    void NODELETE remove(LegacyInlineTextBox&);
 
     void removeAllFromParent(RenderSVGInlineText&);
     void deleteAll();
@@ -58,7 +58,7 @@ public:
 #endif
 
 private:
-    void checkConsistency() const;
+    void NODELETE checkConsistency() const;
 
     LegacyInlineTextBox* m_first { nullptr };
     LegacyInlineTextBox* m_last { nullptr };

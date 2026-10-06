@@ -177,7 +177,7 @@ inline bool HTMLDocumentParser::shouldDelayEnd() const
 
 void HTMLDocumentParser::didBeginYieldingParser()
 {
-    if (RefPtr parserScheduler = m_parserScheduler)
+    if (auto* parserScheduler = m_parserScheduler.get())
         parserScheduler->didBeginYieldingParser();
 }
 
@@ -213,7 +213,7 @@ void HTMLDocumentParser::pumpTokenizerIfPossible(SynchronousMode mode)
 
 bool HTMLDocumentParser::isScheduledForResume() const
 {
-    RefPtr scheduler = m_parserScheduler;
+    auto* scheduler = m_parserScheduler.get();
     return scheduler && scheduler->isScheduledForResume();
 }
 
@@ -243,7 +243,7 @@ void HTMLDocumentParser::runScriptsForPausedTreeBuilder()
             RefPtr document = this->document();
             ThrowOnDynamicMarkupInsertionCountIncrementer incrementer(*document);
 
-            document->eventLoop().performMicrotaskCheckpoint();
+            protect(document->eventLoop())->performMicrotaskCheckpoint(document->vm());
 
             CustomElementReactionStack reactionStack(document->globalObject());
             Ref elementInterface = constructionData->elementInterface.get();
@@ -275,11 +275,12 @@ Document* HTMLDocumentParser::contextForParsingSession()
 bool HTMLDocumentParser::pumpTokenizerLoop(SynchronousMode mode, bool parsingFragment, PumpSession& session)
 {
     RefPtr parserScheduler = m_parserScheduler;
+    RefPtr frame = parsingFragment ? nullptr : document()->frame();
     do {
         if (isWaitingForScripts()) [[unlikely]] {
-            if (mode == SynchronousMode::AllowYield && parserScheduler->shouldYieldBeforeExecutingScript(m_treeBuilder->protectedScriptToProcess().get(), session))
+            if (mode == SynchronousMode::AllowYield && parserScheduler->shouldYieldBeforeExecutingScript(protect(m_treeBuilder->scriptToProcess()).get(), session))
                 return true;
-            
+
             runScriptsForPausedTreeBuilder();
             // If we're paused waiting for a script, we try to execute scripts before continuing.
             if (isWaitingForScripts() || isStopped())
@@ -290,7 +291,7 @@ bool HTMLDocumentParser::pumpTokenizerLoop(SynchronousMode mode, bool parsingFra
         // how the parser has always handled stopping when the page assigns window.location. What should
         // happen instead is that assigning window.location causes the parser to stop parsing cleanly.
         // The problem is we're not prepared to do that at every point where we run JavaScript.
-        if (!parsingFragment && document()->frame() && document()->protectedFrame()->protectedNavigationScheduler()->locationChangePending()) [[unlikely]]
+        SUPPRESS_UNCOUNTED_ARG if (frame && frame->navigationScheduler().locationChangePending()) [[unlikely]]
             return false;
 
         if (mode == SynchronousMode::AllowYield && parserScheduler->shouldYieldBeforeToken(session)) [[unlikely]]
@@ -394,7 +395,7 @@ void HTMLDocumentParser::insert(SegmentedString&& source)
     Ref<HTMLDocumentParser> protectedThis(*this);
 
     source.setExcludeLineNumbers();
-    m_input.insertAtCurrentInsertionPoint(WTF::move(source));
+    m_input.insertAtCurrentInsertionPoint(source);
     pumpTokenizerIfPossible(SynchronousMode::ForceSynchronous);
 
     if (isWaitingForScripts() && !isDetached()) {
@@ -439,7 +440,7 @@ void HTMLDocumentParser::append(RefPtr<StringImpl>&& inputSource, SynchronousMod
         } else {
             m_preloadScanner->appendToEnd(source);
             if (isWaitingForScripts())
-                m_preloadScanner->scan(*m_preloader, *protectedDocument());
+                m_preloadScanner->scan(*m_preloader, *protect(document()));
         }
     }
 
@@ -584,7 +585,7 @@ void HTMLDocumentParser::appendCurrentInputStreamToPreloadScannerAndScan()
 {
     ASSERT(m_preloadScanner);
     m_preloadScanner->appendToEnd(m_input.current());
-    m_preloadScanner->scan(*m_preloader, *protectedDocument());
+    m_preloadScanner->scan(*m_preloader, *protect(document()));
 }
 
 static ALWAYS_INLINE bool canChangeModuleScriptsExecutionTiming()
@@ -615,8 +616,9 @@ void HTMLDocumentParser::notifyFinished(PendingScript& pendingScript)
             // If we're currently in a microtask checkpoint, schedule end() as a regular task.
             // This ensures it runs after ALL microtasks (including any created during execution) complete.
             RefPtr document = this->document();
-            if (document->eventLoop().microtaskQueue().isPerformingCheckpoint()) {
-                document->eventLoop().queueTask(TaskSource::InternalAsyncTask, [protectedThis = Ref { *this }] {
+            CheckedRef eventLoop = document->eventLoop();
+            if (eventLoop->microtaskQueue().isPerformingCheckpoint()) {
+                eventLoop->queueTask(TaskSource::InternalAsyncTask, [protectedThis = Ref { *this }] {
                     if (protectedThis->isStopped())
                         return;
                     protectedThis->attemptToRunDeferredScriptsAndEnd();

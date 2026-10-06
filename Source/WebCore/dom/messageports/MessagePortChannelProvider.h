@@ -39,14 +39,13 @@ struct MessageWithMessagePorts;
 class MessagePortChannelProvider : public AbstractRefCountedAndCanMakeWeakPtr<MessagePortChannelProvider> {
 public:
     static MessagePortChannelProvider& fromContext(ScriptExecutionContext&);
-    static Ref<MessagePortChannelProvider> protectedFromContext(ScriptExecutionContext& context) { return fromContext(context); }
     static MessagePortChannelProvider& singleton();
     WEBCORE_EXPORT static void setSharedProvider(MessagePortChannelProvider&);
 
     virtual ~MessagePortChannelProvider() { }
 
     // Operations that WebProcesses perform
-    virtual void createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, bool siteIsolationEnabled) = 0;
+    virtual void createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote) = 0;
     virtual void entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote) = 0;
     virtual void messagePortDisentangled(const MessagePortIdentifier& local) = 0;
     virtual void messagePortClosed(const MessagePortIdentifier& local) = 0;

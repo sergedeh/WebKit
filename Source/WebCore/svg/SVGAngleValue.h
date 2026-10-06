@@ -43,13 +43,13 @@ public:
 
     Type unitType() const { return m_unitType; }
 
-    void setValue(float);
-    float value() const;
+    void NODELETE setValue(float);
+    float NODELETE value() const;
 
     void setValueInSpecifiedUnits(float valueInSpecifiedUnits) { m_valueInSpecifiedUnits = valueInSpecifiedUnits; }
     float valueInSpecifiedUnits() const { return m_valueInSpecifiedUnits; }
 
-    ExceptionOr<void> setValueAsString(const String&);
+    ExceptionOr<void> setValueAsString(StringView);
     String valueAsString() const;
 
     ExceptionOr<void> newValueSpecifiedUnits(unsigned short unitType, float valueInSpecifiedUnits);

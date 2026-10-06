@@ -27,6 +27,7 @@
 
 #include <wtf/Function.h>
 #include <wtf/RefCounted.h>
+#include <wtf/Seconds.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/ThreadSafetyAnalysis.h>
 
@@ -52,14 +53,14 @@ public:
 
 // A GuaranteedSerialFunctionDispatcher guarantees that a dispatched function will always be run.
 class GuaranteedSerialFunctionDispatcher : public SerialFunctionDispatcher {
+public:
+    virtual void dispatchAfter(Seconds delay, Function<void()>&&) = 0;
 };
 
 inline void assertIsCurrent(const SerialFunctionDispatcher& queue) WTF_ASSERTS_ACQUIRED_CAPABILITY(queue)
 {
-    ASSERT(queue.isCurrent());
-#if !ASSERT_ENABLED
     UNUSED_PARAM(queue);
-#endif
+    ASSERT_WITH_SECURITY_IMPLICATION(queue.isCurrent());
 }
 
 } // namespace WTF

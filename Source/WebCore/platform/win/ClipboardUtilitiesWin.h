@@ -35,6 +35,8 @@ namespace WebCore {
 class Document;
 class DocumentFragment;
 
+UINT customDataClipboardFormat();
+
 HGLOBAL createGlobalData(const String&);
 HGLOBAL createGlobalData(const Vector<char>&);
 HGLOBAL createGlobalData(const URL& url, const String& title);
@@ -68,8 +70,8 @@ RefPtr<DocumentFragment> fragmentFromHTML(Document*, IDataObject*);
 RefPtr<DocumentFragment> fragmentFromHTML(Document*, const DragDataMap*);
 Ref<DocumentFragment> fragmentFromCFHTML(Document*, const String& cfhtml);
 
-String getURL(IDataObject*, DragData::FilenameConversionPolicy, String* title = 0);
-String getURL(const DragDataMap*, DragData::FilenameConversionPolicy, String* title = 0);
+String getURL(IDataObject*, DragData::FilenameConversionPolicy, String* title = nullptr);
+String getURL(const DragDataMap*, DragData::FilenameConversionPolicy, String* title = nullptr);
 String getPlainText(IDataObject*);
 String getPlainText(const DragDataMap*);
 String getTextHTML(IDataObject*);

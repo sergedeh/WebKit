@@ -34,7 +34,7 @@
 
 namespace WebKit {
 
-OptionSet<WebEventModifier> modifiersFromPlatformEventModifiers(OptionSet<WebCore::PlatformEventModifier> modifiers)
+OptionSet<WebEventModifier> NODELETE modifiersFromPlatformEventModifiers(OptionSet<WebCore::PlatformEventModifier> modifiers)
 {
     OptionSet<WebEventModifier> result;
     if (modifiers.contains(WebCore::PlatformEventModifier::ShiftKey))
@@ -47,6 +47,8 @@ OptionSet<WebEventModifier> modifiersFromPlatformEventModifiers(OptionSet<WebCor
         result.add(WebEventModifier::MetaKey);
     if (modifiers.contains(WebCore::PlatformEventModifier::CapsLockKey))
         result.add(WebEventModifier::CapsLockKey);
+    if (modifiers.contains(WebCore::PlatformEventModifier::AltGraphKey))
+        result.add(WebEventModifier::AltGraphKey);
     return result;
 }
 

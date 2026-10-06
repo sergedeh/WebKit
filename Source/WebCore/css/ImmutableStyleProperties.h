@@ -25,6 +25,7 @@
 #pragma once
 
 #include <WebCore/StyleProperties.h>
+#include <wtf/Packed.h>
 
 namespace WebCore {
 
@@ -46,7 +47,7 @@ public:
     static constexpr std::nullptr_t end() { return nullptr; }
     unsigned size() const { return propertyCount(); }
 
-    int findPropertyIndex(CSSPropertyID) const;
+    int NODELETE findPropertyIndex(CSSPropertyID) const;
     int findCustomPropertyIndex(StringView propertyName) const;
 
     static constexpr size_t objectSize(unsigned propertyCount);

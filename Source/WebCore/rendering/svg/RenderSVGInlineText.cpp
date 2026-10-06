@@ -26,8 +26,10 @@
 #include "RenderSVGInlineText.h"
 
 #include "CSSFontSelector.h"
+#include "DocumentInlines.h"
 #include "FloatConversion.h"
 #include "FloatQuad.h"
+#include "FontCascadeInlines.h"
 #include "InlineIteratorSVGTextBox.h"
 #include "InlineRunAndOffset.h"
 #include "LegacyRenderSVGRoot.h"
@@ -37,10 +39,10 @@
 #include "RenderSVGText.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGInlineTextBoxInlines.h"
-#include "SVGLayerTransformComputation.h"
 #include "SVGRenderingContext.h"
 #include "SVGRootInlineBox.h"
 #include "SVGTextBoxPainter.h"
+#include "SVGTransformComputation.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleResolver.h"
 #include "VisiblePosition.h"
@@ -106,13 +108,13 @@ void RenderSVGInlineText::setTextInternal(const String& newText, bool force)
         textAncestor->subtreeTextDidChange(this);
 }
 
-void RenderSVGInlineText::styleDidChange(Style::Difference diff, const RenderStyle* oldStyle)
+void RenderSVGInlineText::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderText::styleDidChange(diff, oldStyle);
     updateScaledFont();
 
     bool newPreserves = style().whiteSpaceCollapse() == WhiteSpaceCollapse::Preserve;
-    bool oldPreserves = oldStyle ? oldStyle->whiteSpaceCollapse() == WhiteSpaceCollapse::Preserve : false;
+    bool oldPreserves = oldStyle && oldStyle->whiteSpaceCollapse() == WhiteSpaceCollapse::Preserve;
     if (oldPreserves && !newPreserves) {
         setText(applySVGWhitespaceRules(originalText(), false), true);
         return;
@@ -246,12 +248,12 @@ float RenderSVGInlineText::computeScalingFactorForRenderer(const RenderObject& r
 {
     if (renderer.document().settings().layerBasedSVGEngineEnabled()) {
         if (const auto* layerRenderer = lineageOfType<RenderLayerModelObject>(renderer).first())
-            return SVGLayerTransformComputation(*layerRenderer).calculateScreenFontSizeScalingFactor();
+            return SVGTransformComputation(*layerRenderer).calculateScreenFontSizeScalingFactor();
     }
     return SVGRenderingContext::calculateScreenFontSizeScalingFactor(renderer);
 }
 
-bool RenderSVGInlineText::computeNewScaledFontForStyle(const RenderObject& renderer, const RenderStyle& style, float& scalingFactor, FontCascade& scaledFont)
+bool RenderSVGInlineText::computeNewScaledFontForStyle(const RenderObject& renderer, const Style::ComputedStyle& style, float& scalingFactor, FontCascade& scaledFont)
 {
     // Alter font-size to the right on-screen value to avoid scaling the glyphs themselves, except when GeometricPrecision is specified
     scalingFactor = computeScalingFactorForRenderer(renderer);
@@ -267,7 +269,7 @@ bool RenderSVGInlineText::computeNewScaledFontForStyle(const RenderObject& rende
     auto fontDescription = style.fontDescription();
 
     // FIXME: We need to better handle the case when we compute very small fonts below (below 1pt).
-    fontDescription.setComputedSize(Style::computedFontSizeFromSpecifiedSizeForSVGInlineText(fontDescription.specifiedSize(), fontDescription.isAbsoluteSize(), scalingFactor, renderer.protectedDocument()));
+    fontDescription.setUsedSize(Style::usedFontSizeFromComputedSizeForSVGInlineText(fontDescription.computedSize(), fontDescription.isAbsoluteSize(), scalingFactor, protect(renderer.document())));
 
     // SVG controls its own glyph orientation, so don't allow writing-mode
     // to affect it.
@@ -275,7 +277,7 @@ bool RenderSVGInlineText::computeNewScaledFontForStyle(const RenderObject& rende
         fontDescription.setOrientation(FontOrientation::Horizontal);
 
     scaledFont = FontCascade(WTF::move(fontDescription));
-    scaledFont.update(renderer.document().protectedFontSelector().ptr());
+    scaledFont.update(protect(protect(renderer.document())->fontSelector()).ptr());
     return true;
 }
 

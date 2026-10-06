@@ -38,6 +38,7 @@
 namespace WebCore {
 
 class AbortAlgorithm;
+class JSDOMGlobalObject;
 class ScriptExecutionContext;
 class WebCoreOpaqueRoot;
 
@@ -63,7 +64,7 @@ public:
     void signalFollow(AbortSignal&);
 
     bool aborted() const { return m_aborted; }
-    const JSValueInWrappedObject& reason() const { return m_reason; }
+    const JSValueInWrappedObject& reason() const LIFETIME_BOUND { return m_reason; }
 
     bool hasActiveTimeoutTimer() const { return m_hasActiveTimeoutTimer; }
     bool hasAbortEventListener() const { return m_hasAbortEventListener; }
@@ -77,14 +78,15 @@ public:
     void throwIfAborted(JSC::JSGlobalObject&);
 
     using AbortSignalSet = WeakListHashSet<AbortSignal, WeakPtrImplWithEventTargetData>;
-    const AbortSignalSet& sourceSignals() const { return m_sourceSignals; }
-    AbortSignalSet& sourceSignals() { return m_sourceSignals; }
+    const AbortSignalSet& sourceSignals() const LIFETIME_BOUND { return m_sourceSignals; }
+    AbortSignalSet& sourceSignals() LIFETIME_BOUND { return m_sourceSignals; }
 
     bool isDependent() const { return m_isDependent; }
 
 private:
     enum class Aborted : bool { No, Yes };
-    AbortSignal(ScriptExecutionContext*, Aborted = Aborted::No, JSC::JSValue reason = JSC::jsUndefined());
+    AbortSignal(ScriptExecutionContext*, Aborted = Aborted::No);
+    AbortSignal(JSC::JSGlobalObject&, ScriptExecutionContext*, Aborted, JSC::JSValue reason);
 
     void setHasActiveTimeoutTimer(bool hasActiveTimeoutTimer) { m_hasActiveTimeoutTimer = hasActiveTimeoutTimer; }
 
@@ -92,13 +94,12 @@ private:
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
 
-    void markAborted(JSC::JSValue);
+    void markAborted(JSC::JSGlobalObject&, JSC::JSValue);
     void runAbortSteps();
 
     // EventTarget.
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::AbortSignal; }
     ScriptExecutionContext* scriptExecutionContext() const final;
-    using ContextDestructionObserver::protectedScriptExecutionContext;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final;
@@ -115,7 +116,7 @@ private:
     bool m_isDependent { false };
 };
 
-WebCoreOpaqueRoot root(AbortSignal*);
+WebCoreOpaqueRoot NODELETE root(AbortSignal*);
 
 } // namespace WebCore
 

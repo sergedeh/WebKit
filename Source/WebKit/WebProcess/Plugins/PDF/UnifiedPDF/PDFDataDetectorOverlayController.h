@@ -67,8 +67,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    bool handleMouseEvent(const WebMouseEvent&, PDFDocumentLayout::PageIndex);
-    RefPtr<WebCore::PageOverlay> protectedOverlay() const { return m_overlay; }
+    bool handleMouseEvent(const WebCore::PlatformMouseEvent&, PDFDocumentLayout::PageIndex);
 
     enum class ShouldUpdatePlatformHighlightData : bool { No, Yes };
     enum class ActiveHighlightChanged : bool { No, Yes };
@@ -99,8 +98,6 @@ private:
     void updateDataDetectorHighlightsIfNeeded(PDFDocumentLayout::PageIndex);
 
     bool handleDataDetectorAction(const WebCore::IntPoint&, PDFDataDetectorItem&);
-
-    RefPtr<UnifiedPDFPlugin> protectedPlugin() const;
 
     ThreadSafeWeakPtr<UnifiedPDFPlugin> m_plugin;
 

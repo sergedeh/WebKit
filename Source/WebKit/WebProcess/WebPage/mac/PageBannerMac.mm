@@ -58,10 +58,10 @@ void PageBanner::addToPage(Type type, WebPage* webPage)
 
     switch (type) {
     case Header:
-        webPage->protectedCorePage()->setHeaderHeight(m_height);
+        protect(webPage->corePage())->setHeaderHeight(m_height);
         break;
     case Footer:
-        webPage->protectedCorePage()->setFooterHeight(m_height);
+        protect(webPage->corePage())->setFooterHeight(m_height);
         break;
     case NotSet:
         ASSERT_NOT_REACHED();
@@ -74,7 +74,7 @@ void PageBanner::didAddParentLayer(GraphicsLayer* parentLayer)
         return;
 
     m_layer.get().bounds = CGRectMake(0, 0, parentLayer->size().width(), parentLayer->size().height());
-    [parentLayer->protectedPlatformLayer() addSublayer:m_layer.get()];
+    [protect(parentLayer->platformLayer()) addSublayer:m_layer.get()];
 }
 
 void PageBanner::detachFromPage()
@@ -100,9 +100,9 @@ void PageBanner::hide()
 {
     // We can hide the banner by removing the parent layer that hosts it.
     if (m_type == Header)
-        protectedWebPage()->protectedCorePage()->setHeaderHeight(0);
+        protect(protect(m_webPage.get())->corePage())->setHeaderHeight(0);
     else if (m_type == Footer)
-        protectedWebPage()->protectedCorePage()->setFooterHeight(0);
+        protect(protect(m_webPage.get())->corePage())->setFooterHeight(0);
 
     m_isHidden = true;
 }
@@ -129,7 +129,7 @@ bool PageBanner::mouseEvent(const WebMouseEvent& mouseEvent)
     if (m_isHidden)
         return false;
 
-    RefPtr frameView = protectedWebPage()->localMainFrameView();
+    RefPtr frameView = protect(m_webPage.get())->localMainFrameView();
     if (!frameView)
         return false;
 
@@ -162,11 +162,6 @@ bool PageBanner::mouseEvent(const WebMouseEvent& mouseEvent)
 CALayer *PageBanner::layer()
 {
     return m_layer.get();
-}
-
-RefPtr<WebPage> PageBanner::protectedWebPage()
-{
-    return m_webPage.get();
 }
 
 } // namespace WebKit

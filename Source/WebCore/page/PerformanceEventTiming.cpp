@@ -28,7 +28,6 @@
 
 #include "Document.h"
 #include "EventNames.h"
-#include "EventTargetInlines.h"
 #include "NodeDocument.h"
 #include "PerformanceEventTimingCandidate.h"
 #include <cmath>
@@ -58,7 +57,7 @@ RefPtr<Node> PerformanceEventTiming::target() const
     if (!node || !node->isConnected())
         return nullptr;
 
-    if (!node->protectedDocument()->isFullyActive())
+    if (!protect(node->document())->isFullyActive())
         return nullptr;
 
     return node;

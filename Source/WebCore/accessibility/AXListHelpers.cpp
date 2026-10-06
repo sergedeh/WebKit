@@ -29,6 +29,7 @@
 #include "config.h"
 #include "AXListHelpers.h"
 
+#include "AccessibilityNodeObjectInlines.h"
 #include "AXObjectCacheInlines.h"
 #include "AXUtilities.h"
 #include "AccessibilityObjectInlines.h"
@@ -61,7 +62,7 @@ bool AXListHelpers::childHasPseudoVisibleListItemMarkers(const Node& node)
     if (!beforePseudo)
         return false;
 
-    CheckedPtr cache = element->protectedDocument()->axObjectCache();
+    CheckedPtr cache = protect(element->document())->axObjectCache();
     RefPtr axBeforePseudo = cache ? cache->getOrCreate(*beforePseudo) : nullptr;
     if (!axBeforePseudo)
         return false;

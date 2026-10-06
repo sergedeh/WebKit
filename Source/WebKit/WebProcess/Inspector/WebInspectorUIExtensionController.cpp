@@ -26,10 +26,13 @@
 #include "config.h"
 #include "WebInspectorUIExtensionController.h"
 
+#include <wtf/text/TextStream.h>
+
 #if ENABLE(INSPECTOR_EXTENSIONS)
 
 #include "JavaScriptEvaluationResult.h"
 #include "Logging.h"
+#include "RunJavaScriptResult.h"
 #include "WebInspectorUI.h"
 #include "WebInspectorUIExtensionControllerMessages.h"
 #include "WebInspectorUIExtensionControllerProxyMessages.h"
@@ -76,13 +79,13 @@ std::optional<Inspector::ExtensionError> WebInspectorUIExtensionController::pars
     }
 
     ASSERT(m_frontendClient);
-    auto globalObject = m_frontendClient->protectedFrontendAPIDispatcher()->frontendGlobalObject();
+    auto globalObject = protect(m_frontendClient->frontendAPIDispatcher())->frontendGlobalObject();
     if (!globalObject)
         return Inspector::ExtensionError::ContextDestroyed;
 
     auto valueOrException = result.value();
     if (!valueOrException.has_value()) {
-        LOG(Inspector, "Encountered exception while evaluating upon the frontend: %s", valueOrException.error().message.utf8().data());
+        LOG_WITH_STREAM(Inspector, stream << "Encountered exception while evaluating upon the frontend: "_s << valueOrException.error().message);
         return Inspector::ExtensionError::InternalError;
     }
     
@@ -112,7 +115,7 @@ std::optional<Inspector::ExtensionError> WebInspectorUIExtensionController::pars
 
 // WebInspectorUIExtensionController IPC messages.
 
-void WebInspectorUIExtensionController::registerExtension(const Inspector::ExtensionID& extensionID, const String& extensionBundleIdentifier, const String& displayName, CompletionHandler<void(Expected<void, Inspector::ExtensionError>)>&& completionHandler)
+void WebInspectorUIExtensionController::registerExtension(const Inspector::ExtensionID& extensionID, const String& extensionBundleIdentifier, const String& displayName, CompletionHandler<void(std::expected<void, Inspector::ExtensionError>)>&& completionHandler)
 {
     if (!m_frontendClient) {
         completionHandler(makeUnexpected(Inspector::ExtensionError::InvalidRequest));
@@ -124,13 +127,14 @@ void WebInspectorUIExtensionController::registerExtension(const Inspector::Exten
         JSON::Value::create(extensionBundleIdentifier),
         JSON::Value::create(displayName),
     };
-    m_frontendClient->protectedFrontendAPIDispatcher()->dispatchCommandWithResultAsync("registerExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
-        if (!weakThis || !result) {
+    protect(m_frontendClient->frontendAPIDispatcher())->dispatchCommandWithResultAsync("registerExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis || !result) {
             completionHandler(makeUnexpected(Inspector::ExtensionError::ContextDestroyed));
             return;
         }
 
-        if (auto parsedError = weakThis->parseExtensionErrorFromEvaluationResult(result)) {
+        if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
             completionHandler(makeUnexpected(parsedError.value()));
             return;
         }
@@ -139,7 +143,7 @@ void WebInspectorUIExtensionController::registerExtension(const Inspector::Exten
     });
 }
 
-void WebInspectorUIExtensionController::unregisterExtension(const Inspector::ExtensionID& extensionID, CompletionHandler<void(Expected<void, Inspector::ExtensionError>)>&& completionHandler)
+void WebInspectorUIExtensionController::unregisterExtension(const Inspector::ExtensionID& extensionID, CompletionHandler<void(std::expected<void, Inspector::ExtensionError>)>&& completionHandler)
 {
     if (!m_frontendClient) {
         completionHandler(makeUnexpected(Inspector::ExtensionError::InvalidRequest));
@@ -147,13 +151,14 @@ void WebInspectorUIExtensionController::unregisterExtension(const Inspector::Ext
     }
 
     Vector<Ref<JSON::Value>> arguments { JSON::Value::create(extensionID) };
-    m_frontendClient->protectedFrontendAPIDispatcher()->dispatchCommandWithResultAsync("unregisterExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
-        if (!weakThis || !result) {
+    protect(m_frontendClient->frontendAPIDispatcher())->dispatchCommandWithResultAsync("unregisterExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis || !result) {
             completionHandler(makeUnexpected(Inspector::ExtensionError::ContextDestroyed));
             return;
         }
 
-        if (auto parsedError = weakThis->parseExtensionErrorFromEvaluationResult(result)) {
+        if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
             completionHandler(makeUnexpected(parsedError.value()));
             return;
         }
@@ -174,7 +179,7 @@ JSC::JSObject* WebInspectorUIExtensionController::unwrapEvaluationResultAsObject
     return valueOrException.value().getObject();
 }
 
-void WebInspectorUIExtensionController::createTabForExtension(const Inspector::ExtensionID& extensionID, const String& tabName, const URL& tabIconURL, const URL& sourceURL, WTF::CompletionHandler<void(Expected<Inspector::ExtensionTabID, Inspector::ExtensionError>)>&& completionHandler)
+void WebInspectorUIExtensionController::createTabForExtension(const Inspector::ExtensionID& extensionID, const String& tabName, const URL& tabIconURL, const URL& sourceURL, WTF::CompletionHandler<void(std::expected<Inspector::ExtensionTabID, Inspector::ExtensionError>)>&& completionHandler)
 {
     if (!m_frontendClient) {
         completionHandler(makeUnexpected(Inspector::ExtensionError::InvalidRequest));
@@ -187,26 +192,27 @@ void WebInspectorUIExtensionController::createTabForExtension(const Inspector::E
         JSON::Value::create(tabIconURL.string()),
         JSON::Value::create(sourceURL.string()),
     };
-    m_frontendClient->protectedFrontendAPIDispatcher()->dispatchCommandWithResultAsync("createTabForExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
-        if (!weakThis || !result) {
+    protect(m_frontendClient->frontendAPIDispatcher())->dispatchCommandWithResultAsync("createTabForExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis || !result) {
             completionHandler(makeUnexpected(Inspector::ExtensionError::ContextDestroyed));
             return;
         }
 
-        if (auto parsedError = weakThis->parseExtensionErrorFromEvaluationResult(result)) {
+        if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
             completionHandler(makeUnexpected(parsedError.value()));
             return;
         }
 
         // Expected result is either an ErrorString or {extensionTabID: <string>}.
-        auto objectResult = weakThis->unwrapEvaluationResultAsObject(result);
+        auto objectResult = protectedThis->unwrapEvaluationResultAsObject(result);
         if (!objectResult) {
             LOG(Inspector, "Unexpected non-object value returned from InspectorFrontendAPI.createTabForExtension().");
             completionHandler(makeUnexpected(Inspector::ExtensionError::InternalError));
             return;
         }
 
-        auto* frontendGlobalObject = weakThis->m_frontendClient->protectedFrontendAPIDispatcher()->frontendGlobalObject();
+        auto* frontendGlobalObject = protect(protectedThis->m_frontendClient->frontendAPIDispatcher())->frontendGlobalObject();
         JSC::JSValue foundProperty = objectResult->get(frontendGlobalObject, JSC::Identifier::fromString(frontendGlobalObject->vm(), "result"_s));
         if (!foundProperty || !foundProperty.isString()) {
             completionHandler(makeUnexpected(Inspector::ExtensionError::InternalError));
@@ -217,7 +223,7 @@ void WebInspectorUIExtensionController::createTabForExtension(const Inspector::E
     });
 }
 
-void WebInspectorUIExtensionController::evaluateScriptForExtension(const Inspector::ExtensionID& extensionID, const String& scriptSource, const std::optional<URL>& frameURL, const std::optional<URL>& contextSecurityOrigin, const std::optional<bool>& useContentScriptContext, CompletionHandler<void(Expected<WebKit::JavaScriptEvaluationResult, std::optional<WebCore::ExceptionDetails>>&&, const std::optional<Inspector::ExtensionError>&)>&& completionHandler)
+void WebInspectorUIExtensionController::evaluateScriptForExtension(const Inspector::ExtensionID& extensionID, const String& scriptSource, const std::optional<URL>& frameURL, const std::optional<URL>& contextSecurityOrigin, const std::optional<bool>& useContentScriptContext, CompletionHandler<void(RunJavaScriptResult&&, const std::optional<Inspector::ExtensionError>&)>&& completionHandler)
 {
     if (!m_frontendClient) {
         completionHandler(makeUnexpected(std::nullopt), Inspector::ExtensionError::InvalidRequest);
@@ -238,13 +244,14 @@ void WebInspectorUIExtensionController::evaluateScriptForExtension(const Inspect
         WTF::move(optionalArguments)
     };
 
-    m_frontendClient->protectedFrontendAPIDispatcher()->dispatchCommandWithResultAsync("evaluateScriptForExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
-        if (!weakThis) {
+    protect(m_frontendClient->frontendAPIDispatcher())->dispatchCommandWithResultAsync("evaluateScriptForExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis) {
             completionHandler(makeUnexpected(std::nullopt), Inspector::ExtensionError::ContextDestroyed);
             return;
         }
 
-        auto* frontendGlobalObject = weakThis->m_frontendClient->protectedFrontendAPIDispatcher()->frontendGlobalObject();
+        auto* frontendGlobalObject = protect(protectedThis->m_frontendClient->frontendAPIDispatcher())->frontendGlobalObject();
         if (!frontendGlobalObject) {
             completionHandler(makeUnexpected(std::nullopt), Inspector::ExtensionError::ContextDestroyed);
             return;
@@ -252,19 +259,19 @@ void WebInspectorUIExtensionController::evaluateScriptForExtension(const Inspect
         
         JSC::JSLockHolder lock(frontendGlobalObject);
 
-        if (auto parsedError = weakThis->parseExtensionErrorFromEvaluationResult(result)) {
+        if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
             if (!result.value().has_value()) {
                 auto exceptionDetails = result.value().error();
-                LOG(Inspector, "Internal error encountered while evaluating upon the frontend at %s:%d:%d: %s", exceptionDetails.sourceURL.utf8().data(), exceptionDetails.lineNumber, exceptionDetails.columnNumber, exceptionDetails.message.utf8().data());
+                LOG_WITH_STREAM(Inspector, stream << "Internal error encountered while evaluating upon the frontend at "_s << exceptionDetails.sourceURL << ":"_s << exceptionDetails.lineNumber << ":"_s << exceptionDetails.columnNumber << ": "_s << exceptionDetails.message);
             } else
-                LOG(Inspector, "Internal error encountered while evaluating upon the frontend: %s", extensionErrorToString(parsedError.value()).utf8().data());
+                LOG_WITH_STREAM(Inspector, stream << "Internal error encountered while evaluating upon the frontend: "_s << extensionErrorToString(parsedError.value()));
 
             completionHandler(makeUnexpected(std::nullopt), parsedError);
             return;
         }
 
         // Expected result is either an ErrorString or {result: <any>}.
-        auto objectResult = weakThis->unwrapEvaluationResultAsObject(result);
+        auto objectResult = protectedThis->unwrapEvaluationResultAsObject(result);
         if (!objectResult) {
             LOG(Inspector, "Unexpected non-object value returned from InspectorFrontendAPI.evaluateScriptForExtension().");
             completionHandler(makeUnexpected(std::nullopt), Inspector::ExtensionError::InternalError);
@@ -312,20 +319,21 @@ void WebInspectorUIExtensionController::reloadForExtension(const Inspector::Exte
         WTF::move(optionalArguments)
     };
 
-    m_frontendClient->protectedFrontendAPIDispatcher()->dispatchCommandWithResultAsync("reloadForExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
-        if (!weakThis) {
+    protect(m_frontendClient->frontendAPIDispatcher())->dispatchCommandWithResultAsync("reloadForExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis) {
             completionHandler(Inspector::ExtensionError::ContextDestroyed);
             return;
         }
 
-        auto* frontendGlobalObject = weakThis->m_frontendClient->protectedFrontendAPIDispatcher()->frontendGlobalObject();
+        auto* frontendGlobalObject = protect(protectedThis->m_frontendClient->frontendAPIDispatcher())->frontendGlobalObject();
         if (!frontendGlobalObject) {
             completionHandler(Inspector::ExtensionError::ContextDestroyed);
             return;
         }
 
-        if (auto parsedError = weakThis->parseExtensionErrorFromEvaluationResult(result)) {
-            LOG(Inspector, "Internal error encountered while evaluating upon the frontend: %s", Inspector::extensionErrorToString(*parsedError).utf8().data());
+        if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
+            LOG_WITH_STREAM(Inspector, stream << "Internal error encountered while evaluating upon the frontend: "_s << (Inspector::extensionErrorToString(*parsedError)));
             completionHandler(parsedError);
             return;
         }
@@ -334,7 +342,7 @@ void WebInspectorUIExtensionController::reloadForExtension(const Inspector::Exte
     });
 }
 
-void WebInspectorUIExtensionController::showExtensionTab(const Inspector::ExtensionTabID& extensionTabIdentifier, CompletionHandler<void(Expected<void, Inspector::ExtensionError>)>&& completionHandler)
+void WebInspectorUIExtensionController::showExtensionTab(const Inspector::ExtensionTabID& extensionTabIdentifier, CompletionHandler<void(std::expected<void, Inspector::ExtensionError>)>&& completionHandler)
 {
     if (!m_frontendClient) {
         completionHandler(makeUnexpected(Inspector::ExtensionError::InvalidRequest));
@@ -345,22 +353,23 @@ void WebInspectorUIExtensionController::showExtensionTab(const Inspector::Extens
         JSON::Value::create(extensionTabIdentifier),
     };
 
-    m_frontendClient->protectedFrontendAPIDispatcher()->dispatchCommandWithResultAsync("showExtensionTab"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
-        if (!weakThis) {
+    protect(m_frontendClient->frontendAPIDispatcher())->dispatchCommandWithResultAsync("showExtensionTab"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis) {
             completionHandler(makeUnexpected(Inspector::ExtensionError::ContextDestroyed));
             return;
         }
 
-        auto* frontendGlobalObject = weakThis->m_frontendClient->protectedFrontendAPIDispatcher()->frontendGlobalObject();
+        auto* frontendGlobalObject = protect(protectedThis->m_frontendClient->frontendAPIDispatcher())->frontendGlobalObject();
         if (!frontendGlobalObject) {
             completionHandler(makeUnexpected(Inspector::ExtensionError::ContextDestroyed));
             return;
         }
 
-        if (auto parsedError = weakThis->parseExtensionErrorFromEvaluationResult(result)) {
+        if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
             if (!result.value().has_value()) {
                 auto exceptionDetails = result.value().error();
-                LOG(Inspector, "Internal error encountered while showing extension tab at %s:%d:%d: %s", exceptionDetails.sourceURL.utf8().data(), exceptionDetails.lineNumber, exceptionDetails.columnNumber, exceptionDetails.message.utf8().data());
+                LOG_WITH_STREAM(Inspector, stream << "Internal error encountered while showing extension tab at "_s << exceptionDetails.sourceURL << ":"_s << exceptionDetails.lineNumber << ":"_s << exceptionDetails.columnNumber << ": "_s << exceptionDetails.message);
             } else
                 LOG(Inspector, "Internal error encountered while showing extension tab.");
 
@@ -386,20 +395,21 @@ void WebInspectorUIExtensionController::navigateTabForExtension(const Inspector:
         JSON::Value::create(extensionTabIdentifier),
         JSON::Value::create(sourceURL.string()),
     };
-    m_frontendClient->protectedFrontendAPIDispatcher()->dispatchCommandWithResultAsync("navigateTabForExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
-        if (!weakThis) {
+    protect(m_frontendClient->frontendAPIDispatcher())->dispatchCommandWithResultAsync("navigateTabForExtension"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis) {
             completionHandler(Inspector::ExtensionError::ContextDestroyed);
             return;
         }
 
-        auto* frontendGlobalObject = weakThis->m_frontendClient->protectedFrontendAPIDispatcher()->frontendGlobalObject();
+        auto* frontendGlobalObject = protect(protectedThis->m_frontendClient->frontendAPIDispatcher())->frontendGlobalObject();
         if (!frontendGlobalObject) {
             completionHandler(Inspector::ExtensionError::ContextDestroyed);
             return;
         }
 
-        if (auto parsedError = weakThis->parseExtensionErrorFromEvaluationResult(result)) {
-            LOG(Inspector, "Internal error encountered while evaluating upon the frontend: %s", Inspector::extensionErrorToString(*parsedError).utf8().data());
+        if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
+            LOG_WITH_STREAM(Inspector, stream << "Internal error encountered while evaluating upon the frontend: "_s << (Inspector::extensionErrorToString(*parsedError)));
             completionHandler(parsedError);
             return;
         }
@@ -410,7 +420,7 @@ void WebInspectorUIExtensionController::navigateTabForExtension(const Inspector:
 
 // WebInspectorUIExtensionController IPC messages for testing.
 
-void WebInspectorUIExtensionController::evaluateScriptInExtensionTab(const Inspector::ExtensionTabID& extensionTabID, const String& scriptSource, CompletionHandler<void(Expected<JavaScriptEvaluationResult, std::optional<WebCore::ExceptionDetails>>&&, const std::optional<Inspector::ExtensionError>&)>&& completionHandler)
+void WebInspectorUIExtensionController::evaluateScriptInExtensionTab(const Inspector::ExtensionTabID& extensionTabID, const String& scriptSource, CompletionHandler<void(RunJavaScriptResult&&, const std::optional<Inspector::ExtensionError>&)>&& completionHandler)
 {
     if (!m_frontendClient) {
         completionHandler(makeUnexpected(std::nullopt), Inspector::ExtensionError::InvalidRequest);
@@ -422,22 +432,25 @@ void WebInspectorUIExtensionController::evaluateScriptInExtensionTab(const Inspe
         JSON::Value::create(scriptSource),
     };
 
-    m_frontendClient->protectedFrontendAPIDispatcher()->dispatchCommandWithResultAsync("evaluateScriptInExtensionTab"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
-        if (!weakThis) {
+    protect(m_frontendClient->frontendAPIDispatcher())->dispatchCommandWithResultAsync("evaluateScriptInExtensionTab"_s, WTF::move(arguments), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](WebCore::InspectorFrontendAPIDispatcher::EvaluationResult&& result) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis) {
             completionHandler(makeUnexpected(std::nullopt), Inspector::ExtensionError::ContextDestroyed);
             return;
         }
 
-        auto* frontendGlobalObject = weakThis->m_frontendClient->protectedFrontendAPIDispatcher()->frontendGlobalObject();
+        auto* frontendGlobalObject = protect(protectedThis->m_frontendClient->frontendAPIDispatcher())->frontendGlobalObject();
         if (!frontendGlobalObject) {
             completionHandler(makeUnexpected(std::nullopt), Inspector::ExtensionError::ContextDestroyed);
             return;
         }
 
-        if (auto parsedError = weakThis->parseExtensionErrorFromEvaluationResult(result)) {
+        JSC::JSLockHolder lock(frontendGlobalObject);
+
+        if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
             if (!result.value().has_value()) {
                 auto exceptionDetails = result.value().error();
-                LOG(Inspector, "Internal error encountered while evaluating upon the frontend: at %s:%d:%d: %s", exceptionDetails.sourceURL.utf8().data(), exceptionDetails.lineNumber, exceptionDetails.columnNumber, exceptionDetails.message.utf8().data());
+                LOG_WITH_STREAM(Inspector, stream << "Internal error encountered while evaluating upon the frontend: at "_s << exceptionDetails.sourceURL << ":"_s << exceptionDetails.lineNumber << ":"_s << exceptionDetails.columnNumber << ": "_s << exceptionDetails.message);
             } else
                 LOG(Inspector, "Internal error encountered while evaluating upon the frontend.");
 
@@ -446,7 +459,7 @@ void WebInspectorUIExtensionController::evaluateScriptInExtensionTab(const Inspe
         }
 
         // Expected result is either an ErrorString or {result: <any>} or {error: string}.
-        auto objectResult = weakThis->unwrapEvaluationResultAsObject(result);
+        auto objectResult = protectedThis->unwrapEvaluationResultAsObject(result);
         if (!objectResult) {
             LOG(Inspector, "Unexpected non-object value returned from InspectorFrontendAPI.evaluateScriptInExtensionTab().");
             completionHandler(makeUnexpected(std::nullopt), Inspector::ExtensionError::InternalError);
@@ -476,22 +489,22 @@ void WebInspectorUIExtensionController::evaluateScriptInExtensionTab(const Inspe
 
 void WebInspectorUIExtensionController::didShowExtensionTab(const Inspector::ExtensionID& extensionID, const Inspector::ExtensionTabID& extensionTabID, WebCore::FrameIdentifier frameID)
 {
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebInspectorUIExtensionControllerProxy::DidShowExtensionTab { extensionID, extensionTabID, frameID }, m_inspectorPageIdentifier);
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebInspectorUIExtensionControllerProxy::DidShowExtensionTab { extensionID, extensionTabID, frameID }, m_inspectorPageIdentifier);
 }
 
 void WebInspectorUIExtensionController::didHideExtensionTab(const Inspector::ExtensionID& extensionID, const Inspector::ExtensionTabID& extensionTabID)
 {
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebInspectorUIExtensionControllerProxy::DidHideExtensionTab { extensionID, extensionTabID }, m_inspectorPageIdentifier);
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebInspectorUIExtensionControllerProxy::DidHideExtensionTab { extensionID, extensionTabID }, m_inspectorPageIdentifier);
 }
 
 void WebInspectorUIExtensionController::didNavigateExtensionTab(const Inspector::ExtensionID& extensionID, const Inspector::ExtensionTabID& extensionTabID, const URL& newURL)
 {
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebInspectorUIExtensionControllerProxy::DidNavigateExtensionTab { extensionID, extensionTabID, newURL }, m_inspectorPageIdentifier);
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebInspectorUIExtensionControllerProxy::DidNavigateExtensionTab { extensionID, extensionTabID, newURL }, m_inspectorPageIdentifier);
 }
 
 void WebInspectorUIExtensionController::inspectedPageDidNavigate(const URL& newURL)
 {
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebInspectorUIExtensionControllerProxy::InspectedPageDidNavigate { newURL }, m_inspectorPageIdentifier);
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebInspectorUIExtensionControllerProxy::InspectedPageDidNavigate { newURL }, m_inspectorPageIdentifier);
 }
 
 } // namespace WebKit

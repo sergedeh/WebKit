@@ -35,6 +35,7 @@
 #include "WebProcessProxy.h"
 #include <WebCore/PlatformEvent.h>
 #include <wtf/CallbackAggregator.h>
+#include <wtf/glib/GSpanExtras.h>
 
 #if USE(ATK)
 #include <atk/atk.h>
@@ -84,14 +85,14 @@ void WebPageProxy::bindAccessibilityTree(const String& plugID)
 #if ENABLE(WPE_PLATFORM)
     if (auto* view = wpeView()) {
         if (auto* accessible = wpe_view_get_accessible(view))
-            wpe_view_accessible_bind(accessible, plugID.utf8().data());
+            wpe_view_accessible_bind(accessible, plugID.utf8().legacyCStringPointer());
         return;
     }
 #endif
 
 #if USE(ATK)
     auto* accessible = static_cast<PageClientImpl&>(*pageClient).accessible();
-    atk_socket_embed(ATK_SOCKET(accessible), const_cast<char*>(plugID.utf8().data()));
+    atk_socket_embed(ATK_SOCKET(accessible), const_cast<char*>(plugID.utf8().legacyCStringPointer()));
     atk_object_notify_state_change(accessible, ATK_STATE_TRANSIENT, FALSE);
 #else
     UNUSED_PARAM(plugID);
@@ -162,23 +163,17 @@ Vector<RendererBufferFormat> WebPageProxy::preferredBufferFormats() const
         if (!targetDevice)
             targetDevice = mainDevice;
         if (targetDevice)
-            bufferFormat.drmDevice = { CString(wpe_drm_device_get_primary_node(targetDevice)), CString(wpe_drm_device_get_render_node(targetDevice)) };
+            bufferFormat.drmDevice = { UTF8CString::unsafeFromUTF8(wpe_drm_device_get_primary_node(targetDevice)), UTF8CString::unsafeFromUTF8(wpe_drm_device_get_render_node(targetDevice)) };
 #endif
 
         auto formatsCount = wpe_buffer_formats_get_group_n_formats(formats, i);
         bufferFormat.formats.reserveInitialCapacity(formatsCount);
         for (unsigned j = 0; j < formatsCount; ++j) {
-            RendererBufferFormat::Format format;
-            format.fourcc = wpe_buffer_formats_get_format_fourcc(formats, i, j);
             auto* modifiers = wpe_buffer_formats_get_format_modifiers(formats, i, j);
-            format.modifiers.reserveInitialCapacity(modifiers->len);
-            for (unsigned k = 0; k < modifiers->len; ++k) {
-                WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // WPE port
-                auto* modifier = &g_array_index(modifiers, guint64, k);
-                WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-                format.modifiers.append(*modifier);
-            }
-            bufferFormat.formats.append(WTF::move(format));
+            bufferFormat.formats.append({
+                .fourcc = wpe_buffer_formats_get_format_fourcc(formats, i, j),
+                .modifiers = unsafeMakeSpan(reinterpret_cast<uint64_t*>(modifiers->data), modifiers->len),
+            });
         }
         bufferFormats.append(WTF::move(bufferFormat));
     }
@@ -242,6 +237,8 @@ void WebPageProxy::callAfterNextPresentationUpdate(CompletionHandler<void()>&& c
 
         if (RefPtr pageClient = protectedThis->pageClient())
             static_cast<PageClientImpl&>(*pageClient).callAfterNextPresentationUpdate(WTF::move(callback));
+        else
+            callback();
     });
     auto drawingAreaIdentifier = m_drawingArea->identifier();
     forEachWebContentProcess([&] (auto& process, auto) {

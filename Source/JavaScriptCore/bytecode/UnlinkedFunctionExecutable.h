@@ -73,19 +73,23 @@ public:
         return &vm.unlinkedFunctionExecutableSpace();
     }
 
-    static UnlinkedFunctionExecutable* create(VM& vm, const SourceCode& source, FunctionMetadataNode* node, UnlinkedFunctionKind unlinkedFunctionKind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, JSParserScriptMode scriptMode, RefPtr<TDZEnvironmentLink> parentScopeTDZVariables, std::optional<Vector<Identifier>>&& generatorOrAsyncWrapperFunctionParameterNames, std::optional<PrivateNameEnvironment> parentPrivateNameEnvironment, DerivedContextType derivedContextType, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement, bool isBuiltinDefaultClassConstructor = false)
+    static UnlinkedFunctionExecutable* create(VM& vm, const SourceCode& source, FunctionMetadataNode* node, UnlinkedFunctionKind unlinkedFunctionKind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, JSParserScriptMode scriptMode, RefPtr<TDZEnvironmentLink> parentScopeTDZVariables, Vector<Identifier>&& generatorOrAsyncWrapperFunctionParameterNames, std::optional<PrivateNameEnvironment> parentPrivateNameEnvironment, DerivedContextType derivedContextType, EvalContextType evalContextType, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement, bool isBuiltinDefaultClassConstructor = false)
     {
         UnlinkedFunctionExecutable* instance = new (NotNull, allocateCell<UnlinkedFunctionExecutable>(vm))
-            UnlinkedFunctionExecutable(vm, vm.unlinkedFunctionExecutableStructure.get(), source, node, unlinkedFunctionKind, constructAbility, inlineAttribute, scriptMode, WTF::move(parentScopeTDZVariables), WTF::move(generatorOrAsyncWrapperFunctionParameterNames), WTF::move(parentPrivateNameEnvironment), derivedContextType, needsClassFieldInitializer, privateBrandRequirement, isBuiltinDefaultClassConstructor);
+            UnlinkedFunctionExecutable(vm, vm.unlinkedFunctionExecutableStructure.get(), source, node, unlinkedFunctionKind, constructAbility, inlineAttribute, scriptMode, WTF::move(parentScopeTDZVariables), WTF::move(generatorOrAsyncWrapperFunctionParameterNames), WTF::move(parentPrivateNameEnvironment), derivedContextType, evalContextType, needsClassFieldInitializer, privateBrandRequirement, isBuiltinDefaultClassConstructor);
         instance->finishCreation(vm);
         return instance;
     }
 
     ~UnlinkedFunctionExecutable();
 
-    const Identifier& name() const { return m_name; }
+    const Identifier& name() const;
     const Identifier& ecmaName() const { return m_ecmaName; }
-    void setEcmaName(const Identifier& name) { m_ecmaName = name; }
+    void setEcmaName(const Identifier& name)
+    {
+        ASSERT(!m_hasName || name == m_ecmaName);
+        m_ecmaName = name;
+    }
     unsigned parameterCount() const { return m_parameterCount; }; // Excluding 'this'!
     SourceParseMode parseMode() const { return static_cast<SourceParseMode>(m_sourceParseMode); };
 
@@ -105,14 +109,8 @@ public:
     ConstructorKind constructorKind() const { return static_cast<ConstructorKind>(m_constructorKind); }
     SuperBinding superBinding() const { return static_cast<SuperBinding>(m_superBinding); }
 
-    unsigned lineCount() const { return m_lineCount; }
-    unsigned linkedStartColumn(unsigned parentStartColumn) const { return m_unlinkedBodyStartColumn + (!m_firstLineOffset ? parentStartColumn : 1); }
-    unsigned linkedEndColumn(unsigned startColumn) const { return m_unlinkedBodyEndColumn + (!m_lineCount ? startColumn : 1); }
-
     unsigned unlinkedFunctionStart() const { return m_unlinkedFunctionStart; }
     unsigned unlinkedFunctionEnd() const { return m_unlinkedFunctionEnd; }
-    unsigned unlinkedBodyStartColumn() const { return m_unlinkedBodyStartColumn; }
-    unsigned unlinkedBodyEndColumn() const { return m_unlinkedBodyEndColumn; }
     unsigned startOffset() const { return m_startOffset; }
     unsigned sourceLength() { return m_sourceLength; }
     unsigned parametersStartOffset() const { return m_parametersStartOffset; }
@@ -174,13 +172,9 @@ public:
             return false;
         return !m_rareData->m_classSource.isNull();
     }
+    bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
-    RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const
-    {
-        if (!m_rareData)
-            return nullptr;
-        return m_rareData->m_parentScopeTDZVariables;
-    }
+    RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const { return m_parentScopeTDZVariables; }
 
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames() const
     {
@@ -198,7 +192,11 @@ public:
     
     bool isArrowFunction() const { return isArrowFunctionParseMode(parseMode()); }
 
+    bool singletonHasBeenInvalidated() const { return m_singletonHasBeenInvalidated; }
+    void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
+
     JSC::DerivedContextType derivedContextType() const {return static_cast<JSC::DerivedContextType>(m_derivedContextType); }
+    EvalContextType evalContextType() const { return static_cast<EvalContextType>(m_evalContextType); }
 
     InlineAttribute inlineAttribute() const { return static_cast<InlineAttribute>(m_inlineAttribute); }
 
@@ -223,7 +221,7 @@ public:
         ensureRareData().m_sourceMappingURLDirective = sourceMappingURL;
     }
 
-    void finalizeUnconditionally(VM&, CollectionScope);
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
 
     struct ClassElementDefinition {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(ClassElementDefinition);
@@ -247,7 +245,6 @@ public:
         SourceCode m_classSource;
         String m_sourceURLDirective;
         String m_sourceMappingURLDirective;
-        RefPtr<TDZEnvironmentLink> m_parentScopeTDZVariables;
         FixedVector<Identifier> m_generatorOrAsyncWrapperFunctionParameterNames;
         FixedVector<ClassElementDefinition> m_classElementDefinitions;
         PrivateNameEnvironment m_parentPrivateNameEnvironment;
@@ -270,7 +267,7 @@ public:
     }
 
 private:
-    UnlinkedFunctionExecutable(VM&, Structure*, const SourceCode&, FunctionMetadataNode*, UnlinkedFunctionKind, ConstructAbility, InlineAttribute, JSParserScriptMode, RefPtr<TDZEnvironmentLink>, std::optional<Vector<Identifier>>&&, std::optional<PrivateNameEnvironment>, JSC::DerivedContextType, JSC::NeedsClassFieldInitializer, PrivateBrandRequirement, bool isBuiltinDefaultClassConstructor);
+    UnlinkedFunctionExecutable(VM&, Structure*, const SourceCode&, FunctionMetadataNode*, UnlinkedFunctionKind, ConstructAbility, InlineAttribute, JSParserScriptMode, RefPtr<TDZEnvironmentLink>, Vector<Identifier>&&, std::optional<PrivateNameEnvironment>, JSC::DerivedContextType, EvalContextType, JSC::NeedsClassFieldInitializer, PrivateBrandRequirement, bool isBuiltinDefaultClassConstructor);
     UnlinkedFunctionExecutable(Decoder&, const CachedFunctionExecutable&);
 
     DECLARE_VISIT_CHILDREN;
@@ -284,15 +281,8 @@ private:
         return VM::useUnlinkedCodeBlockJettisoning() && !m_isGeneratedFromCache;
     }
 
-    unsigned m_firstLineOffset : 31;
-    unsigned m_isGeneratedFromCache : 1;
-    unsigned m_lineCount : 31;
     unsigned m_hasCapturedVariables : 1;
     unsigned m_unlinkedFunctionStart: 31;
-    unsigned m_isBuiltinFunction : 1;
-    unsigned m_unlinkedBodyStartColumn : 31;
-    unsigned m_isBuiltinDefaultClassConstructor : 1;
-    unsigned m_unlinkedBodyEndColumn : 31;
     unsigned m_constructAbility: 1;
     unsigned m_startOffset : 31;
     unsigned m_scriptMode: 1; // JSParserScriptMode
@@ -302,7 +292,11 @@ private:
     unsigned m_isCached : 1;
     unsigned m_unlinkedFunctionEnd : 31;
     unsigned m_needsClassFieldInitializer : 1;
-    unsigned m_parameterCount : 31;
+    unsigned m_parameterCount : 30;
+    unsigned m_singletonHasBeenInvalidated : 1;
+    unsigned m_isGeneratedFromCache : 1;
+    unsigned m_isBuiltinFunction : 1;
+    unsigned m_isBuiltinDefaultClassConstructor : 1;
     unsigned m_privateBrandRequirement : 1;
     CodeFeatures m_features : bitWidthOfCodeFeatures;
     uint16_t m_constructorKind : 2;
@@ -312,6 +306,8 @@ private:
     uint8_t m_functionMode : 2; // FunctionMode
     uint8_t m_derivedContextType : 2;
     uint8_t m_inlineAttribute : 1;
+    uint8_t m_evalContextType : 2;
+    uint8_t m_hasName : 1;
 
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;
@@ -326,8 +322,8 @@ private:
         };
     };
 
-    Identifier m_name;
     Identifier m_ecmaName;
+    RefPtr<TDZEnvironmentLink> m_parentScopeTDZVariables;
 
     RareData& ensureRareData()
     {

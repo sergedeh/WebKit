@@ -24,6 +24,7 @@
 #include "config.h"
 #include "SVGAElement.h"
 
+#include "AnchorElementFunctions.h"
 #include "DOMTokenList.h"
 #include "Document.h"
 #include "EventHandler.h"
@@ -34,10 +35,8 @@
 #include "LegacyRenderSVGTransformableContainer.h"
 #include "LocalFrame.h"
 #include "MouseEvent.h"
-#include "PlatformMouseEvent.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGInline.h"
-#include "RenderSVGText.h"
 #include "RenderSVGTransformableContainer.h"
 #include "ResourceRequest.h"
 #include "SVGElementInlines.h"
@@ -53,7 +52,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGAElement);
 
 inline SVGAElement::SVGAElement(const QualifiedName& tagName, Document& document)
-    : SVGGraphicsElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGGraphicsElement(tagName, document, PropertyRegistry::singleton())
     , SVGURIReference(this)
 {
     ASSERT(hasTagName(SVGNames::aTag));
@@ -89,17 +88,7 @@ void SVGAElement::attributeChanged(const QualifiedName& name, const AtomString& 
         Ref { m_target }->setBaseValInternal(newValue);
         return;
     } else if (name == SVGNames::relAttr) {
-        // Update SVGAElement::relList() if more rel attributes values are supported.
-        static MainThreadNeverDestroyed<const AtomString> noReferrer("noreferrer"_s);
-        static MainThreadNeverDestroyed<const AtomString> noOpener("noopener"_s);
-        static MainThreadNeverDestroyed<const AtomString> opener("opener"_s);
-        SpaceSplitString relValue(newValue, SpaceSplitString::ShouldFoldCase::Yes);
-        if (relValue.contains(noReferrer))
-            m_linkRelations.add(Relation::NoReferrer);
-        if (relValue.contains(noOpener))
-            m_linkRelations.add(Relation::NoOpener);
-        if (relValue.contains(opener))
-            m_linkRelations.add(Relation::Opener);
+        m_linkRelations = relationsForRelAttribute(newValue);
         if (m_relList)
             m_relList->associatedAttributeValueChanged();
     }
@@ -119,7 +108,7 @@ void SVGAElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGGraphicsElement::svgAttributeChanged(attrName);
 }
 
-RenderPtr<RenderElement> SVGAElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGAElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     RefPtr svgParent = dynamicDowncast<SVGElement>(parentNode());
     if (svgParent && svgParent->isTextContent())
@@ -134,7 +123,7 @@ RenderPtr<RenderElement> SVGAElement::createElementRenderer(RenderStyle&& style,
 void SVGAElement::defaultEventHandler(Event& event)
 {
     if (isLink()) {
-        if (focused() && isEnterKeyKeydownEvent(event)) {
+        if (focused() && KeyboardEvent::isEnterKeyKeydownEvent(event)) {
             event.setDefaultHandled();
             dispatchSimulatedClick(&event);
             return;
@@ -144,7 +133,7 @@ void SVGAElement::defaultEventHandler(Event& event)
             auto url = href().trim(isASCIIWhitespace);
 
             if (url[0] == '#') {
-                if (RefPtr targetElement = dynamicDowncast<SVGSMILElement>(treeScope().getElementById(url.substringSharingImpl(1)))) {
+                if (RefPtr targetElement = dynamicDowncast<SVGSMILElement>(protect(treeScope())->getElementById(url.substringSharingImpl(1)))) {
                     targetElement->beginByLinkActivation();
                     event.setDefaultHandled();
                     return;
@@ -152,7 +141,7 @@ void SVGAElement::defaultEventHandler(Event& event)
             }
 
             Ref document = this->document();
-            URL completedURL = document->completeURL(url);
+            URL completedURL = document->encodingParseURL(url);
 
             auto target = this->target();
             if (target.isEmpty() && attributeWithoutSynchronization(XLinkNames::showAttr) == "new"_s)
@@ -160,12 +149,7 @@ void SVGAElement::defaultEventHandler(Event& event)
             event.setDefaultHandled();
 
             auto referrerPolicy = hasRel(Relation::NoReferrer) ? ReferrerPolicy::NoReferrer : ReferrerPolicy::EmptyString;
-            NewFrameOpenerPolicy newFrameOpenerPolicy = NewFrameOpenerPolicy::Allow;
-            if (hasRel(Relation::NoOpener) || hasRel(Relation::NoReferrer) || (!hasRel(Relation::Opener) && isBlankTargetFrameName(target) && !completedURL.protocolIsJavaScript()))
-                newFrameOpenerPolicy = NewFrameOpenerPolicy::Suppress;
-
-            if (RefPtr frame = document->frame())
-                frame->loader().changeLocation(completedURL, target, &event, referrerPolicy, document->shouldOpenExternalURLsPolicyToPropagate(), newFrameOpenerPolicy);
+            navigateHyperlink(*this, event, completedURL, target, m_linkRelations, referrerPolicy);
             return;
         }
     }
@@ -203,7 +187,11 @@ bool SVGAElement::isMouseFocusable() const
 
 bool SVGAElement::isKeyboardFocusable(const FocusEventData& focusEventData) const
 {
-    if (isFocusable() && Element::supportsFocus())
+    if (!isFocusable())
+        return false;
+
+    // Anchor is keyboard focusable if the base element supports focus.
+    if (Element::supportsFocus())
         return SVGElement::isKeyboardFocusable(focusEventData);
 
     RefPtr frame = document().frame();
@@ -232,7 +220,7 @@ bool SVGAElement::childShouldCreateRenderer(const Node& child) const
         return false;
 
     if (parentElement() && parentElement()->isSVGElement())
-        return parentElement()->childShouldCreateRenderer(child);
+        return protect(parentElement())->childShouldCreateRenderer(child);
 
     return SVGElement::childShouldCreateRenderer(child);
 }
@@ -250,16 +238,15 @@ SharedStringHash SVGAElement::visitedLinkHash() const
     return *m_storedVisitedLinkHash;
 }
 
+URL SVGAElement::hrefURL() const
+{
+    return protect(document())->encodingParseURL(href());
+}
+
 DOMTokenList& SVGAElement::relList()
 {
     if (!m_relList) {
-        lazyInitialize(m_relList, makeUniqueWithoutRefCountedCheck<DOMTokenList>(*this, SVGNames::relAttr, [](Document&, StringView token) {
-#if USE(SYSTEM_PREVIEW)
-            if (equalLettersIgnoringASCIICase(token, "ar"_s))
-                return true;
-#endif
-            return equalLettersIgnoringASCIICase(token, "noreferrer"_s) || equalLettersIgnoringASCIICase(token, "noopener"_s) || equalLettersIgnoringASCIICase(token, "opener"_s);
-        }));
+        lazyInitialize(m_relList, makeUniqueWithoutRefCountedCheck<DOMTokenList>(*this, SVGNames::relAttr, isSupportedRelToken));
     }
     return *m_relList;
 }

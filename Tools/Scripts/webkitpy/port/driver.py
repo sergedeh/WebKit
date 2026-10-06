@@ -580,6 +580,8 @@ class Driver(object):
             cmd.append('--show-touches')
         if self._port.get_option('show_window'):
             cmd.append('--show-window')
+        if self._port.get_option('show_cursor'):
+            cmd.append('--show-cursor')
         if self._port.get_option('accessibility_isolated_tree'):
             cmd.append('--accessibility-isolated-tree')
 
@@ -595,8 +597,16 @@ class Driver(object):
             cmd.append('--localhost-alias')
             cmd.append(alias)
 
+        ip_address_space_overrides = self._port.ip_address_space_overrides()
+        if ip_address_space_overrides:
+            cmd.append('--ip-address-space-overrides')
+            cmd.append(ip_address_space_overrides)
+
         if not self._port.get_option('enable_all_experimental_features'):
             cmd.append('--no-enable-all-experimental-features')
+
+        if self._port.get_option('site_isolation_enabled_by_default'):
+            cmd.append('--site-isolation-enabled-by-default')
 
         for feature in self._port.experimental_feature():
             cmd.append('--experimental-feature')

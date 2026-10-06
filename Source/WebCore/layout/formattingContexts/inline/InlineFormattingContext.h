@@ -49,7 +49,11 @@ struct InlineLayoutResult {
         PartialFromDamage // Display content represents part of the inline content starting from damaged line until damage stops -result of partial layout with damage that does not cover the entire inline content
     };
     Range range { Range::Full };
-    bool didDiscardContent { false };
+    struct LineClamp {
+        bool didDiscardContent { false };
+        bool contentFitsWithinMaximumLines { false }; // Without the (eagerly placed) block ellipsis, this inline content would fit within max-lines lines.
+    };
+    LineClamp lineClamp;
 
     WTF_MAKE_TZONE_ALLOCATED(InlineLayoutResult);
 };
@@ -69,36 +73,36 @@ public:
     LayoutUnit maximumContentSize(InlineDamage* = nullptr);
 
     const ElementBox& root() const { return m_rootBlockContainer; }
-    const InlineFormattingUtils& formattingUtils() const { return m_inlineFormattingUtils; }
-    const InlineQuirks& quirks() const { return m_inlineQuirks; }
-    const FloatingContext& floatingContext() const { return m_floatingContext; }
+    const InlineFormattingUtils& formattingUtils() const LIFETIME_BOUND { return m_inlineFormattingUtils; }
+    const InlineQuirks& quirks() const LIFETIME_BOUND { return m_inlineQuirks; }
+    const FloatingContext& floatingContext() const LIFETIME_BOUND { return m_floatingContext; }
 
-    InlineLayoutState& layoutState() { return m_inlineLayoutState; }
-    const InlineLayoutState& layoutState() const { return m_inlineLayoutState; }
+    InlineLayoutState& layoutState() LIFETIME_BOUND { return m_inlineLayoutState; }
+    const InlineLayoutState& layoutState() const LIFETIME_BOUND { return m_inlineLayoutState; }
 
     enum class EscapeReason {
         InkOverflowNeedsInitialContiningBlockForStrokeWidth
     };
-    const BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt) const;
-    BoxGeometry& geometryForBox(const Box&);
+    const BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt) const LIFETIME_BOUND;
+    BoxGeometry& geometryForBox(const Box&) LIFETIME_BOUND;
 
-    const IntegrationUtils& integrationUtils() const { return m_integrationUtils; }
+    const IntegrationUtils& integrationUtils() const LIFETIME_BOUND { return m_integrationUtils; }
 
 private:
-    UniqueRef<InlineLayoutResult> lineLayout(AbstractLineBuilder&, const InlineItemList&, InlineItemRange, std::optional<PreviousLine>, const ConstraintsForInlineContent&, const InlineDamage* = nullptr);
+    UniqueRef<InlineLayoutResult> lineLayout(AbstractLineBuilder&, const InlineItemList&, InlineItemRange, std::optional<PreviousLine>, const ConstraintsForInlineContent&, const InlineDamage*, bool mayUseSimplifiedDisplayContentBuild = false);
     void layoutFloatContentOnly(const ConstraintsForInlineContent&);
 
     void collectContentIfNeeded();
-    InlineRect createDisplayContentForInlineContent(const LineBox&, const LineLayoutResult&, const ConstraintsForInlineContent&, InlineDisplay::Content&);
+    InlineRect createDisplayContentForInlineContent(const LineBox&, const LineLayoutResult&, const ConstraintsForInlineContent&, InlineDisplay::Content&, bool canUseSimplifiedDisplayContentBuild = false);
     void updateLayoutStateWithLineLayoutResult(const LineLayoutResult&, const InlineRect& lineLogicalRect, const FloatingContext&);
     void updateBoxGeometryForPlacedFloats(const LineLayoutResult::PlacedFloatList&);
     void resetBoxGeometriesForDiscardedContent(const InlineItemRange& discardedRange, const LineLayoutResult::SuspendedFloatList& suspendedFloats);
-    bool createDisplayContentForLineFromCachedContent(const ConstraintsForInlineContent&, InlineLayoutResult&);
+    bool createDisplayContentForLineFromCachedContent(const ConstraintsForInlineContent&, InlineLayoutResult&, bool mayUseSimplifiedDisplayContentBuild);
     bool createDisplayContentForEmptyInlineContent(const ConstraintsForInlineContent&, const InlineItemList&, InlineLayoutResult&);
-    void initializeInlineLayoutState(const LayoutState&);
+    void NODELETE initializeInlineLayoutState(const LayoutState&);
     void rebuildInlineItemListIfNeeded(InlineDamage*);
 
-    InlineContentCache& inlineContentCache() { return m_inlineContentCache; }
+    InlineContentCache& inlineContentCache() LIFETIME_BOUND { return m_inlineContentCache; }
 
 private:
     const ElementBox& m_rootBlockContainer;

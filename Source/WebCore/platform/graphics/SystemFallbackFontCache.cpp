@@ -41,23 +41,21 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SystemFallbackFontCache);
 
 SystemFallbackFontCache& SystemFallbackFontCache::forCurrentThread()
 {
-    return FontCache::forCurrentThread()->systemFallbackFontCache();
+    return FontCache::forCurrentThread().systemFallbackFontCache();
 }
 
 SystemFallbackFontCache* SystemFallbackFontCache::forCurrentThreadIfExists()
 {
-    CheckedPtr cache = FontCache::forCurrentThreadIfExists();
-    if (!cache)
-        return nullptr;
-
-    return &cache->systemFallbackFontCache();
+    if (auto* cache = FontCache::forCurrentThreadIfExists())
+        return &cache->systemFallbackFontCache();
+    return nullptr;
 }
 
 RefPtr<Font> SystemFallbackFontCache::systemFallbackFontForCharacterCluster(const Font* font, StringView characterCluster, const FontDescription& description, ResolvedEmojiPolicy resolvedEmojiPolicy, IsForPlatformFont isForPlatformFont)
 {
     auto fontAddResult = m_characterFallbackMaps.add(font, CharacterFallbackMap());
 
-    auto key = CharacterFallbackMapKey { description.computedLocale(), characterCluster.toString(), isForPlatformFont != IsForPlatformFont::No, resolvedEmojiPolicy };
+    auto key = CharacterFallbackMapKey { description.usedLocale(), characterCluster.toString(), isForPlatformFont != IsForPlatformFont::No, resolvedEmojiPolicy };
     return fontAddResult.iterator->value.ensure(WTF::move(key), [&] {
         StringBuilder stringBuilder;
         stringBuilder.append(FontCascade::normalizeSpaces(characterCluster));
@@ -79,7 +77,7 @@ RefPtr<Font> SystemFallbackFontCache::systemFallbackFontForCharacterCluster(cons
             break;
         }
 
-        RefPtr fallbackFont = FontCache::forCurrentThread()->systemFallbackForCharacterCluster(description, *font, isForPlatformFont, FontCache::PreferColoredFont::No, stringBuilder);
+        RefPtr fallbackFont = protect(FontCache::forCurrentThread())->systemFallbackForCharacterCluster(description, *font, isForPlatformFont, FontCache::PreferColoredFont::No, stringBuilder);
         if (fallbackFont)
             fallbackFont->setIsUsedInSystemFallbackFontCache();
         return fallbackFont.unsafeGet();
@@ -94,13 +92,9 @@ void SystemFallbackFontCache::remove(Font* font)
         return;
 
     for (auto& characterMap : m_characterFallbackMaps.values()) {
-        Vector<CharacterFallbackMapKey, 512> toRemove;
-        for (auto& entry : characterMap) {
-            if (entry.value == font)
-                toRemove.append(entry.key);
-        }
-        for (auto& key : toRemove)
-            characterMap.remove(key);
+        characterMap.removeIf([&](auto& entry) {
+            return entry.value == font;
+        });
     }
 }
 

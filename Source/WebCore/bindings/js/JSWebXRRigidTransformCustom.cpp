@@ -29,6 +29,7 @@
 #include "JSWebXRRigidTransform.h"
 
 #include "JSDOMConvertBufferSource.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "WebXRRigidTransform.h"
 
 namespace WebCore {
@@ -38,18 +39,18 @@ JSC::JSValue JSWebXRRigidTransform::matrix(JSC::JSGlobalObject& lexicalGlobalObj
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
     return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().cachedMatrix(), [&](JSC::ThrowScope& throwScope) {
-        JSC::JSValue matrix = toJS<IDLFloat32Array>(lexicalGlobalObject, *globalObject(), throwScope, wrapped().matrix());
+        JSC::JSValue matrix = toJS<IDLFloat32Array>(lexicalGlobalObject, *realm(), throwScope, wrapped().matrix());
         return matrix;
     });
 }
 
 template<typename Visitor>
-void JSWebXRRigidTransform::visitAdditionalChildren(Visitor& visitor)
+void JSWebXRRigidTransform::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().cachedMatrix().visit(visitor);
+    wrapped().cachedMatrix().visitInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSWebXRRigidTransform);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSWebXRRigidTransform);
 
 } // namespace WebCore
 

@@ -34,6 +34,7 @@ namespace WebCore {
 
 class InbandTextTrack : public TextTrack, private InbandTextTrackPrivateClient {
     WTF_MAKE_TZONE_ALLOCATED(InbandTextTrack);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InbandTextTrack);
 public:
     static Ref<InbandTextTrack> create(ScriptExecutionContext&, InbandTextTrackPrivate&);
     virtual ~InbandTextTrack();
@@ -47,14 +48,14 @@ public:
     bool containsOnlyForcedSubtitles() const override;
     bool isMainProgramContent() const override;
     bool isEasyToRead() const override;
-    void setMode(Mode) override;
+    bool isMachineGenerated() const override;
+    void setMode(Mode, ModeChangeType) override;
     bool isDefault() const override;
     size_t inbandTrackIndex();
 
     String inBandMetadataTrackDispatchType() const override;
 
     void setPrivate(InbandTextTrackPrivate&);
-    Ref<InbandTextTrackPrivate> protectedPrivate() const;
 #if !RELEASE_LOG_DISABLED
     void setLogger(const Logger&, uint64_t) final;
 #endif

@@ -35,7 +35,6 @@
 #include "ColorBlending.h"
 #include "Document.h"
 #include "FloatConversion.h"
-#include "FontCascade.h"
 #include "FontSelectionAlgorithm.h"
 #include "FontSelectionValueInlines.h"
 #include "FontTaggedSettings.h"
@@ -45,17 +44,18 @@
 #include "MatrixTransformOperation.h"
 #include "PathOperation.h"
 #include "RenderBox.h"
-#include "RenderStyle+SettersInlines.h"
 #include "ScopedName.h"
 #include "Settings.h"
-#include "StyleCalculationValue.h"
+#include "StyleComputedStyle+SettersInlines.h"
+#include "StyleFontPaletteInlines.h"
 #include "StyleDynamicRangeLimit.h"
 #include "StyleImageWrapper.h"
 #include "StyleInterpolationClient.h"
 #include "StyleInterpolationContext.h"
-#include "StyleLengthWrapper+Blending.h"
+#include "StylePrimitiveNumericOrKeyword+Blending.h"
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StyleResolver.h"
+#include "StyleSizeOrKeyword+Blending.h"
 #include <algorithm>
 #include <wtf/MathExtras.h>
 #include <wtf/PointerComparison.h>
@@ -121,22 +121,6 @@ inline Visibility blendFunc(Visibility from, Visibility to, const Context& conte
     // The composite operation here is irrelevant.
     double result = blendFunc(fromVal, toVal, { context.property, context.progress, false, CompositeOperation::Replace, IterationCompositeOperation::Replace, 0, context.client });
     return result > 0. ? Visibility::Visible : (to != Visibility::Visible ? to : from);
-}
-
-inline DisplayType blendFunc(DisplayType from, DisplayType to, const Context& context)
-{
-    // https://drafts.csswg.org/css-display-4/#display-animation
-    // In general, the display property's animation type is discrete. However, similar to interpolation of
-    // visibility, during interpolation between none and any other display value, p values between 0 and 1
-    // map to the non-none value. Additionally, the element is inert as long as its display value would
-    // compute to none when ignoring the Transitions and Animations cascade origins.
-    if (from != DisplayType::None && to != DisplayType::None)
-        return context.progress < 0.5 ? from : to;
-    if (context.progress <= 0)
-        return from;
-    if (context.progress >= 1)
-        return to;
-    return from == DisplayType::None ? to : from;
 }
 
 } // namespace WebCore::Style::Interpolation

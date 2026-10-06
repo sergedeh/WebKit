@@ -27,29 +27,81 @@
 
 #if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
 
-#include <WebKitAdditions/MediaDeviceRouteAdditions.h>
+#include "MockMediaDeviceRouteURLCallback.h"
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 OBJC_CLASS WebMockMediaDeviceRoute;
+OBJC_PROTOCOL(WebMediaDevicePlatformRoute);
 
 namespace WebCore {
 
 class MockMediaDeviceRoute : public RefCounted<MockMediaDeviceRoute> {
     WTF_MAKE_TZONE_ALLOCATED(MockMediaDeviceRoute);
 public:
+    struct TimeRange {
+        double start;
+        double duration;
+    };
+
     static Ref<MockMediaDeviceRoute> create();
 
     WebMediaDevicePlatformRoute *platformRoute() const;
 
+    void setURLCallback(MockMediaDeviceRouteURLCallback*);
+
+    String deviceName() const;
+    void setDeviceName(const String&);
+
+    String protocolTypeIdentifier() const;
+    void setProtocolTypeIdentifier(const String&);
+
+    String routeName() const;
+
+    bool connected() const;
+
+    bool ready() const;
+    void setReady(bool);
+
+    bool playing() const;
+    void setPlaying(bool);
+
+    bool hasPlaybackError() const;
+    void setHasPlaybackError(bool);
+
+    struct AudioOption {
+        String displayName;
+        String identifier;
+        String extendedLanguageTag;
+    };
+    Vector<AudioOption> audioOptions() const;
+    void setAudioOptions(const Vector<AudioOption>&);
+
+    float playbackRate() const;
+    void setPlaybackRate(float);
+
+    float currentPlaybackPosition() const;
+    void setCurrentPlaybackPosition(float);
+
+    TimeRange timeRange() const;
+    void setTimeRange(const TimeRange&);
+
+    float volume() const;
+    void setVolume(float);
+
+    bool muted() const;
+    void setMuted(bool);
+
+    String lastSeekTolerance() const;
+
 private:
     MockMediaDeviceRoute();
 
-#if HAVE(AVROUTING_FRAMEWORK)
-    RetainPtr<WebMockMediaDeviceRoute> m_platformRoute;
-#endif
+    const RetainPtr<WebMockMediaDeviceRoute> m_platformRoute;
 };
 
 } // namespace WebCore

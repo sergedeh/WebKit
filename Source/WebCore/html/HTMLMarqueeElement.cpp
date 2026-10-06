@@ -34,7 +34,7 @@
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderMarquee.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -122,7 +122,7 @@ void HTMLMarqueeElement::collectPresentationalHintsForAttribute(const QualifiedN
         break;
     case AttributeNames::scrolldelayAttr:
         if (!value.isEmpty())
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWebkitMarqueeSpeed, limitToOnlyHTMLNonNegative(value, defaultScrollDelay), CSSUnitType::CSS_MS);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyWebkitMarqueeSpeed, limitToOnlyHTMLNonNegative(value, defaultScrollDelay), CSSUnitType::Ms);
         break;
     case AttributeNames::loopAttr:
         if (!value.isEmpty()) {
@@ -212,10 +212,10 @@ void HTMLMarqueeElement::resume()
 
 RenderMarquee* HTMLMarqueeElement::renderMarquee() const
 {
-    CheckedPtr renderer = this->renderer();
+    auto* renderer = this->renderer();
     if (!renderer || !renderer->hasLayer())
         return nullptr;
-    CheckedPtr scrollableArea = downcast<RenderBoxModelObject>(*renderer).checkedLayer()->scrollableArea();
+    auto* scrollableArea = downcast<RenderBoxModelObject>(*renderer).layer()->scrollableArea();
     if (!scrollableArea)
         return nullptr;
     return scrollableArea->marquee();

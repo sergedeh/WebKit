@@ -95,10 +95,10 @@ SlowPathCall callOperation(
 
 template<typename... ArgumentTypes>
 SlowPathCall callOperation(
-    VM& vm, const RegisterSetBuilder& usedRegisters, CCallHelpers& jit, CCallHelpers::JumpList* exceptionTarget,
+    VM& vm, const RegisterSet& usedRegisters, CCallHelpers& jit, CCallHelpers::JumpList* exceptionTarget,
     CodePtr<CFunctionPtrTag> function, GPRReg resultGPR, ArgumentTypes... arguments)
 {
-    auto regs = usedRegisters.buildScalarRegisterSet();
+    auto regs = usedRegisters.toScalarRegisterSet();
     return callOperation(vm, regs, jit, exceptionTarget, function, resultGPR, arguments...);
 }
 
@@ -111,7 +111,7 @@ SlowPathCall callOperation(
     if (callSiteIndex) {
         jit.store32(
             CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-            CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+            CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
     }
     return callOperation(vm, usedRegisters, jit, exceptionTarget, function, resultGPR, arguments...);
 }
@@ -146,10 +146,10 @@ SlowPathCall callOperation(
 
 template<typename... ArgumentTypes>
 SlowPathCall callOperation(
-    VM& vm, const RegisterSetBuilder& usedRegisters, CCallHelpers& jit, CCallHelpers::JumpList* exceptionTarget,
+    VM& vm, const RegisterSet& usedRegisters, CCallHelpers& jit, CCallHelpers::JumpList* exceptionTarget,
     CCallHelpers::Address function, GPRReg resultGPR, ArgumentTypes... arguments)
 {
-    auto regs = usedRegisters.buildScalarRegisterSet();
+    auto regs = usedRegisters.toScalarRegisterSet();
     return callOperation(vm, regs, jit, exceptionTarget, function, resultGPR, arguments...);
 }
 
@@ -162,7 +162,7 @@ SlowPathCall callOperation(
     if (callSiteIndex) {
         jit.store32(
             CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-            CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+            CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
     }
     return callOperation(vm, usedRegisters, jit, exceptionTarget, function, resultGPR, arguments...);
 }

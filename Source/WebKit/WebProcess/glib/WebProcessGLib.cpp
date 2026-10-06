@@ -34,8 +34,9 @@
 #include "WebProcessCreationParameters.h"
 #include "WebProcessExtensionManager.h"
 #include "WebSystemSoundDelegate.h"
+#include <WebCore/PlatformRenderTheme.h>
 #include <WebCore/PlatformScreen.h>
-#include <WebCore/RenderTheme.h>
+#include <WebCore/ProcessCapabilities.h>
 #include <WebCore/ScreenProperties.h>
 #include <WebCore/SystemSoundManager.h>
 
@@ -49,6 +50,7 @@
 
 #include <WebCore/ApplicationGLib.h>
 #include <WebCore/MemoryCache.h>
+#include <wtf/SetForScope.h>
 
 #if USE(WPE_RENDERER)
 #include <WebCore/PlatformDisplayLibWPE.h>
@@ -73,10 +75,6 @@
 #include <WebCore/PlatformDisplayDefault.h>
 #endif
 
-#if PLATFORM(GTK) && !USE(GTK4) && USE(CAIRO)
-#include <WebCore/ScrollbarThemeGtk.h>
-#endif
-
 #if ENABLE(MEDIA_STREAM)
 #include "UserMediaCaptureManager.h"
 #endif
@@ -86,19 +84,16 @@
 #endif
 
 #if OS(LINUX)
-#include <wtf/linux/RealTimeThreads.h>
+#include <wtf/linux/HighPriorityThreads.h>
 #endif
 
 #if USE(ATSPI)
 #include <WebCore/AccessibilityAtspi.h>
 #endif
 
-#if USE(CAIRO)
-#include <WebCore/CairoUtilities.h>
-#endif
-
-#if USE(SKIA)
-#include <WebCore/ProcessCapabilities.h>
+#if USE(VULKAN)
+#include <WebCore/VulkanUtilities.h>
+#include <wtf/text/UTF8CStringView.h>
 #endif
 
 #define RELEASE_LOG_SESSION_ID (m_sessionID ? m_sessionID->toUInt64() : 0)
@@ -111,6 +106,11 @@ using namespace WebCore;
 
 void WebProcess::stopRunLoop()
 {
+    // Closing the last page terminates the process, which calls back here.
+    if (m_isStoppingRunLoop)
+        return;
+    SetForScope isStoppingRunLoop(m_isStoppingRunLoop, true);
+
     // Pages are normally closed after Close message is received from the UI
     // process, but it can happen that the connection is closed before the
     // Close message is processed because the UI process close the socket
@@ -118,10 +118,13 @@ void WebProcess::stopRunLoop()
     // ensure the threaded compositor is invalidated and GL resources
     // released (see https://bugs.webkit.org/show_bug.cgi?id=217655).
     for (auto& webPage : copyToVector(m_pageMap.values()))
-        webPage->close();
+        webPage->close([] { });
 
-    if (auto* display = PlatformDisplay::sharedDisplayIfExists())
-        display->clearGLContexts();
+    PlatformDisplay::destroySharedDisplay();
+
+#if USE(ATSPI)
+    AccessibilityAtspi::singleton().disconnect();
+#endif
 
     AuxiliaryProcess::stopRunLoop();
 }
@@ -134,8 +137,8 @@ void WebProcess::platformSetCacheModel(CacheModel cacheModel)
 void WebProcess::platformInitializeProcess(const AuxiliaryProcessInitializationParameters&)
 {
 #if OS(LINUX)
-    // Disable RealTimeThreads in WebProcess initially, since it depends on having a visible web page.
-    RealTimeThreads::singleton().setEnabled(false);
+    // Disable HighPriorityThreads in WebProcess initially, since it depends on having a visible web page.
+    HighPriorityThreads::singleton().setEnabled(false);
 #endif
 
     addSupplementWithoutRefCountedCheck<SystemSettingsManager>();
@@ -187,15 +190,33 @@ void WebProcess::initializePlatformDisplayIfNeeded() const
     CRASH();
 }
 
+void WebProcess::initializeVulkanIfNeeded()
+{
+#if USE(VULKAN)
+    bool useVulkan = false;
+    if (const auto envValue = UTF8CStringView::unsafeFromUTF8(getenv("WEBKIT_VULKAN_ENABLED")))
+        useVulkan = (envValue == "1"_s && envValue != "0"_s);
+
+    if (!useVulkan)
+        return;
+
+    Vulkan::initializeIfNeeded();
+#endif
+}
+
 void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& parameters)
 {
-#if USE(SKIA)
+    if (!parameters.applicationID.isEmpty())
+        WebCore::setApplicationID(parameters.applicationID);
+
+    if (!parameters.applicationName.isEmpty())
+        WebCore::setApplicationName(parameters.applicationName);
+
     const char* enableCPURendering = getenv("WEBKIT_SKIA_ENABLE_CPU_RENDERING");
     IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
     if (enableCPURendering && strcmp(enableCPURendering, "0"))
         ProcessCapabilities::setCanUseAcceleratedBuffers(false);
     IGNORE_CLANG_WARNINGS_END
-#endif
 
 #if ENABLE(MEDIA_STREAM)
     addSupplementWithoutRefCountedCheck<UserMediaCaptureManager>();
@@ -208,19 +229,17 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
     m_rendererBufferTransportMode = parameters.rendererBufferTransportMode;
 #if PLATFORM(WPE)
 #if USE(WPE_RENDERER)
-    if (!parameters.isServiceWorkerProcess) {
-        if (m_rendererBufferTransportMode.isEmpty()) {
-            auto& implementationLibraryName = parameters.implementationLibraryName;
-            if (!implementationLibraryName.isNull() && implementationLibraryName.data()[0] != '\0')
-                wpe_loader_init(parameters.implementationLibraryName.data());
-            PlatformDisplay::setSharedDisplay(PlatformDisplayLibWPE::create(parameters.hostClientFileDescriptor.release()));
-        } else
-            initializePlatformDisplayIfNeeded();
+    if (!parameters.isServiceWorkerProcess && m_rendererBufferTransportMode.isEmpty()) {
+        auto& implementationLibraryName = parameters.implementationLibraryName;
+        if (!implementationLibraryName.isNull() && implementationLibraryName.data()[0] != u8'\0')
+            wpe_loader_init(implementationLibraryName.legacyCStringPointer());
+        PlatformDisplay::setSharedDisplay(PlatformDisplayLibWPE::create(parameters.hostClientFileDescriptor.release()));
     }
-#else
-    initializePlatformDisplayIfNeeded();
 #endif
+#if !ENABLE(WPE_PLATFORM)
+    initializeVulkanIfNeeded();
 #endif
+#endif // PLATFORM(WPE)
 
     m_availableInputDevices = parameters.availableInputDevices;
 
@@ -228,22 +247,15 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
     WebCore::setGStreamerOptionsFromUIProcess(WTF::move(parameters.gstreamerOptions));
 #endif
 
-#if PLATFORM(GTK) && !USE(GTK4) && USE(CAIRO)
-    setUseSystemAppearanceForScrollbars(parameters.useSystemAppearanceForScrollbars);
-#endif
-
     if (parameters.memoryPressureHandlerConfiguration)
         MemoryPressureHandler::singleton().setConfiguration(WTF::move(*parameters.memoryPressureHandlerConfiguration));
 
-    if (!parameters.applicationID.isEmpty())
-        WebCore::setApplicationID(parameters.applicationID);
-
-    if (!parameters.applicationName.isEmpty())
-        WebCore::setApplicationName(parameters.applicationName);
-
 #if ENABLE(REMOTE_INSPECTOR)
-    if (!parameters.inspectorServerAddress.isNull())
+    if (!parameters.inspectorServerAddress.isNull()) {
         Inspector::RemoteInspector::setInspectorServerAddress(WTF::move(parameters.inspectorServerAddress));
+        // pre-warm the inspector for the potentially early BiDi-related events like script.realmCreated
+        Inspector::RemoteInspector::singleton();
+    }
 #endif
 
 #if USE(ATSPI)
@@ -254,14 +266,14 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
         FontRenderOptions::singleton().disableHintingForTesting();
 
 #if PLATFORM(GTK)
-    WebCore::setScreenProperties(parameters.screenProperties);
+    WebCore::PlatformScreen::updateSingletonProperties(WTF::move(parameters.screenProperties));
 
     WebCore::SystemSoundManager::singleton().setSystemSoundDelegate(makeUnique<WebSystemSoundDelegate>());
 #endif
 
 #if PLATFORM(WPE) && ENABLE(WPE_PLATFORM)
     if (!m_rendererBufferTransportMode.isEmpty())
-        WebCore::setScreenProperties(parameters.screenProperties);
+        WebCore::PlatformScreen::updateSingletonProperties(WTF::move(parameters.screenProperties));
 #endif
 }
 
@@ -278,13 +290,6 @@ void WebProcess::sendMessageToWebProcessExtension(UserMessage&& message)
     if (auto* extension = WebProcessExtensionManager::singleton().extension())
         webkitWebProcessExtensionDidReceiveUserMessage(extension, WTF::move(message));
 }
-
-#if PLATFORM(GTK) && !USE(GTK4) && USE(CAIRO)
-void WebProcess::setUseSystemAppearanceForScrollbars(bool useSystemAppearanceForScrollbars)
-{
-    static_cast<ScrollbarThemeGtk&>(ScrollbarTheme::theme()).setUseSystemAppearance(useSystemAppearanceForScrollbars);
-}
-#endif
 
 void WebProcess::grantAccessToAssetServices(Vector<WebKit::SandboxExtension::Handle>&&)
 {
@@ -315,10 +320,10 @@ void WebProcess::releaseSystemMallocMemory()
 }
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
-void WebProcess::setScreenProperties(const WebCore::ScreenProperties& properties)
+void WebProcess::setScreenProperties(WebCore::ScreenProperties&& properties)
 {
 #if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
-    WebCore::setScreenProperties(properties);
+    WebCore::PlatformScreen::updateSingletonProperties(WTF::move(properties));
 #endif
     for (auto& page : m_pageMap.values())
         page->screenPropertiesDidChange();

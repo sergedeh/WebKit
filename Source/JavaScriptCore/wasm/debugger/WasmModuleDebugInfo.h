@@ -27,10 +27,12 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 #include <JavaScriptCore/JSExportMacros.h>
+#include <JavaScriptCore/WasmModuleInformation.h>
 #include <cstdint>
+#include <optional>
 #include <wtf/DataLog.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -42,16 +44,17 @@ namespace JSC {
 namespace Wasm {
 
 struct Type;
-struct ModuleInformation;
 class FunctionCodeIndex;
 
 struct FunctionDebugInfo {
-    JS_EXPORT_PRIVATE UncheckedKeyHashSet<uint32_t>* findNextInstructions(uint32_t offset);
+    JS_EXPORT_PRIVATE UncheckedKeyHashSet<uint32_t>* NODELETE findNextInstructions(uint32_t offset);
     void addNextInstruction(uint32_t offset, uint32_t nextInstruction);
+    void addInstructionStart(uint32_t offset) { instructionStarts.add(offset); }
     void addLocalType(Type);
 
     using OffsetToNextInstructions = UncheckedKeyHashMap<uint32_t, UncheckedKeyHashSet<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     OffsetToNextInstructions offsetToNextInstructions;
+    UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> instructionStarts;
     Vector<Type> locals;
 };
 
@@ -59,22 +62,18 @@ struct ModuleDebugInfo {
     WTF_MAKE_TZONE_ALLOCATED(ModuleDebugInfo);
 
 public:
-    ModuleDebugInfo(ModuleInformation& moduleInfo)
-        : moduleInfo(moduleInfo)
-    {
-    }
+    ModuleDebugInfo() = default;
 
     void takeSource(Vector<uint8_t>&& source) { this->source = WTF::move(source); }
-    FunctionDebugInfo& ensureFunctionDebugInfo(FunctionCodeIndex);
 
-    Ref<ModuleInformation> moduleInfo;
-    uint32_t id { 0 };
     Vector<uint8_t> source;
     using FunctionIndexToData = UncheckedKeyHashMap<size_t, FunctionDebugInfo, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>>;
     FunctionIndexToData functionIndexToData;
+
+    mutable std::optional<String> cachedDeclaredName;
 };
 
 } // namespace Wasm
 } // namespace JSC
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

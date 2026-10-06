@@ -12,9 +12,6 @@
 
 #define __GETOPT_H__
 
-/* All the headers include this file. */
-#include <crtdefs.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif

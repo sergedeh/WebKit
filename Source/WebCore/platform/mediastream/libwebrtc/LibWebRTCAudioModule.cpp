@@ -44,21 +44,20 @@ LibWebRTCAudioModule::LibWebRTCAudioModule()
     ASSERT(isMainThread());
 }
 
-LibWebRTCAudioModule::~LibWebRTCAudioModule()
-{
-}
+LibWebRTCAudioModule::~LibWebRTCAudioModule() = default;
 
 int32_t LibWebRTCAudioModule::RegisterAudioCallback(webrtc::AudioTransport* audioTransport)
 {
     RELEASE_LOG(WebRTC, "LibWebRTCAudioModule::RegisterAudioCallback %d", !!audioTransport);
 
+    Locker locker { m_audioTransportLock };
     m_audioTransport = audioTransport;
     return 0;
 }
 
 int32_t LibWebRTCAudioModule::StartPlayout()
 {
-    RELEASE_LOG(WebRTC, "LibWebRTCAudioModule::StartPlayout %d", m_isPlaying);
+    RELEASE_LOG(WebRTC, "LibWebRTCAudioModule::StartPlayout %d", m_isPlaying.load());
 
     if (m_isPlaying)
         return 0;
@@ -80,7 +79,7 @@ int32_t LibWebRTCAudioModule::StartPlayout()
 
 int32_t LibWebRTCAudioModule::StopPlayout()
 {
-    RELEASE_LOG(WebRTC, "LibWebRTCAudioModule::StopPlayout %d", m_isPlaying);
+    RELEASE_LOG(WebRTC, "LibWebRTCAudioModule::StopPlayout %d", m_isPlaying.load());
 
     m_isPlaying = false;
     callOnMainThread([this, protectedThis = Ref { *this }] {
@@ -132,6 +131,9 @@ void LibWebRTCAudioModule::pollAudioData()
 
 void LibWebRTCAudioModule::pollFromSource()
 {
+    ASSERT(m_queue->isCurrent());
+
+    Locker locker { m_audioTransportLock };
     if (!m_audioTransport)
         return;
 

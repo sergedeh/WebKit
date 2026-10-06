@@ -25,9 +25,9 @@
 
 #pragma once
 
-#if HAVE(AVROUTING_FRAMEWORK)
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
 
-#include <WebKitAdditions/MediaDeviceRouteAdditions.h>
+#include "MediaDeviceRouteLoadURLResult.h"
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/MediaTime.h>
@@ -38,7 +38,9 @@
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
-OBJC_CLASS WebMediaDeviceRoute;
+OBJC_CLASS AVSystemRouteSession;
+OBJC_CLASS WebPlaybackControlObserver;
+OBJC_PROTOCOL(WebMediaDevicePlatformRoute);
 
 namespace WebCore {
 
@@ -80,42 +82,24 @@ struct MediaPlaybackSourceError {
     const String localizedDescription;
 };
 
-struct MediaSelectionOption {
-    enum class Type : uint8_t {
-        Audio,
-        Legible,
-    };
-
-    const String displayName;
-    const String identifier;
-    const Type type;
-    const String extendedLanguageTag;
-};
-
 class MediaDeviceRoute;
+struct MediaSelectionOption;
 
 class MediaDeviceRouteClient : public AbstractRefCountedAndCanMakeWeakPtr<MediaDeviceRouteClient> {
 public:
     virtual ~MediaDeviceRouteClient() = default;
 
-    virtual void minValueDidChange(MediaDeviceRoute&) = 0;
-    virtual void maxValueDidChange(MediaDeviceRoute&) = 0;
-    virtual void currentValueDidChange(MediaDeviceRoute&) = 0;
-    virtual void segmentsDidChange(MediaDeviceRoute&) = 0;
-    virtual void currentSegmentDidChange(MediaDeviceRoute&) = 0;
-    virtual void isPlayingDidChange(MediaDeviceRoute&) = 0;
-    virtual void playbackSpeedDidChange(MediaDeviceRoute&) = 0;
-    virtual void scanSpeedDidChange(MediaDeviceRoute&) = 0;
-    virtual void stateDidChange(MediaDeviceRoute&) = 0;
-    virtual void supportedModesDidChange(MediaDeviceRoute&) = 0;
-    virtual void playbackTypeDidChange(MediaDeviceRoute&) = 0;
-    virtual void playbackErrorDidChange(MediaDeviceRoute&) = 0;
-    virtual void currentAudioOptionDidChange(MediaDeviceRoute&) = 0;
-    virtual void currentSubtitleOptionDidChange(MediaDeviceRoute&) = 0;
-    virtual void optionsDidChange(MediaDeviceRoute&) = 0;
-    virtual void hasAudioDidChange(MediaDeviceRoute&) = 0;
-    virtual void mutedDidChange(MediaDeviceRoute&) = 0;
-    virtual void volumeDidChange(MediaDeviceRoute&) = 0;
+    virtual void timeRangeDidChange(MediaDeviceRoute&) { }
+    virtual void readyDidChange(MediaDeviceRoute&) { }
+    virtual void bufferingDidChange(MediaDeviceRoute&) { }
+    virtual void errorDidChange(MediaDeviceRoute&) { }
+    virtual void audioOptionsDidChange(MediaDeviceRoute&) { }
+    virtual void playbackPositionDidChange(MediaDeviceRoute&) { }
+    virtual void playingDidChange(MediaDeviceRoute&) { }
+    virtual void playbackSpeedDidChange(MediaDeviceRoute&) { }
+    virtual void scanSpeedDidChange(MediaDeviceRoute&) { }
+    virtual void mutedDidChange(MediaDeviceRoute&) { }
+    virtual void volumeDidChange(MediaDeviceRoute&) { }
 };
 
 class MediaDeviceRoute final : public RefCountedAndCanMakeWeakPtr<MediaDeviceRoute> {
@@ -128,45 +112,46 @@ public:
     MediaDeviceRouteClient* client() const { return m_client.get(); }
     void setClient(MediaDeviceRouteClient* client) { m_client = client; }
 
-    const WTF::UUID& identifier() const { return m_identifier; }
+    const WTF::UUID& identifier() const LIFETIME_BOUND { return m_identifier; }
+    String deviceName() const;
+    String routeName() const;
     WebMediaDevicePlatformRoute *platformRoute() const;
 
-    float minValue() const;
-    float maxValue() const;
-    float currentValue() const;
-    Vector<MediaTimelineSegment> segments() const;
-    std::optional<MediaTimelineSegment> currentSegment() const;
-    bool isPlaying() const;
-    double playbackSpeed() const;
-    double scanSpeed() const;
-    MediaPlaybackSourceState state() const;
-    OptionSet<MediaPlaybackSourceSupportedMode> supportedModes() const;
-    OptionSet<MediaPlaybackSourcePlaybackType> playbackType() const;
-    std::optional<MediaPlaybackSourceError> playbackError() const;
-    std::optional<MediaSelectionOption> currentAudioOption() const;
-    std::optional<MediaSelectionOption> currentSubtitleOption() const;
-    Vector<MediaSelectionOption> options() const;
-    bool hasAudio() const;
-    bool muted() const;
-    double volume() const;
+    void loadURL(const URL&, CompletionHandler<void(const MediaDeviceRouteLoadURLResult&)>&&);
+    void disconnectFromSession();
 
-    void setCurrentValue(float);
-    void setIsPlaying(bool);
-    void setPlaybackSpeed(double);
-    void setScanSpeed(double);
-    void setCurrentAudioOption(std::optional<MediaSelectionOption>);
-    void setCurrentSubtitleOption(std::optional<MediaSelectionOption>);
+    MediaTimeRange timeRange() const;
+    bool ready() const;
+    bool buffering() const;
+    std::optional<MediaPlaybackSourceError> error() const;
+    Vector<MediaSelectionOption> audioOptions() const;
+    MediaTime playbackPosition() const;
+    bool playing() const;
+    float playbackSpeed() const;
+    float scanSpeed() const;
+    bool muted() const;
+    float volume() const;
+
+    enum class SeekTolerance : bool { Approximate, Precise };
+    void seekToPosition(MediaTime, SeekTolerance);
+    void setPlaying(bool);
+    void setPlaybackSpeed(float);
+    void setScanSpeed(float);
     void setMuted(bool);
-    void setVolume(double);
+    void setVolume(float);
 
 private:
     explicit MediaDeviceRoute(WebMediaDevicePlatformRoute *);
 
     WTF::UUID m_identifier;
-    RetainPtr<WebMediaDeviceRoute> m_route;
+    const RetainPtr<WebMediaDevicePlatformRoute> m_platformRoute;
+    const RetainPtr<WebPlaybackControlObserver> m_playbackControlObserver;
     WeakPtr<MediaDeviceRouteClient> m_client;
+#if HAVE(AVSYSTEMROUTING_FRAMEWORK)
+    RetainPtr<AVSystemRouteSession> m_routeSession;
+#endif
 };
 
 } // namespace WebCore
 
-#endif // HAVE(AVROUTING_FRAMEWORK)
+#endif // ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)

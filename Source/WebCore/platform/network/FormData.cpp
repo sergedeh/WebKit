@@ -30,6 +30,7 @@
 #include "FormDataBuilder.h"
 #include "MIMETypeRegistry.h"
 #include "Page.h"
+#include "PendingStreamState.h"
 #include "SharedBuffer.h"
 #include <pal/text/TextEncoding.h>
 #include "ThreadableBlobRegistry.h"
@@ -62,9 +63,9 @@ Ref<FormData> FormData::create(std::span<const uint8_t> data)
     return result;
 }
 
-Ref<FormData> FormData::create(const CString& string)
+Ref<FormData> FormData::create(std::span<const char8_t> data)
 {
-    return create(byteCast<uint8_t>(string.span()));
+    return create(byteCast<uint8_t>(data));
 }
 
 Ref<FormData> FormData::create(Vector<uint8_t>&& vector)
@@ -96,6 +97,21 @@ Ref<FormData> FormData::create(Vector<WebCore::FormDataElement>&& elements, uint
     return result;
 }
 
+Ref<FormData> FormData::create(PendingStreamIdentifier identifier, RefPtr<WebCore::PendingStreamState>&& state)
+{
+    auto result = create();
+    result->m_elements.append(FormDataElement { FormDataElement::PendingStreamData { identifier } });
+    result->m_pendingStreamState = WTF::move(state);
+    return result;
+}
+
+void FormData::setPendingStreamState(Ref<PendingStreamState>&& state)
+{
+    ASSERT(isPendingStream());
+    ASSERT(!m_pendingStreamState);
+    m_pendingStreamState = WTF::move(state);
+}
+
 Ref<FormData> FormData::createMultiPart(const DOMFormData& formData)
 {
     auto result = create();
@@ -115,6 +131,8 @@ Ref<FormData> FormData::isolatedCopy() const
     auto formData = create();
     formData->m_alwaysStream = m_alwaysStream;
     formData->m_elements = crossThreadCopy(m_elements);
+    // We copy m_pendingStreamState as it is thread-safe, but only one consumer of data per PendingStreamState is possible.
+    formData->m_pendingStreamState = m_pendingStreamState;
     return formData;
 }
 
@@ -144,6 +162,8 @@ uint64_t FormDataElement::lengthInBytes(NOESCAPE const Function<uint64_t(const U
             return FileSystem::fileSize(fileData.filename).value_or(0);
         }, [&blobSize] (const FormDataElement::EncodedBlobData& blobData) {
             return blobSize(blobData.url);
+        }, [] (const FormDataElement::PendingStreamData&) -> uint64_t {
+            return 0;
         }
     );
 }
@@ -164,6 +184,8 @@ FormDataElement FormDataElement::isolatedCopy() const
             return FormDataElement(fileData.isolatedCopy());
         }, [] (const FormDataElement::EncodedBlobData& blobData) {
             return FormDataElement(blobData.url.isolatedCopy());
+        }, [] (const FormDataElement::PendingStreamData& pendingStream) {
+            return FormDataElement(FormDataElement::PendingStreamData { pendingStream });
         }
     );
 }
@@ -249,10 +271,14 @@ void FormData::appendMultiPartKeyValuePairItems(const DOMFormData& formData)
         Vector<uint8_t> header;
         FormDataBuilder::beginMultiPartHeader(header, m_boundary.span(), normalizedName);
 
-        if (auto* file = std::get_if<RefPtr<File>>(&item.data))
-            appendMultiPartFileValue(Ref { **file }, header, encoding);
-        else
-            appendMultiPartStringValue(std::get<String>(item.data), header, encoding);
+        WTF::switchOn(item.data,
+            [&](const Ref<File>& file) {
+                appendMultiPartFileValue(file, header, encoding);
+            },
+            [&](const String& string) {
+                appendMultiPartStringValue(string, header, encoding);
+            }
+        );
 
         constexpr std::array<uint8_t, 2> newline { '\r', '\n' };
         appendData(newline);
@@ -272,7 +298,8 @@ void FormData::appendNonMultiPartKeyValuePairItems(const DOMFormData& formData, 
         String stringValue = WTF::switchOn(item.data,
             [](const String& string) {
                 return string;
-            }, [](const RefPtr<File>& file) {
+            },
+            [](const Ref<File>& file) {
                 return file->name();
             }
         );
@@ -315,16 +342,14 @@ static void appendBlobResolved(BlobRegistryImpl* blobRegistry, FormData& formDat
     }
 
     for (const auto& blobItem : blobData->items()) {
-        switch (blobItem.type()) {
-        case BlobDataItem::Type::Data:
-            formData.appendData(blobItem.protectedData()->span().subspan(blobItem.offset(), blobItem.length()));
-            break;
-        case BlobDataItem::Type::File: {
-            Ref file = blobItem.file();
-            formData.appendFileRange(file->path(), blobItem.offset(), blobItem.length(), file->expectedModificationTime());
-            break;
-        }
-        }
+        WTF::switchOn(blobItem,
+            [&](const DataSegment& data) {
+                formData.appendData(data.span().subspan(blobItem.offset(), blobItem.length()));
+            },
+            [&](BlobDataFileReference& file) {
+                formData.appendFileRange(file.path(), blobItem.offset(), blobItem.length(), file.expectedModificationTime());
+            }
+        );
     }
 }
 
@@ -335,6 +360,13 @@ bool FormData::containsBlobElement() const
             return true;
     }
     return false;
+}
+
+bool FormData::isPendingStream() const
+{
+    return m_elements.containsIf([](auto& element) {
+        return std::holds_alternative<FormDataElement::PendingStreamData>(element.data);
+    });
 }
 
 Ref<FormData> FormData::resolveBlobReferences(BlobRegistryImpl* blobRegistryImpl)
@@ -356,6 +388,8 @@ Ref<FormData> FormData::resolveBlobReferences(BlobRegistryImpl* blobRegistryImpl
                 newFormData->appendFileRange(fileData.filename, fileData.fileStart, fileData.fileLength, fileData.expectedFileModificationTime);
             }, [&] (const FormDataElement::EncodedBlobData& blobData) {
                 appendBlobResolved(blobRegistryImpl ? blobRegistryImpl : blobRegistry()->blobRegistryImpl(), newFormData.get(), blobData.url);
+            }, [&] (const FormDataElement::PendingStreamData& pendingStream) {
+                newFormData->m_elements.append(FormDataElement { FormDataElement::PendingStreamData { pendingStream } });
             }
         );
     }

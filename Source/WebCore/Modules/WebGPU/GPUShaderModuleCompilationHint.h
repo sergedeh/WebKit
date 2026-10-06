@@ -28,6 +28,7 @@
 #include "GPUPipelineDescriptorBase.h"
 #include "GPUPipelineLayout.h"
 #include "WebGPUShaderModuleCompilationHint.h"
+#include <wtf/Forward.h>
 
 namespace WebCore {
 
@@ -39,7 +40,9 @@ struct GPUShaderModuleCompilationHint {
         };
     }
 
-    GPULayoutMode layout { nullptr };
+    Ref<JSON::Object> toJSON() const;
+
+    GPULayoutMode layout;
 };
 
 }

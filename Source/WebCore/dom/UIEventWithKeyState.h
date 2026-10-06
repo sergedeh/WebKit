@@ -39,6 +39,7 @@ public:
     bool altKey() const { return m_modifiers.contains(Modifier::AltKey); }
     bool metaKey() const { return m_modifiers.contains(Modifier::MetaKey); }
     bool capsLockKey() const { return m_modifiers.contains(Modifier::CapsLockKey); }
+    bool altGraphKey() const { return m_modifiers.contains(Modifier::AltGraphKey); }
 
     OptionSet<Modifier> modifierKeys() const { return m_modifiers; }
 
@@ -70,10 +71,10 @@ protected:
     {
     }
 
-    void setModifierKeys(bool ctrlKey, bool altKey, bool shiftKey, bool metaKey);
+    void NODELETE setModifierKeys(bool ctrlKey, bool altKey, bool shiftKey, bool metaKey);
 
 private:
-    static OptionSet<Modifier> modifiersFromInitializer(const EventModifierInit& initializer);
+    static OptionSet<Modifier> NODELETE modifiersFromInitializer(const EventModifierInit& initializer);
 
     bool isUIEventWithKeyState() const final { return true; }
 

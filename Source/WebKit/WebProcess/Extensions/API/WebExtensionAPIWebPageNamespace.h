@@ -41,17 +41,17 @@ class WebExtensionAPIWebPageNamespace : public WebExtensionAPIObject, public JSW
     WEB_EXTENSION_DECLARE_JS_WRAPPER_CLASS(WebExtensionAPIWebPageNamespace, webPageNamespace, browser);
 
 public:
-#if PLATFORM(COCOA)
     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
-
+#if PLATFORM(COCOA)
     WebExtensionAPIWebPageRuntime& runtime() const;
-    Ref<WebExtensionAPIWebPageRuntime> protectedRuntime() const;
+#endif
     WebExtensionAPITest& test();
 
 private:
+#if PLATFORM(COCOA)
     mutable RefPtr<WebExtensionAPIWebPageRuntime> m_runtime;
-    RefPtr<WebExtensionAPITest> m_test;
 #endif
+    const RefPtr<WebExtensionAPITest> m_test;
 };
 
 } // namespace WebKit

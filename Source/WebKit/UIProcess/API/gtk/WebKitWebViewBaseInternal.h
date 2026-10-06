@@ -27,13 +27,10 @@
 
 #include <WebKit/WKBase.h>
 #include <WebCore/PlatformMouseEvent.h>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
-#if USE(CAIRO)
-typedef struct _cairo_surface cairo_surface_t;
-#elif USE(SKIA)
 class SkImage;
-#endif
 
 typedef struct _WebKitWebViewBase WebKitWebViewBase;
 
@@ -53,8 +50,17 @@ WK_EXPORT void webkitWebViewBaseSynthesizeKeyEvent(WebKitWebViewBase*, KeyEventT
 enum class WheelEventPhase { NoPhase, Began, Changed, Ended, Cancelled, MayBegin };
 WK_EXPORT void webkitWebViewBaseSynthesizeWheelEvent(WebKitWebViewBase*, double deltaX, double deltaY, int x, int y, WheelEventPhase, WheelEventPhase momentumPhase, bool);
 
-#if USE(CAIRO)
-WK_EXPORT cairo_surface_t* webkitWebViewBaseSnapshotForTesting(WebKitWebViewBase*);
-#elif USE(SKIA)
-WK_EXPORT SkImage* webkitWebViewBaseSnapshotForTesting(WebKitWebViewBase*);
+#if ENABLE(TOUCH_EVENTS)
+enum class TouchEventType { Start, Move, End, Cancel };
+struct SyntheticTouchPoint {
+    enum class State : uint8_t { Stationary, Pressed, Moved, Released, Cancelled };
+    unsigned id { 0 };
+    State state { State::Stationary };
+    int x { 0 };
+    int y { 0 };
+};
+WK_EXPORT void webkitWebViewBaseSynthesizeTouchEvent(WebKitWebViewBase*, TouchEventType, Vector<SyntheticTouchPoint>&&, unsigned modifiers);
 #endif
+
+WK_EXPORT SkImage* webkitWebViewBaseSnapshotForTesting(WebKitWebViewBase*);
+

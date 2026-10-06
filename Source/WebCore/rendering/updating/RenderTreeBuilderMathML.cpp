@@ -31,8 +31,9 @@
 #include "RenderMathMLFenced.h"
 #include "RenderMathMLFencedOperator.h"
 #include "RenderObjectDocument.h"
-#include "RenderStyle+SettersInlines.h"
+#include "RenderObjectNode.h"
 #include "RenderTreeBuilderBlock.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -47,17 +48,17 @@ RenderTreeBuilder::MathML::MathML(RenderTreeBuilder& builder)
 RenderPtr<RenderMathMLFencedOperator> RenderTreeBuilder::MathML::createMathMLOperator(RenderMathMLFenced& parent, const String& operatorString,
     MathMLOperatorDictionary::Form form, MathMLOperatorDictionary::Flag flag)
 {
-    RenderPtr<RenderMathMLFencedOperator> newOperator = createRenderer<RenderMathMLFencedOperator>(parent.document(), RenderStyle::createAnonymousStyleWithDisplay(parent.style(), DisplayType::Block), operatorString, form, flag);
+    RenderPtr<RenderMathMLFencedOperator> newOperator = createRenderer<RenderMathMLFencedOperator>(parent.document(), Style::ComputedStyle::createAnonymousStyleWithDisplay(protect(parent.style()), Style::DisplayType::BlockFlow), operatorString, form, flag);
     newOperator->initializeStyle();
     return newOperator;
 }
 
 void RenderTreeBuilder::MathML::makeFences(RenderMathMLFenced& parent)
 {
-    auto openFence = createMathMLOperator(parent, parent.openingBrace(), MathMLOperatorDictionary::Prefix, MathMLOperatorDictionary::Fence);
+    auto openFence = createMathMLOperator(parent, parent.openingBrace(), MathMLOperatorDictionary::Form::Prefix, MathMLOperatorDictionary::Fence);
     m_builder.blockBuilder().attach(parent, WTF::move(openFence), parent.firstChild());
 
-    auto closeFence = createMathMLOperator(parent, parent.closingBrace(), MathMLOperatorDictionary::Postfix, MathMLOperatorDictionary::Fence);
+    auto closeFence = createMathMLOperator(parent, parent.closingBrace(), MathMLOperatorDictionary::Form::Postfix, MathMLOperatorDictionary::Fence);
     parent.setCloseFenceRenderer(*closeFence);
     m_builder.blockBuilder().attach(parent, WTF::move(closeFence), nullptr);
 }
@@ -97,7 +98,7 @@ void RenderTreeBuilder::MathML::attach(RenderMathMLFenced& parent, RenderPtr<Ren
 
             StringBuilder stringBuilder;
             stringBuilder.append(separator);
-            separatorRenderer = createMathMLOperator(parent, stringBuilder.toString(), MathMLOperatorDictionary::Infix, MathMLOperatorDictionary::Separator);
+            separatorRenderer = createMathMLOperator(parent, stringBuilder.toString(), MathMLOperatorDictionary::Form::Infix, MathMLOperatorDictionary::Separator);
         }
     }
 

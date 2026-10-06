@@ -88,6 +88,9 @@ void AudioNodeInput::disconnect(AudioNodeOutput* output)
     }
     
     // Otherwise, try to disconnect from disabled connections.
+    // Heap allocations are forbidden on the audio thread for performance reasons so we need to
+    // explicitly allow the following allocation(s).
+    DisableMallocRestrictionsForCurrentThreadScope disableMallocRestrictions;
     if (m_disabledOutputs.remove(output)) {
         output->removeInput(this); // Note: it's important to return immediately after this since the node may be deleted.
         return;
@@ -115,7 +118,7 @@ void AudioNodeInput::disable(AudioNodeOutput* output)
     }
 
     // Propagate disabled state to outputs.
-    checkedNode()->disableOutputsIfNecessary();
+    protect(node())->disableOutputsIfNecessary();
 }
 
 void AudioNodeInput::enable(AudioNodeOutput* output)
@@ -139,12 +142,12 @@ void AudioNodeInput::enable(AudioNodeOutput* output)
     m_disabledOutputs.remove(output);
 
     // Propagate enabled state to outputs.
-    checkedNode()->enableOutputsIfNecessary();
+    protect(node())->enableOutputsIfNecessary();
 }
 
 void AudioNodeInput::didUpdate()
 {
-    checkedNode()->checkNumberOfChannelsForInput(this);
+    protect(node())->checkNumberOfChannelsForInput(this);
 }
 
 void AudioNodeInput::updateInternalBus()
@@ -215,7 +218,7 @@ void AudioNodeInput::sumAllConnections(AudioBus& summingBus, size_t framesToProc
         ASSERT(output);
 
         // Render audio from this output.
-        AudioBus& connectionBus = output->pull(nullptr, framesToProcess);
+        Ref connectionBus = output->pull(nullptr, framesToProcess);
 
         // Sum, with unity-gain.
         summingBus.sumFrom(connectionBus, interpretation);
@@ -237,7 +240,7 @@ AudioBus& AudioNodeInput::pull(AudioBus* inPlaceBus, size_t framesToProcess)
     if (!numberOfRenderingConnections()) {
         // At least, generate silence if we're not connected to anything.
         // FIXME: if we wanted to get fancy, we could propagate a 'silent hint' here to optimize the downstream graph processing.
-        m_internalSummingBus->zero();
+        protect(m_internalSummingBus)->zero();
         return m_internalSummingBus;
     }
 

@@ -159,23 +159,22 @@ struct TextDecorationLine {
         }
     }
 
-    uint8_t addOrReplaceIfNotNone(const TextDecorationLine&);
+    void addOrReplaceIfNotNone(TextDecorationLine);
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
         switch (type()) {
         case Type::Flags:
             return visitor(unpackFlags());
-        case Type::SingleValue: {
+        case Type::SingleValue:
             if (isNone())
                 return visitor(CSS::Keyword::None { });
             if (isSpellingError())
                 return visitor(CSS::Keyword::SpellingError { });
             ASSERT(isGrammarError());
             return visitor(CSS::Keyword::GrammarError { });
-            }
         }
         ASSERT_NOT_REACHED();
         return visitor(CSS::Keyword::None { });
@@ -260,13 +259,13 @@ template<> struct CSSValueConversion<TextDecorationLine> {
 };
 
 template<> struct CSSValueCreation<OptionSet<TextDecorationLine::Flag>> {
-    auto operator()(CSSValuePool&, const RenderStyle&, const  OptionSet<TextDecorationLine::Flag>&) -> Ref<CSSValue>;
+    auto operator()(CSSValuePool&, const Style::ComputedStyle&, const  OptionSet<TextDecorationLine::Flag>&) -> Ref<CSSValue>;
 };
 
 // MARK: Serialization
 
 template<> struct Serialize<OptionSet<TextDecorationLine::Flag>> {
-    void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const OptionSet<TextDecorationLine::Flag>&);
+    void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const OptionSet<TextDecorationLine::Flag>&);
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const TextDecorationLine&);

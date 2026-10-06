@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,42 +39,49 @@ namespace WebCore {
 
 class PlatformMouseEvent : public PlatformEvent {
 public:
+    using CanInitiateDrag = MouseEventCanInitiateDrag;
+
     PlatformMouseEvent()
         : PlatformEvent(Type::MouseMoved)
     {
     }
 
-    PlatformMouseEvent(const DoublePoint& position, const DoublePoint& globalPosition, MouseButton button, PlatformEvent::Type type, int clickCount, OptionSet<PlatformEvent::Modifier> modifiers, MonotonicTime timestamp, double force, SyntheticClickType syntheticClickType, PointerID pointerId = mousePointerID)
+    PlatformMouseEvent(const DoublePoint& position, const DoublePoint& globalPosition, MouseButton button, PlatformEvent::Type type, int clickCount, OptionSet<PlatformEvent::Modifier> modifiers, MonotonicTime timestamp, double force, SyntheticClickType syntheticClickType, MouseEventInputSource inputSource, PointerID pointerId = mousePointerID, const DoublePoint& movementDelta = { })
         : PlatformEvent(type, modifiers, timestamp)
         , m_button(button)
         , m_syntheticClickType(syntheticClickType)
         , m_position(position)
         , m_globalPosition(globalPosition)
+        , m_movementDelta(movementDelta)
         , m_force(force)
         , m_pointerId(pointerId)
         , m_clickCount(clickCount)
+        , m_inputSource(inputSource)
     {
     }
 
     // This position is relative to the enclosing NSWindow in WebKit1, and is WKWebView-relative in WebKit2.
     // Use ScrollView::windowToContents() to convert it to into the contents of a given view.
-    const DoublePoint& position() const { return m_position; }
-    const DoublePoint& globalPosition() const { return m_globalPosition; }
-    const DoublePoint& movementDelta() const { return m_movementDelta; }
+    const DoublePoint& position() const LIFETIME_BOUND { return m_position; }
+    const DoublePoint& globalPosition() const LIFETIME_BOUND { return m_globalPosition; }
+    const DoublePoint& movementDelta() const LIFETIME_BOUND { return m_movementDelta; }
     // Unaccelerated pointer movement
-    const DoublePoint& unadjustedMovementDelta() const { return m_unadjustedMovementDelta; }
+    const DoublePoint& unadjustedMovementDelta() const LIFETIME_BOUND { return m_unadjustedMovementDelta; }
 
     MouseButton button() const { return m_button; }
     unsigned short buttons() const { return m_buttons; }
     int clickCount() const { return m_clickCount; }
-    unsigned modifierFlags() const { return m_modifierFlags; }
     double force() const { return m_force; }
     SyntheticClickType syntheticClickType() const { return m_syntheticClickType; }
     PointerID pointerId() const { return m_pointerId; }
-    const String& pointerType() const { return m_pointerType; }
+    const String& pointerType() const LIFETIME_BOUND { return m_pointerType; }
+    MouseEventInputSource inputSource() const { return m_inputSource; }
+    CanInitiateDrag canInitiateDrag() const { return m_canInitiateDrag; }
 
     Vector<PlatformMouseEvent> coalescedEvents() const { return m_coalescedEvents; }
     Vector<PlatformMouseEvent> predictedEvents() const { return m_predictedEvents; }
+
+    void setButtons(unsigned short buttons) { m_buttons = buttons; }
 
 #if PLATFORM(MAC)
     int eventNumber() const { return m_eventNumber; }
@@ -105,10 +112,11 @@ protected:
     PointerID m_pointerId { mousePointerID };
     String m_pointerType { mousePointerEventType() };
     int m_clickCount { 0 };
-    unsigned m_modifierFlags { 0 };
     unsigned short m_buttons { 0 };
     Vector<PlatformMouseEvent> m_coalescedEvents;
     Vector<PlatformMouseEvent> m_predictedEvents;
+    MouseEventInputSource m_inputSource { MouseEventInputSource::UserDriven };
+    CanInitiateDrag m_canInitiateDrag { CanInitiateDrag::Yes };
 #if PLATFORM(MAC)
     int m_eventNumber { 0 };
     int m_menuTypeForEvent { 0 };

@@ -40,9 +40,10 @@ enum class WebEventModifier : uint8_t {
     AltKey      = 1 << 2,
     MetaKey     = 1 << 3,
     CapsLockKey = 1 << 4,
+    AltGraphKey = 1 << 5,
 };
 
-OptionSet<WebEventModifier> modifiersFromPlatformEventModifiers(OptionSet<WebCore::PlatformEventModifier>);
+OptionSet<WebEventModifier> NODELETE modifiersFromPlatformEventModifiers(OptionSet<WebCore::PlatformEventModifier>);
 OptionSet<WebEventModifier> modifiersForNavigationAction(const WebCore::NavigationAction&);
 
 } // namespace WebKit

@@ -43,9 +43,8 @@
 #import <wtf/RunLoop.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
-using namespace WebCore;
 
-NSString *WebArchivePboardType = @"Apple Web Archive pasteboard type";
+NSString * const WebArchivePboardType = @"Apple Web Archive pasteboard type";
 
 static NSString * const WebMainResourceKey = @"WebMainResource";
 static NSString * const WebSubresourcesKey = @"WebSubresources";
@@ -57,12 +56,12 @@ static NSString * const WebSubframeArchivesKey = @"WebSubframeArchives";
     RetainPtr<NSArray> cachedSubresources;
     RetainPtr<NSArray> cachedSubframeArchives;
 @private
-    RefPtr<LegacyWebArchive> coreArchive;
+    RefPtr<WebCore::LegacyWebArchive> coreArchive;
 }
 
-- (instancetype)initWithCoreArchive:(RefPtr<LegacyWebArchive>&&)coreArchive;
-- (LegacyWebArchive*)coreArchive;
-- (void)setCoreArchive:(Ref<LegacyWebArchive>&&)newCoreArchive;
+- (instancetype)initWithCoreArchive:(RefPtr<WebCore::LegacyWebArchive>&&)coreArchive;
+- (WebCore::LegacyWebArchive*)coreArchive;
+- (void)setCoreArchive:(Ref<WebCore::LegacyWebArchive>&&)newCoreArchive;
 @end
 
 @implementation WebArchivePrivate
@@ -80,7 +79,7 @@ static NSString * const WebSubframeArchivesKey = @"WebSubframeArchives";
     return self;
 }
 
-- (instancetype)initWithCoreArchive:(RefPtr<LegacyWebArchive>&&)_coreArchive
+- (instancetype)initWithCoreArchive:(RefPtr<WebCore::LegacyWebArchive>&&)_coreArchive
 {
     self = [super init];
     if (!self|| !_coreArchive) {
@@ -91,12 +90,12 @@ static NSString * const WebSubframeArchivesKey = @"WebSubframeArchives";
     return self;
 }
 
-- (LegacyWebArchive*)coreArchive
+- (WebCore::LegacyWebArchive*)coreArchive
 {
     return coreArchive.get();
 }
 
-- (void)setCoreArchive:(Ref<LegacyWebArchive>&&)newCoreArchive
+- (void)setCoreArchive:(Ref<WebCore::LegacyWebArchive>&&)newCoreArchive
 {
     coreArchive = WTF::move(newCoreArchive);
 }
@@ -166,15 +165,15 @@ static BOOL isArrayOfClass(id object, Class elementClass)
         return nil;
     }
 
-    Vector<Ref<ArchiveResource>> coreResources;
+    Vector<Ref<WebCore::ArchiveResource>> coreResources;
     for (WebResource *subresource in subresources)
-        coreResources.append([subresource _coreResource].get());
+        coreResources.append(protect([subresource _coreResource].get()));
 
-    Vector<Ref<LegacyWebArchive>> coreArchives;
+    Vector<Ref<WebCore::LegacyWebArchive>> coreArchives;
     for (WebArchive *subframeArchive in subframeArchives)
-        coreArchives.append(*[subframeArchive->_private coreArchive]);
+        coreArchives.append(protect(*[protect(subframeArchive->_private) coreArchive]));
 
-    [_private setCoreArchive:LegacyWebArchive::create([mainResource _coreResource].get(), WTF::move(coreResources), WTF::move(coreArchives), std::nullopt)];
+    [protect(_private) setCoreArchive:WebCore::LegacyWebArchive::create([mainResource _coreResource].get(), WTF::move(coreResources), WTF::move(coreArchives), std::nullopt)];
     return self;
 }
 
@@ -191,13 +190,13 @@ static BOOL isArrayOfClass(id object, Class elementClass)
 #endif
 
     _private = [[WebArchivePrivate alloc] init];
-    auto coreArchive = LegacyWebArchive::create(SharedBuffer::create(data));
+    auto coreArchive = WebCore::LegacyWebArchive::create(WebCore::SharedBuffer::create(data));
     if (!coreArchive) {
         [self release];
         return nil;
     }
         
-    [_private setCoreArchive:coreArchive.releaseNonNull()];
+    [protect(_private) setCoreArchive:coreArchive.releaseNonNull()];
         
 #if !LOG_DISABLED
     CFAbsoluteTime end = CFAbsoluteTimeGetCurrent();
@@ -241,7 +240,8 @@ static BOOL isArrayOfClass(id object, Class elementClass)
 
 - (void)dealloc
 {
-    [_private release];
+    // Retaining the member just to release it would be pointless.
+    SUPPRESS_UNRETAINED_ARG [_private release];
     [super dealloc];
 }
 
@@ -257,8 +257,8 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     // Currently from WebKit API perspective, WebArchives are entirely immutable once created
     // If they ever become mutable, we'll need to rethink this. 
     if (!_private->cachedMainResource) {
-        if (auto* coreArchive = [_private coreArchive]) {
-            if (auto* mainResource = coreArchive->mainResource())
+        if (RefPtr coreArchive = [protect(_private) coreArchive]) {
+            if (RefPtr mainResource = coreArchive->mainResource())
                 _private->cachedMainResource = adoptNS([[WebResource alloc] _initWithCoreResource:*mainResource]);
         }
     }
@@ -274,7 +274,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     // Currently from WebKit API perspective, WebArchives are entirely immutable once created
     // If they ever become mutable, we'll need to rethink this.     
     if (!_private->cachedSubresources) {
-        auto coreArchive = [_private coreArchive];
+        RefPtr coreArchive = [protect(_private) coreArchive];
         if (!coreArchive)
             _private->cachedSubresources = adoptNS([[NSArray alloc] init]);
         else {
@@ -299,12 +299,12 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     // Currently from WebKit API perspective, WebArchives are entirely immutable once created
     // If they ever become mutable, we'll need to rethink this.  
     if (!_private->cachedSubframeArchives) {
-        auto* coreArchive = [_private coreArchive];
+        RefPtr coreArchive = [protect(_private) coreArchive];
         if (!coreArchive)
             _private->cachedSubframeArchives = adoptNS([[NSArray alloc] init]);
         else {
             _private->cachedSubframeArchives = createNSArray(coreArchive->subframeArchives(), [] (auto& archive) {
-                return adoptNS([[WebArchive alloc] _initWithCoreLegacyWebArchive:downcast<LegacyWebArchive>(archive.ptr())]);
+                return adoptNS([[WebArchive alloc] _initWithCoreLegacyWebArchive:downcast<WebCore::LegacyWebArchive>(archive.ptr())]);
             });
         }
     }
@@ -321,7 +321,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
 #endif
 
-    RetainPtr<CFDataRef> data = [_private coreArchive]->rawDataRepresentation();
+    RetainPtr<CFDataRef> data = protect([protect(_private) coreArchive])->rawDataRepresentation();
     
 #if !LOG_DISABLED
     CFAbsoluteTime end = CFAbsoluteTimeGetCurrent();
@@ -357,7 +357,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
 {
     WebCoreThreadViolationCheckRoundTwo();
 
-    return [_private coreArchive];
+    return [protect(_private) coreArchive];
 }
 
 @end

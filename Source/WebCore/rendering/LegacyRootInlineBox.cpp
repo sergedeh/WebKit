@@ -52,7 +52,7 @@ struct SameSizeAsLegacyRootInlineBox : LegacyInlineFlowBox, CanMakeWeakPtr<Legac
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(SameSizeAsLegacyRootInlineBox);
 
 static_assert(sizeof(LegacyRootInlineBox) == sizeof(SameSizeAsLegacyRootInlineBox), "LegacyRootInlineBox should stay small");
-#if !ASSERT_ENABLED
+#if !ASSERT_ENABLED && ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
 static_assert(sizeof(SingleThreadWeakPtr<RenderObject>) == sizeof(void*), "WeakPtr should be same size as raw pointer");
 #endif
 
@@ -62,9 +62,7 @@ LegacyRootInlineBox::LegacyRootInlineBox(RenderBlockFlow& block)
     setIsHorizontal(block.isHorizontalWritingMode());
 }
 
-LegacyRootInlineBox::~LegacyRootInlineBox()
-{
-}
+LegacyRootInlineBox::~LegacyRootInlineBox() = default;
 
 void LegacyRootInlineBox::adjustPosition(float dx, float dy)
 {

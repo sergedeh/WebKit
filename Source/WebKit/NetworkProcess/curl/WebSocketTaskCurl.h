@@ -70,7 +70,7 @@ public:
 
     WebPageProxyIdentifier webPageProxyID() const { return m_webProxyPageID; }
 
-    const WebCore::SecurityOriginData& topOrigin() const { return m_topOrigin; }
+    const WebCore::SecurityOriginData& topOrigin() const LIFETIME_BOUND { return m_topOrigin; }
 
 private:
     WebSocketTask(NetworkSocketChannel&, WebPageProxyIdentifier, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&);
@@ -88,15 +88,13 @@ private:
     void didReceiveData(WebCore::CurlStreamID, const WebCore::SharedBuffer&) final;
     void didFail(WebCore::CurlStreamID, CURLcode, WebCore::CertificateInfo&&) final;
 
-    RefPtr<NetworkSocketChannel> protectedChannel() const;
-
     void tryServerTrustEvaluation(WebCore::AuthenticationChallenge&&, String&&);
 
     bool appendReceivedBuffer(const WebCore::SharedBuffer&);
     void skipReceivedBuffer(size_t len);
 
-    Expected<bool, String> validateOpeningHandshake();
-    std::optional<String> receiveFrames(Function<void(WebCore::WebSocketFrame::OpCode, std::span<const uint8_t>)>&&);
+    std::expected<bool, String> validateOpeningHandshake();
+    std::optional<String> receiveFrames(NOESCAPE const Function<void(WebCore::WebSocketFrame::OpCode, std::span<const uint8_t>)>&);
     std::optional<String> validateFrame(const WebCore::WebSocketFrame&);
 
     bool sendFrame(WebCore::WebSocketFrame::OpCode, std::span<const uint8_t> data);

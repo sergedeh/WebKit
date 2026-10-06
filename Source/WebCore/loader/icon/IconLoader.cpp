@@ -38,6 +38,7 @@
 #include "Logging.h"
 #include "ResourceRequest.h"
 #include "SharedBuffer.h"
+#include <WebCore/HTTPStatusCodes.h>
 #include <wtf/text/CString.h>
 
 namespace WebCore {
@@ -92,17 +93,20 @@ void IconLoader::startLoading()
 
     request.setInitiatorType(cachedResourceRequestInitiatorTypes().icon);
 
-    auto cachedResource = frame->protectedDocument()->protectedCachedResourceLoader()->requestIcon(WTF::move(request));
-    m_resource = cachedResource.value_or(nullptr);
-    if (CachedResourceHandle resource = m_resource)
+    auto cachedResource = protect(protect(frame->document())->cachedResourceLoader())->requestIcon(WTF::move(request));
+    if (cachedResource)
+        m_resource = WTF::move(cachedResource.value());
+    else
+        m_resource = nullptr;
+    if (RefPtr resource = m_resource)
         resource->addClient(*this);
     else
-        LOG_ERROR("Failed to start load for icon at url %s (error: %s)", resourceRequestURL.string().ascii().data(), cachedResource.error().localizedDescription().utf8().data());
+        LOG_ERROR("Failed to start load for icon at url %s (error: %s)", resourceRequestURL.string().utf8(), cachedResource.error().localizedDescription().utf8());
 }
 
 void IconLoader::stopLoading()
 {
-    if (CachedResourceHandle resource = std::exchange(m_resource, nullptr))
+    if (RefPtr resource = std::exchange(m_resource, nullptr))
         resource->removeClient(*this);
 }
 
@@ -112,18 +116,18 @@ void IconLoader::notifyFinished(CachedResource& resource, const NetworkLoadMetri
 
     // If we got a status code indicating an invalid response, then lets
     // ignore the data and not try to decode the error page as an icon.
-    RefPtr data = m_resource->resourceBuffer();
-    int status = m_resource->response().httpStatusCode();
-    if (status && (status < 200 || status > 299))
+    RefPtr data = resource.resourceBuffer();
+    int status = resource.response().httpStatusCode();
+    if (status && !isHttpOkStatus(status))
         data = nullptr;
 
     constexpr std::array<uint8_t, 4> pdfMagicNumber { '%', 'P', 'D', 'F' };
     if (data && data->startsWith(pdfMagicNumber)) {
-        LOG(IconDatabase, "IconLoader::finishLoading() - Ignoring icon at %s because it appears to be a PDF", m_resource->url().string().ascii().data());
+        LOG(IconDatabase, "IconLoader::finishLoading() - Ignoring icon at %s because it appears to be a PDF", resource.url().string().utf8());
         data = nullptr;
     }
 
-    LOG(IconDatabase, "IconLoader::finishLoading() - Committing iconURL %s to database", m_resource->url().string().ascii().data());
+    LOG(IconDatabase, "IconLoader::finishLoading() - Committing iconURL %s to database", resource.url().string().utf8());
 
     // DocumentLoader::finishedLoadingIcon destroys this IconLoader as it finishes. This will automatically
     // trigger IconLoader::stopLoading() during destruction, so we should just return here.

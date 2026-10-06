@@ -73,13 +73,13 @@ struct BackgroundLayer {
     BackgroundLayer();
     BackgroundLayer(CSS::Keyword::None);
     BackgroundLayer(ImageOrNone&&);
-    BackgroundLayer(RefPtr<StyleImage>&&);
+    BackgroundLayer(RefPtr<Image>&&);
 
-    const ImageOrNone& image() const { return m_image; }
-    const PositionX& positionX() const { return m_positionX; }
-    const PositionY& positionY() const { return m_positionY; }
-    const BackgroundSize& size() const { return m_size; }
-    const RepeatStyle& repeat() const { return m_repeat; }
+    const ImageOrNone& image() const LIFETIME_BOUND { return m_image; }
+    const PositionX& positionX() const LIFETIME_BOUND { return m_positionX; }
+    const PositionY& positionY() const LIFETIME_BOUND { return m_positionY; }
+    const BackgroundSize& size() const LIFETIME_BOUND { return m_size; }
+    const RepeatStyle& repeat() const LIFETIME_BOUND { return m_repeat; }
     FillAttachment attachment() const { return static_cast<FillAttachment>(m_attachment); }
     FillBox clip() const { return static_cast<FillBox>(m_clip); }
     FillBox origin() const { return static_cast<FillBox>(m_origin); }
@@ -127,7 +127,6 @@ struct BackgroundLayer {
 
     // CoordinatedValueList interface.
 
-    static constexpr auto computedValueUsesUsedValues = true;
     static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyBackgroundImage> { };
     static constexpr auto properties = std::tuple { FOR_EACH_BACKGROUND_LAYER_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
     static BackgroundLayer clone(const BackgroundLayer& other) { return other; }
@@ -161,7 +160,7 @@ FOR_EACH_BACKGROUND_LAYER_SHORTHAND(DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCE
 // MARK: - Blending
 
 template<> struct Blending<BackgroundLayer> {
-    auto canBlend(const BackgroundLayer&, const BackgroundLayer&) -> bool;
+    bool NODELETE canBlend(const BackgroundLayer&, const BackgroundLayer&);
 };
 
 // MARK: - Logging

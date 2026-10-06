@@ -57,7 +57,7 @@ class ApplePayAMSUIPaymentHandler final : public PaymentHandler, private Context
 public:
     static ExceptionOr<void> validateData(Document&, JSC::JSValue);
     static bool handlesIdentifier(const PaymentRequest::MethodIdentifier&);
-    static bool hasActiveSession(Document&);
+    static bool NODELETE hasActiveSession(Document&);
 
     void finishSession(std::optional<bool>&&);
 
@@ -69,8 +69,8 @@ private:
     friend class PaymentHandler;
     explicit ApplePayAMSUIPaymentHandler(Document&, const PaymentRequest::MethodIdentifier&, PaymentRequest&);
 
-    Document& document() const;
-    Page& page() const;
+    Document& NODELETE document() const;
+    Page& NODELETE page() const;
 
     // PaymentHandler
     ExceptionOr<void> convertData(Document&, JSC::JSValue) final;

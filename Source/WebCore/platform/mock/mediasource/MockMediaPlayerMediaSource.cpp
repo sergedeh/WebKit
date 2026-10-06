@@ -28,13 +28,12 @@
 
 #if ENABLE(MEDIA_SOURCE)
 
-#include "DestinationColorSpace.h"
+#include "ColorSpace.h"
 #include "MediaPlayer.h"
 #include "MediaSourcePrivate.h"
 #include "MediaSourcePrivateClient.h"
 #include "MockMediaSourcePrivate.h"
 #include <wtf/MainThread.h>
-#include <wtf/NativePromise.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -84,7 +83,7 @@ void MockMediaPlayerMediaSource::getSupportedTypes(HashSet<String>& supportedTyp
 
 MediaPlayer::SupportsType MockMediaPlayerMediaSource::supportsType(const MediaEngineSupportParameters& parameters)
 {
-    if (!parameters.isMediaSource)
+    if (parameters.platformType != PlatformMediaDecodingType::MediaSource)
         return MediaPlayer::SupportsType::IsNotSupported;
 
     auto containerType = parameters.type.containerType().convertToASCIILowercase();
@@ -97,6 +96,9 @@ MediaPlayer::SupportsType MockMediaPlayerMediaSource::supportsType(const MediaEn
 
     if (codecs == "mock"_s || codecs == "kcom"_s)
         return MediaPlayer::SupportsType::IsSupported;
+
+    if (codecs == "unknown"_s || codecs == "invalid"_s)
+        return MediaPlayer::SupportsType::IsNotSupported;
 
     return MediaPlayer::SupportsType::MayBeSupported;
 }
@@ -147,13 +149,13 @@ FloatSize MockMediaPlayerMediaSource::naturalSize() const
 
 bool MockMediaPlayerMediaSource::hasVideo() const
 {
-    RefPtr mediaSourcePrivate = m_mediaSourcePrivate;
+    auto* mediaSourcePrivate = m_mediaSourcePrivate.get();
     return mediaSourcePrivate ? mediaSourcePrivate->hasVideo() : false;
 }
 
 bool MockMediaPlayerMediaSource::hasAudio() const
 {
-    RefPtr mediaSourcePrivate = m_mediaSourcePrivate;
+    auto* mediaSourcePrivate = m_mediaSourcePrivate.get();
     return mediaSourcePrivate ? mediaSourcePrivate->hasAudio() : false;
 }
 
@@ -164,13 +166,15 @@ void MockMediaPlayerMediaSource::characteristicsFromMediaSourceChanged()
         player->characteristicChanged();
 }
 
-void MockMediaPlayerMediaSource::setPageIsVisible(bool)
+void MockMediaPlayerMediaSource::seekableRangesFromMediaSourceChanged()
 {
+    assertIsMainThread();
+    if (RefPtr player = m_player.get())
+        player->seekableTimeRangesChanged();
 }
 
-bool MockMediaPlayerMediaSource::seeking() const
+void MockMediaPlayerMediaSource::setPageIsVisible(bool)
 {
-    return !!m_lastSeekTarget;
 }
 
 bool MockMediaPlayerMediaSource::paused() const
@@ -185,7 +189,7 @@ MediaPlayer::NetworkState MockMediaPlayerMediaSource::networkState() const
 
 MediaPlayer::ReadyState MockMediaPlayerMediaSource::readyState() const
 {
-    RefPtr mediaSourcePrivate = m_mediaSourcePrivate;
+    auto* mediaSourcePrivate = m_mediaSourcePrivate.get();
     return mediaSourcePrivate ? mediaSourcePrivate->mediaPlayerReadyState() : MediaPlayer::ReadyState::HaveNothing;
 }
 
@@ -250,35 +254,42 @@ MediaTime MockMediaPlayerMediaSource::duration() const
     return mediaSourcePrivate ? mediaSourcePrivate->duration() : MediaTime::zeroTime();
 }
 
-RefPtr<MockMediaSourcePrivate> MockMediaPlayerMediaSource::protectedMediaSourcePrivate()
-{
-    return m_mediaSourcePrivate;
-}
 
-void MockMediaPlayerMediaSource::seekToTarget(const SeekTarget& target)
+Ref<MediaTimePromise> MockMediaPlayerMediaSource::seekToTarget(const SeekTarget& target)
 {
     m_lastSeekTarget = target;
-    protectedMediaSourcePrivate()->waitForTarget(target)->whenSettled(RunLoop::currentSingleton(), [weakThis = WeakPtr { this }](auto&& result) {
+    m_seekPromise.emplace(PlatformMediaError::Cancelled);
+
+    protect(m_mediaSourcePrivate)->waitForTarget(target)->whenSettled(RunLoop::currentSingleton(), [weakThis = WeakPtr { this }](auto&& result) {
         RefPtr protectedThis = weakThis.get();
-        if (!protectedThis || !result)
+        if (!protectedThis)
             return;
 
+        if (!result) {
+            if (auto seekPromise = std::exchange(protectedThis->m_seekPromise, std::nullopt))
+                seekPromise->reject(result.error());
+            return;
+        }
+
         const auto seekTime = *result;
-        protectedThis->protectedMediaSourcePrivate()->seekToTime(seekTime);
-        protectedThis->m_lastSeekTarget.reset();
-        protectedThis->m_currentTime = seekTime;
+        protect(protectedThis->m_mediaSourcePrivate)->reenqueueMediaForTime(seekTime)->whenSettled(RunLoop::currentSingleton(), [weakThis, seekTime](auto&& result) {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis || !result)
+                return;
+            protectedThis->m_lastSeekTarget.reset();
+            protectedThis->m_currentTime = seekTime;
 
-        if (RefPtr player = protectedThis->m_player.get()) {
-            player->seeked(seekTime);
-            player->timeChanged();
-        }
+            if (auto seekPromise = std::exchange(protectedThis->m_seekPromise, std::nullopt))
+                seekPromise->resolve(seekTime);
 
-        if (protectedThis->m_playing) {
-            callOnMainThread([protectedThis = WTF::move(protectedThis)] {
-                protectedThis->advanceCurrentTime();
-            });
-        }
+            if (protectedThis->m_playing) {
+                callOnMainThread([protectedThis = WTF::move(protectedThis)] {
+                    protectedThis->advanceCurrentTime();
+                });
+            }
+        });
     });
+    return *m_seekPromise;
 }
 
 void MockMediaPlayerMediaSource::advanceCurrentTime()
@@ -292,8 +303,7 @@ void MockMediaPlayerMediaSource::advanceCurrentTime()
     if (pos == notFound)
         return;
 
-    bool ignoreError;
-    m_currentTime = std::min(m_duration, buffered.end(pos, ignoreError));
+    m_currentTime = std::min(m_duration, buffered.end(pos));
     if (auto player = m_player.get())
         player->timeChanged();
 }
@@ -320,13 +330,13 @@ void MockMediaPlayerMediaSource::setNetworkState(MediaPlayer::NetworkState netwo
 
 std::optional<VideoPlaybackQualityMetrics> MockMediaPlayerMediaSource::videoPlaybackQualityMetrics()
 {
-    RefPtr mediaSourcePrivate = m_mediaSourcePrivate;
+    auto* mediaSourcePrivate = m_mediaSourcePrivate.get();
     return mediaSourcePrivate ? mediaSourcePrivate->videoPlaybackQualityMetrics() : std::nullopt;
 }
 
-DestinationColorSpace MockMediaPlayerMediaSource::colorSpace()
+ColorSpace MockMediaPlayerMediaSource::colorSpace()
 {
-    return DestinationColorSpace::SRGB();
+    return ColorSpace::SRGB();
 }
 
 }

@@ -29,14 +29,13 @@
 
 namespace WebKit {
 
-WebColorPicker::WebColorPicker(Client* client)
+WebColorPicker::WebColorPicker(Client* client, std::optional<WebCore::FrameIdentifier> frameID)
     : m_client(client)
+    , m_frameID(frameID)
 {
 }
 
-WebColorPicker::~WebColorPicker()
-{
-}
+WebColorPicker::~WebColorPicker() = default;
 
 void WebColorPicker::endPicker()
 {
@@ -50,7 +49,7 @@ void WebColorPicker::setSelectedColor(const WebCore::Color& color)
         client->didChooseColor(color);
 }
 
-void WebColorPicker::showColorPicker(const WebCore::Color&)
+void WebColorPicker::showColorPicker(const WebCore::Color&, const WebCore::IntRect&)
 {
     ASSERT_NOT_REACHED();
     return;

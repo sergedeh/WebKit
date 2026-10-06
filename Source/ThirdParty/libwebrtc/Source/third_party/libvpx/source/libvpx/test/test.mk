@@ -118,6 +118,11 @@ ifeq ($(findstring yes,$(CONFIG_VP8_DECODER)$(CONFIG_VP9_DECODER)), yes)
 LIBVPX_TEST_SRCS-yes += invalid_file_test.cc
 endif
 
+ifeq ($(findstring yesyes, $(CONFIG_VP8_DECODER)$(CONFIG_POSTPROC) \
+                           $(CONFIG_VP9_DECODER)$(CONFIG_VP9_POSTPROC)), yesyes)
+LIBVPX_TEST_SRCS-yes += postproc_test.cc
+endif
+
 ##
 ## WHITE BOX TESTS
 ##
@@ -164,8 +169,10 @@ ifeq ($(CONFIG_VP9_ENCODER)$(CONFIG_VP9_DECODER),yesyes)
 # IDCT test currently depends on FDCT function
 LIBVPX_TEST_SRCS-yes                   += idct8x8_test.cc
 LIBVPX_TEST_SRCS-yes                   += partial_idct_test.cc
+ifneq ($(CONFIG_REALTIME_ONLY),yes)
 LIBVPX_TEST_SRCS-yes                   += superframe_test.cc
 LIBVPX_TEST_SRCS-yes                   += tile_independence_test.cc
+endif
 LIBVPX_TEST_SRCS-yes                   += vp9_boolcoder_test.cc
 LIBVPX_TEST_SRCS-yes                   += vp9_encoder_parms_get_to_decoder.cc
 LIBVPX_TEST_SRCS-yes                   += vp9_roi_test.cc
@@ -173,6 +180,9 @@ endif
 
 LIBVPX_TEST_SRCS-yes                   += convolve_test.cc
 LIBVPX_TEST_SRCS-yes                   += lpf_test.cc
+LIBVPX_TEST_SRCS-yes                   += vp9_scan_test.cc
+LIBVPX_TEST_SRCS-yes                   += vp9_entropy_test.cc
+LIBVPX_TEST_SRCS-$(CONFIG_VP9_ENCODER) += vp9_tokenize_test.cc
 LIBVPX_TEST_SRCS-yes                   += vp9_intrapred_test.cc
 LIBVPX_TEST_SRCS-$(CONFIG_VP9_DECODER) += vp9_decrypt_test.cc
 LIBVPX_TEST_SRCS-$(CONFIG_VP9_DECODER) += vp9_thread_test.cc

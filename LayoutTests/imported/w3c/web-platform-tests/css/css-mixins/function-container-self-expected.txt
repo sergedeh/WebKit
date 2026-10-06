@@ -1,3 +1,0 @@
-
-FAIL Custom Functions: @container can not query self assert_equals: expected "B" but got "C"
-

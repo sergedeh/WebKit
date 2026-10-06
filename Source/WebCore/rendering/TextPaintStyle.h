@@ -35,11 +35,11 @@ namespace WebCore {
 
 class GraphicsContext;
 class LocalFrame;
-class RenderStyle;
 class RenderText;
 struct PaintInfo;
 
 namespace Style {
+class ComputedStyle;
 struct TextShadow;
 template<typename> struct Shadows;
 using TextShadows = Shadows<TextShadow>;
@@ -49,7 +49,7 @@ struct TextPaintStyle {
     TextPaintStyle() = default;
     TextPaintStyle(const Color&);
 
-    bool operator==(const TextPaintStyle&) const;
+    bool NODELETE operator==(const TextPaintStyle&) const;
 
     Color fillColor;
     Color strokeColor;
@@ -64,10 +64,10 @@ struct TextPaintStyle {
 };
 
 bool textColorIsLegibleAgainstBackgroundColor(const Color& textColor, const Color& backgroundColor);
-TextPaintStyle computeTextPaintStyle(const RenderText&, const RenderStyle&, const PaintInfo&);
-TextPaintStyle computeTextSelectionPaintStyle(const TextPaintStyle&, const RenderText&, const RenderStyle&, const PaintInfo&, Style::TextShadows& selectionShadow);
+TextPaintStyle computeTextPaintStyle(const RenderText&, const Style::ComputedStyle&, const PaintInfo&);
+TextPaintStyle computeTextSelectionPaintStyle(const TextPaintStyle&, const RenderText&, const Style::ComputedStyle&, const PaintInfo&, Style::TextShadows& selectionShadow);
 
-enum FillColorType { UseNormalFillColor, UseEmphasisMarkColor };
-void updateGraphicsContext(GraphicsContext&, const TextPaintStyle&, FillColorType = UseNormalFillColor);
+enum class FillColorType : bool { Normal, EmphasisMark };
+void updateGraphicsContext(GraphicsContext&, const TextPaintStyle&, FillColorType = FillColorType::Normal);
 
 } // namespace WebCore

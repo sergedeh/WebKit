@@ -71,15 +71,15 @@ public:
 
     bool isNull() const { return m_identifier.isNull(); }
 
-    const String& partition() const { return m_partition; }
-    const String& identifier() const { return m_identifier; }
-    const String& type() const { return m_type; }
-    const String& range() const { return m_range; }
+    const String& partition() const LIFETIME_BOUND { return m_partition; }
+    const String& identifier() const LIFETIME_BOUND { return m_identifier; }
+    const String& type() const LIFETIME_BOUND { return m_type; }
+    const String& range() const LIFETIME_BOUND { return m_range; }
 
-    const HashType& hash() const { return m_hash; }
-    const HashType& partitionHash() const { return m_partitionHash; }
+    const HashType& hash() const LIFETIME_BOUND { return m_hash; }
+    const HashType& partitionHash() const LIFETIME_BOUND { return m_partitionHash; }
 
-    static bool stringToHash(const String&, HashType&);
+    static bool NODELETE stringToHash(const String&, HashType&);
 
     static size_t hashStringLength() { return 2 * sizeof(m_hash); }
     String hashAsString() const { return hashAsString(m_hash); }

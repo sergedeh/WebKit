@@ -32,11 +32,6 @@ enum class GLESEnum
 {{
     {gles_enum_groups}
 }};
-
-enum class BigGLEnum
-{{
-    {gl_enum_groups}
-}};
 }}  // namespace gl
 
 # endif  // COMMON_GL_ENUM_UTILS_AUTOGEN_H_
@@ -56,9 +51,12 @@ template_gl_enums_source = """// GENERATED FILE - DO NOT EDIT.
 
 #include "common/debug.h"
 #include "common/gl_enum_utils.h"
+#include "common/unsafe_buffers.h"
 
 #include <algorithm>
-#include <cstring>
+#include <array>
+#include <iterator>
+#include <string_view>
 
 namespace gl
 {{
@@ -67,9 +65,9 @@ namespace
 const char *UnknownEnumToString(unsigned int value)
 {{
     constexpr size_t kBufferSize = 64;
-    static thread_local char sBuffer[kBufferSize];
-    snprintf(sBuffer, kBufferSize, "0x%04X", value);
-    return sBuffer;
+    static thread_local std::array<char,kBufferSize> sBuffer;
+    ANGLE_UNSAFE_TODO(snprintf(sBuffer.data(), kBufferSize, "0x%04X", value));
+    return sBuffer.data();
 }}
 }}  // anonymous namespace
 
@@ -83,38 +81,33 @@ const char *GLenumToString(GLESEnum enumGroup, unsigned int value)
     }}
 }}
 
-const char *GLenumToString(BigGLEnum enumGroup, unsigned int value)
-{{
-    switch (enumGroup)
-    {{
-        {gl_enums_value_to_string_table}
-        default:
-            return UnknownEnumToString(value);
-    }}
-}}
-
 namespace
 {{
-using StringEnumEntry = std::pair<const char*, unsigned int>;
-static StringEnumEntry g_stringEnumTable[] = {{
-    {string_to_enum_table}
+struct StringEnumEntry
+{{
+    std::string_view name;
+    unsigned int enumValue;
 }};
 
-const size_t g_numStringEnums = std::size(g_stringEnumTable);
+constexpr std::array<StringEnumEntry, {string_to_enum_table_size}> g_stringEnumTable = {{{{
+    {string_to_enum_table}
+}}}};
 }}  // anonymous namespace
 
 unsigned int StringToGLenum(const char *str)
 {{
+    std::string_view strView(str);
     auto it = std::lower_bound(
-        &g_stringEnumTable[0], &g_stringEnumTable[g_numStringEnums], str,
-        [](const StringEnumEntry& a, const char* b) {{ return strcmp(a.first, b) < 0; }});
+        g_stringEnumTable.begin(), g_stringEnumTable.end(), strView,
+        [](const StringEnumEntry &entry, std::string_view target) {{
+            return entry.name < target;
+        }});
 
-    if (strcmp(it->first, str) == 0)
+    if (it != g_stringEnumTable.end() && it->name == strView)
     {{
-        return it->second;
+        return it->enumValue;
     }}
 
-    UNREACHABLE();
     return 0;
 }}
 }}  // namespace gl
@@ -183,7 +176,7 @@ def dump_string_to_value_mapping(enums_and_values):
 
     def f(value):
         if value < 0:
-            return str(value)
+            return "static_cast<unsigned int>(%s)" % value
         if value < 0xFFFF:
             return "0x%04X" % value
         if value <= 0xFFFFFFFF:
@@ -199,16 +192,12 @@ def main(header_output_path, source_output_path):
 
     # Compute a list of all GLES enums.
     gles_enums = set()
-    bigl_enums = set()
     for feature in xml.root.findall('feature'):
         for require in feature.findall('require'):
             assert 'api' not in require.attrib
             if 'gles' in feature.attrib['api']:
                 for enum in require.findall('enum'):
                     gles_enums.add(enum.attrib['name'])
-            if feature.attrib['api'] == 'gl':
-                for enum in require.findall('enum'):
-                    bigl_enums.add(enum.attrib['name'])
 
     for extensions in xml.root.findall('extensions'):
         for extension in extensions.findall('extension'):
@@ -219,19 +208,12 @@ def main(header_output_path, source_output_path):
                             'gles' in extension.attrib['supported']):
                         for enum in require.findall('enum'):
                             gles_enums.add(enum.attrib['name'])
-                    if ('api' not in require.attrib or
-                            feature.attrib['api'] == 'gl') and ('gl' in ext_apis):
-                        for enum in require.findall('enum'):
-                            bigl_enums.add(enum.attrib['name'])
 
     # Build a map from GLenum name to its value
-    gl_enum_groups = dict()
     gles_enum_groups = dict()
 
     # Add all enums to default groups
-    gl_default_enums = dict()
     gles_default_enums = dict()
-    gl_enum_groups[registry_xml.default_enum_group_name] = gl_default_enums
     gles_enum_groups[registry_xml.default_enum_group_name] = gles_default_enums
     enums_and_values = []
 
@@ -243,8 +225,6 @@ def main(header_output_path, source_output_path):
 
             if enum_name in gles_enums:
                 gles_default_enums[enum_name] = enum_value
-            if enum_name in bigl_enums:
-                gl_default_enums[enum_name] = enum_value
 
             if 'group' in enum.attrib:
                 for enum_group in enum.attrib['group'].split(','):
@@ -254,24 +234,17 @@ def main(header_output_path, source_output_path):
                         if enum_group not in gles_enum_groups:
                             gles_enum_groups[enum_group] = dict()
                         gles_enum_groups[enum_group][enum_name] = enum_value
-                    if enum_name in bigl_enums:
-                        if enum_group not in gl_enum_groups:
-                            gl_enum_groups[enum_group] = dict()
-                        gl_enum_groups[enum_group][enum_name] = enum_value
 
     for empty_group in empty_enum_groups:
-        assert not empty_group in gles_enum_groups or not empty_group in gl_enum_groups, 'Remove %s from the empty groups list, it has enums now.' % empty_group
+        assert empty_group not in gles_enum_groups, 'Remove %s from the empty groups list, it has enums now.' % empty_group
         if empty_group not in gles_enum_groups:
             gles_enum_groups[empty_group] = dict()
-        if empty_group not in gl_enum_groups:
-            gl_enum_groups[empty_group] = dict()
 
     # Write GLenum groups into the header file.
     header_content = template_gl_enums_header.format(
         script_name=os.path.basename(sys.argv[0]),
         data_source_name="gl.xml and gl_angle_ext.xml",
-        gles_enum_groups=',\n'.join(sorted(gles_enum_groups.keys())),
-        gl_enum_groups=',\n'.join(sorted(gl_enum_groups.keys())))
+        gles_enum_groups=',\n'.join(sorted(gles_enum_groups.keys())))
 
     header_output_path = registry_xml.script_relative(header_output_path)
     with open(header_output_path, 'w') as f:
@@ -279,14 +252,13 @@ def main(header_output_path, source_output_path):
 
     # Write mapping to source file
     gles_enums_value_to_string_table = dump_value_to_string_mapping(gles_enum_groups, 'GLESEnum')
-    gl_enums_value_to_string_table = dump_value_to_string_mapping(gl_enum_groups, 'BigGLEnum')
     string_to_enum_table = dump_string_to_value_mapping(enums_and_values)
     source_content = template_gl_enums_source.format(
         script_name=os.path.basename(sys.argv[0]),
         data_source_name="gl.xml and gl_angle_ext.xml",
         gles_enums_value_to_string_table=gles_enums_value_to_string_table,
-        gl_enums_value_to_string_table=gl_enums_value_to_string_table,
         string_to_enum_table=string_to_enum_table,
+        string_to_enum_table_size=len(enums_and_values),
     )
 
     source_output_path = registry_xml.script_relative(source_output_path)

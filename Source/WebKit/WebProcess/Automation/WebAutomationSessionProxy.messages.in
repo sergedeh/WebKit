@@ -26,16 +26,18 @@
 ]
 messages -> WebAutomationSessionProxy {
     EvaluateJavaScriptFunction(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String function, Vector<String> arguments, bool expectsImplicitCallbackArgument, bool forceUserGesture, std::optional<double> callbackTimeout) -> (String result, String errorType)
+    EvaluateBidiScript(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String expression, bool awaitPromise, int maxObjectDepth, std::optional<double> callbackTimeout) -> (String result, String errorType)
 
     ResolveChildFrameWithOrdinal(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, uint32_t ordinal) -> (std::optional<String> errorType, std::optional<WebCore::FrameIdentifier> frameID)
     ResolveChildFrameWithNodeHandle(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle) -> (std::optional<String> errorType, std::optional<WebCore::FrameIdentifier> frameID)
     ResolveChildFrameWithName(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String name) -> (std::optional<String> errorType, std::optional<WebCore::FrameIdentifier> frameID)
     ResolveParentFrame(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID) -> (std::optional<String> errorType, std::optional<WebCore::FrameIdentifier> frameID)
-    FocusFrame(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID) -> (Expected<void, String> errorType)
+    FocusFrame(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID) -> (std::expected<void, String> errorType)
     ComputeElementLayout(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle, bool scrollIntoViewIfNeeded, enum:uint8_t WebKit::CoordinateSystem coordinateSystem) -> (std::optional<String> errorType, WebCore::FloatRect rect, std::optional<WebCore::IntPoint> inViewCenterPoint, bool isObscured)
 
     GetComputedRole(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle) -> (std::optional<String> role, std::optional<String> errorType)
     GetComputedLabel(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle) -> (std::optional<String> role, std::optional<String> errorType)
+    ConsumeUserActivation(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID) -> (std::optional<String> errorType, bool consume)
 
     SelectOptionElement(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle) -> (std::optional<String> errorType)
 
@@ -47,4 +49,8 @@ messages -> WebAutomationSessionProxy {
 
     GetCookiesForFrame(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID) -> (std::optional<String> errorType, Vector<WebCore::Cookie> cookies)
     DeleteCookie(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String cookieName) -> (std::optional<String> errorType)
+
+#if ENABLE(WEBDRIVER_BIDI)
+    EnsureRealmForInitialEmptyDocument(WebCore::PageIdentifier pageID)
+#endif
 }

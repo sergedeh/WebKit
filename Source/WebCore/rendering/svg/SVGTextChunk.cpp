@@ -1,6 +1,6 @@
 /*
  * Copyright (C) Research In Motion Limited 2010. All rights reserved.
- * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2017 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -23,10 +23,10 @@
 #include "SVGTextChunk.h"
 
 #include "RenderSVGInlineText.h"
-#include "RenderStyle+GettersInlines.h"
 #include "SVGInlineTextBoxInlines.h"
 #include "SVGTextContentElement.h"
 #include "SVGTextFragment.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <ranges>
 
 namespace WebCore {
@@ -37,26 +37,27 @@ SVGTextChunk::SVGTextChunk(const Vector<InlineIterator::SVGTextBoxIterator>& lin
     ASSERT(limit <= lineLayoutBoxes.size());
 
     auto firstBox = lineLayoutBoxes[first];
-    auto& style = firstBox->renderer().style();
+    CheckedRef style = firstBox->renderer().style();
 
-    if (style.writingMode().isBidiRTL())
-        m_chunkStyle |= SVGTextChunk::RightToLeftText;
+    if (style->writingMode().isBidiRTL())
+        m_chunkStyle.add(ChunkStyle::RightToLeftText);
 
-    if (style.writingMode().isVertical())
-        m_chunkStyle |= SVGTextChunk::VerticalText;
+    if (style->writingMode().isVertical())
+        m_chunkStyle.add(ChunkStyle::VerticalText);
     
-    switch (style.textAnchor()) {
+    switch (style->textAnchor()) {
     case TextAnchor::Start:
         break;
     case TextAnchor::Middle:
-        m_chunkStyle |= MiddleAnchor;
+        m_chunkStyle.add(ChunkStyle::MiddleAnchor);
         break;
     case TextAnchor::End:
-        m_chunkStyle |= EndAnchor;
+        m_chunkStyle.add(ChunkStyle::EndAnchor);
         break;
     }
 
     if (RefPtr textContentElement = SVGTextContentElement::elementFromRenderer(firstBox->renderer().parent())) {
+        m_textContentElement = textContentElement.get();
         SVGLengthContext lengthContext(textContentElement.get());
         m_desiredTextLength = textContentElement->specifiedTextLength().value(lengthContext);
 
@@ -64,10 +65,10 @@ SVGTextChunk::SVGTextChunk(const Vector<InlineIterator::SVGTextBoxIterator>& lin
         case SVGLengthAdjustUnknown:
             break;
         case SVGLengthAdjustSpacing:
-            m_chunkStyle |= LengthAdjustSpacing;
+            m_chunkStyle.add(ChunkStyle::LengthAdjustSpacing);
             break;
         case SVGLengthAdjustSpacingAndGlyphs:
-            m_chunkStyle |= LengthAdjustSpacingAndGlyphs;
+            m_chunkStyle.add(ChunkStyle::LengthAdjustSpacingAndGlyphs);
             break;
         }
     }
@@ -113,7 +114,7 @@ float SVGTextChunk::totalLength() const
     if (!firstFragment)
         return 0;
 
-    if (m_chunkStyle & VerticalText)
+    if (isVerticalText())
         return (lastFragment->y + lastFragment->height) - firstFragment->y;
 
     return (lastFragment->x + lastFragment->width) - firstFragment->x;
@@ -122,16 +123,15 @@ float SVGTextChunk::totalLength() const
 float SVGTextChunk::totalAnchorShift() const
 {
     float length = totalLength();
-    if (m_chunkStyle & MiddleAnchor)
+    if (m_chunkStyle.contains(ChunkStyle::MiddleAnchor))
         return -length / 2;
-    if (m_chunkStyle & EndAnchor)
-        return m_chunkStyle & RightToLeftText ? 0 : -length;
-    return m_chunkStyle & RightToLeftText ? -length : 0;
+    return (m_chunkStyle.contains(ChunkStyle::EndAnchor) == m_chunkStyle.contains(ChunkStyle::RightToLeftText)) ? 0 : -length;
 }
 
 void SVGTextChunk::layout(SVGChunkTransformMap& textBoxTransformations) const
 {
-    if (hasDesiredTextLength()) {
+    // ElementGroup mode: textLength was already applied by SVGTextChunkBuilder. webkit.org/b/61855.
+    if (hasDesiredTextLength() && m_textLengthLayoutMode == TextLengthLayoutMode::SingleChunk) {
         if (hasLengthAdjustSpacing())
             processTextLengthSpacingCorrection();
         else {
@@ -150,7 +150,7 @@ void SVGTextChunk::processTextLengthSpacingCorrection() const
     if (totalCharacters() > 1)
         textLengthShift = (desiredTextLength() - totalLength()) / (totalCharacters() - 1);
 
-    bool isVerticalText = m_chunkStyle & VerticalText;
+    bool isVerticalText = this->isVerticalText();
     unsigned atCharacter = 0;
 
     for (auto& box : m_boxes) {
@@ -191,7 +191,7 @@ bool SVGTextChunk::boxSpacingAndGlyphsTransform(const Vector<SVGTextFragment>& f
 
     spacingAndGlyphsTransform.translate(fragment.x, fragment.y);
 
-    if (m_chunkStyle & VerticalText)
+    if (isVerticalText())
         spacingAndGlyphsTransform.scaleNonUniform(1, scale);
     else
         spacingAndGlyphsTransform.scaleNonUniform(scale, 1);
@@ -203,7 +203,7 @@ bool SVGTextChunk::boxSpacingAndGlyphsTransform(const Vector<SVGTextFragment>& f
 void SVGTextChunk::processTextAnchorCorrection() const
 {
     float textAnchorShift = totalAnchorShift();
-    bool isVerticalText = m_chunkStyle & VerticalText;
+    bool isVerticalText = this->isVerticalText();
 
     for (auto& box : m_boxes) {
         for (auto& fragment : box.fragments) {

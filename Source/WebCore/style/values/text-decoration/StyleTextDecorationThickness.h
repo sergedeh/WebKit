@@ -26,66 +26,27 @@
 
 #pragma once
 
-#include <WebCore/StyleLengthWrapper.h>
+#include <WebCore/StylePrimitiveNumericOrKeyword.h>
 
 namespace WebCore {
-
-class FontMetrics;
-
 namespace Style {
-
-struct TextDecorationThicknessLength : LengthWrapperBase<LengthPercentage<CSS::AllUnzoomed>> {
-    using Base::Base;
-};
 
 // <'text-decoration-thickness'> = auto | from-font | <length-percentage>
 // https://drafts.csswg.org/css-text-decor-4/#propdef-text-decoration-thickness
-struct TextDecorationThickness {
-    TextDecorationThickness(CSS::Keyword::Auto keyword)
-        : m_value { keyword }
-    {
-    }
+struct TextDecorationThickness : PrimitiveNumericOrKeyword<LengthPercentage<>, CSS::Keyword::Auto, CSS::Keyword::FromFont> {
+    using Base::Base;
 
-    TextDecorationThickness(CSS::Keyword::FromFont keyword)
-        : m_value { keyword }
-    {
-    }
+    ALWAYS_INLINE bool isAuto() const { return holdsAlternative<CSS::Keyword::Auto>(); }
+    ALWAYS_INLINE bool isFromFont() const { return holdsAlternative<CSS::Keyword::FromFont>(); }
 
-    TextDecorationThickness(TextDecorationThicknessLength&& length)
-        : m_value { WTF::move(length) }
-    {
-    }
-
-    bool isAuto() const { return WTF::holdsAlternative<CSS::Keyword::Auto>(m_value); }
-    bool isFromFont() const { return WTF::holdsAlternative<CSS::Keyword::FromFont>(m_value); }
-    bool isLength() const { return WTF::holdsAlternative<TextDecorationThicknessLength>(m_value); }
-
-    float resolve(const RenderStyle&) const;
-
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
-    {
-        return WTF::switchOn(m_value, std::forward<F>(f)...);
-    }
-
-    bool operator==(const TextDecorationThickness&) const = default;
-
-private:
-    Variant<CSS::Keyword::Auto, CSS::Keyword::FromFont, TextDecorationThicknessLength> m_value;
+    float resolve(const Style::ComputedStyle&) const;
 };
 
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<TextDecorationThickness> { auto operator()(BuilderState&, const CSSValue&) -> TextDecorationThickness; };
 
-// MARK: - Blending
-
-template<> struct Blending<TextDecorationThickness> {
-    auto canBlend(const TextDecorationThickness&, const TextDecorationThickness&, const RenderStyle&, const RenderStyle&) -> bool;
-    auto blend(const TextDecorationThickness&, const TextDecorationThickness&, const RenderStyle&, const RenderStyle&, const BlendingContext&) -> TextDecorationThickness;
-};
-
 } // namespace Style
 } // namespace WebCore
 
-DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::TextDecorationThicknessLength)
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::TextDecorationThickness)

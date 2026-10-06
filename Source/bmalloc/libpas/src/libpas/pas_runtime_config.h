@@ -29,7 +29,6 @@
 #include "pas_config.h"
 #include "pas_platform.h"
 #if defined(PAS_BMALLOC)
-#include "BPlatform.h"
 // FIXME: Find a way to declare bmalloc's symbol visibility without having to
 // import a bmalloc header.
 #include "BExport.h"
@@ -64,8 +63,14 @@ extern Slot g_config[];
 #define PAS_RUNTIME_CONFIG_RESERVED_SLOTS 2
 #define PAS_RUNTIME_CONFIG_RESERVED_BYTES (PAS_RUNTIME_CONFIG_RESERVED_SLOTS * sizeof(Slot))
 
+typedef enum {
+    pas_mte_state_undetermined = 0,
+    pas_mte_state_disabled = 1,
+    pas_mte_state_enabled = 2
+} pas_mte_state;
+
 typedef struct {
-    uint8_t enabled;
+    uint8_t mte_state; /* One of pas_mte_state. */
 
     struct {
         uint8_t retag_on_scavenge : 1;
@@ -75,10 +80,9 @@ typedef struct {
         uint8_t zero_tag_all : 1;
         uint8_t adjacent_tag_exclusion : 1;
         uint8_t assert_adjacent_tags_are_disjoint : 1;
+        uint8_t check_tag_on_dealloc : 1;
     } mode_bits;
 
-    uint8_t tagging_rate;
-    bool medium_tagging_enabled;
     bool is_lockdown_mode;
     bool is_hardened;
 } pas_runtime_config;

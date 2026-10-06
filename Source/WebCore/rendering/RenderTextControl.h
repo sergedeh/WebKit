@@ -36,8 +36,7 @@ class RenderTextControl : public RenderBlockFlow {
 public:
     virtual ~RenderTextControl();
 
-    WEBCORE_EXPORT HTMLTextFormControlElement& textFormControlElement() const;
-    WEBCORE_EXPORT Ref<HTMLTextFormControlElement> protectedTextFormControlElement() const;
+    WEBCORE_EXPORT HTMLTextFormControlElement& NODELETE textFormControlElement() const;
 
 #if PLATFORM(IOS_FAMILY)
     bool canScroll() const;
@@ -45,14 +44,14 @@ public:
 #endif
 
 protected:
-    RenderTextControl(Type, HTMLTextFormControlElement&, RenderStyle&&);
+    RenderTextControl(Type, HTMLTextFormControlElement&, Style::ComputedStyle&&);
 
     // This convenience function should not be made public because innerTextElement may outlive the render tree.
     RefPtr<TextControlInnerTextElement> innerTextElement() const;
 
     int scrollbarThickness() const;
 
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
     void hitInnerTextElement(HitTestResult&, const LayoutPoint& pointInContainer, const LayoutPoint& accumulatedOffset);
 
@@ -69,8 +68,8 @@ private:
     void element() const = delete;
 
     ASCIILiteral renderName() const override { return "RenderTextControl"_s; }
-    void computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const override;
-    void computePreferredLogicalWidths() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
+    void computeIntrinsicLogicalWidthContributions() override;
     bool canHaveGeneratedChildren() const override { return false; }
     bool canBeProgramaticallyScrolled() const override { return true; }
 };
@@ -83,7 +82,7 @@ class RenderTextControlInnerContainer final : public RenderFlexibleBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderTextControlInnerContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTextControlInnerContainer);
 public:
-    RenderTextControlInnerContainer(Element&, RenderStyle&&);
+    RenderTextControlInnerContainer(Element&, Style::ComputedStyle&&);
     virtual ~RenderTextControlInnerContainer();
 
     std::optional<LayoutUnit> firstLineBaseline() const override { return RenderBlock::firstLineBaseline(); }

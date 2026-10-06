@@ -37,14 +37,13 @@ struct SerializationContext;
 
 namespace Style {
 
+class ResolvedColors;
+
 struct CurrentColor {
     constexpr bool operator==(const CurrentColor&) const = default;
 };
 
-inline WebCore::Color resolveColor(const CurrentColor&, const WebCore::Color& currentColor)
-{
-    return currentColor;
-}
+WebCore::Color resolveColor(const CurrentColor&, const ResolvedColors&);
 
 constexpr bool containsCurrentColor(const CurrentColor&)
 {
@@ -52,7 +51,7 @@ constexpr bool containsCurrentColor(const CurrentColor&)
 }
 
 void serializationForCSSTokenization(StringBuilder&, const CSS::SerializationContext&, const CurrentColor&);
-String serializationForCSSTokenization(const CSS::SerializationContext&, const CurrentColor&);
+WTF::String serializationForCSSTokenization(const CSS::SerializationContext&, const CurrentColor&);
 
 WTF::TextStream& operator<<(WTF::TextStream&, const CurrentColor&);
 

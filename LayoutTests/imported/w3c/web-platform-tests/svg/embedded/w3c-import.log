@@ -10,12 +10,10 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/WEB_FEATURES.yml
-/LayoutTests/imported/w3c/web-platform-tests/svg/embedded/attr-image-fetchpriority.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/embedded/attr-image-fetchpriority.optional.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-crossorigin.sub.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-embedding-nested-data-url-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-embedding-nested-data-url-from-canvas-expected.html
@@ -50,6 +48,9 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-embedding-svg-with-viewport-units.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-fractional-width-vertical-fidelity-expected.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-fractional-width-vertical-fidelity.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-large-bitmap-expected.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-large-bitmap-ref.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-large-bitmap.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-modify-href-1-expected.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-modify-href-1.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-modify-href-2-expected.svg
@@ -64,3 +65,4 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-remove-href-2.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-remove-href-3-expected.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/embedded/image-remove-href-3.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/embedded/svg-zero-size-crash.html

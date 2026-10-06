@@ -28,15 +28,20 @@
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
 
 #include "MessageReceiver.h"
-#include "MessageSender.h"
 #include "RemoteAudioSessionConfiguration.h"
-#include "WebProcessProxy.h"
 #include <WebCore/AudioHardwareListener.h>
 #include <WebCore/AudioSession.h>
 #include <WebCore/MediaSessionIdentifier.h>
 #include <WebCore/PageIdentifier.h>
-#include <wtf/RefCounted.h>
+#include <WebCore/ProcessQualified.h>
+#include <wtf/HashMap.h>
+#include <wtf/NativePromise.h>
+#include <wtf/Ref.h>
+#include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
 
 #if PLATFORM(IOS_FAMILY)
 #include <WebCore/MediaSessionManagerIOS.h>
@@ -57,23 +62,31 @@ namespace WebKit {
 
 class RemoteMediaSessionManagerAudioHardwareListener;
 class RemoteMediaSessionProxy;
+class WebPageProxy;
 class WebProcessProxy;
 struct RemoteMediaSessionState;
+struct SharedPreferencesForWebProcess;
 
 class RemoteMediaSessionManagerProxy
     : public WebCore::REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS
 #if USE(AUDIO_SESSION)
     , public WebCore::AudioSession
 #endif
-    , public IPC::MessageReceiver
-    , public IPC::MessageSender {
+    , public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteMediaSessionManagerProxy);
 public:
     USING_CAN_MAKE_WEAKPTR(MessageReceiver);
 
-    static RefPtr<RemoteMediaSessionManagerProxy> create(WebCore::PageIdentifier, WebProcessProxy&);
+    static Ref<RemoteMediaSessionManagerProxy> singleton();
+    static RefPtr<RemoteMediaSessionManagerProxy> singletonIfCreated();
+
+#if ENABLE(GPU_PROCESS)
+    std::optional<WebCore::QualifiedMediaSessionIdentifier> computeNowPlayingFallbackSession() const;
+#endif
 
     virtual ~RemoteMediaSessionManagerProxy();
+
+    void webProcessWillShutDown(WebCore::ProcessIdentifier);
 
     // IPC::MessageReceiver, WebCore::AudioSession.
     void ref() const final { WebCore::REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::ref(); }
@@ -85,27 +98,32 @@ public:
     uint32_t weakRefCount() const final { return REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::weakRefCount(); }
 #endif
 
-    const Ref<WebProcessProxy> process() const { return m_process; }
-
-    void addRemoteMediaSessionManager(WebCore::PageIdentifier);
-    void removeRemoteMediaSessionManager(WebCore::PageIdentifier);
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
 private:
-    RemoteMediaSessionManagerProxy(WebCore::PageIdentifier, WebProcessProxy&);
+    RemoteMediaSessionManagerProxy();
 
     // Messages
-    void addMediaSession(RemoteMediaSessionState&&);
-    void removeMediaSession(RemoteMediaSessionState&&);
-    void setCurrentMediaSession(RemoteMediaSessionState&&);
-    void updateMediaSessionState();
-    void mediaSessionStateChanged(WebKit::RemoteMediaSessionState&&);
-    void mediaSessionWillBeginPlayback(RemoteMediaSessionState&&, CompletionHandler<void(bool)>&&);
+    void addMediaSession(IPC::Connection&, RemoteMediaSessionState&&);
+    void removeMediaSession(IPC::Connection&, RemoteMediaSessionState&&);
+    void setCurrentMediaSession(IPC::Connection&, RemoteMediaSessionState&&);
+    void updateMediaSessionStates(IPC::Connection&, WebCore::PageIdentifier, Vector<RemoteMediaSessionState>&&, uint64_t audioCaptureSourceCount);
+    void mediaSessionStateChanged(IPC::Connection&, WebKit::RemoteMediaSessionState&&);
+    void mediaSessionWillBeginPlayback(IPC::Connection&, RemoteMediaSessionState&&);
+
+    // The audio session category is computed by each content process for its own sessions; the GPU
+    // process reconciles them. Nothing is computed here.
+    void updateSessionState() final { }
 
     void setCurrentSession(WebCore::PlatformMediaSessionInterface&) final;
+
+    void updateNowPlayingFallbackSession();
 
     void addMediaSessionRestriction(WebCore::PlatformMediaSessionMediaType, WebCore::MediaSessionRestrictions);
     void removeMediaSessionRestriction(WebCore::PlatformMediaSessionMediaType, WebCore::MediaSessionRestrictions);
     void resetMediaSessionRestrictions();
+
+    int countActiveAudioCaptureSources() final;
 
 #if PLATFORM(COCOA)
     void remoteAudioHardwareDidBecomeActive();
@@ -117,11 +135,6 @@ private:
     void remoteAudioConfigurationChanged(RemoteAudioSessionConfiguration&&);
 
     // AudioSession
-    void setCategory(CategoryType, Mode, WebCore::RouteSharingPolicy) final;
-    CategoryType category() const final { return m_category; }
-    Mode mode() const final { return m_mode; }
-
-    WebCore::RouteSharingPolicy routeSharingPolicy() const final { return m_routeSharingPolicy; }
     String routingContextUID() const final { return m_audioConfiguration.routingContextUID; }
 
     float sampleRate() const final { return m_audioConfiguration.sampleRate; }
@@ -130,47 +143,38 @@ private:
     size_t maximumNumberOfOutputChannels() const final { return m_audioConfiguration.maximumNumberOfOutputChannels; }
     size_t outputLatency() const final { return m_audioConfiguration.outputLatency; }
 
-    bool tryToSetActiveInternal(bool) final;
+    Ref<SetActivePromise> tryToSetActiveInternal(bool) final;
 
     size_t preferredBufferSize() const final { return m_audioConfiguration.preferredBufferSize; }
     void setPreferredBufferSize(size_t) final;
 
-    CategoryType categoryOverride() const final  { return m_audioConfiguration.categoryOverride; }
 #endif
 
-    void forEachRemoteSessionManager(NOESCAPE const Function<void(WebCore::PageIdentifier)>&);
-    RefPtr<WebCore::PlatformMediaSessionInterface> findAndUpdateSession(RemoteMediaSessionState&);
+    RefPtr<WebCore::PlatformMediaSessionInterface> findAndUpdateSession(IPC::Connection&, const RemoteMediaSessionState&);
+    void refreshSessionStates(IPC::Connection&, const Vector<RemoteMediaSessionState>&);
     Ref<RemoteMediaSessionManagerAudioHardwareListener> ensureAudioHardwareListenerProxy(WebCore::AudioHardwareListener::Client&);
 
-    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
-
-    // IPC::MessageSender.
-    IPC::Connection* messageSenderConnection() const final;
-    uint64_t messageSenderDestinationID() const final;
-
-    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(IPC::Connection&) const;
 
 #if !RELEASE_LOG_DISABLED
     ASCIILiteral logClassName() const final;
 #endif
 
-    const Ref<WebProcessProxy> m_process;
-    WebCore::PageIdentifier m_localPageID;
-    HashMap<WebCore::MediaSessionIdentifier, Ref<RemoteMediaSessionProxy>> m_sessionProxies;
-    HashSet<WebCore::PageIdentifier> m_remoteSessionManagerPages;
+    HashMap<WebCore::QualifiedMediaSessionIdentifier, Ref<RemoteMediaSessionProxy>> m_sessionProxies;
+    HashMap<WebCore::ProcessQualified<WebCore::PageIdentifier>, uint64_t> m_audioCaptureSourceCountsByPage;
+#if ENABLE(GPU_PROCESS)
+    std::optional<WebCore::QualifiedMediaSessionIdentifier> m_nowPlayingFallbackSession;
+#endif
 
 #if PLATFORM(COCOA)
-    RefPtr<RemoteMediaSessionManagerAudioHardwareListener> m_audioHardwareListenerProxy;
+    ThreadSafeWeakPtr<RemoteMediaSessionManagerAudioHardwareListener> m_audioHardwareListenerProxy;
 #endif
 
 #if USE(AUDIO_SESSION)
-    CategoryType m_category { CategoryType::None };
-    Mode m_mode { Mode::Default };
-    WebCore::RouteSharingPolicy m_routeSharingPolicy { WebCore::RouteSharingPolicy::Default };
     mutable RemoteAudioSessionConfiguration m_audioConfiguration;
+
 #endif
 
-    bool m_isInterruptedForTesting { false };
     bool m_isInSetCurrentSession { false };
 };
 

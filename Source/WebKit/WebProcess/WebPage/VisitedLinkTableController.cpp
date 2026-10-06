@@ -36,7 +36,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-static HashMap<VisitedLinkTableIdentifier, WeakPtr<VisitedLinkTableController>>& visitedLinkTableControllers()
+static HashMap<VisitedLinkTableIdentifier, WeakPtr<VisitedLinkTableController>>& NODELETE visitedLinkTableControllers()
 {
     static NeverDestroyed<HashMap<VisitedLinkTableIdentifier, WeakPtr<VisitedLinkTableController>>> visitedLinkTableControllers;
     RELEASE_ASSERT(isMainRunLoop());
@@ -46,7 +46,7 @@ static HashMap<VisitedLinkTableIdentifier, WeakPtr<VisitedLinkTableController>>&
 Ref<VisitedLinkTableController> VisitedLinkTableController::getOrCreate(VisitedLinkTableIdentifier identifier)
 {
     auto& visitedLinkTableControllerPtr = visitedLinkTableControllers().add(identifier, nullptr).iterator->value;
-    if (RefPtr ptr = visitedLinkTableControllerPtr.get())
+    if (auto* ptr = visitedLinkTableControllerPtr.get())
         return *ptr;
 
     auto visitedLinkTableController = adoptRef(*new VisitedLinkTableController(identifier));
@@ -80,7 +80,7 @@ void VisitedLinkTableController::addVisitedLink(Page& page, SharedStringHash lin
     if (m_visitedLinkTable.contains(linkHash))
         return;
 
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::VisitedLinkStore::AddVisitedLinkHashFromPage(WebPage::fromCorePage(page)->webPageProxyIdentifier(), linkHash), m_identifier);
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::VisitedLinkStore::AddVisitedLinkHashFromPage(WebPage::fromCorePage(page)->webPageProxyIdentifier(), linkHash), m_identifier);
 }
 
 void VisitedLinkTableController::setVisitedLinkTable(SharedMemory::Handle&& handle)

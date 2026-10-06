@@ -24,7 +24,6 @@
 
 #pragma once
 
-#include "LocalFrameView.h"
 #include "ParserContentPolicy.h"
 #include "PendingScriptClient.h"
 #include "ScriptableDocumentParser.h"
@@ -49,11 +48,11 @@ class Text;
 
 class XMLParserContext : public RefCounted<XMLParserContext> {
 public:
-    static RefPtr<XMLParserContext> createMemoryParser(xmlSAXHandlerPtr, void* userData, const CString& chunk);
+    static RefPtr<XMLParserContext> createMemoryParser(xmlSAXHandlerPtr, void* userData, const UTF8CString& chunk);
     static Ref<XMLParserContext> createStringParser(xmlSAXHandlerPtr, void* userData);
     XMLParserContext() = delete;
     ~XMLParserContext();
-    xmlParserCtxtPtr context() const { return m_context; }
+    xmlParserCtxtPtr context() const LIFETIME_BOUND { return m_context; }
 
 private:
     XMLParserContext(xmlParserCtxtPtr context)
@@ -115,9 +114,12 @@ private:
 
     void notifyFinished(PendingScript&) final;
 
+    bool hasScriptsWaitingForStylesheets() const final;
+    void executeScriptsWaitingForStylesheets() final;
+
     void end();
 
-    void pauseParsing();
+    void NODELETE pauseParsing();
     void resumeParsing();
 
     bool appendFragmentSource(const String&);
@@ -138,9 +140,13 @@ public:
     void startDocument(const xmlChar* version, const xmlChar* encoding, int standalone);
     void internalSubset(const xmlChar* name, const xmlChar* externalID, const xmlChar* systemID);
     void endDocument();
+    xmlEntityPtr getEntity(const xmlChar* name);
+    void entityDecl(const xmlChar* name, int type, const xmlChar* publicId, const xmlChar* systemId, xmlChar* content);
 
 private:
-    void initializeParserContext(const CString& chunk = CString());
+    void initializeParserContext(const UTF8CString& chunk = UTF8CString());
+    void flushDeferredEntityDeclarations();
+    uint64_t computeTransitiveEntityReferenceCount(const AtomString& name, const HashMap<AtomString, String>& entityContents, HashSet<AtomString>& visiting);
 
     void pushCurrentNode(ContainerNode*);
     void popCurrentNode();
@@ -151,10 +157,8 @@ private:
     void createLeafTextNode();
     bool updateLeafTextNode();
 
-    void doWrite(const String&);
+    void doWrite(String&&);
     void doEnd();
-
-    RefPtr<Text> protectedLeafTextNode() const { return m_leafTextNode; }
 
     xmlParserCtxtPtr context() const { return m_context ? m_context->context() : nullptr; };
 
@@ -180,9 +184,23 @@ private:
     bool m_requestingScript { false };
     bool m_finishCalled { false };
 
-    std::unique_ptr<XMLErrors> m_xmlErrors;
+    const uint64_t m_maxEntityExpansionCount;
+
+    struct DeferredEntityDeclaration {
+        String name;
+        int type;
+        String publicId;
+        String systemId;
+        String content;
+    };
+    Vector<DeferredEntityDeclaration> m_deferredEntityDeclarations;
+    bool m_deferredEntityDeclarationsFlushed { false };
+    HashMap<AtomString, uint64_t> m_entityTransitiveReferenceCounts;
+
+    const std::unique_ptr<XMLErrors> m_xmlErrors;
 
     RefPtr<PendingScript> m_pendingScript;
+    RefPtr<PendingScript> m_scriptWaitingForStylesheets;
     TextPosition m_scriptStartPosition;
 
     bool m_parsingFragment { false };

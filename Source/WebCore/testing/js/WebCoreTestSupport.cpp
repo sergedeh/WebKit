@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011, 2015 Google Inc. All rights reserved.
- * Copyright (C) 2016-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,8 @@
 #include "config.h"
 #include "WebCoreTestSupport.h"
 
+#include "AXIsolatedTree.h"
+#include "AXTreeStore.h"
 #include "DeprecatedGlobalSettings.h"
 #include "DocumentFragment.h"
 #include "DocumentPage.h"
@@ -51,7 +53,9 @@
 #include <JavaScriptCore/CallFrame.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/JITOperationList.h>
+#include <JavaScriptCore/JSObjectRef.h>
 #include <JavaScriptCore/JSValueRef.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/URLParser.h>
 
 #if PLATFORM(COCOA)
@@ -74,7 +78,7 @@ void injectInternalsObject(JSContextRef context)
     VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSLockHolder lock(vm);
-    JSDOMGlobalObject* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
+    JSDOMGlobalObject* globalObject = downcast<JSDOMGlobalObject>(lexicalGlobalObject);
     if (RefPtr document = dynamicDowncast<Document>(*globalObject->scriptExecutionContext())) {
         globalObject->putDirect(vm, Identifier::fromString(vm, Internals::internalsId), toJS(lexicalGlobalObject, globalObject, Internals::create(*document)));
         Options::useDollarVM() = true;
@@ -87,11 +91,12 @@ void resetInternalsObject(JSContextRef context)
 {
     JSGlobalObject* lexicalGlobalObject = toJS(context);
     JSLockHolder lock(lexicalGlobalObject);
-    JSDOMGlobalObject* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
+    JSDOMGlobalObject* globalObject = downcast<JSDOMGlobalObject>(lexicalGlobalObject);
     Ref document = downcast<Document>(*globalObject->scriptExecutionContext());
-    RefPtr page = document->frame()->page();
+    RefPtr page = document->page();
+    RELEASE_ASSERT_WITH_MESSAGE(page, "Frame or Page is nullptr when Document is in a bad state");
     Internals::resetToConsistentState(*page);
-    InternalSettings::from(page.get())->resetToConsistentState();
+    protect(InternalSettings::from(page.get()))->resetToConsistentState();
 }
 
 void monitorWheelEvents(WebCore::LocalFrame& frame, bool clearLatchingState)
@@ -168,6 +173,35 @@ void setLinkedOnOrAfterEverythingForTesting()
 #endif
 }
 
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+void setAccessibilityIsolatedTreeEnabled(bool isEnabled)
+{
+    DeprecatedGlobalSettings::setIsAccessibilityIsolatedTreeEnabled(isEnabled);
+}
+
+bool isAccessibilityIsolatedTreeModeEnabled()
+{
+    return AXObjectCache::isIsolatedTreeEnabled();
+}
+
+static Function<void()>& accessibilityTestTeardownCallback()
+{
+    static NeverDestroyed<Function<void()>> callback;
+    return callback.get();
+}
+
+void setAccessibilityTestTeardownCallback(Function<void()>&& callback)
+{
+    accessibilityTestTeardownCallback() = WTF::move(callback);
+}
+
+void notifyAccessibilityTestTeardown()
+{
+    if (auto& callback = accessibilityTestTeardownCallback())
+        callback();
+}
+#endif
+
 void installMockGamepadProvider()
 {
 #if ENABLE(GAMEPAD)
@@ -234,7 +268,7 @@ void setupNewlyCreatedServiceWorker(uint64_t serviceWorkerIdentifier)
 {
     auto identifier = AtomicObjectIdentifier<ServiceWorkerIdentifierType>(serviceWorkerIdentifier);
     SWContextManager::singleton().postTaskToServiceWorker(identifier, [identifier] (ServiceWorkerGlobalScope& globalScope) {
-        auto* script = globalScope.script();
+        CheckedPtr script = globalScope.script();
         if (!script)
             return;
 

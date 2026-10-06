@@ -62,12 +62,12 @@ public:
         ASSERT(!!structure || (strength == WeakValue));
     }
     
-    static FrozenValue* emptySingleton();
+    static FrozenValue* NODELETE emptySingleton();
     
     bool operator!() const { return !m_value; }
     
     JSValue value() const { return m_value; }
-    JSCell* cell() const { return m_value.asCell(); }
+    JSCell* cell() const LIFETIME_BOUND { return m_value.asCell(); }
     
     template<typename T>
     T dynamicCast()
@@ -75,12 +75,12 @@ public:
         JSValue theValue = value();
         if (!theValue)
             return nullptr;
-        return jsDynamicCast<T>(theValue);
+        return dynamicDowncast<std::remove_pointer_t<T>>(theValue);
     }
     template<typename T>
     T cast()
     {
-        return jsCast<T>(value());
+        return uncheckedDowncast<std::remove_pointer_t<T>>(value());
     }
     
     Structure* structure() const { return m_structure; }

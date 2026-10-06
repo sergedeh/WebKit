@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2010, 2013, 2016, 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,32 +37,29 @@
 #include <wtf/text/TextStream.h>
 #include <wtf/text/WTFString.h>
 
-#if USE(CF)
-#include <CoreFoundation/CoreFoundation.h>
-#endif
-
 namespace WTF {
 
 static Lock languagesLock;
-static Vector<String>& cachedFullPlatformPreferredLanguages() WTF_REQUIRES_LOCK(languagesLock)
+static Vector<String>& NODELETE cachedFullPlatformPreferredLanguages() WTF_REQUIRES_LOCK(languagesLock)
 {
     static NeverDestroyed<Vector<String>> languages;
     return languages;
 }
-static Vector<String>& cachedMinimizedPlatformPreferredLanguages() WTF_REQUIRES_LOCK(languagesLock)
+static Vector<String>& NODELETE cachedMinimizedPlatformPreferredLanguages() WTF_REQUIRES_LOCK(languagesLock)
 {
     static NeverDestroyed<Vector<String>> languages;
     return languages;
 }
-static Vector<String>& preferredLanguagesOverride() WTF_REQUIRES_LOCK(languagesLock)
+static Vector<String>& NODELETE preferredLanguagesOverride() WTF_REQUIRES_LOCK(languagesLock)
 {
     static NeverDestroyed<Vector<String>> override;
     return override;
 }
 static std::optional<bool> cachedUserPrefersSimplifiedChinese WTF_GUARDED_BY_LOCK(languagesLock);
 
+static Lock observerMapLock;
 using ObserverMap = HashMap<void*, LanguageChangeObserverFunction>;
-static ObserverMap& observerMap()
+static ObserverMap& NODELETE observerMap() WTF_REQUIRES_LOCK(observerMapLock)
 {
     static NeverDestroyed<ObserverMap> map;
     return map.get();
@@ -69,11 +67,13 @@ static ObserverMap& observerMap()
 
 void addLanguageChangeObserver(void* context, LanguageChangeObserverFunction customObserver)
 {
+    Locker locker { observerMapLock };
     observerMap().set(context, customObserver);
 }
 
 void removeLanguageChangeObserver(void* context)
 {
+    Locker locker { observerMapLock };
     ASSERT(observerMap().contains(context));
     observerMap().remove(context);
 }
@@ -87,10 +87,9 @@ void languageDidChange()
         cachedUserPrefersSimplifiedChinese = std::nullopt;
     }
 
-    for (auto& observer : copyToVector(observerMap())) {
-        if (observerMap().contains(observer.key))
-            observer.value(observer.key);
-    }
+    Locker locker { observerMapLock };
+    for (auto& observer : copyToVector(observerMap()))
+        observer.value(observer.key);
 }
 
 String defaultLanguage(ShouldMinimizeLanguages shouldMinimizeLanguages)

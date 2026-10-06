@@ -41,7 +41,6 @@
 namespace WebCore {
 
 class DOMFileSystem;
-class DataTransferListItem;
 class File;
 class FileSystemEntry;
 class ScriptExecutionContext;
@@ -56,14 +55,14 @@ public:
 
     ~DataTransferItem();
 
-    RefPtr<File> file() { return m_file; }
-    void clearListAndPutIntoDisabledMode();
+    File* file() { return m_file; }
+    void NODELETE clearListAndPutIntoDisabledMode();
 
-    bool isFile() const;
+    bool NODELETE isFile() const;
     String kind() const;
-    String type() const;
+    String NODELETE type() const;
     void getAsString(Document&, RefPtr<StringCallback>&&) const;
-    RefPtr<File> getAsFile() const;
+    File* NODELETE getAsFile() const;
     RefPtr<FileSystemEntry> getAsEntry(ScriptExecutionContext&) const;
 
 private:
@@ -75,7 +74,7 @@ private:
     WeakPtr<DataTransferItemList> m_list;
     const String m_type;
     Kind m_kind { Kind::String };
-    RefPtr<File> m_file;
+    const RefPtr<File> m_file;
 };
 
 }

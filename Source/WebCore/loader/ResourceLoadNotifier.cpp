@@ -31,6 +31,7 @@
 #include "config.h"
 #include "ResourceLoadNotifier.h"
 
+#include "CachedResourceHandle.h"
 #include "DocumentLoader.h"
 #include "DocumentPage.h"
 #include "FrameInlines.h"
@@ -53,47 +54,42 @@ ResourceLoadNotifier::ResourceLoadNotifier(LocalFrame& frame)
 {
 }
 
-Ref<LocalFrame> ResourceLoadNotifier::protectedFrame() const
-{
-    return m_frame;
-}
-
 void ResourceLoadNotifier::didReceiveAuthenticationChallenge(ResourceLoaderIdentifier identifier, DocumentLoader* loader, const AuthenticationChallenge& currentWebChallenge)
 {
-    protectedFrame()->loader().client().dispatchDidReceiveAuthenticationChallenge(loader, identifier, currentWebChallenge);
+    m_frame->loader().client().dispatchDidReceiveAuthenticationChallenge(loader, identifier, currentWebChallenge);
 }
 
 void ResourceLoadNotifier::willSendRequest(ResourceLoader& loader, ResourceLoaderIdentifier identifier, ResourceRequest& clientRequest, const ResourceResponse& redirectResponse)
 {
-    protectedFrame()->loader().applyUserAgentIfNeeded(clientRequest);
+    m_frame->loader().applyUserAgentIfNeeded(clientRequest);
 
-    dispatchWillSendRequest(loader.protectedDocumentLoader().get(), identifier, clientRequest, redirectResponse, loader.protectedCachedResource().get(), &loader);
+    dispatchWillSendRequest(protect(loader.documentLoader()), identifier, clientRequest, redirectResponse, protect(loader.cachedResource()).get(), &loader);
 }
 
 void ResourceLoadNotifier::didReceiveResponse(ResourceLoader& loader, ResourceLoaderIdentifier identifier, const ResourceResponse& r)
 {
-    loader.documentLoader()->addResponse(r);
+    protect(loader.documentLoader())->addResponse(r);
 
     if (RefPtr page = m_frame->page())
-        page->checkedProgress()->incrementProgress(identifier, r);
+        protect(page->progress())->incrementProgress(identifier, r);
 
-    dispatchDidReceiveResponse(loader.protectedDocumentLoader().get(), identifier, r, &loader);
+    dispatchDidReceiveResponse(protect(loader.documentLoader()), identifier, r, &loader);
 }
 
 void ResourceLoadNotifier::didReceiveData(ResourceLoader& loader, ResourceLoaderIdentifier identifier, const SharedBuffer& buffer, int encodedDataLength)
 {
     if (RefPtr page = m_frame->page())
-        page->checkedProgress()->incrementProgress(identifier, buffer.size());
+        protect(page->progress())->incrementProgress(identifier, buffer.size());
 
-    dispatchDidReceiveData(loader.protectedDocumentLoader().get(), identifier, &buffer, buffer.size(), encodedDataLength);
+    dispatchDidReceiveData(protect(loader.documentLoader()), identifier, &buffer, buffer.size(), encodedDataLength);
 }
 
 void ResourceLoadNotifier::didFinishLoad(ResourceLoader& loader, ResourceLoaderIdentifier identifier, const NetworkLoadMetrics& networkLoadMetrics)
 {    
     if (RefPtr page = m_frame->page())
-        page->checkedProgress()->completeProgress(identifier);
+        protect(page->progress())->completeProgress(identifier);
 
-    dispatchDidFinishLoading(loader.protectedDocumentLoader().get(), identifier, networkLoadMetrics, &loader);
+    dispatchDidFinishLoading(protect(loader.documentLoader()), identifier, networkLoadMetrics, &loader);
 }
 
 void ResourceLoadNotifier::didFailToLoad(ResourceLoader& loader, ResourceLoaderIdentifier identifier, const ResourceError& error)
@@ -102,26 +98,26 @@ void ResourceLoadNotifier::didFailToLoad(ResourceLoader& loader, ResourceLoaderI
     if (!page) // This may be called during the frame's destruction after detaching from parent page.
         return;
 
-    page->checkedProgress()->completeProgress(identifier);
+    protect(page->progress())->completeProgress(identifier);
 
     // Notifying the LocalFrameLoaderClient may cause the frame to be destroyed.
     Ref frame = m_frame.get();
     if (!error.isNull())
-        frame->loader().client().dispatchDidFailLoading(loader.protectedDocumentLoader().get(), identifier, error);
+        frame->loader().client().dispatchDidFailLoading(protect(loader.documentLoader()), identifier, error);
 
-    InspectorInstrumentation::didFailLoading(frame.ptr(), loader.protectedDocumentLoader().get(), identifier, error);
+    InspectorInstrumentation::didFailLoading(frame.ptr(), protect(loader.documentLoader()), identifier, error);
 }
 
 void ResourceLoadNotifier::assignIdentifierToInitialRequest(ResourceLoaderIdentifier identifier, DocumentLoader* loader, const ResourceRequest& request)
 {
     bool pageIsProvisionallyLoading = false;
-    if (RefPtr frameLoader = loader ? loader->frameLoader() : nullptr)
+    if (auto* frameLoader = loader ? loader->frameLoader() : nullptr)
         pageIsProvisionallyLoading = frameLoader->provisionalDocumentLoader() == loader;
 
     if (pageIsProvisionallyLoading)
         m_initialRequestIdentifier = identifier;
 
-    protectedFrame()->loader().client().assignIdentifierToInitialRequest(identifier, loader, request);
+    m_frame->loader().client().assignIdentifierToInitialRequest(identifier, loader, request);
 }
 
 void ResourceLoadNotifier::dispatchWillSendRequest(DocumentLoader* loader, ResourceLoaderIdentifier identifier, ResourceRequest& request, const ResourceResponse& redirectResponse, const CachedResource* cachedResource, ResourceLoader* resourceLoader)
@@ -134,16 +130,16 @@ void ResourceLoadNotifier::dispatchWillSendRequest(DocumentLoader* loader, Resou
 
     String oldRequestURL = request.url().string();
 
-    Ref frame = m_frame.get();
+    Ref frame = m_frame;
     ASSERT(frame->loader().documentLoader());
-    if (RefPtr documentLoader = m_frame->loader().documentLoader())
+    if (RefPtr documentLoader = frame->loader().documentLoader())
         documentLoader->didTellClientAboutLoad(request.url().string());
 
     frame->loader().client().dispatchWillSendRequest(loader, identifier, request, redirectResponse);
 
     // If the URL changed, then we want to put that new URL in the "did tell client" set too.
     if (!request.isNull() && oldRequestURL != request.url().string()) {
-        if (RefPtr documentLoader = m_frame->loader().documentLoader())
+        if (RefPtr documentLoader = frame->loader().documentLoader())
             documentLoader->didTellClientAboutLoad(request.url().string());
     }
 

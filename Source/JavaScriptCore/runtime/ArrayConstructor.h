@@ -30,7 +30,7 @@ class ArrayPrototype;
 class JSArray;
 class GetterSetter;
 
-extern const ASCIILiteral ArrayInvalidLengthError;
+inline constexpr ASCIILiteral ArrayInvalidLengthError { "Array length must be a positive integer of safe magnitude."_s };
 
 class ArrayConstructor final : public InternalFunction {
 public:
@@ -56,6 +56,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ArrayConstructor, InternalFunction);
 
 JSArray* constructArrayWithSizeQuirk(JSGlobalObject*, ArrayAllocationProfile*, JSValue length, JSValue prototype = JSValue());
 
+JSC_DECLARE_HOST_FUNCTION(arrayConstructorIsArray);
 JSC_DECLARE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn);
 JSC_DECLARE_HOST_FUNCTION(arrayConstructorPrivateFuncIsArraySlow);
 bool isArraySlow(JSGlobalObject*, ProxyObject* argument);
@@ -67,13 +68,13 @@ inline bool isArray(JSGlobalObject* globalObject, JSValue argumentValue)
     if (!argumentValue.isObject())
         return false;
 
-    JSObject* argument = jsCast<JSObject*>(argumentValue);
+    JSObject* argument = uncheckedDowncast<JSObject>(argumentValue);
     if (argument->type() == ArrayType || argument->type() == DerivedArrayType)
         return true;
 
     if (argument->type() != ProxyObjectType)
         return false;
-    return isArraySlow(globalObject, jsCast<ProxyObject*>(argument));
+    return isArraySlow(globalObject, uncheckedDowncast<ProxyObject>(argument));
 }
 
 } // namespace JSC

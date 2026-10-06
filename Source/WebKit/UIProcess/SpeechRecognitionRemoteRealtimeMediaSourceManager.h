@@ -31,6 +31,7 @@
 #include "MessageSender.h"
 #include <WebCore/RealtimeMediaSourceIdentifier.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakRef.h>
 
 #if PLATFORM(COCOA)
@@ -62,7 +63,7 @@ public:
     void addSource(SpeechRecognitionRemoteRealtimeMediaSource&, const WebCore::CaptureDevice&);
     void removeSource(SpeechRecognitionRemoteRealtimeMediaSource&);
 
-    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+    std::optional<SharedPreferencesForWebProcess> NODELETE sharedPreferencesForWebProcess() const;
 
 private:
     // Messages::SpeechRecognitionRemoteRealtimeMediaSourceManager

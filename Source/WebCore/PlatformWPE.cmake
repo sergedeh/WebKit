@@ -1,20 +1,25 @@
 include(platform/Adwaita.cmake)
-
-if (USE_CAIRO)
-    include(platform/Cairo.cmake)
-    include(platform/FreeType.cmake)
-elseif (USE_SKIA)
-    include(platform/Skia.cmake)
-endif ()
-
-include(platform/GCrypt.cmake)
+include(platform/CoordinatedGraphics.cmake)
 include(platform/GStreamer.cmake)
 include(platform/ImageDecoders.cmake)
+include(platform/Skia.cmake)
 include(platform/Soup.cmake)
-include(platform/TextureMapper.cmake)
+
+if (USE_OPENSSL)
+    include(platform/OpenSSL.cmake)
+    list(APPEND WebCore_LIBRARIES OpenSSL::Crypto)
+    # The OpenSSL backend uses APIs deprecated in OpenSSL 3, see bug 245146.
+    list(APPEND WebCore_PRIVATE_DEFINITIONS OPENSSL_API_COMPAT=0x10100000L)
+else ()
+    include(platform/GCrypt.cmake)
+endif ()
 
 if (USE_EXTERNAL_HOLEPUNCH)
     include(platform/HolePunch.cmake)
+endif ()
+
+if (USE_TEXTURE_MAPPER)
+    include(platform/TextureMapper.cmake)
 endif ()
 
 list(APPEND WebCore_UNIFIED_SOURCE_LIST_FILES
@@ -56,8 +61,11 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/glib/SelectionData.h
     platform/glib/SystemSettings.h
 
+    platform/graphics/DMABufBuffer.h
+    platform/graphics/DMABufBufferAttributes.h
+
     platform/graphics/android/BufferFormatAndroid.h
-    platform/graphics/android/GraphicsContextGLTextureMapperAndroid.h
+    platform/graphics/android/GraphicsContextGLAndroid.h
     platform/graphics/android/PlatformDisplayAndroid.h
 
     platform/graphics/egl/PlatformDisplayDefault.h
@@ -67,13 +75,11 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/gbm/PlatformDisplayGBM.h
 
     platform/graphics/libwpe/PlatformDisplayLibWPE.h
+
+    platform/text/enchant/TextCheckerEnchant.h
 )
 
 set(WebCore_USER_AGENT_SCRIPTS_DEPENDENCIES ${WEBCORE_DIR}/platform/wpe/RenderThemeWPE.cpp)
-
-list(APPEND WebCore_PRIVATE_LIBRARIES
-    Tasn1::Tasn1
-)
 
 list(APPEND WebCore_LIBRARIES
     GLib::Module
@@ -93,10 +99,14 @@ if (USE_OPENXR)
     list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES ${OPENXR_INCLUDE_DIRS})
 endif ()
 
-if (USE_SKIA AND ENABLE_DRAG_SUPPORT)
+if (ENABLE_DRAG_SUPPORT)
     list(APPEND WebCore_SOURCES
         platform/skia/DragImageSkia.cpp
     )
+endif ()
+
+if (ENABLE_SPELLCHECK)
+    list(APPEND WebCore_LIBRARIES Enchant::Enchant)
 endif ()
 
 if (USE_ATSPI)
@@ -154,6 +164,20 @@ if (ENABLE_GAMEPAD)
 
     list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
         platform/gamepad/libwpe/GamepadProviderLibWPE.h
+    )
+endif ()
+
+if (USE_VULKAN)
+    list(APPEND WebCore_PRIVATE_LIBRARIES volk::volk)
+    list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
+        "${WEBCORE_DIR}/platform/graphics/vulkan"
+    )
+    list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+        platform/graphics/vulkan/VulkanHandle.h
+        platform/graphics/vulkan/VulkanStructure.h
+        platform/graphics/vulkan/VulkanTypes.h
+        platform/graphics/vulkan/VulkanUtilities.h
+        platform/graphics/vulkan/VulkanVolk.h
     )
 endif ()
 

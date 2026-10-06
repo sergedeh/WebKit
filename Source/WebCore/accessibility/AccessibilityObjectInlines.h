@@ -25,22 +25,22 @@
 
 #pragma once
 
-#include <WebCore/AXObjectCache.h>
-#include <WebCore/AXObjectRareData.h>
-#include <WebCore/AXTextMarker.h>
-#include <WebCore/AXUtilities.h>
-#include <WebCore/AccessibilityObject.h>
-#include <WebCore/Color.h>
-#include <WebCore/Document.h>
-#include <WebCore/Element.h>
-#include <WebCore/FrameDestructionObserverInlines.h>
-#include <WebCore/HTMLParserIdioms.h>
-#include <WebCore/LocalFrame.h>
-#include <WebCore/NodeDocument.h>
-#include <WebCore/RenderInline.h>
-#include <WebCore/RenderLayer.h>
-#include <WebCore/SimpleRange.h>
-#include <WebCore/TextIterator.h>
+#include "AXObjectCache.h"
+#include "AXObjectRareData.h"
+#include "AXTextMarker.h"
+#include "AXUtilities.h"
+#include "AccessibilityObject.h"
+#include "Color.h"
+#include "Document.h"
+#include "Element.h"
+#include "FrameDestructionObserverInlines.h"
+#include "HTMLParserIdioms.h"
+#include "LocalFrame.h"
+#include "NodeDocument.h"
+#include "RenderInline.h"
+#include "RenderLayer.h"
+#include "SimpleRange.h"
+#include "TextIterator.h"
 
 namespace WebCore {
 
@@ -57,9 +57,10 @@ inline AXObjectCache* AccessibilityObject::axObjectCache() const
     return m_axObjectCache.get();
 }
 
-inline CheckedPtr<AXObjectCache> AccessibilityObject::checkedAxObjectCache() const
+inline bool AccessibilityObject::anyObjectHasAriaOwns() const
 {
-    return axObjectCache();
+    auto* cache = axObjectCache();
+    return cache && cache->hasAriaOwnsRelations();
 }
 
 inline bool AccessibilityObject::isDetached() const
@@ -84,11 +85,6 @@ inline bool AccessibilityObject::hasTreeRole() const
     return element && hasRole(*element, "tree"_s);
 }
 
-inline AXTextMarkerRange AccessibilityObject::textMarkerRange() const
-{
-    return simpleRange();
-}
-
 inline LocalFrame* AccessibilityObject::frame() const
 {
     Node* node = this->node();
@@ -106,11 +102,6 @@ inline bool AccessibilityObject::hasElementName(ElementName name) const
     return elementName() == name;
 }
 
-inline RefPtr<Document> AccessibilityObject::protectedDocument() const
-{
-    return document();
-}
-
 inline SRGBA<uint8_t> AccessibilityObject::colorValue() const
 {
     return Color::black;
@@ -118,7 +109,8 @@ inline SRGBA<uint8_t> AccessibilityObject::colorValue() const
 
 inline bool AccessibilityObject::isInlineText() const
 {
-    return is<RenderInline>(renderer());
+    auto* renderer = this->renderer();
+    return renderer && renderer->isInlineBox();
 }
 
 inline Element* AccessibilityObject::element() const
@@ -263,7 +255,7 @@ inline bool AccessibilityObject::ariaIsMultiline() const
     return equalLettersIgnoringASCIICase(getAttribute(HTMLNames::aria_multilineAttr), "true"_s);
 }
 
-inline const AccessibilityObject::AccessibilityChildrenVector& AccessibilityObject::children(bool updateChildrenIfNeeded)
+inline const AccessibilityObject::AccessibilityChildrenVector& AccessibilityObject::children(bool updateChildrenIfNeeded) LIFETIME_BOUND
 {
     if (updateChildrenIfNeeded)
         updateChildrenIfNecessary();
@@ -303,7 +295,7 @@ inline void AccessibilityObject::initializeAncestorFlags(const OptionSet<AXAnces
     m_ancestorFlags.add(flags);
 }
 
-inline std::optional<AXID> AccessibilityObject::treeID() const
+inline std::optional<AXTreeID> AccessibilityObject::treeID() const
 {
     auto* cache = axObjectCache();
     return cache ? std::optional { cache->treeID() } : std::nullopt;
@@ -312,7 +304,7 @@ inline std::optional<AXID> AccessibilityObject::treeID() const
 inline void AccessibilityObject::recomputeIsIgnored()
 {
     // isIgnoredWithoutCache will update m_lastKnownIsIgnoredValue and perform any necessary actions if it has changed.
-    isIgnoredWithoutCache(axObjectCache());
+    isIgnoredWithoutCache(protect(axObjectCache()));
 }
 
 } // namespace WebCore

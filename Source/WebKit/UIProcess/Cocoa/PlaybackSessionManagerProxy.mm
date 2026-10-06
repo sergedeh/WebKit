@@ -29,6 +29,7 @@
 #if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE))
 
 #import "MessageSenderInlines.h"
+#import "PlaybackSessionInterfaceAVKit.h"
 #import "PlaybackSessionInterfaceLMK.h"
 #import "PlaybackSessionManagerMessages.h"
 #import "PlaybackSessionManagerProxyMessages.h"
@@ -40,7 +41,6 @@
 #import "WebProcessProxy.h"
 #import <Foundation/Foundation.h>
 #import <WebCore/NullPlaybackSessionInterface.h>
-#import <WebCore/PlaybackSessionInterfaceAVKit.h>
 #import <WebCore/PlaybackSessionInterfaceAVKitLegacy.h>
 #import <WebCore/PlaybackSessionInterfaceMac.h>
 #import <WebCore/PlaybackSessionInterfaceTVOS.h>
@@ -64,8 +64,20 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PlaybackSessionModelContext);
 PlaybackSessionModelContext::PlaybackSessionModelContext(PlaybackSessionManagerProxy& manager, PlaybackSessionContextIdentifier contextId)
     : m_manager(manager)
     , m_contextId(contextId)
-    , m_prefersAutoDimming([[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitPrefersFullScreenDimming"])
 {
+}
+
+bool PlaybackSessionModelContext::persistedPrefersAutoDimming()
+{
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitPrefersFullScreenDimming"];
+}
+
+void PlaybackSessionModelContext::setPersistedPrefersAutoDimming(bool value)
+{
+    if (persistedPrefersAutoDimming() == value)
+        return;
+
+    [[NSUserDefaults standardUserDefaults] setBool:value forKey:@"WebKitPrefersFullScreenDimming"];
 }
 
 PlaybackSessionModelContext::~PlaybackSessionModelContext()
@@ -338,10 +350,7 @@ void PlaybackSessionModelContext::setPlayingOnSecondScreen(bool value)
 
 void PlaybackSessionModelContext::setPrefersAutoDimming(bool value)
 {
-    if (m_prefersAutoDimming != value) {
-        m_prefersAutoDimming = value;
-        [[NSUserDefaults standardUserDefaults] setBool:value forKey:@"WebKitPrefersFullScreenDimming"];
-    }
+    setPersistedPrefersAutoDimming(value);
 }
 
 void PlaybackSessionModelContext::playbackStartedTimeChanged(double playbackStartedTime)
@@ -439,14 +448,15 @@ void PlaybackSessionModelContext::legibleMediaSelectionIndexChanged(uint64_t sel
         client->legibleMediaSelectionIndexChanged(selectedIndex);
 }
 
-void PlaybackSessionModelContext::externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType type, const String& localizedName)
+void PlaybackSessionModelContext::externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType type, const String& localizedDeviceName, const String& localizedRouteName)
 {
     m_externalPlaybackEnabled = enabled;
     m_externalPlaybackTargetType = type;
-    m_externalPlaybackLocalizedDeviceName = localizedName;
+    m_externalPlaybackLocalizedDeviceName = localizedDeviceName;
+    m_externalPlaybackLocalizedRouteName = localizedRouteName;
 
     for (CheckedRef client : m_clients)
-        client->externalPlaybackChanged(enabled, type, localizedName);
+        client->externalPlaybackChanged(enabled, type, localizedDeviceName, localizedRouteName);
 }
 
 void PlaybackSessionModelContext::wirelessVideoPlaybackDisabledChanged(bool wirelessVideoPlaybackDisabled)
@@ -609,8 +619,8 @@ void PlaybackSessionManagerProxy::sendToWebProcess(PlaybackSessionContextIdentif
 
 static Ref<PlatformPlaybackSessionInterface> playbackSessionInterface(WebPageProxy& page, PlaybackSessionModel& model)
 {
-#if HAVE(AVKIT_CONTENT_SOURCE)
-    if (page.preferences().isAVKitContentSourceEnabled())
+#if HAVE(AVEXPERIENCECONTROLLER)
+    if (page.preferences().isAVExperienceControllerFullscreenEnabled())
         return PlaybackSessionInterfaceAVKit::create(model);
 #endif
 
@@ -655,11 +665,6 @@ PlatformPlaybackSessionInterface& PlaybackSessionManagerProxy::ensureInterface(P
     return std::get<1>(ensureModelAndInterface(contextId)).get();
 }
 
-Ref<PlatformPlaybackSessionInterface> PlaybackSessionManagerProxy::ensureProtectedInterface(PlaybackSessionContextIdentifier contextId)
-{
-    return ensureInterface(contextId);
-}
-
 void PlaybackSessionManagerProxy::addClientForContext(PlaybackSessionContextIdentifier contextId)
 {
     m_clientCounts.add(contextId);
@@ -670,14 +675,25 @@ void PlaybackSessionManagerProxy::removeClientForContext(PlaybackSessionContextI
     if (!m_clientCounts.remove(contextId))
         return;
 
-    ensureProtectedInterface(contextId)->invalidate();
+    protect(ensureInterface(contextId))->invalidate();
     m_contextMap.remove(contextId);
+}
+
+PlaybackSessionContextIdentifier PlaybackSessionManagerProxy::contextIdForConnection(IPC::Connection& connection, WebCore::HTMLMediaElementIdentifier identifier) const
+{
+    return { identifier, WebProcessProxy::fromConnection(connection)->coreProcessIdentifier() };
+}
+
+Ref<PlaybackSessionModelContext> PlaybackSessionManagerProxy::ensureModel(IPC::Connection& connection, WebCore::HTMLMediaElementIdentifier identifier)
+{
+    return ensureModel(contextIdForConnection(connection, identifier));
 }
 
 #pragma mark Messages from PlaybackSessionManager
 
-void PlaybackSessionManagerProxy::setUpPlaybackControlsManagerWithID(PlaybackSessionContextIdentifier contextId, bool isVideo)
+void PlaybackSessionManagerProxy::setUpPlaybackControlsManagerWithID(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool isVideo)
 {
+    auto contextId = contextIdForConnection(connection, identifier);
     if (m_controlsManagerContextId == contextId)
         return;
 
@@ -686,7 +702,7 @@ void PlaybackSessionManagerProxy::setUpPlaybackControlsManagerWithID(PlaybackSes
 
     m_controlsManagerContextId = contextId;
     m_controlsManagerContextIsVideo = isVideo;
-    ensureProtectedInterface(*m_controlsManagerContextId)->ensureControlsManager();
+    protect(ensureInterface(*m_controlsManagerContextId))->ensureControlsManager();
     addClientForContext(*m_controlsManagerContextId);
 
     if (RefPtr page = m_page.get())
@@ -715,8 +731,10 @@ void PlaybackSessionManagerProxy::clearPlaybackControlsManager()
         page->videoControlsManagerDidChange();
 }
 
-void PlaybackSessionManagerProxy::swapFullscreenModes(PlaybackSessionContextIdentifier firstContextId, PlaybackSessionContextIdentifier secondContextId)
+void PlaybackSessionManagerProxy::swapFullscreenModes(IPC::Connection& connection, HTMLMediaElementIdentifier firstIdentifier, HTMLMediaElementIdentifier secondIdentifier)
 {
+    auto firstContextId = contextIdForConnection(connection, firstIdentifier);
+    auto secondContextId = contextIdForConnection(connection, secondIdentifier);
     auto firstModelInterface = ensureModelAndInterface(firstContextId);
     auto secondModelInterface = ensureModelAndInterface(secondContextId);
 
@@ -738,93 +756,93 @@ void PlaybackSessionManagerProxy::swapFullscreenModes(PlaybackSessionContextIden
     }
 }
 
-void PlaybackSessionManagerProxy::currentTimeChanged(PlaybackSessionContextIdentifier contextId, double currentTime, double hostTime)
+void PlaybackSessionManagerProxy::currentTimeChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, double currentTime, double hostTime)
 {
-    ensureModel(contextId)->currentTimeChanged(currentTime);
+    ensureModel(connection, identifier)->currentTimeChanged(currentTime);
 }
 
-void PlaybackSessionManagerProxy::bufferedTimeChanged(PlaybackSessionContextIdentifier contextId, double bufferedTime)
+void PlaybackSessionManagerProxy::bufferedTimeChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, double bufferedTime)
 {
-    ensureModel(contextId)->bufferedTimeChanged(bufferedTime);
+    ensureModel(connection, identifier)->bufferedTimeChanged(bufferedTime);
 }
 
-void PlaybackSessionManagerProxy::seekableRangesVectorChanged(PlaybackSessionContextIdentifier contextId, const WebCore::PlatformTimeRanges& timeRanges, double lastModifiedTime, double liveUpdateInterval)
+void PlaybackSessionManagerProxy::seekableRangesVectorChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, const WebCore::PlatformTimeRanges& timeRanges, double lastModifiedTime, double liveUpdateInterval)
 {
-    ensureModel(contextId)->seekableRangesChanged(timeRanges, lastModifiedTime, liveUpdateInterval);
+    ensureModel(connection, identifier)->seekableRangesChanged(timeRanges, lastModifiedTime, liveUpdateInterval);
 }
 
-void PlaybackSessionManagerProxy::canPlayFastReverseChanged(PlaybackSessionContextIdentifier contextId, bool value)
+void PlaybackSessionManagerProxy::canPlayFastReverseChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool value)
 {
-    ensureModel(contextId)->canPlayFastReverseChanged(value);
+    ensureModel(connection, identifier)->canPlayFastReverseChanged(value);
 }
 
-void PlaybackSessionManagerProxy::audioMediaSelectionOptionsChanged(PlaybackSessionContextIdentifier contextId, Vector<MediaSelectionOption> options, uint64_t selectedIndex)
+void PlaybackSessionManagerProxy::audioMediaSelectionOptionsChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, Vector<MediaSelectionOption> options, uint64_t selectedIndex)
 {
-    ensureModel(contextId)->audioMediaSelectionOptionsChanged(options, selectedIndex);
+    ensureModel(connection, identifier)->audioMediaSelectionOptionsChanged(options, selectedIndex);
 }
 
-void PlaybackSessionManagerProxy::legibleMediaSelectionOptionsChanged(PlaybackSessionContextIdentifier contextId, Vector<MediaSelectionOption> options, uint64_t selectedIndex)
+void PlaybackSessionManagerProxy::legibleMediaSelectionOptionsChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, Vector<MediaSelectionOption> options, uint64_t selectedIndex)
 {
-    ensureModel(contextId)->legibleMediaSelectionOptionsChanged(options, selectedIndex);
+    ensureModel(connection, identifier)->legibleMediaSelectionOptionsChanged(options, selectedIndex);
 }
 
-void PlaybackSessionManagerProxy::audioMediaSelectionIndexChanged(PlaybackSessionContextIdentifier contextId, uint64_t selectedIndex)
+void PlaybackSessionManagerProxy::audioMediaSelectionIndexChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, uint64_t selectedIndex)
 {
-    ensureModel(contextId)->audioMediaSelectionIndexChanged(selectedIndex);
+    ensureModel(connection, identifier)->audioMediaSelectionIndexChanged(selectedIndex);
 }
 
-void PlaybackSessionManagerProxy::legibleMediaSelectionIndexChanged(PlaybackSessionContextIdentifier contextId, uint64_t selectedIndex)
+void PlaybackSessionManagerProxy::legibleMediaSelectionIndexChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, uint64_t selectedIndex)
 {
-    ensureModel(contextId)->legibleMediaSelectionIndexChanged(selectedIndex);
+    ensureModel(connection, identifier)->legibleMediaSelectionIndexChanged(selectedIndex);
 }
 
-void PlaybackSessionManagerProxy::externalPlaybackPropertiesChanged(PlaybackSessionContextIdentifier contextId, bool enabled, WebCore::PlaybackSessionModel::ExternalPlaybackTargetType targetType, String localizedDeviceName)
+void PlaybackSessionManagerProxy::externalPlaybackPropertiesChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool enabled, WebCore::PlaybackSessionModel::ExternalPlaybackTargetType targetType, String localizedDeviceName, String localizedRouteName)
 {
-    ensureModel(contextId)->externalPlaybackChanged(enabled, targetType, localizedDeviceName);
+    ensureModel(connection, identifier)->externalPlaybackChanged(enabled, targetType, localizedDeviceName, localizedRouteName);
 }
 
-void PlaybackSessionManagerProxy::wirelessVideoPlaybackDisabledChanged(PlaybackSessionContextIdentifier contextId, bool disabled)
+void PlaybackSessionManagerProxy::wirelessVideoPlaybackDisabledChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool disabled)
 {
-    ensureModel(contextId)->wirelessVideoPlaybackDisabledChanged(disabled);
+    ensureModel(connection, identifier)->wirelessVideoPlaybackDisabledChanged(disabled);
 }
 
-void PlaybackSessionManagerProxy::mutedChanged(PlaybackSessionContextIdentifier contextId, bool muted)
+void PlaybackSessionManagerProxy::mutedChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool muted)
 {
-    ensureModel(contextId)->mutedChanged(muted);
+    ensureModel(connection, identifier)->mutedChanged(muted);
 }
 
-void PlaybackSessionManagerProxy::volumeChanged(PlaybackSessionContextIdentifier contextId, double volume)
+void PlaybackSessionManagerProxy::volumeChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, double volume)
 {
-    ensureModel(contextId)->volumeChanged(volume);
+    ensureModel(connection, identifier)->volumeChanged(volume);
 }
 
-void PlaybackSessionManagerProxy::durationChanged(PlaybackSessionContextIdentifier contextId, double duration)
+void PlaybackSessionManagerProxy::durationChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, double duration)
 {
-    ensureModel(contextId)->durationChanged(duration);
+    ensureModel(connection, identifier)->durationChanged(duration);
 }
 
-void PlaybackSessionManagerProxy::playbackStartedTimeChanged(PlaybackSessionContextIdentifier contextId, double playbackStartedTime)
+void PlaybackSessionManagerProxy::playbackStartedTimeChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, double playbackStartedTime)
 {
-    ensureModel(contextId)->playbackStartedTimeChanged(playbackStartedTime);
+    ensureModel(connection, identifier)->playbackStartedTimeChanged(playbackStartedTime);
 }
 
-void PlaybackSessionManagerProxy::rateChanged(PlaybackSessionContextIdentifier contextId, OptionSet<WebCore::PlaybackSessionModel::PlaybackState> playbackState, double rate, double defaultPlaybackRate)
+void PlaybackSessionManagerProxy::rateChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, OptionSet<WebCore::PlaybackSessionModel::PlaybackState> playbackState, double rate, double defaultPlaybackRate)
 {
-    ensureModel(contextId)->rateChanged(playbackState, rate, defaultPlaybackRate);
+    ensureModel(connection, identifier)->rateChanged(playbackState, rate, defaultPlaybackRate);
 }
 
-void PlaybackSessionManagerProxy::pictureInPictureSupportedChanged(PlaybackSessionContextIdentifier contextId, bool supported)
+void PlaybackSessionManagerProxy::pictureInPictureSupportedChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool supported)
 {
-    ensureModel(contextId)->pictureInPictureSupportedChanged(supported);
+    ensureModel(connection, identifier)->pictureInPictureSupportedChanged(supported);
 }
 
-void PlaybackSessionManagerProxy::isInWindowFullscreenActiveChanged(PlaybackSessionContextIdentifier contextId, bool active)
+void PlaybackSessionManagerProxy::isInWindowFullscreenActiveChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool active)
 {
-    ensureModel(contextId)->isInWindowFullscreenActiveChanged(active);
+    ensureModel(connection, identifier)->isInWindowFullscreenActiveChanged(active);
 }
 
 #if HAVE(PIP_SKIP_PREROLL)
-void PlaybackSessionManagerProxy::canSkipAdChanged(PlaybackSessionContextIdentifier contextId, bool value)
+void PlaybackSessionManagerProxy::canSkipAdChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool value)
 {
     RefPtr page = m_page.get();
     if (!page)
@@ -843,21 +861,22 @@ void PlaybackSessionManagerProxy::canSkipAdChanged(PlaybackSessionContextIdentif
 #endif
 
 #if ENABLE(LINEAR_MEDIA_PLAYER)
-void PlaybackSessionManagerProxy::supportsLinearMediaPlayerChanged(PlaybackSessionContextIdentifier contextId, bool supportsLinearMediaPlayer)
+void PlaybackSessionManagerProxy::supportsLinearMediaPlayerChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool supportsLinearMediaPlayer)
 {
-    ensureModel(contextId)->supportsLinearMediaPlayerChanged(supportsLinearMediaPlayer);
+    ensureModel(connection, identifier)->supportsLinearMediaPlayerChanged(supportsLinearMediaPlayer);
 }
 #endif
 
-void PlaybackSessionManagerProxy::immersiveVideoMetadataChanged(PlaybackSessionContextIdentifier contextId, const std::optional<WebCore::ImmersiveVideoMetadata>& metadata)
+void PlaybackSessionManagerProxy::immersiveVideoMetadataChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, const std::optional<WebCore::ImmersiveVideoMetadata>& metadata)
 {
-    ensureModel(contextId)->immersiveVideoMetadataChanged(metadata);
+    ensureModel(connection, identifier)->immersiveVideoMetadataChanged(metadata);
 }
 
-void PlaybackSessionManagerProxy::handleControlledElementIDResponse(PlaybackSessionContextIdentifier contextId, String identifier) const
+void PlaybackSessionManagerProxy::handleControlledElementIDResponse(IPC::Connection& connection, HTMLMediaElementIdentifier mediaElementIdentifier, String identifier) const
 {
+    auto contextId = contextIdForConnection(connection, mediaElementIdentifier);
 #if PLATFORM(MAC)
-    if (RefPtr page = m_page.get(); contextId == m_controlsManagerContextId)
+    if (RefPtr page = m_page.get(); page && contextId == m_controlsManagerContextId)
         page->handleControlledElementIDResponse(identifier);
 #else
     UNUSED_PARAM(contextId);
@@ -1031,9 +1050,9 @@ void PlaybackSessionManagerProxy::setVideoReceiverEndpoint(PlaybackSessionContex
     }
     WebCore::ProcessIdentifier processIdentifier = process->coreProcessIdentifier();
 
-    Ref gpuProcess = process->processPool().ensureProtectedGPUProcess();
+    Ref gpuProcess = process->processPool().ensureGPUProcess();
     Ref connection = gpuProcess->connection();
-    XPCObjectPtr<xpc_connection_t> xpcConnection = connection->xpcConnection();
+    OSObjectPtr<xpc_connection_t> xpcConnection = connection->xpcConnection();
     if (!xpcConnection)
         return;
 
@@ -1071,9 +1090,9 @@ void PlaybackSessionManagerProxy::swapVideoReceiverEndpoints(PlaybackSessionCont
     }
     WebCore::ProcessIdentifier processIdentifier = process->coreProcessIdentifier();
 
-    Ref gpuProcess = process->processPool().ensureProtectedGPUProcess();
+    Ref gpuProcess = process->processPool().ensureGPUProcess();
     Ref connection = gpuProcess->connection();
-    XPCObjectPtr<xpc_connection_t> xpcConnection = connection->xpcConnection();
+    OSObjectPtr<xpc_connection_t> xpcConnection = connection->xpcConnection();
     if (!xpcConnection)
         return;
 
@@ -1112,32 +1131,6 @@ void PlaybackSessionManagerProxy::setSoundStageSize(PlaybackSessionContextIdenti
     sendToWebProcess(contextId, Messages::PlaybackSessionManager::SetSoundStageSize(contextId.object(), size));
 }
 
-bool PlaybackSessionManagerProxy::prefersAutoDimming() const
-{
-    if (!m_controlsManagerContextId)
-        return false;
-
-    auto it = m_contextMap.find(*m_controlsManagerContextId);
-    if (it == m_contextMap.end())
-        return false;
-
-    Ref model = std::get<0>(it->value);
-    return model->prefersAutoDimming();
-}
-
-void PlaybackSessionManagerProxy::setPrefersAutoDimming(bool prefersAutoDimming)
-{
-    if (!m_controlsManagerContextId)
-        return;
-
-    auto it = m_contextMap.find(*m_controlsManagerContextId);
-    if (it == m_contextMap.end())
-        return;
-
-    Ref model = std::get<0>(it->value);
-    model->setPrefersAutoDimming(prefersAutoDimming);
-}
-
 bool PlaybackSessionManagerProxy::wirelessVideoPlaybackDisabled()
 {
     if (!m_controlsManagerContextId)
@@ -1147,12 +1140,24 @@ bool PlaybackSessionManagerProxy::wirelessVideoPlaybackDisabled()
     if (it == m_contextMap.end())
         return true;
 
-    return std::get<0>(it->value)->wirelessVideoPlaybackDisabled();
+    return protect(std::get<0>(it->value))->wirelessVideoPlaybackDisabled();
+}
+
+WebCore::PlatformTimeRanges PlaybackSessionManagerProxy::seekableRanges()
+{
+    if (!m_controlsManagerContextId)
+        return { };
+
+    auto it = m_contextMap.find(*m_controlsManagerContextId);
+    if (it == m_contextMap.end())
+        return { };
+
+    return protect(std::get<0>(it->value))->seekableRanges();
 }
 
 void PlaybackSessionManagerProxy::requestControlledElementID()
 {
-    if (RefPtr page = m_page.get(); m_controlsManagerContextId)
+    if (RefPtr page = m_page.get(); page && m_controlsManagerContextId)
         protect(page->legacyMainFrameProcess())->send(Messages::PlaybackSessionManager::HandleControlledElementIDRequest(m_controlsManagerContextId->object()), page->webPageIDInMainFrameProcess());
 }
 
@@ -1162,11 +1167,6 @@ PlatformPlaybackSessionInterface* PlaybackSessionManagerProxy::controlsManagerIn
         return nullptr;
 
     return &ensureInterface(*m_controlsManagerContextId);
-}
-
-RefPtr<WebCore::PlatformPlaybackSessionInterface> PlaybackSessionManagerProxy::protectedControlsManagerInterface()
-{
-    return controlsManagerInterface();
 }
 
 bool PlaybackSessionManagerProxy::isPaused(PlaybackSessionContextIdentifier identifier) const
@@ -1196,9 +1196,9 @@ std::optional<SharedPreferencesForWebProcess> PlaybackSessionManagerProxy::share
 }
 
 #if !RELEASE_LOG_DISABLED
-void PlaybackSessionManagerProxy::setLogIdentifier(PlaybackSessionContextIdentifier identifier, uint64_t logIdentifier)
+void PlaybackSessionManagerProxy::setLogIdentifier(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, uint64_t logIdentifier)
 {
-    Ref model = ensureModel(identifier);
+    Ref model = ensureModel(connection, identifier);
     model->setLogIdentifier(logIdentifier);
 }
 

@@ -55,7 +55,7 @@ public:
     RTCDtlsTransportState state() { return m_state; }
     Vector<Ref<JSC::ArrayBuffer>> getRemoteCertificates();
 
-    const RTCDtlsTransportBackend& backend() const { return m_backend.get(); }
+    const RTCDtlsTransportBackend& backend() const LIFETIME_BOUND { return m_backend.get(); }
 
     void close() { stop(); }
 
@@ -64,13 +64,13 @@ private:
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::RTCDtlsTransport; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
     // ActiveDOMObject
-    void stop() final;
-    bool virtualHasPendingActivity() const final;
+    void NODELETE stop() final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     // RTCDtlsTransportBackendClient
     void onStateChanged(RTCDtlsTransportState, Vector<Ref<JSC::ArrayBuffer>>&&) final;

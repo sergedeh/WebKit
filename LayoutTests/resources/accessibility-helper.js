@@ -1,7 +1,15 @@
 function axDebug(msg)
 {
-    getOrCreate("console", "div").innerText += `${msg}\n`;
-};
+    var log = document.getElementById("log");
+    if (!log)
+        log = document.getElementById("console");
+    if (!log) {
+        log = document.createElement("div");
+        log.id = "console";
+        document.body.insertBefore(log, document.body.firstChild);
+    }
+    log.innerText += `${msg}\n`;
+}
 
 // This function is necessary when printing AX attributes that are stringified with angle brackets:
 //    AXChildren: <array of size 0>
@@ -240,10 +248,17 @@ function waitFor(condition)
         // Schedule a timeout after 3 seconds if condition is never met.
         let timeoutID = setTimeout(() => {
             clearInterval(intervalID);
+
+            // Output a message to indicate that this call is timing out and avoid masking any possible failure.
+            let conditionString = condition.toString();
+            if (conditionString.length > 80)
+                conditionString = `${conditionString.substring(0, 80)}...`;
+            axDebug(`Condition '${conditionString}' was not satisfied in 3s, timing out.`);
+
             resolve(false);
         }, 3000);
 
-	// Repeatedly poll for the condition to be true.
+        // Repeatedly poll for the condition to be true.
         let intervalID = setInterval(() => {
             try {
                 if (condition()) {
@@ -260,6 +275,29 @@ function waitFor(condition)
     });
 }
 
+async function waitForFrameGeometryReady() {
+    await waitFor(() => {
+        return accessibilityController.rootElement.isFrameGeometryInitialized;
+    });
+}
+
+// Waits for an iframe's frame geometry to be initialized and for the target
+// element to be accessible. Returns the target element.
+async function waitForIframeAccessibilityReady(iframeContainerID, targetID) {
+    let target;
+    await waitFor(() => {
+        let container = accessibilityController.accessibleElementById(iframeContainerID);
+        if (!container)
+            return false;
+        let scrollView = container.childAtIndex(0);
+        if (!scrollView || !scrollView.isFrameGeometryInitialized)
+            return false;
+        target = accessibilityController.accessibleElementById(targetID);
+        return target;
+    });
+    return target;
+}
+
 async function waitForElementById(id) {
     let element;
     await waitFor(() => {
@@ -269,22 +307,140 @@ async function waitForElementById(id) {
     return element;
 }
 
-// Executes the operation and waits until an accessibility notification of the provided
-// `notificationName` is received. A notification listener is added to the AccessibilityUIElement
-// passed in; before the operation is executed. The `operation` is expected to be a function,
-// which can optionally be async.
-async function waitForNotification(accessibilityElement, notificationName, operation) {
-    var reached = false;
-    function listener(receivedNotification) {
-        if (receivedNotification == notificationName) {
-            reached = true;
-            accessibilityElement.removeNotificationListener(listener);
-        }
+async function waitUntilIDHasPathWith(id, minimumCount, pathComponent) {
+    await waitFor(() => {
+        var element = accessibilityController.accessibleElementById(id);
+        if (!element)
+            return false;
+        var matches = element.pathDescription.match(new RegExp(pathComponent, "g"));
+        return matches && matches.length >= minimumCount;
+    });
+}
+
+function pathSegmentCountOfID(id, segmentType) {
+    var element = accessibilityController.accessibleElementById(id);
+    if (!element)
+        return 0;
+    return (element.pathDescription.match(new RegExp(segmentType, "g")) || []).length;
+}
+
+// Parses a pathAsBounds string "{{x, y}, {w, h}}" into an object {x, y, width, height}.
+// Returns null if the element has no path or the string can't be parsed.
+function pathAsBoundsOfID(id) {
+    var element = accessibilityController.accessibleElementById(id);
+    if (!element || !element.pathAsBounds)
+        return null;
+    var match = element.pathAsBounds.match(/\{\{([^,]+),\s*([^}]+)\},\s*\{([^,]+),\s*([^}]+)\}\}/);
+    if (!match)
+        return null;
+    return { x: parseFloat(match[1]), y: parseFloat(match[2]), width: parseFloat(match[3]), height: parseFloat(match[4]) };
+}
+
+// Finds the popover Menu for a base-appearance select. On macOS, the menu is a
+// child of the select. On iOS, it is reparented to be a sibling, as both the menu
+// and menu items need to be isAccessibilityElement=YES at the same time (the menu
+// so it can be expanded and collapsed, and menu items so they can be selected).
+function findBaseSelectMenu(select) {
+    for (var i = 0; i < select.childrenCount; i++) {
+        var child = select.childAtIndex(i);
+        var childRole = child ? child.role : null;
+        if (childRole && childRole.toLowerCase().includes("menu"))
+            return child;
     }
 
-    accessibilityElement.addNotificationListener(listener);
+    var parent = select.parentElement();
+    if (parent) {
+        for (var i = 0; i < parent.childrenCount; i++) {
+            var sibling = parent.childAtIndex(i);
+            var siblingRole = sibling ? sibling.role : null;
+            if (siblingRole && siblingRole.toLowerCase().includes("menu"))
+                return sibling;
+        }
+    }
+    return null;
+}
+
+// Same as findBaseSelectMenu, but waits until the menu has the given number of menu items.
+// With the isolated tree enabled, the select's expanded state is committed in an earlier
+// cycle than the newly rendered popover contents, so a menu found the moment the select
+// reports itself expanded can still have no children.
+async function waitForBaseSelectMenu(select, menuItemCount) {
+    var menu = null;
+    await waitFor(() => {
+        menu = findBaseSelectMenu(select);
+        return menu && menu.childrenCount === menuItemCount;
+    });
+    return menu;
+}
+
+// Executes the operation and waits until an accessibility notification of the provided
+// `notificationName` is received. A notification listener is added to the passed
+// AccessibilityUIElement if not null, or a global listener is installed, before
+// the operation is executed. The `operation` is expected to be a function,
+// which can optionally be async.
+async function waitForNotification(axElement, notificationName, operation) {
+    var received = false;
+
+    function elementListener(notification) {
+        if (notification != notificationName)
+            return;
+        received = true;
+        axElement.removeNotificationListener(elementListener);
+    }
+
+    function globalListener(element, notification) {
+        if (notification != notificationName)
+            return;
+        received = true;
+        accessibilityController.removeNotificationListener(globalListener);
+    }
+
+    if (axElement)
+        axElement.addNotificationListener(elementListener);
+    else
+        accessibilityController.addNotificationListener(globalListener);
+
     await operation();
-    await waitFor(() => { return reached; });
+    await waitFor(() => { return received; });
+}
+
+// Executes the passed operation function and waits for expectedCount number of
+// notifications of the given name. It takes a notificationHandler function to
+// be executed when the proper notifications are received. Similarly to
+// waitForNotification, the listener can be added to the given AccessibilityUIElement
+// or globally.
+async function waitForNotifications(axElement, notificationName, expectedCount, operation, notificationHandler) {
+    var receivedCount = 0;
+
+    function elementListener(notification) {
+        if (notification != notificationName)
+            return;
+        ++receivedCount;
+
+        notificationHandler(axElement, notification);
+
+        if (receivedCount == expectedCount)
+            axElement.removeNotificationListener(elementListener);
+    }
+
+    function globalListener(element, notification) {
+        if (notification != notificationName)
+            return;
+        ++receivedCount;
+
+        notificationHandler(element, notification);
+
+        if (receivedCount == expectedCount)
+            accessibilityController.removeNotificationListener(globalListener);
+    }
+
+    if (axElement)
+        axElement.addNotificationListener(elementListener);
+    else
+        accessibilityController.addNotificationListener(globalListener);
+
+    await operation();
+    await waitFor(() => { return receivedCount == expectedCount; });
 }
 
 // Expect an expression to equal a value and return the result as a string.
@@ -334,6 +490,52 @@ function expectRectWithVariance(expression, x, y, width, height, allowedVariance
         return `FAIL: ${expression} varied more than allowed variance ${allowedVariance}. Was: ${result}, expected ${expectedRect}\n`;
     else
         return `PASS: ${expression} was ${allowedVariance === 0 ? "equal" : "equal or approximately equal"} to ${expectedRect}.\n`;
+}
+
+// Draws a drawFocusIfNeeded focus ring on a canvas descendant element at the
+// given canvas-local coordinates, waits for accessibility bounds to update,
+// then verifies the reported page position and size match expectations.
+async function verifyCanvasFocusBounds({
+    canvasId, canvasDescendantId,
+    focusX, focusY, focusWidth, focusHeight,
+    expectedPageX, expectedPageY,
+    expectedWidth, expectedHeight,
+    variance = 0,
+}) {
+    var canvas = document.getElementById(canvasId);
+    var canvasContext = canvas.getContext("2d");
+    var descendant = document.getElementById(canvasDescendantId);
+
+    descendant.focus();
+
+    canvasContext.clearRect(0, 0, canvas.width, canvas.height);
+    canvasContext.beginPath();
+    canvasContext.rect(focusX, focusY, focusWidth, focusHeight);
+    canvasContext.drawFocusIfNeeded(descendant);
+
+    var axDescendant = accessibilityController.accessibleElementById(canvasDescendantId);
+
+    await waitFor(() => {
+        return Math.abs(axDescendant.width - expectedWidth) <= variance
+            && Math.abs(axDescendant.height - expectedHeight) <= variance
+            && Math.abs(axDescendant.pageX - expectedPageX) <= variance
+            && Math.abs(axDescendant.pageY - expectedPageY) <= variance;
+    });
+
+    var output = "";
+    var checks = [
+        { name: "pageX", actual: axDescendant.pageX, expected: expectedPageX },
+        { name: "pageY", actual: axDescendant.pageY, expected: expectedPageY },
+        { name: "width", actual: axDescendant.width, expected: expectedWidth },
+        { name: "height", actual: axDescendant.height, expected: expectedHeight },
+    ];
+    for (var check of checks) {
+        if (Math.abs(check.actual - check.expected) <= variance)
+            output += `PASS: ${check.name} was ${variance === 0 ? "equal" : "equal or approximately equal"} to ${check.expected}.\n`;
+        else
+            output += `FAIL: ${check.name} was ${check.actual}, expected ${check.expected} (variance ${variance}).\n`;
+    }
+    return output;
 }
 
 async function expectAsync(expression, expectedValue) {
@@ -512,6 +714,42 @@ function formatAnnouncementUserInfo(userInfo) {
     return result;
 }
 
+function stripObjectReplacementCharacters(text) {
+    return text.replace(/\uFFFC/g, "");
+}
+
+// The text of each message a field vends as its error, which is what the user actually receives. Empty
+// entries are dropped because iOS flattens a message container into the elements inside it, and some of
+// those carry no text of their own. Asserting text rather than DOM ids keeps one baseline for both
+// platforms, since iOS does not report DOM ids.
+function errorMessageText(axElement) {
+    var messages = axElement.errorMessageElements();
+    if (!messages || !messages.length)
+        return "no error messages";
+    return messages.map(function(message) {
+        var text = message.stringForTextMarkerRange(message.textMarkerRangeForElement(message));
+        return stripObjectReplacementCharacters(text).trim();
+    }).filter(function(text) { return text.length; }).join(" | ");
+}
+
+function errorMessageCount(axElement) {
+    var messages = axElement.errorMessageElements();
+    return messages ? messages.length : 0;
+}
+
+function formFieldWithErrorCount(axContainer) {
+    var count = 0;
+    var field = null;
+    while ((field = axContainer.uiElementForSearchPredicate(field, true, "AXFormFieldWithErrorSearchKey", "", false)))
+        ++count;
+    return count;
+}
+
+function formatFormValidationUserInfo(userInfo) {
+    return `AXFormValidationUnannouncedText: ${userInfo["AXFormValidationUnannouncedText"].join(" | ")}\n`
+        + `AXFormValidationErrorFieldCount: ${userInfo["AXFormValidationErrorFieldCount"]}\n`;
+}
+
 // Checks that text alternatives include all expected values and exclude all unexpected values.
 // Returns a string with PASS/FAIL results for each check.
 function checkTextAlternatives(axElement, { expected = [], unexpected = [] }) {
@@ -532,3 +770,55 @@ function checkTextAlternatives(axElement, { expected = [], unexpected = [] }) {
     return result;
 }
 
+// Keep walking the tree, calling the given elementTests on each element, until each returns true on at least one element.
+function waitForElements(elementTests) {
+    // Recursively searches all elements from element returns true if elementTests each pass on
+    // at least one element. The passes array is used to keep track of which tests have passed
+    // so far and doesn't need to be passed in.
+    function checkElementTests(element, elementTests, passes) {
+        if (!element || !element.role) {
+            return false;
+        }
+
+        if (passes === undefined) {
+            passes = Array(elementTests.length).fill(false);
+        }
+
+        for (let i = 0; i < elementTests.length; i++) {
+            if (!passes[i] && elementTests[i](element)) {
+                passes[i] = true;
+            }
+        }
+        const childrenCount = element.childrenCount;
+        for (let i = 0; i < childrenCount; i++) {
+            checkElementTests(element.childAtIndex(i), elementTests, passes);
+        }
+
+        // Return if all tests passed
+        return passes.every(Boolean);
+    }
+
+    return new Promise((resolve, reject) => {
+        // Schedule a timeout after 3 seconds if condition is never met.
+        let timeoutID = setTimeout(() => {
+            clearInterval(intervalID);
+            reject("Timed out");
+        }, 3000);
+
+        // Repeatedly poll until all elementTests pass or we time out.
+        let intervalID = setInterval(() => {
+            try {
+                let root = accessibilityController.rootElement;
+                if (checkElementTests(root, elementTests)) {
+                    clearTimeout(timeoutID);
+                    clearInterval(intervalID);
+                    resolve(true);
+                }
+            } catch (error) {
+                clearTimeout(timeoutID);
+                clearInterval(intervalID);
+                reject(error);
+            }
+        }, 0);
+    });
+}

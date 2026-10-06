@@ -66,7 +66,7 @@ void RemoteRealtimeMediaSource::createRemoteMediaSource()
 
         m_proxy.setAsReady();
         if (m_proxy.shouldCaptureInGPUProcess())
-            WebProcess::singleton().ensureProtectedGPUProcessConnection()->addClient(*this);
+            protect(WebProcess::singleton().ensureGPUProcessConnection())->addClient(*this);
     }, m_proxy.shouldCaptureInGPUProcess() && m_manager->shouldUseGPUProcessRemoteFrames());
 }
 
@@ -116,7 +116,7 @@ void RemoteRealtimeMediaSource::applyConstraintsSucceeded(WebCore::RealtimeMedia
 void RemoteRealtimeMediaSource::stopProducingData()
 {
     if (isAudio())
-        m_manager->protectedRemoteCaptureSampleManager()->audioSourceWillBeStopped(identifier());
+        protect(m_manager->remoteCaptureSampleManager())->audioSourceWillBeStopped(identifier());
     m_proxy.stopProducingData();
 }
 
@@ -127,7 +127,7 @@ void RemoteRealtimeMediaSource::didEnd()
 
     m_proxy.end();
     m_manager->removeSource(identifier());
-    m_manager->protectedRemoteCaptureSampleManager()->removeSource(identifier());
+    protect(m_manager->remoteCaptureSampleManager())->removeSource(identifier());
 }
 
 void RemoteRealtimeMediaSource::captureStopped(bool didFail)
@@ -153,7 +153,7 @@ void RemoteRealtimeMediaSource::gpuProcessConnectionDidClose(GPUProcessConnectio
         return;
 
     m_proxy.updateConnection();
-    m_manager->protectedRemoteCaptureSampleManager()->didUpdateSourceConnection(Ref { m_proxy.connection() });
+    protect(m_manager->remoteCaptureSampleManager())->didUpdateSourceConnection(Ref { m_proxy.connection() });
     m_proxy.resetReady();
     createRemoteMediaSource();
 

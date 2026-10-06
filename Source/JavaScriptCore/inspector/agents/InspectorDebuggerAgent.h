@@ -38,6 +38,7 @@
 #include <JavaScriptCore/InspectorFrontendDispatchers.h>
 #include <JavaScriptCore/Microtask.h>
 #include <JavaScriptCore/RegularExpression.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -45,6 +46,7 @@
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
 
 namespace Inspector {
 
@@ -56,7 +58,8 @@ class JS_EXPORT_PRIVATE InspectorDebuggerAgent
     : public InspectorAgentBase
     , public DebuggerBackendDispatcherHandler
     , public JSC::Debugger::Client
-    , public JSC::Debugger::Observer {
+    , public JSC::Debugger::Observer
+    , public CanMakeWeakPtr<InspectorDebuggerAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorDebuggerAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorDebuggerAgent);
 public:
@@ -107,10 +110,12 @@ public:
     JSC::JSObject* debuggerScopeExtensionObject(JSC::Debugger&, JSC::JSGlobalObject*, JSC::DebuggerCallFrame&) final;
 
     // JSC::Debugger::Observer
-    void didParseSource(JSC::SourceID, const JSC::Debugger::Script&) final;
+    void didParseSource(JSC::JSGlobalObject*, JSC::SourceID, const JSC::Debugger::Script&) final;
     void failedToParseSource(const String& url, const String& data, int firstLine, int errorLine, const String& errorMessage) final;
     void didCreateNativeExecutable(JSC::NativeExecutable&) final;
     void willCallNativeExecutable(JSC::CallFrame*) final;
+    void didCreateInternalFunction(JSC::InternalFunction&) final;
+    void willCallInternalFunction(JSC::InternalFunction&) final;
     void willEnter(JSC::CallFrame*) final;
     void didQueueMicrotask(JSC::JSGlobalObject*, JSC::MicrotaskIdentifier) final;
     void willRunMicrotask(JSC::JSGlobalObject*, JSC::MicrotaskIdentifier) final;
@@ -122,10 +127,10 @@ public:
     void breakpointActionProbe(JSC::JSGlobalObject*, JSC::BreakpointActionID, unsigned batchId, unsigned sampleId, JSC::JSValue sample) final;
     void didDeferBreakpointPause(JSC::BreakpointID) final;
 
-    bool isPaused() const;
-    bool breakpointsActive() const;
+    bool NODELETE isPaused() const;
+    bool NODELETE breakpointsActive() const;
 
-    void setSuppressAllPauses(bool);
+    void NODELETE setSuppressAllPauses(bool);
 
     void handleConsoleAssert(const String& message);
 
@@ -178,6 +183,7 @@ protected:
     virtual void unmuteConsole() = 0;
 
     virtual String sourceMapURLForScript(const JSC::Debugger::Script&);
+    virtual String requestIdForScript(JSC::JSGlobalObject*, const JSC::Debugger::Script&);
 
     void didClearGlobalObject();
     virtual void didClearAsyncStackTraceData();
@@ -199,7 +205,7 @@ private:
 
         Ref<JSC::Breakpoint> createDebuggerBreakpoint(JSC::BreakpointID, JSC::SourceID) const;
 
-        const Protocol::Debugger::BreakpointId& id() const { return m_id; }
+        const Protocol::Debugger::BreakpointId& id() const LIFETIME_BOUND { return m_id; }
 
         bool matchesScriptURL(const String&) const;
 
@@ -244,13 +250,13 @@ private:
     RefPtr<JSON::Object> buildExceptionPauseReason(JSC::JSValue exception, const InjectedScript&);
 
     using AsyncCallIdentifier = std::pair<unsigned, uint64_t>;
-    static AsyncCallIdentifier asyncCallIdentifier(AsyncCallType, uint64_t callbackId);
+    static AsyncCallIdentifier NODELETE asyncCallIdentifier(AsyncCallType, uint64_t callbackId);
 
     const UniqueRef<DebuggerFrontendDispatcher> m_frontendDispatcher;
     const Ref<DebuggerBackendDispatcher> m_backendDispatcher;
 
     JSC::Debugger& m_debugger;
-    InjectedScriptManager& m_injectedScriptManager;
+    const CheckedRef<InjectedScriptManager> m_injectedScriptManager;
     UncheckedKeyHashMap<JSC::SourceID, JSC::Debugger::Script> m_scripts;
 
     struct BlackboxedScript {
@@ -262,7 +268,7 @@ private:
         // Put another way, it doesn't change whether the script is blackboxed.
         UncheckedKeyHashSet<JSC::Debugger::BlackboxRange> ranges;
 
-        inline bool operator==(const BlackboxedScript& other) const
+        inline bool NODELETE operator==(const BlackboxedScript& other) const
         {
             return url == other.url
                 && caseSensitive == other.caseSensitive

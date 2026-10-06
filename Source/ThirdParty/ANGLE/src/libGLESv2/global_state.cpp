@@ -35,7 +35,7 @@ bool g_EGLValidationEnabled = true;
 {
     egl::Thread *thread = static_cast<egl::Thread *>(ptr);
     ASSERT(thread);
-    ANGLE_SCOPED_GLOBAL_EGL_AND_EGL_SYNC_LOCK();
+    ANGLE_SCOPED_GLOBAL_LOCK();
     // ReleaseThread() and makeCurrent() inside will perform:
     // - destroy Context if it was already marked for destruction;
     // - invalidate Context if Display was already terminated by app;
@@ -86,9 +86,8 @@ Thread *AllocateCurrentThread()
 }  // anonymous namespace
 
 #if defined(ANGLE_PLATFORM_APPLE)
-// TODO(angleproject:6479): Due to a bug in Apple's dyld loader, `thread_local` will cause
-// excessive memory use. Temporarily avoid it by using pthread's thread
-// local storage instead.
+// TODO(http://anglebug.com/42264979): Due to a bug in Apple's dyld loader, `thread_local` will
+// cause excessive memory use. Temporarily avoid it by using pthread's thread local storage instead.
 // https://bugs.webkit.org/show_bug.cgi?id=228240
 
 static angle::TLSIndex GetCurrentThreadTLSIndex()

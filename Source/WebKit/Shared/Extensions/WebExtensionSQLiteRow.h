@@ -47,7 +47,6 @@ public:
     {
         return adoptRef(*new WebExtensionSQLiteRow(std::forward<Args>(args)...));
     }
-    explicit WebExtensionSQLiteRow(Ref<WebExtensionSQLiteStatement>);
 
     String getString(int index);
     int getInt(int index);
@@ -57,9 +56,11 @@ public:
     RefPtr<API::Data> getData(int index);
 
 private:
+    explicit WebExtensionSQLiteRow(Ref<WebExtensionSQLiteStatement>&&);
+
     bool isNullAtIndex(int index);
 
-    Ref<WebExtensionSQLiteStatement> m_statement;
+    const Ref<WebExtensionSQLiteStatement> m_statement;
     sqlite3_stmt* m_handle;
 };
 
@@ -74,14 +75,14 @@ public:
         return adoptRef(*new WebExtensionSQLiteRowEnumerator(std::forward<Args>(args)...));
     }
 
-    explicit WebExtensionSQLiteRowEnumerator(Ref<WebExtensionSQLiteStatement>);
-
     RefPtr<WebExtensionSQLiteRow> next();
     Ref<WebExtensionSQLiteStatement> statement() { return m_statement; };
 
 private:
-    Ref<WebExtensionSQLiteStatement> m_statement;
-    RefPtr<WebExtensionSQLiteRow> m_row;
+    explicit WebExtensionSQLiteRowEnumerator(Ref<WebExtensionSQLiteStatement>&&);
+
+    const Ref<WebExtensionSQLiteStatement> m_statement;
+    const RefPtr<WebExtensionSQLiteRow> m_row;
 };
 
 }; // namespace WebKit

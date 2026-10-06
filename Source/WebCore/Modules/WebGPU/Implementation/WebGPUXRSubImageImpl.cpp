@@ -26,7 +26,7 @@
 #include "config.h"
 #include "WebGPUXRSubImageImpl.h"
 
-#if HAVE(WEBGPU_IMPLEMENTATION)
+#if HAVE(WEBGPU_IMPLEMENTATION) && ENABLE(WEBGPU)
 
 #include "WebGPUConvertToBackingContext.h"
 #include "WebGPUDevice.h"
@@ -35,7 +35,7 @@
 
 namespace WebCore::WebGPU {
 
-static TextureFormat fromBacking(WGPUTextureFormat textureFormat)
+static TextureFormat NODELETE fromBacking(WGPUTextureFormat textureFormat)
 {
     switch (textureFormat) {
     case WGPUTextureFormat_R8Unorm:
@@ -237,7 +237,7 @@ static TextureFormat fromBacking(WGPUTextureFormat textureFormat)
     case WGPUTextureFormat_RG16Snorm:
         return TextureFormat::Rg16snorm;
     case WGPUTextureFormat_RGBA16Unorm:
-        return TextureFormat::Rgba16snorm;
+        return TextureFormat::Rgba16unorm;
     case WGPUTextureFormat_RGBA16Snorm:
         return TextureFormat::Rgba16snorm;
     case WGPUTextureFormat_Undefined:
@@ -279,4 +279,4 @@ RefPtr<Texture> XRSubImageImpl::motionVectorTexture()
 
 } // namespace WebCore::WebGPU
 
-#endif // HAVE(WEBGPU_IMPLEMENTATION)
+#endif // HAVE(WEBGPU_IMPLEMENTATION) && ENABLE(WEBGPU)

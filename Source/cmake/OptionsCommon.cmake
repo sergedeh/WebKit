@@ -3,10 +3,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPERIMENTAL_CXX_MODULE_DYNDEP OFF)
 
-add_definitions(-DBUILDING_WITH_CMAKE=1)
-add_definitions(-DBUILDING_WEBKIT=1)
-add_definitions(-DHAVE_CONFIG_H=1)
-add_definitions(-DPAS_BMALLOC=1)
+webkit_add_compile_definitions(BUILDING_WITH_CMAKE=1)
+webkit_add_compile_definitions(BUILDING_WEBKIT=1)
+webkit_add_compile_definitions(HAVE_CONFIG_H=1)
+webkit_add_compile_definitions(PAS_BMALLOC=1)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 define_property(TARGET PROPERTY FOLDER INHERITED BRIEF_DOCS "folder" FULL_DOCS "IDE folder name")
@@ -35,9 +35,13 @@ CMAKE_DEPENDENT_OPTION(USE_LD_LLD "Use LLD linker" ON
 if (USE_LD_LLD)
     execute_process(COMMAND ${CMAKE_C_COMPILER} -fuse-ld=lld -Wl,--version ERROR_QUIET OUTPUT_VARIABLE LD_VERSION)
     if (LD_VERSION MATCHES "(^|[ \t])LLD ")
-        string(APPEND CMAKE_EXE_LINKER_FLAGS " -fuse-ld=lld")
-        string(APPEND CMAKE_SHARED_LINKER_FLAGS " -fuse-ld=lld")
-        string(APPEND CMAKE_MODULE_LINKER_FLAGS " -fuse-ld=lld")
+        # Swift's spelling of -fuse-ld= is different.
+        add_link_options(
+            "$<$<NOT:$<LINK_LANGUAGE:Swift>>:-fuse-ld=lld>"
+            "$<$<LINK_LANGUAGE:Swift>:-use-ld=lld>")
+        # The probes below use the C compiler spelling of -fuse-ld
+        # unconditionally.
+        set(LD_PROBE_FLAGS "-fuse-ld=lld")
     else ()
         set(USE_LD_LLD OFF)
     endif ()
@@ -45,7 +49,7 @@ endif ()
 
 # Determine which linker is being used with the chosen linker flags.
 separate_arguments(LD_VERSION_COMMAND UNIX_COMMAND
-    "${CMAKE_C_COMPILER} ${CMAKE_EXE_LINKER_FLAGS} -Wl,--version"
+    "${CMAKE_C_COMPILER} ${CMAKE_EXE_LINKER_FLAGS} ${LD_PROBE_FLAGS} -Wl,--version"
 )
 execute_process(
     COMMAND ${LD_VERSION_COMMAND}
@@ -55,7 +59,7 @@ execute_process(
 unset(LD_VERSION_COMMAND)
 
 separate_arguments(LD_USAGE_COMMAND UNIX_COMMAND
-    "${CMAKE_C_COMPILER} ${CMAKE_EXE_LINKER_FLAGS} -Wl,--help"
+    "${CMAKE_C_COMPILER} ${CMAKE_EXE_LINKER_FLAGS} ${LD_PROBE_FLAGS} -Wl,--help"
 )
 execute_process(
   COMMAND ${LD_USAGE_COMMAND}
@@ -66,7 +70,7 @@ unset(LD_USAGE_COMMAND)
 
 set(LD_SUPPORTS_SPLIT_DEBUG TRUE)
 set(LD_SUPPORTS_THIN_ARCHIVES TRUE)
-if (LD_VERSION MATCHES "^LLD ")
+if (LD_VERSION MATCHES "(^|[ \t])LLD ")
     set(LD_VARIANT LLD)
 elseif (LD_VERSION MATCHES "^mold ")
     set(LD_VARIANT MOLD)
@@ -94,6 +98,10 @@ endif ()
 if (LD_USAGE MATCHES "--gc-sections")
     set(LD_SUPPORTS_GC_SECTIONS TRUE)
 endif ()
+set(LD_SUPPORTS_ALLOW_MULTIPLE_DEFINITION FALSE)
+if (LD_USAGE MATCHES "allow-multiple-definition")
+    set(LD_SUPPORTS_ALLOW_MULTIPLE_DEFINITION TRUE)
+endif ()
 unset(LD_USAGE)
 
 message(STATUS "Linker variant in use: ${LD_VARIANT} ")
@@ -118,7 +126,7 @@ if (AR_STATUS EQUAL 0)
     if (AR_VERSION MATCHES "^GNU ar ")
         set(AR_VARIANT BFD)
         set(AR_SUPPORTS_THIN_ARCHIVES TRUE)
-    elseif (AR_VERSION MATCHES "^LLVM ")
+    elseif (AR_VERSION MATCHES "(^|[ \t])LLVM ")
         set(AR_VARIANT LLVM)
         set(AR_SUPPORTS_THIN_ARCHIVES TRUE)
     else ()
@@ -133,22 +141,18 @@ message(STATUS "  Archiver supports thin archives - ${AR_SUPPORTS_THIN_ARCHIVES}
 # Remove unused sections to reduce the binary size when supported.
 if (LD_SUPPORTS_GC_SECTIONS)
     WEBKIT_APPEND_GLOBAL_COMPILER_FLAGS(-ffunction-sections -fdata-sections)
-    string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,--gc-sections")
-    string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,--gc-sections")
-    string(APPEND CMAKE_MODULE_LINKER_FLAGS " -Wl,--gc-sections")
+    add_link_options("LINKER:--gc-sections")
 endif ()
 
 # Use --disable-new-dtags to ensure that the rpath set by CMake when building
 # will use a DT_RPATH entry in the ELF headers, to ensure that the build
 # directory lib/ subdir is always used and developers do not accidentally run
 # test programs from the build directory against system libraries. Without
-# passing the option DT_RUNPATH is used, which can be overriden by the value
+# passing the option DT_RUNPATH is used, which can be overridden by the value
 # of LD_LIBRARY_PATH set in the environment, resulting in unexpected behaviour
 # for developers.
 if (LD_SUPPORTS_DISABLE_NEW_DTAGS)
-    string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,--disable-new-dtags")
-    string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,--disable-new-dtags")
-    string(APPEND CMAKE_MODULE_LINKER_FLAGS " -Wl,--disable-new-dtags")
+    add_link_options("LINKER:--disable-new-dtags")
 endif ()
 
 # Prefer thin archives by default if they can be both created by the
@@ -181,9 +185,56 @@ if (DEBUG_FISSION)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -gsplit-dwarf")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -gsplit-dwarf")
     if (LD_SUPPORTS_GDB_INDEX)
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gdb-index")
-        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gdb-index")
+        add_link_options("LINKER:--gdb-index")
     endif ()
+endif ()
+
+option(CLANG_TIME_TRACE "Generate Clang time trace profiling output" OFF)
+if (CLANG_TIME_TRACE AND COMPILER_IS_CLANG)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ftime-trace")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ftime-trace")
+endif ()
+
+option(SWIFT_NINJA_TRACE "Collect ninja and swift driver execution data and produce a Perfetto-style trace" OFF)
+if (SWIFT_NINJA_TRACE)
+    if (WIN32)
+        # Would need to adapt clang-cl argument parsing logic and provide a
+        # Windows finalizer script.
+        message(FATAL_ERROR "SWIFT_NINJA_TRACE is not supported on Windows")
+    endif ()
+    # Tracing uses a swiftc harness that captures job info from stdio.
+    # --swift-wrapper= is recognized by swiftc-wrapper.py, so we end up
+    # with nested, independent harnesses.
+    set(SWIFT_JOBS_LOG "${CMAKE_BINARY_DIR}/swift-jobs.jsonl")
+    set(SWIFT_STATS_DIR "${CMAKE_BINARY_DIR}/swift-stats")
+    set(SWIFT_NINJA_TRACE_FINALIZE "${CMAKE_BINARY_DIR}/swift-trace-finalize.sh")
+    add_compile_options($<$<COMPILE_LANGUAGE:Swift>:--swift-wrapper=${CMAKE_SOURCE_DIR}/Tools/Scripts/swift/swiftc_job_recorder.py>)
+    add_compile_options($<$<COMPILE_LANGUAGE:Swift>:--jobs-log=${SWIFT_JOBS_LOG}>)
+    add_compile_options("$<$<COMPILE_LANGUAGE:Swift>:SHELL:-stats-output-dir ${SWIFT_STATS_DIR}>")
+
+    file(MAKE_DIRECTORY ${SWIFT_STATS_DIR})
+    file(GENERATE
+        OUTPUT ${SWIFT_NINJA_TRACE_FINALIZE}
+        CONTENT "#!/bin/sh -ex
+${CMAKE_SOURCE_DIR}/Tools/Scripts/swift/ninja_build_trace.py \
+--ninja-log ${CMAKE_BINARY_DIR}/.ninja_log \
+--jobs-log ${SWIFT_JOBS_LOG} \
+--stats-dir ${SWIFT_STATS_DIR} \"$@\""
+        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+            GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+    )
+    # Defer to print this instructional message at the end of configuration.
+cmake_language(DEFER CALL message NOTICE "\
+============================
+Swift+Ninja tracing enabled!
+============================
+Perform a clean build (cmake --build ... --clean-first). Then finalize the
+trace by running:
+
+    ${SWIFT_NINJA_TRACE_FINALIZE} -o trace.json
+
+and load the result into <https://ui.perfetto.dev>.
+")
 endif ()
 
 set(GCC_OFFLINEASM_SOURCE_MAP_DEFAULT OFF)
@@ -194,8 +245,6 @@ endif ()
 option(GCC_OFFLINEASM_SOURCE_MAP
   "Produce debug line information for offlineasm-generated code"
   ${GCC_OFFLINEASM_SOURCE_MAP_DEFAULT})
-
-option(USE_APPLE_ICU "Use Apple's internal ICU" ${APPLE})
 
 # Enable the usage of OpenMP.
 #  - At this moment, OpenMP is only used as an alternative implementation
@@ -219,33 +268,38 @@ set(CXX_STDLIB_TEST_SOURCE "
     #error Clang needed for libc++
     #endif
 ")
-check_cxx_source_compiles("${CXX_STDLIB_TEST_SOURCE}" CXX_STDLIB_IS_LIBCPP)
-if (CXX_STDLIB_IS_LIBCPP)
-    set(CXX_STDLIB_TEST_SOURCE "
-        #include <utility>
-        #if _LIBCPP_VERSION >= 190000
-        int main() { }
-        #else
-        #error libc++ is older than 19.x
-        #endif
-    ")
-    check_cxx_source_compiles("${CXX_STDLIB_TEST_SOURCE}" CXX_STDLIB_IS_LIBCPP_19_OR_NEWER)
-    if (CXX_STDLIB_IS_LIBCPP_19_OR_NEWER)
-        set(CXX_STDLIB_VARIANT "LIBCPP 19+")
-        set(CXX_STDLIB_ASSERTIONS_MACRO _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE)
-    else ()
-        set(CXX_STDLIB_VARIANT "LIBCPP <19")
-        set(CXX_STDLIB_ASSERTIONS_MACRO _LIBCPP_ENABLE_ASSERTIONS=1)
-    endif ()
+if (APPLE)
+    set(CXX_STDLIB_VARIANT "LIBCPP 19+")
+    set(CXX_STDLIB_ASSERTIONS_MACRO _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE)
 else ()
-    set(CXX_STDLIB_TEST_SOURCE "
-    #include <utility>
-    int main() { return _GLIBCXX_RELEASE; }
-    ")
-    check_cxx_source_compiles("${CXX_STDLIB_TEST_SOURCE}" CXX_STDLIB_IS_GLIBCXX)
-    if (CXX_STDLIB_IS_GLIBCXX)
-        set(CXX_STDLIB_VARIANT "GLIBCXX")
-        set(CXX_STDLIB_ASSERTIONS_MACRO _GLIBCXX_ASSERTIONS=1)
+    check_cxx_source_compiles("${CXX_STDLIB_TEST_SOURCE}" CXX_STDLIB_IS_LIBCPP)
+    if (CXX_STDLIB_IS_LIBCPP)
+        set(CXX_STDLIB_TEST_SOURCE "
+            #include <utility>
+            #if _LIBCPP_VERSION >= 190000
+            int main() { }
+            #else
+            #error libc++ is older than 19.x
+            #endif
+        ")
+        check_cxx_source_compiles("${CXX_STDLIB_TEST_SOURCE}" CXX_STDLIB_IS_LIBCPP_19_OR_NEWER)
+        if (CXX_STDLIB_IS_LIBCPP_19_OR_NEWER)
+            set(CXX_STDLIB_VARIANT "LIBCPP 19+")
+            set(CXX_STDLIB_ASSERTIONS_MACRO _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE)
+        else ()
+            set(CXX_STDLIB_VARIANT "LIBCPP <19")
+            set(CXX_STDLIB_ASSERTIONS_MACRO _LIBCPP_ENABLE_ASSERTIONS=1)
+        endif ()
+    else ()
+        set(CXX_STDLIB_TEST_SOURCE "
+        #include <utility>
+        int main() { return _GLIBCXX_RELEASE; }
+        ")
+        check_cxx_source_compiles("${CXX_STDLIB_TEST_SOURCE}" CXX_STDLIB_IS_GLIBCXX)
+        if (CXX_STDLIB_IS_GLIBCXX)
+            set(CXX_STDLIB_VARIANT "GLIBCXX")
+            set(CXX_STDLIB_ASSERTIONS_MACRO _GLIBCXX_ASSERTIONS=1)
+        endif ()
     endif ()
 endif ()
 message(STATUS "C++ standard library in use: ${CXX_STDLIB_VARIANT}")
@@ -262,7 +316,7 @@ option(USE_CXX_STDLIB_ASSERTIONS
 if (USE_CXX_STDLIB_ASSERTIONS)
     if (CXX_STDLIB_ASSERTIONS_MACRO)
         message(STATUS "  Assertions enabled, ${CXX_STDLIB_ASSERTIONS_MACRO}")
-        add_compile_definitions("${CXX_STDLIB_ASSERTIONS_MACRO}")
+        webkit_add_compile_definitions("${CXX_STDLIB_ASSERTIONS_MACRO}")
     else ()
         message(STATUS "  Assertions disabled, CXX_STDLIB_ASSERTIONS_MACRO undefined")
     endif ()
@@ -288,57 +342,69 @@ elseif (NOT ENABLE_ASSERTS)
     WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-DASSERT_ENABLED=0)
 endif ()
 
-# Check whether features.h header exists.
-# Including glibc's one defines __GLIBC__, that is used in Platform.h
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_FEATURES_H features.h)
+if (NOT APPLE)
+    # Check whether features.h header exists.
+    # Including glibc's one defines __GLIBC__, that is used in Platform.h
+    WEBKIT_CHECK_HAVE_INCLUDE(HAVE_FEATURES_H features.h)
 
-# Check for headers
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_ERRNO_H errno.h)
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_LANGINFO_H langinfo.h)
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_MMAP sys/mman.h)
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_PTHREAD_NP_H pthread_np.h)
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_SYS_PARAM_H sys/param.h)
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_SYS_TIME_H sys/time.h)
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_SYS_TIMEB_H sys/timeb.h)
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_LINUX_MEMFD_H linux/memfd.h)
+    # Check for headers
+    WEBKIT_CHECK_HAVE_INCLUDE(HAVE_ERRNO_H errno.h)
+    WEBKIT_CHECK_HAVE_INCLUDE(HAVE_LANGINFO_H langinfo.h)
+    WEBKIT_CHECK_HAVE_INCLUDE(HAVE_MMAP sys/mman.h)
+    WEBKIT_CHECK_HAVE_INCLUDE(HAVE_PTHREAD_NP_H pthread_np.h)
+    WEBKIT_CHECK_HAVE_INCLUDE(HAVE_SYS_PARAM_H sys/param.h)
+    WEBKIT_CHECK_HAVE_INCLUDE(HAVE_SYS_TIME_H sys/time.h)
+    WEBKIT_CHECK_HAVE_INCLUDE(HAVE_SYS_TIMEB_H sys/timeb.h)
+    WEBKIT_CHECK_HAVE_INCLUDE(HAVE_LINUX_MEMFD_H linux/memfd.h)
 
-# Check for functions
-# _GNU_SOURCE=1 is required to expose statx
-list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE=1")
-WEBKIT_CHECK_HAVE_FUNCTION(HAVE_ALIGNED_MALLOC _aligned_malloc malloc.h)
-WEBKIT_CHECK_HAVE_FUNCTION(HAVE_LOCALTIME_R localtime_r time.h)
-WEBKIT_CHECK_HAVE_FUNCTION(HAVE_MALLOC_TRIM malloc_trim malloc.h)
-WEBKIT_CHECK_HAVE_FUNCTION(HAVE_STATX statx sys/stat.h)
-WEBKIT_CHECK_HAVE_FUNCTION(HAVE_TIMEGM timegm time.h)
-WEBKIT_CHECK_HAVE_FUNCTION(HAVE_TIMERFD timerfd_create sys/timerfd.h)
-WEBKIT_CHECK_HAVE_FUNCTION(HAVE_VASPRINTF vasprintf stdio.h)
+    # Check for functions
+    # _GNU_SOURCE=1 is required to expose statx
+    list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE=1")
+    WEBKIT_CHECK_HAVE_FUNCTION(HAVE_ALIGNED_MALLOC _aligned_malloc malloc.h)
+    WEBKIT_CHECK_HAVE_FUNCTION(HAVE_LOCALTIME_R localtime_r time.h)
+    WEBKIT_CHECK_HAVE_FUNCTION(HAVE_MALLOC_TRIM malloc_trim malloc.h)
+    WEBKIT_CHECK_HAVE_FUNCTION(HAVE_STATX statx sys/stat.h)
+    WEBKIT_CHECK_HAVE_FUNCTION(HAVE_TIMEGM timegm time.h)
+    WEBKIT_CHECK_HAVE_FUNCTION(HAVE_TIMERFD timerfd_create sys/timerfd.h)
+    WEBKIT_CHECK_HAVE_FUNCTION(HAVE_VASPRINTF vasprintf stdio.h)
 
-# Check for symbols
-WEBKIT_CHECK_HAVE_SYMBOL(HAVE_REGEX_H regexec regex.h)
-if (NOT (${CMAKE_SYSTEM_NAME} STREQUAL "Darwin"))
-    WEBKIT_CHECK_HAVE_SYMBOL(HAVE_PTHREAD_MAIN_NP pthread_main_np pthread_np.h)
-endif ()
-WEBKIT_CHECK_HAVE_SYMBOL(HAVE_MAP_ALIGNED MAP_ALIGNED sys/mman.h)
-WEBKIT_CHECK_HAVE_SYMBOL(HAVE_SHM_ANON SHM_ANON sys/mman.h)
-WEBKIT_CHECK_HAVE_SYMBOL(HAVE_TIMINGSAFE_BCMP timingsafe_bcmp string.h)
-# Windows has signal.h but is missing symbols that are used in calls to signal.
-WEBKIT_CHECK_HAVE_SYMBOL(HAVE_SIGNAL_H SIGTRAP signal.h)
+    # Check for symbols
+    WEBKIT_CHECK_HAVE_SYMBOL(HAVE_REGEX_H regexec regex.h)
+    if (NOT (${CMAKE_SYSTEM_NAME} STREQUAL "Darwin"))
+        WEBKIT_CHECK_HAVE_SYMBOL(HAVE_PTHREAD_MAIN_NP pthread_main_np pthread_np.h)
+    endif ()
+    WEBKIT_CHECK_HAVE_SYMBOL(HAVE_MAP_ALIGNED MAP_ALIGNED sys/mman.h)
+    WEBKIT_CHECK_HAVE_SYMBOL(HAVE_SHM_ANON SHM_ANON sys/mman.h)
+    WEBKIT_CHECK_HAVE_SYMBOL(HAVE_TIMINGSAFE_BCMP timingsafe_bcmp string.h)
+    # Windows has signal.h but is missing symbols that are used in calls to signal.
+    WEBKIT_CHECK_HAVE_SYMBOL(HAVE_SIGNAL_H SIGTRAP signal.h)
 
-# Check for struct members
-WEBKIT_CHECK_HAVE_STRUCT(HAVE_STAT_BIRTHTIME "struct stat" st_birthtime sys/stat.h)
-WEBKIT_CHECK_HAVE_STRUCT(HAVE_TM_GMTOFF "struct tm" tm_gmtoff time.h)
-WEBKIT_CHECK_HAVE_STRUCT(HAVE_TM_ZONE "struct tm" tm_zone time.h)
+    # Check for struct members
+    WEBKIT_CHECK_HAVE_STRUCT(HAVE_STAT_BIRTHTIME "struct stat" st_birthtime sys/stat.h)
+    WEBKIT_CHECK_HAVE_STRUCT(HAVE_TM_GMTOFF "struct tm" tm_gmtoff time.h)
+    WEBKIT_CHECK_HAVE_STRUCT(HAVE_TM_ZONE "struct tm" tm_zone time.h)
 
-# Check for int types
-check_type_size("__int128_t" INT128_VALUE)
+    # Check for int types
+    # Some standard libraries (e.g. the Microsoft STL) do not support __int128_t.
+    set(INT128_TEST_SOURCE "
+        #include <limits>
+        #include <utility>
+        static_assert(std::numeric_limits<__int128_t>::is_specialized);
+        static_assert(std::numeric_limits<__int128_t>::is_signed);
+        static_assert(std::numeric_limits<__uint128_t>::is_specialized);
+        static_assert(alignof(std::pair<long long, __int128_t>) == alignof(__int128_t));
+        int main() { return 0; }
+    ")
+    check_cxx_source_compiles("${INT128_TEST_SOURCE}" INT128_IS_USABLE)
 
-if (HAVE_INT128_VALUE)
-  SET_AND_EXPOSE_TO_BUILD(HAVE_INT128_T INT128_VALUE)
-endif ()
+    if (INT128_IS_USABLE)
+      SET_AND_EXPOSE_TO_BUILD(HAVE_INT128_T TRUE)
+    endif ()
 
-# Check which filesystem implementation is available if any
-if (STD_FILESYSTEM_IS_AVAILABLE)
-    SET_AND_EXPOSE_TO_BUILD(HAVE_STD_FILESYSTEM TRUE)
-elseif (STD_EXPERIMENTAL_FILESYSTEM_IS_AVAILABLE)
-    SET_AND_EXPOSE_TO_BUILD(HAVE_STD_EXPERIMENTAL_FILESYSTEM TRUE)
+    # Check which filesystem implementation is available if any
+    if (STD_FILESYSTEM_IS_AVAILABLE)
+        SET_AND_EXPOSE_TO_BUILD(HAVE_STD_FILESYSTEM TRUE)
+    elseif (STD_EXPERIMENTAL_FILESYSTEM_IS_AVAILABLE)
+        SET_AND_EXPOSE_TO_BUILD(HAVE_STD_EXPERIMENTAL_FILESYSTEM TRUE)
+    endif ()
 endif ()

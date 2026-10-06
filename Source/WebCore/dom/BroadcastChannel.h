@@ -30,8 +30,10 @@
 #include <WebCore/ClientOrigin.h>
 #include <WebCore/EventTarget.h>
 #include <WebCore/EventTargetInterfaces.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace JSC {
 class JSGlobalObject;
@@ -59,7 +61,7 @@ public:
     void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    BroadcastChannelIdentifier identifier() const;
+    BroadcastChannelIdentifier NODELETE identifier() const;
     String name() const;
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message);
@@ -70,14 +72,13 @@ public:
 private:
     BroadcastChannel(ScriptExecutionContext&, const String& name);
 
-    void dispatchMessage(Ref<SerializedScriptValue>&&);
+    void dispatchMessage(Ref<SerializedScriptValue>&&, CompletionHandlerCallingScope&&);
 
     bool isEligibleForMessaging() const;
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::BroadcastChannel; }
     ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
     void refEventTarget() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
     void derefEventTarget() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
     void eventListenersDidChange() final;

@@ -23,12 +23,18 @@
 #include "GraphicsContext.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
+#include "LocalFrameViewInlines.h"
 #include "RenderElement.h"
 #include "RenderObjectDocument.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderView.h"
 #include "SVGRenderSupport.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/TZoneMallocInlines.h>
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
+#endif
 
 namespace WebCore {
 
@@ -38,7 +44,7 @@ LegacyRenderSVGResourceSolidColor::LegacyRenderSVGResourceSolidColor() = default
 
 LegacyRenderSVGResourceSolidColor::~LegacyRenderSVGResourceSolidColor() = default;
 
-auto LegacyRenderSVGResourceSolidColor::applyResource(RenderElement& renderer, const RenderStyle& style, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode) -> OptionSet<ApplyResult>
+auto LegacyRenderSVGResourceSolidColor::applyResource(RenderElement& renderer, const Style::ComputedStyle& style, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode) -> OptionSet<ApplyResult>
 {
     ASSERT(context);
     ASSERT(!resourceMode.isEmpty());
@@ -49,10 +55,14 @@ auto LegacyRenderSVGResourceSolidColor::applyResource(RenderElement& renderer, c
 
     if (resourceMode.contains(RenderSVGResourceMode::ApplyToFill)) {
         if (!isRenderingMask)
-            context->setAlpha(style.fillOpacity().value.value);
+            context->setAlpha(Style::evaluate<float>(style.fillOpacity()));
         else
             context->setAlpha(1);
-        context->setFillColor(colorResolver.colorApplyingColorFilter(m_color));
+        auto fillColor = colorResolver.colorApplyingColorFilter(m_color);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        fillColor = AXCustomColorModeController::adjustedSVGPaintColor(renderer, style, AXCustomColorModeController::SVGPaintTarget::Fill, fillColor, m_color);
+#endif
+        context->setFillColor(fillColor);
         if (isRenderingMask)
             context->setFillRule(style.clipRule());
         else
@@ -63,8 +73,12 @@ auto LegacyRenderSVGResourceSolidColor::applyResource(RenderElement& renderer, c
     } else if (resourceMode.contains(RenderSVGResourceMode::ApplyToStroke)) {
         // When rendering the mask for a LegacyRenderSVGResourceClipper, the stroke code path is never hit.
         ASSERT(!isRenderingMask);
-        context->setAlpha(style.strokeOpacity().value.value);
-        context->setStrokeColor(colorResolver.colorApplyingColorFilter(m_color));
+        context->setAlpha(Style::evaluate<float>(style.strokeOpacity()));
+        auto strokeColor = colorResolver.colorApplyingColorFilter(m_color);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        strokeColor = AXCustomColorModeController::adjustedSVGPaintColor(renderer, style, AXCustomColorModeController::SVGPaintTarget::Stroke, strokeColor, m_color);
+#endif
+        context->setStrokeColor(strokeColor);
 
         SVGRenderSupport::applyStrokeStyleToContext(*context, style, renderer);
 

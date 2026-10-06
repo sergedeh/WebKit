@@ -27,6 +27,7 @@
 
 #include <WebCore/GlobalFrameIdentifier.h>
 #include <WebCore/PolicyContainer.h>
+#include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <WebCore/SecurityContext.h>
 #include <WebCore/SecurityOrigin.h>
@@ -43,9 +44,21 @@ struct NavigationRequester {
     Ref<SecurityOrigin> topOrigin;
     PolicyContainer policyContainer;
     std::optional<FrameIdentifier> frameID;
+    std::optional<FrameIdentifier> topFrameID;
     std::optional<PageIdentifier> pageID;
     ScriptExecutionContextIdentifier documentIdentifier;
     SandboxFlags sandboxFlags;
+    SandboxFlags frameSandboxFlags;
+    bool hasLoadedThirdPartyScript { false };
+    bool hasLoadedThirdPartyFrame { false };
+    bool hasHadUserInteraction { false };
+    bool parentOriginIsSameAsTopOrigin { false };
+    std::optional<ProcessIdentifier> processIdentifier;
+    bool isSecureContext { false };
+    bool localNetworkAllowedByPermissionsPolicy { false };
+    bool loopbackNetworkAllowedByPermissionsPolicy { false };
 };
+
+WEBCORE_EXPORT bool shouldNavigationLoseFrameSpecificStorageAccess(const NavigationRequester&, FrameIdentifier navigatedFrame, const URL& fromURL, const URL& toURL);
 
 } // namespace WebCore

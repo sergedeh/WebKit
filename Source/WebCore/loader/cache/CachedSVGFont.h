@@ -41,17 +41,17 @@ public:
     virtual ~CachedSVGFont();
 
     bool ensureCustomFontData() final;
-    RefPtr<Font> createFont(const FontDescription&, bool syntheticBold, bool syntheticItalic, const FontCreationContext&) final;
+    RefPtr<Font> createFont(const FontDescription&, const FontCreationContext&) final;
 
 private:
-    FontPlatformData platformDataFromCustomData(const FontDescription&, bool bold, bool italic, const FontCreationContext&);
+    FontPlatformData platformDataFromCustomData(const FontDescription&, const FontCreationContext&);
 
-    SVGFontElement* getSVGFontById(const AtomString&) const;
+    SVGFontElement* NODELETE getSVGFontById(const AtomString&) const;
 
     SVGFontElement* maybeInitializeExternalSVGFontElement();
     SVGFontFaceElement* firstFontFace();
 
-    RefPtr<SharedBuffer> m_convertedFont;
+    const RefPtr<SharedBuffer> m_convertedFont;
     RefPtr<SVGDocument> m_externalSVGDocument;
     WeakPtr<SVGFontElement, WeakPtrImplWithEventTargetData> m_externalSVGFontElement;
     const Ref<const Settings> m_settings;

@@ -127,7 +127,7 @@ RemoteInspector& RemoteInspector::singleton()
 }
 
 RemoteInspector::RemoteInspector()
-    : m_xpcQueue(adoptOSObject(dispatch_queue_create("com.apple.JavaScriptCore.remote-inspector-xpc", DISPATCH_QUEUE_SERIAL)))
+    : m_xpcQueue(adoptOSObject(dispatch_queue_create("com.apple.JavaScriptCore.remote-inspector-xpc", serialQueueWithAutoreleasePoolAttrSingleton())))
 {
 }
 
@@ -337,8 +337,7 @@ void RemoteInspector::setupXPCConnectionIfNeeded()
         return;
     }
 
-    // FIXME: This is a false positive. <rdar://164843889>
-    SUPPRESS_RETAINPTR_CTOR_ADOPT auto connection = adoptXPCObject(xpc_connection_create_mach_service(WIRXPCMachPortName, m_xpcQueue.get(), 0));
+    OSObjectPtr connection = adoptOSObject(xpc_connection_create_mach_service(WIRXPCMachPortName, m_xpcQueue.get(), 0));
     if (!connection) {
         WTFLogAlways("RemoteInspector failed to create XPC connection.");
         return;
@@ -533,7 +532,7 @@ RetainPtr<NSDictionary> RemoteInspector::listingForInspectionTarget(const Remote
         [listing setObject:identifierForPID(presentingApplicationPID.value()).get() forKey:WIRHostApplicationIdentifierKey];
 
     if (RefPtr connectionToTarget = m_targetConnectionMap.get(target.targetIdentifier()))
-        [listing setObject:connectionToTarget->protectedConnectionIdentifier().get() forKey:WIRConnectionIdentifierKey];
+        [listing setObject:protect(connectionToTarget->connectionIdentifier()).get() forKey:WIRConnectionIdentifierKey];
 
     if (target.hasLocalDebugger())
         [listing setObject:@YES forKey:WIRHasLocalDebuggerKey];
@@ -561,7 +560,7 @@ RetainPtr<NSDictionary> RemoteInspector::listingForAutomationTarget(const Remote
     }
 
     if (RefPtr connectionToTarget = m_targetConnectionMap.get(target.targetIdentifier()))
-        [listing setObject:connectionToTarget->protectedConnectionIdentifier().get() forKey:WIRConnectionIdentifierKey];
+        [listing setObject:protect(connectionToTarget->connectionIdentifier()).get() forKey:WIRConnectionIdentifierKey];
 
     return listing;
 }
@@ -707,7 +706,7 @@ void RemoteInspector::receivedDidCloseMessage(NSDictionary *userInfo)
     if (!connectionToTarget)
         return;
 
-    if (![connectionIdentifier isEqualToString:connectionToTarget->protectedConnectionIdentifier().get()])
+    if (![connectionIdentifier isEqualToString:protect(connectionToTarget->connectionIdentifier()).get()])
         return;
 
     connectionToTarget->close();
@@ -796,7 +795,7 @@ void RemoteInspector::receivedConnectionDiedMessage(NSDictionary *userInfo)
     auto it = m_targetConnectionMap.begin();
     auto end = m_targetConnectionMap.end();
     for (; it != end; ++it) {
-        if ([connectionIdentifier isEqualToString:RefPtr { it->value }->protectedConnectionIdentifier().get()])
+        if ([connectionIdentifier isEqualToString:protect(RefPtr { it->value }->connectionIdentifier()).get()])
             break;
     }
 
@@ -869,6 +868,11 @@ void RemoteInspector::receivedAutomationSessionRequestMessage(NSDictionary *user
     if (NSNumber *value = forwardedCapabilities[WIRSiteIsolationEnabled]) {
         if ([value isKindOfClass:NSNumber.class])
             sessionCapabilities.siteIsolationEnabled = value.boolValue;
+    }
+
+    if (NSNumber *value = forwardedCapabilities[WIRControlledByExternalAgent]) {
+        if ([value isKindOfClass:NSNumber.class])
+            sessionCapabilities.controlledByExternalAgent = value.boolValue;
     }
 
     if (!m_client)

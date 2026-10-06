@@ -82,7 +82,7 @@ static void* kWindowContentLayoutObserverContext = &kWindowContentLayoutObserver
 
 - (WKInspectorRef)inspectorRef
 {
-    return toAPI(self._protectedInspector.get());
+    return toAPI(protect(_inspectorProxy).get());
 }
 
 - (_WKInspector *)inspector
@@ -92,10 +92,6 @@ static void* kWindowContentLayoutObserverContext = &kWindowContentLayoutObserver
     return nil;
 }
 
-- (RefPtr<WebKit::WebInspectorUIProxy>)_protectedInspector
-{
-    return _inspectorProxy.get();
-}
 
 - (instancetype)initWithWebInspectorUIProxy:(WebKit::WebInspectorUIProxy*)inspectorProxy
 {
@@ -152,6 +148,12 @@ static void* kWindowContentLayoutObserverContext = &kWindowContentLayoutObserver
         proxy->windowFullScreenDidChange();
 }
 
+- (void)_systemColorsDidChange:(NSNotification *)notification
+{
+    if (RefPtr proxy = _inspectorProxy.get())
+        proxy->systemAppearanceDidChange();
+}
+
 - (void)inspectedViewFrameDidChange:(NSNotification *)notification
 {
     // Resizing the views while inside this notification can lead to bad results when entering
@@ -199,7 +201,7 @@ static void* kWindowContentLayoutObserverContext = &kWindowContentLayoutObserver
 
 - (BOOL)inspectorViewControllerInspectorIsUnderTest:(WKInspectorViewController *)inspectorViewController
 {
-    return _inspectorProxy ? _inspectorProxy->isUnderTest() : false;
+    return _inspectorProxy && _inspectorProxy->isUnderTest();
 }
 
 - (BOOL)inspectorViewControllerInspectorIsHorizontallyAttached:(WKInspectorViewController *)inspectorViewController
@@ -338,7 +340,7 @@ using namespace WebCore;
 
 void WebInspectorUIProxy::didBecomeActive()
 {
-    protect(protectedInspectorPage()->legacyMainFrameProcess())->send(Messages::WebInspectorUI::UpdateFindString(WebKit::stringForFind()), m_inspectorPage->webPageIDInMainFrameProcess());
+    protect(protect(inspectorPage())->legacyMainFrameProcess())->send(Messages::WebInspectorUI::UpdateFindString(WebKit::stringForFind()), m_inspectorPage->webPageIDInMainFrameProcess());
 }
 
 void WebInspectorUIProxy::attachmentViewDidChange(NSView *oldView, NSView *newView)
@@ -478,9 +480,10 @@ RefPtr<WebPageProxy> WebInspectorUIProxy::platformCreateFrontendPage()
     m_objCAdapter = adoptNS([[WKWebInspectorUIProxyObjCAdapter alloc] initWithWebInspectorUIProxy:this]);
     RetainPtr inspectedView = inspectedPage->inspectorAttachmentView();
     [[NSNotificationCenter defaultCenter] addObserver:m_objCAdapter.get() selector:@selector(inspectedViewFrameDidChange:) name:NSViewFrameDidChangeNotification object:inspectedView.get()];
+    [[NSNotificationCenter defaultCenter] addObserver:m_objCAdapter.get() selector:@selector(_systemColorsDidChange:) name:NSSystemColorsDidChangeNotification object:nil];
 
     Ref configuration = inspectedPage->uiClient().configurationForLocalInspector(*inspectedPage, *this);
-    m_inspectorViewController = adoptNS([[WKInspectorViewController alloc] initWithConfiguration:protectedWrapper(configuration.get()).get() inspectedPage:inspectedPage.get()]);
+    m_inspectorViewController = adoptNS([[WKInspectorViewController alloc] initWithConfiguration:protect(WebKit::wrapper(configuration.get())).get() inspectedPage:inspectedPage.get()]);
     [m_inspectorViewController setDelegate:m_objCAdapter.get()];
 
     RefPtr inspectorPage = [m_inspectorViewController webView]->_page.get();
@@ -498,7 +501,7 @@ void WebInspectorUIProxy::platformCreateFrontendWindow()
         savedWindowFrame = NSRectFromString(savedWindowFrameString.get());
     }
 
-    m_inspectorWindow = WebInspectorUIProxy::createFrontendWindow(savedWindowFrame, InspectionTargetType::Local, protectedInspectedPage().get());
+    m_inspectorWindow = WebInspectorUIProxy::createFrontendWindow(savedWindowFrame, InspectionTargetType::Local, protect(inspectedPage()).get());
     [m_inspectorWindow setDelegate:m_objCAdapter.get()];
 
     RetainPtr<WKWebView> inspectorView = [m_inspectorViewController webView];
@@ -714,7 +717,7 @@ void WebInspectorUIProxy::platformSave(Vector<InspectorFrontendClient::SaveData>
 void WebInspectorUIProxy::platformLoad(const String& path, CompletionHandler<void(const String&)>&& completionHandler)
 {
     if (auto contents = FileSystem::readEntireFile(path))
-        completionHandler(String { byteCast<Latin1Character>(contents->span()) });
+        completionHandler(String::fromUTF8ReplacingInvalidSequences(byteCast<Latin1Character>(contents->span())));
     else
         completionHandler(nullString());
 }
@@ -785,7 +788,7 @@ void WebInspectorUIProxy::inspectedViewFrameDidChange(CGFloat currentDimension)
 
     auto frameAdjustedForContentLayoutRect = [&](NSRect frameIgnoringContentLayoutRect) {
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
-        bool drawsScrollPocket = inspectedPage->preferences().contentInsetBackgroundFillEnabled() && inspectedPage->pendingOrActualObscuredContentInsets().top();
+        bool drawsScrollPocket = protect(inspectedPage->preferences())->contentInsetBackgroundFillEnabled() && inspectedPage->pendingOrActualObscuredContentInsets().top();
         if (drawsScrollPocket)
             return frameIgnoringContentLayoutRect;
 #endif
@@ -855,8 +858,8 @@ void WebInspectorUIProxy::inspectedViewFrameDidChange(CGFloat currentDimension)
 
 void WebInspectorUIProxy::platformAttach()
 {
-    ASSERT(protectedInspectedPage());
-    RetainPtr inspectedView = protectedInspectedPage()->inspectorAttachmentView();
+    ASSERT(protect(inspectedPage()));
+    RetainPtr inspectedView = protect(inspectedPage())->inspectorAttachmentView();
     RetainPtr<WKWebView> inspectorView = [m_inspectorViewController webView];
 
     if (m_inspectorWindow) {
@@ -871,15 +874,15 @@ void WebInspectorUIProxy::platformAttach()
     switch (m_attachmentSide) {
     case AttachmentSide::Bottom:
         [inspectorView setAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin];
-        currentDimension = protectedInspectorPagePreferences()->inspectorAttachedHeight();
+        currentDimension = protect(inspectorPagePreferences())->inspectorAttachedHeight();
         break;
     case AttachmentSide::Right:
         [inspectorView setAutoresizingMask:NSViewHeightSizable | NSViewMinXMargin];
-        currentDimension = protectedInspectorPagePreferences()->inspectorAttachedWidth();
+        currentDimension = protect(inspectorPagePreferences())->inspectorAttachedWidth();
         break;
     case AttachmentSide::Left:
         [inspectorView setAutoresizingMask:NSViewHeightSizable | NSViewMaxXMargin];
-        currentDimension = protectedInspectorPagePreferences()->inspectorAttachedWidth();
+        currentDimension = protect(inspectorPagePreferences())->inspectorAttachedWidth();
         break;
     }
 

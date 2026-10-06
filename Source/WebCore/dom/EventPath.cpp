@@ -31,23 +31,23 @@
 #include "HTMLSlotElement.h"
 #include "LocalDOMWindow.h"
 #include "MouseEvent.h"
-#include "NodeInlines.h"
 #include "PseudoElement.h"
 #include "ShadowRoot.h"
+#include "SlotAssignment.h"
 #include "TouchEvent.h"
 #include "TreeScopeInlines.h"
 #include <wtf/CheckedPtr.h>
 
 namespace WebCore {
 
-static inline bool shouldEventCrossShadowBoundary(Event& event, ShadowRoot& shadowRoot, EventTarget& target)
+static inline bool NODELETE shouldEventCrossShadowBoundary(Event& event, ShadowRoot& shadowRoot, EventTarget& target)
 {
     auto* targetNode = dynamicDowncast<Node>(target);
     bool targetIsInShadowRoot = targetNode && &targetNode->treeScope().rootNode() == &shadowRoot;
     return !targetIsInShadowRoot || event.composed();
 }
 
-static Node* nodeOrHostIfPseudoElement(Node* node)
+static Node* NODELETE nodeOrHostIfPseudoElement(Node* node)
 {
     auto* pseudoElement = dynamicDowncast<PseudoElement>(*node);
     return pseudoElement ? pseudoElement->hostElement() : node;
@@ -57,14 +57,14 @@ class RelatedNodeRetargeter {
 public:
     RelatedNodeRetargeter(Ref<Node>&& relatedNode, Node& target);
 
-    Node* currentNode(Node& currentTreeScope);
+    Node* NODELETE currentNode(Node& currentTreeScope);
     void moveToNewTreeScope(TreeScope* previousTreeScope, TreeScope& newTreeScope);
 
 private:
-    Node* nodeInLowestCommonAncestor();
+    Node* NODELETE nodeInLowestCommonAncestor();
     void collectTreeScopes();
 
-    void checkConsistency(Node& currentTarget);
+    void NODELETE checkConsistency(Node& currentTarget);
 
     const Ref<Node> m_relatedNode;
     RefPtr<Node> m_retargetedRelatedNode;
@@ -88,8 +88,8 @@ EventPath::EventPath(Node& originalTarget, Event& event)
 
 void EventPath::buildPath(Node& originalTarget, Event& event)
 {
-    EventContext::Type contextType = [&]() {
-        if (is<MouseEvent>(event) || is<FocusEvent>(event))
+    auto contextType = [&] {
+        if (isAnyOf<MouseEvent, FocusEvent>(event))
             return EventContext::Type::MouseOrFocus;
 #if ENABLE(TOUCH_EVENTS)
         if (is<TouchEvent>(event))
@@ -310,12 +310,12 @@ EventPath::EventPath(EventTarget& target)
     m_path = { EventContext { EventContext::Type::Normal, nullptr, &target, &target, 0 } };
 }
 
-static Node* moveOutOfAllShadowRoots(Node& startingNode)
+static Node* NODELETE moveOutOfAllShadowRoots(Node& startingNode)
 {
-    CheckedPtr node = &startingNode;
+    auto* node = &startingNode;
     while (node && node->isInShadowTree())
         node = downcast<ShadowRoot>(node->rootNode()).host();
-    return node.unsafeGet();
+    return node;
 }
 
 RelatedNodeRetargeter::RelatedNodeRetargeter(Ref<Node>&& relatedNode, Node& target)
@@ -372,7 +372,7 @@ RelatedNodeRetargeter::RelatedNodeRetargeter(Ref<Node>&& relatedNode, Node& targ
     m_retargetedRelatedNode = nodeInLowestCommonAncestor();
 }
 
-inline Node* RelatedNodeRetargeter::currentNode(Node& currentTarget)
+inline Node* NODELETE RelatedNodeRetargeter::currentNode(Node& currentTarget)
 {
     checkConsistency(currentTarget);
     return m_retargetedRelatedNode.get();
@@ -412,7 +412,7 @@ void RelatedNodeRetargeter::moveToNewTreeScope(TreeScope* previousTreeScope, Tre
     }
 }
 
-inline Node* RelatedNodeRetargeter::nodeInLowestCommonAncestor()
+inline Node* NODELETE RelatedNodeRetargeter::nodeInLowestCommonAncestor()
 {
     if (!m_lowestCommonAncestorIndex)
         return m_relatedNode.ptr();
@@ -430,7 +430,7 @@ void RelatedNodeRetargeter::collectTreeScopes()
 
 #if !ASSERT_ENABLED
 
-inline void RelatedNodeRetargeter::checkConsistency(Node&)
+inline void NODELETE RelatedNodeRetargeter::checkConsistency(Node&)
 {
 }
 

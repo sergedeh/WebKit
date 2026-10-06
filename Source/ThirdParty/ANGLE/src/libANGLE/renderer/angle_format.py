@@ -102,7 +102,7 @@ def get_component_type(format_id):
 def get_channel_tokens(format_id):
     if 'EXTERNAL' in format_id:
         return ['R8', 'G8', 'B8', 'A8']
-    r = re.compile(r'([' + kChannels + '][\d]+)')
+    r = re.compile(r'([' + kChannels + r'][\d]+)')
     return list(filter(r.match, r.split(format_id)))
 
 
@@ -134,7 +134,10 @@ def get_bits(format_id):
     else:
         tokens = get_channel_tokens(format_id)
         for token in tokens:
-            bits[token[0]] = int(token[1:])
+            # Some padding tokens can appear multiple times in a format name
+            # (e.g. R10X6G10X6B10X6A10X6 has four X6 tokens). They should be
+            # accumulated for the correct pixelBytes value.
+            bits[token[0]] = bits.get(token[0], 0) + int(token[1:])
     return bits
 
 
@@ -158,7 +161,7 @@ def gl_format_channels(internal_format):
     if internal_format.find('INT_10_10_10_2_OES') == 0:
         return 'rgba'
 
-    channels_pattern = re.compile('GL_(COMPRESSED_)?(SIGNED_)?(ETC\d_)?([A-Z]+)')
+    channels_pattern = re.compile(r'GL_(COMPRESSED_)?(SIGNED_)?(ETC\d_)?([A-Z]+)')
     match = re.search(channels_pattern, internal_format)
     channels_string = match.group(4)
 

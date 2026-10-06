@@ -32,24 +32,24 @@ namespace WebCore {
 
 #define WEBCORE_COMMON_ATOM_STRINGS_FOR_EACH_KEYWORD(macro) \
     macro(all, "all") \
-    macro(alternative, "alternative") \
+    macro(any, "any") \
     macro(applicationXHTMLContentType, "application/xhtml+xml") \
     macro(applicationXMLContentType, "application/xml") \
     macro(applicationOctetStream, "application/octet-stream") \
     macro(auto, "auto") \
-    macro(captions, "captions") \
+    macro(captions, "captions")                             \
+    macro(closerequest, "closerequest") \
     macro(commentary, "commentary") \
     macro(cssContentType, "text/css") \
-    macro(eager, "eager") \
     macro(email, "email") \
     macro(false, "false") \
+    macro(hint, "hint") \
     macro(imageSVGContentType, "image/svg+xml") \
-    macro(lazy, "lazy") \
-    macro(main, "main") \
     macro(manual, "manual") \
     macro(none, "none") \
     macro(off, "off") \
     macro(on, "on") \
+    macro(pickerSelect, "picker(select)") \
     macro(plaintextOnly, "plaintext-only") \
     macro(print, "print") \
     macro(reset, "reset") \

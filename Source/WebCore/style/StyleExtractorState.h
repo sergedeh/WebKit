@@ -25,23 +25,24 @@
 
 #pragma once
 
-#include <WebCore/PseudoElementIdentifier.h>
+#include "PseudoElementIdentifier.h"
 #include <wtf/Ref.h>
 
 namespace WebCore {
 
 class CSSValuePool;
-class RenderStyle;
 class Element;
 class RenderElement;
 
 namespace Style {
 
+class ComputedStyle;
+
 struct ExtractorState {
     enum class PropertyValueType : bool { Resolved, Computed };
     PropertyValueType valueType;
 
-    const RenderStyle& style;
+    const Style::ComputedStyle& style;
 
     Ref<Element> element;
     const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier;

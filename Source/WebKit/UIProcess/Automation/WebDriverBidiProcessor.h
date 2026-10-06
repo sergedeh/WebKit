@@ -38,8 +38,10 @@ namespace WebKit {
 
 class BidiBrowserAgent;
 class BidiBrowsingContextAgent;
+class BidiDigitalCredentialsAgent;
 class BidiPermissionsAgent;
 class BidiScriptAgent;
+class BidiSessionAgent;
 class BidiStorageAgent;
 class WebAutomationSession;
 class WebPageProxy;
@@ -53,7 +55,9 @@ public:
     void processBidiMessage(const String&);
     void sendBidiMessage(const String&);
 
-    BidiBrowserAgent& browserAgent() const { return m_browserAgent; }
+    BidiBrowserAgent& browserAgent() const LIFETIME_BOUND { return m_browserAgent; }
+    BidiDigitalCredentialsAgent& digitalCredentialsAgent() const LIFETIME_BOUND { return m_digitalCredentialsAgent; }
+    BidiScriptAgent& scriptAgent() const LIFETIME_BOUND { return m_scriptAgent; }
 
     // Inspector::FrontendChannel methods. Domain events sent via WebDriverBidi domain notifiers are packaged up
     // by FrontendRouter and are then sent back out-of-process via WebAutomationSession::sendBidiMessage().
@@ -61,8 +65,15 @@ public:
     void sendMessageToFrontend(const String&) override;
 
     // Event entry points called from the owning WebAutomationSession.
-    Inspector::BidiBrowsingContextFrontendDispatcher& browsingContextDomainNotifier() const { return m_browsingContextDomainNotifier; }
-    Inspector::BidiLogFrontendDispatcher& logDomainNotifier() const { return m_logDomainNotifier; }
+    Inspector::BidiBrowsingContextFrontendDispatcher& browsingContextDomainNotifier() const LIFETIME_BOUND { return m_browsingContextDomainNotifier; }
+    Inspector::BidiLogFrontendDispatcher& logDomainNotifier() const LIFETIME_BOUND { return m_logDomainNotifier; }
+    Inspector::BidiScriptFrontendDispatcher& scriptDomainNotifier() const LIFETIME_BOUND { return m_scriptDomainNotifier; }
+
+    bool eventIsEnabled(const String& eventName, const HashSet<String>& contexts);
+    void emitEventIfEnabled(const String& eventName, const HashSet<String>& browsingContexts, NOESCAPE const Function<void()>&);
+
+    // Shared validation helpers for BiDi protocol
+    static Inspector::CommandResult<void> validateSerializationOptions(const JSON::Object&);
 
 private:
     WeakPtr<WebAutomationSession> m_session;
@@ -71,12 +82,15 @@ private:
     const Ref<Inspector::BackendDispatcher> m_backendDispatcher;
 
     const UniqueRef<BidiBrowserAgent> m_browserAgent;
-    const UniqueRef<BidiBrowsingContextAgent> m_browsingContextAgent;
+    const Ref<BidiBrowsingContextAgent> m_browsingContextAgent;
+    const UniqueRef<BidiDigitalCredentialsAgent> m_digitalCredentialsAgent;
     const UniqueRef<BidiPermissionsAgent> m_permissionsAgent;
     const UniqueRef<BidiScriptAgent> m_scriptAgent;
+    const UniqueRef<BidiSessionAgent> m_sessionAgent;
     const UniqueRef<BidiStorageAgent> m_storageAgent;
     const UniqueRef<Inspector::BidiBrowsingContextFrontendDispatcher> m_browsingContextDomainNotifier;
     const UniqueRef<Inspector::BidiLogFrontendDispatcher> m_logDomainNotifier;
+    const UniqueRef<Inspector::BidiScriptFrontendDispatcher> m_scriptDomainNotifier;
 };
 
 } // namespace WebKit

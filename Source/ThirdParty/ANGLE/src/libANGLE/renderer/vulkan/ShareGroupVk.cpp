@@ -37,23 +37,17 @@ constexpr double kMonolithicPipelineJobPeriod = 0.002;
 // Time interval in seconds that we should try to prune default buffer pools.
 constexpr double kTimeElapsedForPruneDefaultBufferPool = 0.25;
 
-bool ValidateIdenticalPriority(const egl::ContextMap &contexts, egl::ContextPriority sharedPriority)
+bool ValidateIdenticalPriority(const egl::SharedContextMap &contexts,
+                               egl::ContextPriority sharedPriority)
 {
     if (sharedPriority == egl::ContextPriority::InvalidEnum)
     {
         return false;
     }
 
-    for (auto context : contexts)
-    {
-        const ContextVk *contextVk = vk::GetImpl(context.second);
-        if (contextVk->getPriority() != sharedPriority)
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return contexts.forEach([sharedPriority](const gl::Context *context) {
+        return vk::GetImpl(context)->getPriority() == sharedPriority;
+    });
 }
 }  // namespace
 
@@ -132,10 +126,9 @@ angle::Result ShareGroupVk::updateContextsPriority(ContextVk *contextVk,
 
     vk::ProtectionTypes protectionTypes;
     protectionTypes.set(contextVk->getProtectionType());
-    for (auto context : getContexts())
-    {
-        protectionTypes.set(vk::GetImpl(context.second)->getProtectionType());
-    }
+    getContexts().forEach([&protectionTypes](const gl::Context *context) {
+        protectionTypes.set(vk::GetImpl(context)->getProtectionType());
+    });
 
     {
         vk::ScopedQueueSerialIndex index;
@@ -144,13 +137,13 @@ angle::Result ShareGroupVk::updateContextsPriority(ContextVk *contextVk,
                                                       newPriority, index.get()));
     }
 
-    for (auto context : getContexts())
-    {
-        ContextVk *sharedContextVk = vk::GetImpl(context.second);
+    egl::ContextPriority oldPriority = mContextsPriority;
+    getContexts().forEach([oldPriority, newPriority](gl::Context *context) {
+        ContextVk *sharedContextVk = vk::GetImpl(context);
 
-        ASSERT(sharedContextVk->getPriority() == mContextsPriority);
+        ASSERT(sharedContextVk->getPriority() == oldPriority);
         sharedContextVk->setPriority(newPriority);
-    }
+    });
     mContextsPriority = newPriority;
 
     return angle::Result::Continue;
@@ -176,15 +169,14 @@ void ShareGroupVk::onDestroy(const egl::Display *display)
     mPipelineLayoutCache.destroy(mRenderer);
     mDescriptorSetLayoutCache.destroy(mRenderer);
 
-    mSamplerCache.destroy(mRenderer, hasDisplayTextureShareGroup);
-    mYuvConversionCache.destroy(mRenderer, hasDisplayTextureShareGroup);
+    mSamplerCache.destroy(mRenderer);
+    mYuvConversionCache.destroy(mRenderer);
 
     mMetaDescriptorPools[DescriptorSetIndex::UniformsAndXfb].destroy(mRenderer);
     mMetaDescriptorPools[DescriptorSetIndex::Texture].destroy(mRenderer);
     mMetaDescriptorPools[DescriptorSetIndex::UniformBuffers].destroy(mRenderer);
     mMetaDescriptorPools[DescriptorSetIndex::ShaderResource].destroy(mRenderer);
 
-    mFramebufferCache.destroy(mRenderer);
     resetPrevTexture();
 }
 
@@ -269,7 +261,7 @@ angle::Result TextureUpload::onMutableTextureUpload(ContextVk *contextVk, Textur
     // If the mutable texture is consistently specified, we initialize a full mip chain for it.
     if (mPrevUploadedMutableTexture->isMutableTextureConsistentlySpecifiedForFlush())
     {
-        ANGLE_TRY(mPrevUploadedMutableTexture->ensureImageInitialized(
+        ANGLE_TRY(mPrevUploadedMutableTexture->ensureImageAndReadViewsInitialized(
             contextVk, ImageMipLevels::EnabledLevels));
         contextVk->getPerfCounters().mutableTexturesUploaded++;
     }
@@ -315,8 +307,7 @@ vk::BufferPool *ShareGroupVk::getDefaultBufferPool(VkDeviceSize size,
 
         std::unique_ptr<vk::BufferPool> pool  = std::make_unique<vk::BufferPool>();
         vma::VirtualBlockCreateFlags vmaFlags = vma::VirtualBlockCreateFlagBits::GENERAL;
-        pool->initWithFlags(mRenderer, vmaFlags, usageFlags, 0, memoryTypeIndex,
-                            memoryPropertyFlags);
+        pool->initWithFlags(mRenderer, vmaFlags, usageFlags, memoryTypeIndex, memoryPropertyFlags);
         mDefaultBufferPools[memoryTypeIndex] = std::move(pool);
     }
 
@@ -392,6 +383,60 @@ void ShareGroupVk::logBufferPools() const
             pool->addStats(&log);
             INFO() << "Pool[" << i << "]:" << log.str();
         }
+    }
+}
+
+void ShareGroupVk::imageWillFallbackFromTileMemory(vk::ImageHelper *image)
+{
+    ASSERT(image->useTileMemory());
+    ASSERT(!image->isForeignImage());
+
+    finalizeImageLayoutInAllSharedContexts(image);
+}
+
+void ShareGroupVk::finalizeImageLayoutInAllSharedContexts(vk::ImageHelper *image)
+{
+    if (image->useTileMemory())
+    {
+        mState.getContexts().forEach([image](gl::Context *context) {
+            ContextVk *sharedContextVk = vk::GetImpl(context);
+            sharedContextVk->removeImageWithTileMemory(image);
+        });
+    }
+
+    vk::ImageRenderPassUsage &ImageRenderPassUsage = image->getRenderPassUsage();
+    if (ImageRenderPassUsage.hasAttachmentUsage() || image->isForeignImage())
+    {
+        mState.getContexts().forEach([image, &ImageRenderPassUsage](gl::Context *context) {
+            ContextVk *sharedContextVk = vk::GetImpl(context);
+            bool finalized             = sharedContextVk->finalizeImageLayout(image);
+
+            if ((finalized && ImageRenderPassUsage.hasAttachmentUsage()) ||
+                (image->isForeignImage() && !image->isReleasedToForeign()))
+            {
+                // Note: Foreign images may be shared between different textures. If another texture
+                // starts to use the image while the barrier-to-foreign is cached in the context, it
+                // will attempt to acquire the image from foreign while the release is still cached.
+                // A submission is made to finalize the queue family ownership transfer back to
+                // foreign.
+                //
+                // Similarly, if an image is used in two active render passes in two contexts. If we
+                // close one renderPass, the other renderPass may rely on previous renderPass's
+                // layout transition barrier. A submission will ensure previous barrier gets flushed
+                // out so that VVL will not complain. Note that one image used in two contexts
+                // simultaneously is a bit tricky, this is not rock solid to avoid image layout VVL,
+                // but should solve some usage cases at least.
+                const angle::Result result = sharedContextVk->flushAndSubmitCommands(
+                    nullptr, nullptr, QueueSubmitReason::ForeignImageRelease);
+
+                // In case of failure, remove the dangling image pointer to avoid UAF
+                if (result != angle::Result::Continue)
+                {
+                    sharedContextVk->forgetAllForeignImagesOnError();
+                }
+                ASSERT(!sharedContextVk->hasForeignImagesToTransition());
+            }
+        });
     }
 }
 }  // namespace rx

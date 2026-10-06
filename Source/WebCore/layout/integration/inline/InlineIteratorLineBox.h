@@ -71,7 +71,7 @@ public:
     float scrollableOverflowTop() const;
     float scrollableOverflowBottom() const;
 
-    const RenderStyle& style() const { return isFirst() ? formattingContextRoot().firstLineStyle() : formattingContextRoot().style(); }
+    const Style::ComputedStyle& style() const LIFETIME_BOUND { return isFirst() ? formattingContextRoot().firstLineStyle() : formattingContextRoot().style(); }
 
     bool hasEllipsis() const;
     enum AdjustedForSelection : bool { No, Yes };
@@ -89,6 +89,7 @@ public:
 
     bool hasBlockContent() const;
     LeafBoxIterator blockLevelBox() const;
+    inline bool hasContentfulInFlowBox() const;
 
     // Text-relative left/right
     LeafBoxIterator lineLeftmostLeafBox() const;
@@ -100,7 +101,7 @@ public:
     LineBoxIterator next() const;
     LineBoxIterator previous() const;
 
-    size_t lineIndex() const;
+    inline size_t lineIndex() const; // Defined in InlineIteratorLineBoxInlines.h
 
 private:
     friend class LineBoxIterator;
@@ -125,8 +126,8 @@ public:
     bool operator==(const LineBoxIterator&) const;
     bool operator==(EndLineBoxIterator) const { return atEnd(); }
 
-    const LineBox& operator*() const { return m_lineBox; }
-    const LineBox* operator->() const { return &m_lineBox; }
+    const LineBox& operator*() const LIFETIME_BOUND { return m_lineBox; }
+    const LineBox* operator->() const LIFETIME_BOUND { return &m_lineBox; }
 
     bool atEnd() const;
 
@@ -329,10 +330,10 @@ inline bool LineBox::hasBlockContent() const
     });
 }
 
-inline size_t LineBox::lineIndex() const
+inline bool LineBox::hasContentfulInFlowBox() const
 {
     return WTF::switchOn(m_pathVariant, [](const auto& path) {
-        return path.lineIndex();
+        return path.hasContentfulInFlowBox();
     });
 }
 

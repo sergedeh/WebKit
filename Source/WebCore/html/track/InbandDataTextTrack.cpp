@@ -93,8 +93,8 @@ void InbandDataTextTrack::addDataCue(const MediaTime& start, const MediaTime& en
 
 RefPtr<DataCue> InbandDataTextTrack::findIncompleteCue(const SerializedPlatformDataCue& cueToFind)
 {
-    auto index = m_incompleteCueMap.findIf([&](const auto& cue) {
-        return cueToFind.isEqual(Ref { *cue->protectedPlatformValue() });
+    auto index = m_incompleteCueMap.findIf([&](const Ref<DataCue>& cue) {
+        return cueToFind.isEqual(*protect(cue->platformValue()));
     });
 
     if (index == notFound)
@@ -137,10 +137,10 @@ void InbandDataTextTrack::removeDataCue(const MediaTime&, const MediaTime&, Seri
 
 ExceptionOr<void> InbandDataTextTrack::removeCue(TextTrackCue& cue)
 {
-    ASSERT(cue.cueType() == TextTrackCue::Data);
-
-    if (RefPtr platformValue = const_cast<SerializedPlatformDataCue*>(downcast<DataCue>(cue).platformValue()))
-        removeDataCue({ }, { }, *platformValue);
+    if (is<DataCue>(cue)) {
+        if (RefPtr platformValue = const_cast<SerializedPlatformDataCue*>(downcast<DataCue>(cue).platformValue()))
+            removeDataCue({ }, { }, *platformValue);
+    }
 
     return InbandTextTrack::removeCue(cue);
 }

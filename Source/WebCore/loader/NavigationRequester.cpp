@@ -27,20 +27,57 @@
 #include "NavigationRequester.h"
 
 #include "Document.h"
+#include "FrameDestructionObserverInlines.h"
+#include "LocalFrame.h"
+#include "PermissionsPolicy.h"
+#include "ProcessIdentifier.h"
+#include "SecurityOrigin.h"
+#include "Site.h"
 
 namespace WebCore {
 
+bool shouldNavigationLoseFrameSpecificStorageAccess(const NavigationRequester& requester, FrameIdentifier navigatedFrame, const URL& fromURL, const URL& toURL)
+{
+    if (!requester.frameID)
+        return false;
+
+    // A different, cross-site frame initiating the navigation drops access. A self-navigation
+    // drops access only when it crosses origins.
+    // https://privacycg.github.io/storage-access/#navigation
+    // FIXME: The algorithm also drops access when the navigation went through a cross-origin
+    // redirect; that needs redirect information not available here and is not implemented.
+    if (*requester.frameID != navigatedFrame)
+        return Site(requester.url) != Site(fromURL);
+    return !SecurityOrigin::create(fromURL)->isSameOriginAs(SecurityOrigin::create(toURL));
+}
+
 NavigationRequester NavigationRequester::from(Document& document)
 {
+    RefPtr frame = document.frame();
+    RefPtr parentFrame = frame ? frame->tree().parent() : nullptr;
+
     return {
-        document.url(),
+        document.url().isEmpty() ? aboutBlankURL() : document.url(),
         document.securityOrigin(),
         document.topOrigin(),
         document.policyContainer(),
         document.frameID(),
+        frame ? std::make_optional(frame->tree().top().frameID()) : std::nullopt,
         document.pageID(),
         document.identifier(),
-        document.sandboxFlags()
+        document.sandboxFlags(),
+        frame ? frame->sandboxFlagsFromSandboxAttributeNotCSP() : SandboxFlags { },
+        document.hasLoadedThirdPartyScript(),
+        document.hasLoadedThirdPartyFrame(),
+        frame ? frame->hasHadUserInteraction() : false,
+        [&] {
+            RefPtr parentOrigin = parentFrame ? parentFrame->frameDocumentSecurityOrigin() : nullptr;
+            return parentOrigin && parentOrigin->isSameOriginDomain(protect(document.topOrigin()));
+        }(),
+        Process::identifier(),
+        document.isSecureContext(),
+        PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::LocalNetwork, document, PermissionsPolicy::ShouldReportViolation::No),
+        PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::LoopbackNetwork, document, PermissionsPolicy::ShouldReportViolation::No),
     };
 }
 

@@ -45,12 +45,16 @@
 #include "WebXRViewport.h"
 #include "XRWebGLLayerInit.h"
 #include <JavaScriptCore/ConsoleMessage.h>
-#include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebXRWebGLLayer);
+
+const WebXRSession* WebXRWebGLLayer::session()
+{
+    return m_session.get();
+}
 
 // Arbitrary value for minimum framebuffer scaling.
 // Below this threshold the resulting framebuffer would be too small to see.
@@ -77,8 +81,8 @@ static ExceptionOr<std::unique_ptr<WebXROpaqueFramebuffer>> createOpaqueFramebuf
     // 9.4. Allocate and initialize resources compatible with session’s XR device, including GPU accessible memory buffers,
     //      as required to support the compositing of layer.
     // 9.5. If layer’s resources were unable to be created for any reason, throw an OperationError and abort these steps.
-    auto layerHandle = device->createLayerProjection(size.width(), size.height(), init.alpha);
-    if (!layerHandle)
+    auto layerInfo = device->createLayerProjection(size.width(), size.height(), init.alpha);
+    if (!layerInfo)
         return Exception { ExceptionCode::OperationError, "Unable to allocate XRWebGLLayer GPU resources."_s };
 
     WebXROpaqueFramebuffer::Attributes attributes {
@@ -88,10 +92,10 @@ static ExceptionOr<std::unique_ptr<WebXROpaqueFramebuffer>> createOpaqueFramebuf
         .stencil = init.stencil
     };
 
-    auto framebuffer = WebXROpaqueFramebuffer::create(*layerHandle, context, WTF::move(attributes), size);
+    auto framebuffer = WebXROpaqueFramebuffer::create(layerInfo->handle, context, WTF::move(attributes), size);
     if (!framebuffer)
         return Exception { ExceptionCode::OperationError, "Unable to create a framebuffer."_s };
-    
+
     return framebuffer;
 }
 
@@ -112,8 +116,7 @@ ExceptionOr<Ref<WebXRWebGLLayer>> WebXRWebGLLayer::create(WebXRSession& session,
     // 4. If session is an immersive session and context’s XR compatible boolean is false, throw
     //    an InvalidStateError and abort these steps.
     return WTF::switchOn(context,
-        [&](const RefPtr<WebGLRenderingContextBase>& baseContext) -> ExceptionOr<Ref<WebXRWebGLLayer>>
-        {
+        [&](const Ref<WebGLRenderingContextBase>& baseContext) -> ExceptionOr<Ref<WebXRWebGLLayer>> {
             if (baseContext->isContextLost())
                 return Exception { ExceptionCode::InvalidStateError, "Cannot create an XRWebGLLayer with a lost WebGL context."_s };
 
@@ -137,9 +140,9 @@ ExceptionOr<Ref<WebXRWebGLLayer>> WebXRWebGLLayer::create(WebXRSession& session,
             bool antialias = false;
             std::unique_ptr<WebXROpaqueFramebuffer> framebuffer;
 
-            // 9. If layer's composition enabled boolean is true: 
+            // 9. If layer's composition enabled boolean is true:
             if (isCompositionEnabled) {
-                auto createResult = createOpaqueFramebuffer(session, *baseContext, init);
+                auto createResult = createOpaqueFramebuffer(session, baseContext, init);
                 if (createResult.hasException())
                     return createResult.releaseException();
                 framebuffer = createResult.releaseReturnValue();
@@ -153,10 +156,6 @@ ExceptionOr<Ref<WebXRWebGLLayer>> WebXRWebGLLayer::create(WebXRSession& session,
 
             // 10. Return layer.
             return adoptRef(*new WebXRWebGLLayer(session, WTF::move(context), WTF::move(framebuffer), antialias, ignoreDepthValues, isCompositionEnabled));
-        },
-        [](std::monostate) {
-            ASSERT_NOT_REACHED();
-            return Exception { ExceptionCode::InvalidStateError };
         }
     );
 }
@@ -207,9 +206,10 @@ unsigned WebXRWebGLLayer::framebufferWidth() const
     }
 
     return WTF::switchOn(m_context,
-        [&](const RefPtr<WebGLRenderingContextBase>& baseContext) {
+        [&](const Ref<WebGLRenderingContextBase>& baseContext) {
             return std::max<unsigned>(1, baseContext->drawingBufferWidth());
-        });
+        }
+    );
 }
 
 unsigned WebXRWebGLLayer::framebufferHeight() const
@@ -222,9 +222,10 @@ unsigned WebXRWebGLLayer::framebufferHeight() const
     }
 
     return WTF::switchOn(m_context,
-        [&](const RefPtr<WebGLRenderingContextBase>& baseContext) {
+        [&](const Ref<WebGLRenderingContextBase>& baseContext) {
             return std::max<unsigned>(1, baseContext->drawingBufferHeight());
-        });
+        }
+    );
 }
 
 // https://immersive-web.github.io/webxr/#dom-xrwebgllayer-getviewport
@@ -271,15 +272,19 @@ double WebXRWebGLLayer::getNativeFramebufferScaleFactor(const WebXRSession& sess
 
 HTMLCanvasElement* WebXRWebGLLayer::canvas() const
 {
-    return WTF::switchOn(m_context, [](const RefPtr<WebGLRenderingContextBase>& baseContext) {
-        auto canvas = baseContext->canvas();
-        return WTF::switchOn(canvas, [](const RefPtr<HTMLCanvasElement>& canvas) {
-            return canvas.get();
-        }, [](const RefPtr<OffscreenCanvas>) -> HTMLCanvasElement* {
-            ASSERT_NOT_REACHED("baseLayer of a WebXRWebGLLayer must be an HTMLCanvasElement");
-            return nullptr;
-        });
-    });
+    return WTF::switchOn(m_context,
+        [](const Ref<WebGLRenderingContextBase>& baseContext) {
+            return WTF::switchOn(baseContext->canvas(),
+                [](const Ref<HTMLCanvasElement>& canvas) -> HTMLCanvasElement* {
+                    return canvas.ptr();
+                },
+                [](const Ref<OffscreenCanvas>&) -> HTMLCanvasElement* {
+                    ASSERT_NOT_REACHED("baseLayer of a WebXRWebGLLayer must be an HTMLCanvasElement");
+                    return nullptr;
+                }
+            );
+        }
+    );
 }
 
 void WebXRWebGLLayer::sessionEnded()
@@ -312,22 +317,36 @@ void WebXRWebGLLayer::startFrame(PlatformXR::FrameData& data)
     m_framebuffer->startFrame(it->value);
 }
 
-PlatformXR::Device::Layer WebXRWebGLLayer::endFrame()
+PlatformXR::LayerHandle WebXRWebGLLayer::layerHandle() const
+{
+    ASSERT(m_framebuffer);
+    return m_framebuffer->handle();
+}
+
+PlatformXR::DeviceLayer WebXRWebGLLayer::endFrame()
 {
     ASSERT(m_framebuffer);
     m_framebuffer->endFrame();
 
-    Vector<PlatformXR::Device::LayerView> views {
+    Vector<PlatformXR::DeviceLayer::LayerView> views {
         { PlatformXR::Eye::Left, m_leftViewportData.viewport->rect() },
         { PlatformXR::Eye::Right, m_rightViewportData.viewport->rect() }
     };
 
-    return PlatformXR::Device::Layer {
+    return PlatformXR::DeviceLayer {
         .handle = m_framebuffer->handle(),
         .visible = true,
         .views = WTF::move(views),
 #if USE(OPENXR)
-        .fenceFD = m_framebuffer->takeFenceFD()
+        .fenceFD = m_framebuffer->takeFenceFD(),
+#if ENABLE(WEBXR_LAYERS)
+        .blendTextureSourceAlpha = false,
+        .forceMonoPresentation = false,
+        .quadLayerData = std::nullopt,
+        .equirectLayerData = std::nullopt,
+        .cylinderLayerData = std::nullopt,
+        .cubeLayerData = std::nullopt,
+#endif
 #endif
     };
 }

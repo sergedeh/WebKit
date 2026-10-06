@@ -25,8 +25,12 @@
 
 #pragma once
 
+#include "LoadedWebArchive.h"
 #include "SharedPreferencesForWebProcess.h"
 #include "WebPageProxyIdentifier.h"
+#include <WebCore/PageIdentifier.h>
+#include <WebCore/RegistrableDomain.h>
+#include <wtf/HashMap.h>
 
 namespace WebKit {
 
@@ -36,6 +40,10 @@ struct NetworkProcessConnectionParameters {
     bool ignoreInvalidMessageForTesting { false };
 #endif
     Vector<WebPageProxyIdentifier> pagesWithRelaxedThirdPartyCookieBlocking;
+    LoadedWebArchive loadedWebArchive { LoadedWebArchive::No };
+    HashSet<WebCore::RegistrableDomain> allowedFirstPartiesForCookies;
+    Vector<WebPageProxyIdentifier> allowedWebPageProxyIdentifiers;
+    HashMap<WebCore::PageIdentifier, Vector<String>> corsDisablingPatternsPerPage;
 };
 
 } // namespace WebKit

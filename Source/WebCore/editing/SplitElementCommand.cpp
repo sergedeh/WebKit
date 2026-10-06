@@ -68,7 +68,7 @@ void SplitElementCommand::executeApply()
     
 void SplitElementCommand::doApply()
 {
-    m_element1 = m_element2->cloneElementWithoutChildren(document(), nullptr);
+    lazyInitialize(m_element1, m_element2->cloneElementWithoutChildren(document(), nullptr));
     
     executeApply();
 }
@@ -108,9 +108,9 @@ void SplitElementCommand::doReapply()
 #ifndef NDEBUG
 void SplitElementCommand::getNodesInCommand(NodeSet& nodes)
 {
-    addNodeAndDescendants(protectedElement1().get(), nodes);
+    addNodeAndDescendants(m_element1.get(), nodes);
     addNodeAndDescendants(m_element2.ptr(), nodes);
-    addNodeAndDescendants(Ref { m_atChild }.ptr(), nodes);
+    addNodeAndDescendants(protect(m_atChild).ptr(), nodes);
 }
 #endif
     

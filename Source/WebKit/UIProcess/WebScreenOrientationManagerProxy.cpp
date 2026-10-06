@@ -90,7 +90,7 @@ void WebScreenOrientationManagerProxy::setCurrentOrientation(WebCore::ScreenOrie
         m_currentLockRequest(std::nullopt);
 }
 
-static WebCore::ScreenOrientationType resolveScreenOrientationLockType(WebCore::ScreenOrientationType currentOrientation, WebCore::ScreenOrientationLockType lockType)
+SUPPRESS_NODELETE static WebCore::ScreenOrientationType NODELETE resolveScreenOrientationLockType(WebCore::ScreenOrientationType currentOrientation, WebCore::ScreenOrientationLockType lockType)
 {
     switch (lockType) {
     case WebCore::ScreenOrientationLockType::Any:
@@ -198,10 +198,5 @@ std::optional<WebCore::Exception> WebScreenOrientationManagerProxy::platformShou
     return std::nullopt;
 }
 #endif
-
-Ref<WebPageProxy> WebScreenOrientationManagerProxy::protectedPage() const
-{
-    return m_page.get();
-}
 
 } // namespace WebKit

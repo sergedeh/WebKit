@@ -57,13 +57,13 @@ public:
     SQLiteIDBTransaction(SQLiteIDBBackingStore&, const IDBTransactionInfo&);
     ~SQLiteIDBTransaction();
 
-    const IDBResourceIdentifier& transactionIdentifier() const { return m_info.identifier(); }
+    const IDBResourceIdentifier& transactionIdentifier() const LIFETIME_BOUND { return m_info.identifier(); }
 
     IDBError begin(SQLiteDatabase&);
     IDBError commit();
     IDBError abort();
 
-    std::unique_ptr<SQLiteIDBCursor> maybeOpenBackingStoreCursor(IDBObjectStoreIdentifier, std::optional<IDBIndexIdentifier>, const IDBKeyRangeData&);
+    std::unique_ptr<SQLiteIDBCursor> maybeOpenBackingStoreCursor(IDBObjectStoreIdentifier, std::optional<IDBIndexIdentifier>, const IDBKeyRangeData&, IndexedDB::CursorDirection = IndexedDB::CursorDirection::Next);
     SQLiteIDBCursor* maybeOpenCursor(const IDBCursorInfo&);
 
     void closeCursor(SQLiteIDBCursor&);
@@ -71,11 +71,11 @@ public:
 
     IDBTransactionMode mode() const { return m_info.mode(); }
     IDBTransactionDurability durability() const { return m_info.durability(); }
-    bool inProgress() const;
-    bool inProgressOrReadOnly() const;
+    bool NODELETE inProgress() const;
+    bool NODELETE inProgressOrReadOnly() const;
 
-    SQLiteDatabase* sqliteDatabase() const;
-    SQLiteTransaction* sqliteTransaction() const { return m_sqliteTransaction.get(); }
+    SQLiteDatabase* NODELETE sqliteDatabase() const;
+    SQLiteTransaction* sqliteTransaction() const LIFETIME_BOUND { return m_sqliteTransaction.get(); }
     SQLiteIDBBackingStore& backingStore() { return m_backingStore.get(); }
 
     void addBlobFile(const String& temporaryPath, const String& storedFilename);

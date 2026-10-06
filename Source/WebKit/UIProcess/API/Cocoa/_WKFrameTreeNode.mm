@@ -53,8 +53,13 @@
 - (NSArray<_WKFrameTreeNode *> *)childFrames
 {
     return createNSArray(_node->childFrames(), [&] (auto& child) {
-        return wrapper(API::FrameTreeNode::create(WebKit::FrameTreeNodeData(child), protect(Ref { *_node }->page())));
+        return wrapper(API::FrameTreeNode::create(WebKit::FrameTreeNodeData(child), protect(_node->page())));
     }).autorelease();
+}
+
+- (NSURL *)_topDocumentURLForTesting
+{
+    return _node->topDocumentURLForTesting().createNSURL().autorelease();
 }
 
 - (API::Object&)_apiObject

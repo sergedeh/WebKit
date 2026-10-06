@@ -33,6 +33,7 @@
 #include <WebCore/WritingMode.h>
 #include <array>
 #include <wtf/EnumSet.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace WebCore {
 
@@ -48,6 +49,11 @@ enum class BoxAxis : uint8_t {
     Vertical,
 
     HighestEnumValue = Vertical
+};
+
+enum class AxisDirection : bool {
+    Normal = 0,
+    Reverse = 1,
 };
 
 constexpr BoxAxis mapAxisLogicalToPhysical(const WritingMode, const LogicalBoxAxis);
@@ -89,6 +95,22 @@ constexpr std::array<BoxSide, 4> allBoxSides = {
     BoxSide::Bottom,
     BoxSide::Left
 };
+
+inline ASCIILiteral nameForBoxSide(BoxSide side)
+{
+    switch (side) {
+    case BoxSide::Top:
+        return "Top"_s;
+    case BoxSide::Right:
+        return "Right"_s;
+    case BoxSide::Bottom:
+        return "Bottom"_s;
+    case BoxSide::Left:
+        return "Left"_s;
+    }
+    ASSERT_NOT_REACHED();
+    return ""_s;
+}
 
 using BoxSideSet = EnumSet<BoxSide>;
 

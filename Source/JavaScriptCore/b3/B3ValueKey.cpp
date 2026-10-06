@@ -33,6 +33,7 @@
 #include "B3SlotBaseValue.h"
 #include "B3ValueInlines.h"
 #include "B3ValueKeyInlines.h"
+#include "B3WasmArrayLengthValue.h"
 #include "B3WasmRefTypeCheckValue.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -85,7 +86,6 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
     case FloatToDouble:
     case DoubleToFloat:
     case BitwiseCast:
-    case TruncHigh:
         return proc.add<Value>(kind(), type(), origin, child(proc, 0));
     case Add:
     case Sub:
@@ -117,7 +117,6 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
     case AboveEqual:
     case BelowEqual:
     case EqualOrUnordered:
-    case Stitch:
         return proc.add<Value>(kind(), type(), origin, child(proc, 0), child(proc, 1));
     case Select:
         return proc.add<Value>(kind(), type(), origin, child(proc, 0), child(proc, 1), child(proc, 2));
@@ -164,6 +163,7 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
         return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), child(proc, 0));
     case VectorExtractLane:
     case VectorDupElement:
+    case VectorReverse:
         return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), static_cast<uint8_t>(u.indices[1]), child(proc, 0));
     case VectorEqual:
     case VectorNotEqual:
@@ -197,16 +197,27 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
     case VectorShr:
     case VectorMulSat:
     case VectorAvgRound:
-    case VectorShiftByVector:
+    case VectorUnzipEven:
+    case VectorUnzipOdd:
+    case VectorZipLower:
+    case VectorZipHigher:
+    case VectorTransposeEven:
+    case VectorTransposeOdd:
     case VectorRelaxedSwizzle:
+    case VectorRelaxedMin:
+    case VectorRelaxedMax:
+    case VectorRelaxedQ15Mulr:
+    case VectorRelaxedDotI8x16I7x16:
         return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), child(proc, 0), child(proc, 1));
     case VectorReplaceLane:
     case VectorMulByElement:
+    case VectorExtractPair:
         return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), static_cast<uint8_t>(u.indices[2]), child(proc, 0), child(proc, 1));
     case VectorRelaxedMAdd:
     case VectorRelaxedNMAdd:
     case VectorBitwiseSelect:
     case VectorRelaxedLaneSelect:
+    case VectorRelaxedDotI8x16I7x16Add:
         return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), child(proc, 0), child(proc, 1), child(proc, 2));
     case VectorSwizzle:
         if (u.indices[2] == UINT32_MAX)
@@ -214,14 +225,15 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
         return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), child(proc, 0), child(proc, 1), child(proc, 2));
     case WasmRefTest:
     case WasmRefCast: {
-        OptionSet<WasmRefTypeCheckFlag> flags = OptionSet<WasmRefTypeCheckFlag>::fromRaw(u.indices[1]);
+        unsigned packedFlags = u.indices[3] >> 16;
+        OptionSet<WasmRefTypeCheckFlag> flags = OptionSet<WasmRefTypeCheckFlag>::fromRaw(packedFlags);
 
         int32_t targetHeapType = 0;
         RefPtr<const Wasm::RTT> targetRTT;
 
         if (flags.contains(WasmRefTypeCheckFlag::HasRTT)) {
-            // Reconstruct RTT pointer when HasRTT flag is set
-            uintptr_t rttPtr = static_cast<uintptr_t>(static_cast<uint64_t>(u.indices[2]) | (static_cast<uint64_t>(u.indices[3]) << 32));
+            // Reconstruct RTT pointer: lower 32 bits in indices[2], upper 16 bits in lower 16 bits of indices[3]
+            uintptr_t rttPtr = static_cast<uintptr_t>(static_cast<uint64_t>(u.indices[2]) | (static_cast<uint64_t>(u.indices[3] & 0xFFFF) << 32));
             targetRTT = reinterpret_cast<const Wasm::RTT*>(rttPtr);
         } else {
             // Use targetHeapType when HasRTT flag is not set (builtin types)
@@ -232,7 +244,15 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
         // Remove HasRTT from flags before passing to constructor (it's not stored in the value)
         flags.remove(WasmRefTypeCheckFlag::HasRTT);
 
+        bool hasChild2 = u.indices[1] != UINT_MAX;
+        if (hasChild2)
+            return proc.add<WasmRefTypeCheckValue>(kind(), type(), origin, targetHeapType, flags, WTF::move(targetRTT), child(proc, 0), child(proc, 1));
         return proc.add<WasmRefTypeCheckValue>(kind(), type(), origin, targetHeapType, flags, WTF::move(targetRTT), child(proc, 0));
+    }
+    case WasmArrayLength: {
+        auto* v = proc.add<WasmArrayLengthValue>(kind(), type(), origin, child(proc, 0));
+        v->setRange(proc.heaps().JSWebAssemblyArray_size.range());
+        return v;
     }
     case Nop:
     case Set:
@@ -258,6 +278,9 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
     case WasmStructGet:
     case WasmStructSet:
     case WasmStructNew:
+    case WasmArrayGet:
+    case WasmArraySet:
+    case WasmArrayNew:
     case MemoryCopy:
     case MemoryFill:
     case Fence:

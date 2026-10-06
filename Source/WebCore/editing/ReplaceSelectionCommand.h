@@ -75,15 +75,13 @@ private:
         void willRemoveNode(Node*);
         void didReplaceNode(Node*, Node* newNode);
 
-        bool isEmpty() { return !m_firstNodeInserted; }
+        bool NODELETE isEmpty() { return !m_firstNodeInserted; }
         Node* firstNodeInserted() const { return m_firstNodeInserted.get(); }
-        RefPtr<Node> protectedFirstNodeInserted() const { return m_firstNodeInserted; }
         Node* lastLeafInserted() const
         {
             ASSERT(m_lastNodeInserted);
             return m_lastNodeInserted->lastDescendant();
         }
-        RefPtr<Node> protectedLastLeafInserted() const { return lastLeafInserted(); }
         Node* pastLastLeaf() const
         {
             ASSERT(m_lastNodeInserted);
@@ -118,7 +116,7 @@ private:
     VisiblePosition positionAtEndOfInsertedContent() const;
 
     bool shouldPerformSmartReplace() const;
-    bool shouldPerformSmartParagraphReplace() const;
+    bool NODELETE shouldPerformSmartParagraphReplace() const;
     void addSpacesForSmartReplace();
     void addNewLinesForSmartReplace();
     void completeHTMLReplacement(const Position& lastPositionToSelect);
@@ -131,17 +129,15 @@ private:
 
     void removeForegroundColorsInDarkModeIfNeeded(const InsertedNodes&);
 
-    RefPtr<DocumentFragment> protectedDocumentFragment() const { return m_documentFragment; }
-
     VisibleSelection m_visibleSelectionForInsertedText;
     Position m_startOfInsertedContent;
     Position m_endOfInsertedContent;
-    RefPtr<EditingStyle> m_insertionStyle;
+    const RefPtr<EditingStyle> m_insertionStyle;
     bool m_selectReplacement;
     bool m_smartReplace;
     bool m_matchStyle;
     const RefPtr<DocumentFragment> m_documentFragment;
-    std::unique_ptr<ReplacementFragment> m_replacementFragment;
+    const std::unique_ptr<ReplacementFragment> m_replacementFragment;
     String m_documentFragmentHTMLMarkup;
     String m_documentFragmentPlainText;
     bool m_preventNesting;

@@ -31,6 +31,24 @@
 
 namespace JSC {
 
-JS_EXPORT_PRIVATE void runInternalMicrotask(JSGlobalObject*, InternalMicrotask, uint8_t, std::span<const JSValue, maxMicrotaskArguments>);
+class MicrotaskCallCache;
+class JSAsyncGenerator;
+class JSModuleRecord;
+class ThrowScope;
+
+void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, MicrotaskCallCache* = nullptr);
+
+void asyncModuleResolveEvaluation(JSGlobalObject*, VM&, ThrowScope&, JSModuleRecord*, JSValue result);
+
+// https://tc39.es/ecma262/#sec-asyncgeneratorresume and #sec-asyncgeneratorawaitreturn — used by the C++
+// %AsyncGeneratorPrototype%.return / .throw host functions to drive a non-busy generator.
+void asyncGeneratorResume(JSGlobalObject*, JSAsyncGenerator*, MicrotaskCallCache*);
+void asyncGeneratorAwaitReturn(JSGlobalObject*, JSAsyncGenerator*);
+
+void enqueueAsyncGeneratorDriver(JSGlobalObject*, JSAsyncGenerator* iterator, JSObject* driver, JSValue resumeValue, MicrotaskCallCache*);
+
+JSValue asyncIteratorNextWithDriver(JSGlobalObject*, JSObject* iterator, JSObject* driver, JSValue resumeValue, MicrotaskCallCache*);
+
+JSC_DECLARE_HOST_FUNCTION(asyncFunctionDrive);
 
 } // namespace JSC

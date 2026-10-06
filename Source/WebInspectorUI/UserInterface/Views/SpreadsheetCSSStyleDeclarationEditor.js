@@ -171,13 +171,17 @@ WI.SpreadsheetCSSStyleDeclarationEditor = class SpreadsheetCSSStyleDeclarationEd
         if (this._style === style)
             return;
 
-        if (this._style)
+        if (this._style) {
             this._style.removeEventListener(WI.CSSStyleDeclaration.Event.PropertiesChanged, this._propertiesChanged, this);
+            this._style.removeEventListener(WI.CSSStyleDeclaration.Event.LockedChanged, this._handleLockedChanged, this);
+        }
 
         this._style = style || null;
 
-        if (this._style)
+        if (this._style) {
             this._style.addEventListener(WI.CSSStyleDeclaration.Event.PropertiesChanged, this._propertiesChanged, this);
+            this._style.addEventListener(WI.CSSStyleDeclaration.Event.LockedChanged, this._handleLockedChanged, this);
+        }
 
         this.needsLayout();
     }
@@ -647,6 +651,11 @@ WI.SpreadsheetCSSStyleDeclarationEditor = class SpreadsheetCSSStyleDeclarationEd
         this._removeSelectedProperties();
     }
 
+    _handleLockedChanged(event)
+    {
+        this._delegate?.spreadsheetCSSStyleDeclarationEditorStyleLockedChanged?.(this, event.target.locked);
+    }
+
     _copySelectedProperties(event)
     {
         let [startIndex, endIndex] = this.selectionRange;
@@ -707,8 +716,9 @@ WI.SpreadsheetCSSStyleDeclarationEditor = class SpreadsheetCSSStyleDeclarationEd
 
     _updatePropertiesStatus()
     {
+        let duplicateProperties = this._style ? WI.SpreadsheetStyleProperty.calculateDuplicateProperties(this._style.enabledProperties) : null;
         for (let propertyView of this._propertyViews)
-            propertyView.updateStatus();
+            propertyView.updateStatus({ duplicateProperties });
     }
 
     _updateStyleLock()

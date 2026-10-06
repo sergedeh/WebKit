@@ -48,8 +48,6 @@
 - (RefPtr<JSC::Bindings::Instance>)createPluginBindingsInstance:(Ref<JSC::Bindings::RootObject>&&)rootObject;
 @end
 
-using namespace JSC::Bindings;
-
 namespace WebCore {
 
 RefPtr<JSC::Bindings::Instance> ScriptController::createScriptInstanceForWidget(Widget* widget)
@@ -80,7 +78,7 @@ WebScriptObject *ScriptController::windowScriptObject()
     if (!m_windowScriptObject) {
         JSC::JSLockHolder lock(commonVM());
         RefPtr root = bindingRootObject();
-        m_windowScriptObject = [WebScriptObject scriptObjectForJSObject:toRef(&jsWindowProxy(pluginWorldSingleton())) originRootObject:root.get() rootObject:root.get()];
+        lazyInitialize(m_windowScriptObject, RetainPtr<WebScriptObject> { [WebScriptObject scriptObjectForJSObject:toRef(&jsWindowProxy(pluginWorldSingleton())) originRootObject:root.get() rootObject:root.get()] });
     }
 
     return m_windowScriptObject.get();
@@ -91,7 +89,7 @@ JSContext *ScriptController::javaScriptContext()
 #if JSC_OBJC_API_ENABLED
     if (!canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
         return 0;
-    JSContext *context = [JSContext contextWithJSGlobalContextRef:toGlobalRef(protectedBindingRootObject()->globalObject())];
+    JSContext *context = [JSContext contextWithJSGlobalContextRef:toGlobalRef(bindingRootObject()->globalObject())];
     return context;
 #else
     return 0;

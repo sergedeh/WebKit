@@ -27,11 +27,14 @@
 #include <WebCore/NodeFilter.h>
 #include <WebCore/ScriptWrappable.h>
 #include <WebCore/Traversal.h>
+#include <wtf/Lock.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadAssertions.h>
 
 namespace WebCore {
 
+class WebCoreOpaqueRoot;
 template<typename> class ExceptionOr;
 
 class TreeWalker final : public ScriptWrappable, public RefCounted<TreeWalker>, public NodeIteratorBase {
@@ -42,8 +45,10 @@ public:
         return adoptRef(*new TreeWalker(rootNode, whatToShow, WTF::move(filter)));
     }                            
 
-    Node& currentNode() { return m_current.get(); }
-    const Node& currentNode() const { return m_current.get(); }
+    Node& currentNode() { assertIsOwnerThread(); return m_current.get(); }
+    const Node& currentNode() const { assertIsOwnerThread(); return m_current.get(); }
+
+    WebCoreOpaqueRoot opaqueRootForCurrentNodeInGCThread() const;
 
     WEBCORE_EXPORT void setCurrentNode(Node&);
 
@@ -60,10 +65,14 @@ private:
 
     enum class SiblingTraversalType { Previous, Next };
     template<SiblingTraversalType> ExceptionOr<Node*> traverseSiblings();
-    
+
     Node* setCurrent(Ref<Node>&&);
 
-    Ref<Node> m_current;
+    mutable Lock m_currentLock;
+    // Only mutated on the main thread while holding m_currentLock, so main-thread reads use
+    // assertIsOwnerThread() instead of locking; the GC thread must lock even to read.
+    Ref<Node> m_current WTF_GUARDED_BY_LOCK(m_currentLock);
+    WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_currentLock, mainThreadLike);
 };
 
 } // namespace WebCore

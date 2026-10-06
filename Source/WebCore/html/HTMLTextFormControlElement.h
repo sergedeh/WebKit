@@ -60,7 +60,7 @@ public:
     int minLength() const { return m_minLength; }
     ExceptionOr<void> setMinLength(int);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) override;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) override;
 
     // The derived class should return true if placeholder processing is needed.
     bool isPlaceholderVisible() const { return m_isPlaceholderVisible; }
@@ -87,7 +87,8 @@ public:
 
     void scheduleSelectionChangeEvent();
 
-    TextFieldSelectionDirection computeSelectionDirection() const;
+    TextFieldSelectionDirection NODELETE computeSelectionDirection() const;
+    TextFieldSelectionDirection normalizeSelectionDirection(TextFieldSelectionDirection);
 
     std::optional<SimpleRange> selection() const;
     String selectedText() const;
@@ -100,13 +101,13 @@ public:
     virtual ExceptionOr<void> setValue(const String&, TextFieldEventBehavior = DispatchNoEvent, TextControlSetValueSelection = TextControlSetValueSelection::SetSelectionToEnd) = 0;
     virtual RefPtr<TextControlInnerTextElement> innerTextElement() const = 0;
     virtual RefPtr<TextControlInnerTextElement> innerTextElementCreatingShadowSubtreeIfNeeded() = 0;
-    virtual RenderStyle createInnerTextStyle(const RenderStyle&) = 0;
+    virtual Style::ComputedStyle createInnerTextStyle(const Style::ComputedStyle&) = 0;
 
     virtual bool dirAutoUsesValue() const = 0;
 
     bool selectionChanged(bool shouldFireSelectEvent);
-    WEBCORE_EXPORT bool lastChangeWasUserEdit() const;
-    bool wasEverChangedByUserEdit() const;
+    WEBCORE_EXPORT bool NODELETE lastChangeWasUserEdit() const;
+    bool NODELETE wasEverChangedByUserEdit() const;
     void setInnerTextValue(String&&);
     String innerTextValue() const;
 
@@ -121,8 +122,7 @@ public:
     WEBCORE_EXPORT void dispatchUserTextInputEvent();
 
 protected:
-    HTMLTextFormControlElement(const QualifiedName&, Document&, HTMLFormElement*);
-    bool isPlaceholderEmpty() const;
+    HTMLTextFormControlElement(const QualifiedName&, Document&);
     virtual void updatePlaceholderText() = 0;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
@@ -133,7 +133,7 @@ protected:
 
     void updateInnerTextElementEditability();
 
-    bool cacheSelection(unsigned start, unsigned end, TextFieldSelectionDirection);
+    bool NODELETE cacheSelection(unsigned start, unsigned end, TextFieldSelectionDirection);
 
     void restoreCachedSelection(SelectionRevealMode, const AXTextStateChangeIntent& = AXTextStateChangeIntent());
     bool hasCachedSelection() const { return m_hasCachedSelection; }
@@ -147,7 +147,7 @@ protected:
 
     String valueWithHardLineBreaks() const;
 
-    void adjustInnerTextStyle(const RenderStyle& parentStyle, RenderStyle& textBlockStyle) const;
+    void adjustInnerTextStyle(const Style::ComputedStyle& parentStyle, Style::ComputedStyle& textBlockStyle) const;
 
     void internalSetMaxLength(int maxLength) { m_maxLength = maxLength; }
     void internalSetMinLength(int minLength) { m_minLength = minLength; }
@@ -157,7 +157,7 @@ protected:
 private:
     TextFieldSelectionDirection cachedSelectionDirection() const { return static_cast<TextFieldSelectionDirection>(m_cachedSelectionDirection); }
 
-    bool isTextFormControlElement() const final { return true; }
+    bool NODELETE isTextFormControlElement() const final { return true; }
 
     void dispatchFocusEvent(RefPtr<Element>&& oldFocusedElement, const FocusOptions&) final;
     void dispatchBlurEvent(RefPtr<Element>&& newFocusedElement) final;
@@ -192,13 +192,14 @@ private:
 
     bool m_hasCachedSelection { false };
     bool m_hasScheduledSelectionChangeEvent { false };
+    bool m_isInsideSetSelectionRange { false };
 
     String m_pointerType { mousePointerEventType() };
 
     String m_textAsOfLastFormControlChangeEvent;
 };
 
-WEBCORE_EXPORT HTMLTextFormControlElement* enclosingTextFormControl(const Position&);
+WEBCORE_EXPORT HTMLTextFormControlElement* NODELETE enclosingTextFormControl(const Position&);
 
 } // namespace WebCore
 

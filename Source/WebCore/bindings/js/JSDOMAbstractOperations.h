@@ -25,8 +25,9 @@
 
 #pragma once
 
-#include <WebCore/JSDOMConvertStrings.h>
-#include <WebCore/JSDOMExceptionHandling.h>
+#include "JSDOMConvertStrings.h"
+#include "JSDOMExceptionHandling.h"
+#include <WebCore/JSDOMBindingFacade.h>
 
 namespace WebCore {
 
@@ -38,7 +39,7 @@ enum class LegacyOverrideBuiltIns : bool { No, Yes };
 // An implementation of the 'named property visibility algorithm'
 // https://webidl.spec.whatwg.org/#dfn-named-property-visibility
 template<LegacyOverrideBuiltIns overrideBuiltins, class JSClass>
-static bool isVisibleNamedProperty(JSC::JSGlobalObject& lexicalGlobalObject, JSClass& thisObject, JSC::PropertyName propertyName)
+bool isVisibleNamedProperty(JSC::JSGlobalObject& lexicalGlobalObject, JSClass& thisObject, JSC::PropertyName propertyName)
 {
     // FIXME: It seems unfortunate that have to do two lookups for the property name,
     // one for isSupportedPropertyName and one by the user of this algorithm to access
@@ -58,7 +59,7 @@ static bool isVisibleNamedProperty(JSC::JSGlobalObject& lexicalGlobalObject, JSC
     
     // 2. If O has an own property named P, then return false.
     JSC::PropertySlot slot { &thisObject, JSC::PropertySlot::InternalMethodType::VMInquiry, &lexicalGlobalObject.vm() };
-    if (JSC::JSObject::getOwnPropertySlot(&thisObject, &lexicalGlobalObject, propertyName, slot))
+    if (WebCore::getOwnPropertySlot(&thisObject, &lexicalGlobalObject, propertyName, slot))
         return false;
     
     // 3. If O implements an interface that has the [LegacyOverrideBuiltIns] extended attribute, then return true.
@@ -70,8 +71,8 @@ static bool isVisibleNamedProperty(JSC::JSGlobalObject& lexicalGlobalObject, JSC
     //    1. If prototype is not a named properties object, and prototype has an own property named P, then return false.
     // FIXME: Implement checking for 'named properties object'.
     //    2. Set prototype to be the value of the internal [[Prototype]] property of prototype.
-    auto prototype = thisObject.getPrototypeDirect();
-    if (prototype.isObject() && JSC::asObject(prototype)->getPropertySlot(&lexicalGlobalObject, propertyName, slot))
+    auto prototype = WebCore::storedPrototype(thisObject.structure(), &thisObject);
+    if (prototype.isObject() && WebCore::getPropertySlot(JSC::asObject(prototype), &lexicalGlobalObject, propertyName, slot))
         return false;
 
     // 6. Return true.
@@ -117,7 +118,7 @@ static decltype(auto) visibleNamedPropertyItemAccessorFunctor(InnerItemAccessor&
 // the property name twice; once for 'named property visibility algorithm' check, and then
 // again when the value is needed.
 template<LegacyOverrideBuiltIns overrideBuiltins, class JSClass, class ItemAccessor>
-static auto accessVisibleNamedProperty(JSC::JSGlobalObject& lexicalGlobalObject, JSClass& thisObject, JSC::PropertyName propertyName, ItemAccessor&& itemAccessor) -> decltype(itemAccessor(thisObject, propertyName))
+static auto accessVisibleNamedProperty(JSC::JSGlobalObject& lexicalGlobalObject, JSClass& thisObject, JSC::PropertyName propertyName, NOESCAPE const ItemAccessor& itemAccessor) -> decltype(itemAccessor(thisObject, propertyName))
 {
     // NOTE: While it is not specified, a Symbol can never be a 'supported property
     // name' so we check that first.
@@ -131,7 +132,7 @@ static auto accessVisibleNamedProperty(JSC::JSGlobalObject& lexicalGlobalObject,
 
     // 2. If O has an own property named P, then return false.
     JSC::PropertySlot slot { &thisObject, JSC::PropertySlot::InternalMethodType::VMInquiry, &lexicalGlobalObject.vm() };
-    if (JSC::JSObject::getOwnPropertySlot(&thisObject, &lexicalGlobalObject, propertyName, slot))
+    if (WebCore::getOwnPropertySlot(&thisObject, &lexicalGlobalObject, propertyName, slot))
         return std::nullopt;
 
     // 3. If O implements an interface that has the [LegacyOverrideBuiltIns] extended attribute, then return true.
@@ -143,8 +144,8 @@ static auto accessVisibleNamedProperty(JSC::JSGlobalObject& lexicalGlobalObject,
     //    1. If prototype is not a named properties object, and prototype has an own property named P, then return false.
     // FIXME: Implement checking for 'named properties object'.
     //    2. Set prototype to be the value of the internal [[Prototype]] property of prototype.
-    auto prototype = thisObject.getPrototypeDirect();
-    if (prototype.isObject() && JSC::asObject(prototype)->getPropertySlot(&lexicalGlobalObject, propertyName, slot))
+    auto prototype = WebCore::storedPrototype(thisObject.structure(), &thisObject);
+    if (prototype.isObject() && WebCore::getPropertySlot(JSC::asObject(prototype), &lexicalGlobalObject, propertyName, slot))
         return std::nullopt;
 
     // 6. Return true.
@@ -152,9 +153,9 @@ static auto accessVisibleNamedProperty(JSC::JSGlobalObject& lexicalGlobalObject,
 }
 
 // This implements steps 2.2 through 2.5 of https://webidl.spec.whatwg.org/#legacy-platform-object-delete.
-template<typename Functor> bool performLegacyPlatformObjectDeleteOperation(JSC::JSGlobalObject& lexicalGlobalObject, Functor&& functor)
+template<typename Functor> bool performLegacyPlatformObjectDeleteOperation(JSC::JSGlobalObject& lexicalGlobalObject, NOESCAPE const Functor& functor)
 {
-    using ReturnType = std::invoke_result_t<Functor>;
+    using ReturnType = std::invoke_result_t<const Functor&>;
 
     if constexpr (IsExceptionOr<ReturnType>) {
         auto result = functor();

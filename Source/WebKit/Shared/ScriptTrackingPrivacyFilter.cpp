@@ -27,7 +27,12 @@
 #include "ScriptTrackingPrivacyFilter.h"
 
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/ScriptTrackingPrivacyCategory.h>
 #include <WebCore/SecurityOrigin.h>
+
+#if PLATFORM(COCOA)
+#include "WebPrivacyHelpers.h"
+#endif
 
 namespace WebKit {
 

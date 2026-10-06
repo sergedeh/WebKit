@@ -69,18 +69,18 @@ public:
     unsigned lineNumber() const { return m_lineNumber; }
     unsigned columnNumber() const { return m_columnNumber; }
 
-    const String& condition() const { return m_condition; }
-    const ActionsVector& actions() const { return m_actions; }
+    const String& condition() const LIFETIME_BOUND { return m_condition; }
+    const ActionsVector& actions() const LIFETIME_BOUND { return m_actions; }
     bool isAutoContinue() const { return m_autoContinue; }
 
     void resetHitCount() { m_hitCount = 0; }
 
     // Associates this breakpoint with a position in a specific source code.
-    bool link(SourceID, unsigned lineNumber, unsigned columnNumber);
+    bool NODELETE link(SourceID, unsigned lineNumber, unsigned columnNumber);
     bool isLinked() const { return m_sourceID != noSourceID; }
 
     // Adjust the previously associated position to the next pause opportunity.
-    bool resolve(unsigned lineNumber, unsigned columnNumber);
+    bool NODELETE resolve(unsigned lineNumber, unsigned columnNumber);
     bool isResolved() const { return m_resolved; }
 
     bool shouldPause(Debugger&, JSGlobalObject*);

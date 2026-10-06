@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <WebCore/AccessibilityRole.h>
+#include "AccessibilityRole.h"
 
 namespace WebCore {
 
@@ -35,13 +35,16 @@ class Element;
 class HTMLTableElement;
 class HTMLTableSectionElement;
 class RenderObject;
-class RenderStyle;
 struct AccessibilityText;
+
+namespace Style {
+class ComputedStyle;
+}
 
 namespace AXTableHelpers {
 
 bool appendCaptionTextIfNecessary(Element&, Vector<AccessibilityText>&);
-bool isTableRole(AccessibilityRole);
+bool NODELETE isTableRole(AccessibilityRole);
 bool isTableRowElement(Element&);
 bool isTableCellElement(Element&);
 bool hasRowRole(Element&);

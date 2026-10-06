@@ -39,7 +39,6 @@ namespace WebCore {
 
 class RenderBlockFlow;
 class RenderBox;
-class StyleImage;
 class FloatingObject;
 
 Ref<const LayoutShape> makeShapeForShapeOutside(const RenderBox&);
@@ -47,11 +46,7 @@ Ref<const LayoutShape> makeShapeForShapeOutside(const RenderBox&);
 class ShapeOutsideDeltas final {
     WTF_MAKE_TZONE_ALLOCATED(ShapeOutsideDeltas);
 public:
-    ShapeOutsideDeltas()
-        : m_lineOverlapsShape(false)
-        , m_isValid(false)
-    {
-    }
+    ShapeOutsideDeltas() = default;
 
     ShapeOutsideDeltas(LayoutUnit leftMarginBoxDelta, LayoutUnit rightMarginBoxDelta, bool lineOverlapsShape, LayoutUnit borderBoxLineTop, LayoutUnit lineHeight)
         : m_leftMarginBoxDelta(leftMarginBoxDelta)
@@ -78,8 +73,8 @@ private:
     LayoutUnit m_rightMarginBoxDelta;
     LayoutUnit m_borderBoxLineTop;
     LayoutUnit m_lineHeight;
-    unsigned m_lineOverlapsShape : 1;
-    unsigned m_isValid : 1;
+    unsigned m_lineOverlapsShape : 1 { false };
+    unsigned m_isValid : 1 { false };
 };
 
 class ShapeOutsideInfo final {
@@ -102,7 +97,7 @@ public:
     bool isShapeDirty() { return !m_shape; }
 
     LayoutRect computedShapePhysicalBoundingBox() const;
-    FloatPoint shapeToRendererPoint(const FloatPoint&) const;
+    FloatPoint NODELETE shapeToRendererPoint(const FloatPoint&) const;
 
     const LayoutShape& computedShape() const;
 

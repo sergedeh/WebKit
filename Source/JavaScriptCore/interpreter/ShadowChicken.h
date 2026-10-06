@@ -130,8 +130,8 @@ public:
         JSObject* callee { nullptr };
         CallFrame* frame { nullptr };
         CallFrame* callerFrame { nullptr };
-        JSScope* scope { nullptr };
-        CodeBlock* codeBlock { nullptr };
+        SUPPRESS_FORWARD_DECL_MEMBER JSScope* scope { nullptr };
+        SUPPRESS_FORWARD_DECL_MEMBER CodeBlock* codeBlock { nullptr };
         CallSiteIndex callSiteIndex;
     };
     
@@ -161,8 +161,8 @@ public:
         JSObject* callee { nullptr };
         CallFrame* frame { nullptr };
         JSValue thisValue { JSValue() };
-        JSScope* scope { nullptr };
-        CodeBlock* codeBlock { nullptr };
+        SUPPRESS_FORWARD_DECL_MEMBER JSScope* scope { nullptr };
+        SUPPRESS_FORWARD_DECL_MEMBER CodeBlock* codeBlock { nullptr };
         CallSiteIndex callSiteIndex;
         bool isTailDeleted { false };
     };
@@ -180,7 +180,7 @@ public:
     // inlining, and would mostly require that we can request that StackVisitor doesn't skip tail
     // frames.
     template<typename Functor>
-    void iterate(VM&, CallFrame*, const Functor&);
+    void iterate(VM&, CallFrame*, NOESCAPE const Functor&);
     
     void visitChildren(AbstractSlotVisitor&);
     void reset();

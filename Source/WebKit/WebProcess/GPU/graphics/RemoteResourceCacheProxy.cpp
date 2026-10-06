@@ -33,6 +33,7 @@
 #include "RemoteImageBufferProxy.h"
 #include "RemoteNativeImageProxy.h"
 #include "RemoteRenderingBackendProxy.h"
+#include "RemoteSharedResourceCacheProxy.h"
 #include "WebProcess.h"
 #include <WebCore/FontCustomPlatformData.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -47,14 +48,14 @@ struct CreateShareableBitmapResult {
 };
 }
 
-static std::optional<CreateShareableBitmapResult> createShareableBitmapForNativeImage(NativeImage& image, const DestinationColorSpace& fallbackColorSpace)
+static std::optional<CreateShareableBitmapResult> createShareableBitmapForNativeImage(const NativeImage& image, const ColorSpace& fallbackColorSpace)
 {
     RefPtr<ShareableBitmap> bitmap;
     PlatformImagePtr platformImage;
 #if USE(CG)
     bitmap = ShareableBitmap::createFromImagePixels(image);
     if (bitmap)
-        platformImage = bitmap->createPlatformImage(DontCopyBackingStore, ShouldInterpolate::Yes);
+        platformImage = bitmap->createBasePlatformImage(DontCopyBackingStore, ShouldInterpolate::Yes);
 #endif
 
     // If we failed to create ShareableBitmap or PlatformImage, fall back to image-draw method.
@@ -66,7 +67,7 @@ static std::optional<CreateShareableBitmapResult> createShareableBitmapForNative
         // If createGraphicsContext() failed because the image fallbackColorSpace is not
         // supported for output, fallback to SRGB.
         if (!platformImage) {
-            bitmap = ShareableBitmap::createFromImageDraw(image, DestinationColorSpace::SRGB());
+            bitmap = ShareableBitmap::createFromImageDraw(image, ColorSpace::SRGB());
             if (bitmap)
                 platformImage = bitmap->createPlatformImage(DontCopyBackingStore, ShouldInterpolate::Yes);
         }
@@ -111,6 +112,19 @@ RemoteGradientIdentifier RemoteResourceCacheProxy::recordGradientUse(Gradient& g
     return identifier;
 }
 
+RemotePathImplIdentifier RemoteResourceCacheProxy::recordPathImplUse(const PathImpl& path)
+{
+    auto result = m_paths.ensure(&path, [] {
+        return RemotePathImplIdentifier::generate();
+    });
+    auto identifier = result.iterator->value;
+    if (result.isNewEntry) {
+        path.addObserver(m_resourceObserverWeakFactory.createWeakPtr(static_cast<RenderingResourceObserver&>(*this)).releaseNonNull());
+        m_remoteRenderingBackendProxy->cachePathImpl(const_cast<PathImpl&>(path), identifier);
+    }
+    return identifier;
+}
+
 void RemoteResourceCacheProxy::recordFilterUse(Filter& filter)
 {
     if (m_filters.add(filter.renderingResourceIdentifier()).isNewEntry) {
@@ -119,7 +133,7 @@ void RemoteResourceCacheProxy::recordFilterUse(Filter& filter)
     }
 }
 
-bool RemoteResourceCacheProxy::recordNativeImageUse(NativeImage& image, const DestinationColorSpace& fallbackColorSpace)
+bool RemoteResourceCacheProxy::recordNativeImageUse(const NativeImage& image, const ColorSpace& fallbackColorSpace)
 {
     if (isMainRunLoop())
         WebProcess::singleton().deferNonVisibleProcessEarlyMemoryCleanupTimer();
@@ -162,7 +176,16 @@ bool RemoteResourceCacheProxy::recordNativeImageUse(NativeImage& image, const De
     return true;
 }
 
-void RemoteResourceCacheProxy::recordFontUse(Font& font)
+RemoteNativeImageReadReference RemoteResourceCacheProxy::recordSharedNativeImageUse(RemoteNativeImageProxy& image)
+{
+    // The image reports its destruction to this cache from now on, so that the rendering backend cache
+    // entry created by the caller is released, and so that pixel read-back can be routed through here.
+    image.attachResourceCache(m_remoteNativeImageProxyWeakFactory.createWeakPtr(*this).releaseNonNull());
+    m_nativeImages.add(&image, NativeImageEntry { nullptr, true });
+    return image.newReadReference();
+}
+
+void RemoteResourceCacheProxy::recordFontUse(FontBase& font)
 {
     if (RefPtr platformData = font.platformData().customPlatformData())
         recordFontCustomPlatformDataUse(*platformData);
@@ -253,6 +276,13 @@ void RemoteResourceCacheProxy::willDestroyGradient(const Gradient& gradient)
     m_remoteRenderingBackendProxy->releaseGradient(*identifier);
 }
 
+void RemoteResourceCacheProxy::willDestroyPathImpl(const PathImpl& path)
+{
+    auto identifier = m_paths.take(&path);
+    RELEASE_ASSERT(identifier);
+    m_remoteRenderingBackendProxy->releasePathImpl(*identifier);
+}
+
 void RemoteResourceCacheProxy::willDestroyFilter(RenderingResourceIdentifier identifier)
 {
     bool removed = m_filters.remove(identifier);
@@ -338,6 +368,7 @@ void RemoteResourceCacheProxy::releaseMemory()
     m_resourceObserverWeakFactory.revokeAll();
     m_filters.clear();
     m_gradients.clear();
+    m_paths.clear();
     m_displayLists.clear();
     releaseFonts();
     releaseFontCustomPlatformDatas();
@@ -348,6 +379,7 @@ void RemoteResourceCacheProxy::disconnect()
     m_resourceObserverWeakFactory.revokeAll();
     m_filters.clear();
     m_gradients.clear();
+    m_paths.clear();
     m_displayLists.clear();
     releaseFonts();
     releaseFontCustomPlatformDatas();

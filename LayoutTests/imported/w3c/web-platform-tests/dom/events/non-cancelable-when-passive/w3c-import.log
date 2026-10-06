@@ -10,10 +10,9 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
+/LayoutTests/imported/w3c/web-platform-tests/dom/events/non-cancelable-when-passive/WEB_FEATURES.yml
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/non-cancelable-when-passive/generic-events-stay-cancelable.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/non-cancelable-when-passive/non-passive-mousewheel-event-listener-on-body.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/non-cancelable-when-passive/non-passive-mousewheel-event-listener-on-div.html

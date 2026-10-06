@@ -33,6 +33,7 @@
 #include "CSSFontSelector.h"
 #include "FontCache.h"
 #include "FontCascadeDescription.h"
+#include "TextShapingResultAndDisplayList.h"
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -67,7 +68,7 @@ bool operator==(const FontFamilyName& a, const FontFamilyName& b)
 
 FontCascadeCache& FontCascadeCache::forCurrentThread()
 {
-    return FontCache::forCurrentThread()->fontCascadeCache();
+    return FontCache::forCurrentThread().fontCascadeCache();
 }
 
 void FontCascadeCache::invalidate()
@@ -78,7 +79,13 @@ void FontCascadeCache::invalidate()
 void FontCascadeCache::clearMeasurementCaches()
 {
     for (auto& value : m_entries.values())
-        value->fonts.get().widthCache().clear();
+        value->fonts.get().glyphGeometryCache().clear();
+}
+
+void FontCascadeCache::clearShapedTextCaches()
+{
+    for (auto& value : m_entries.values())
+        value->fonts.get().shapedTextCache().clear();
 }
 
 void FontCascadeCache::pruneUnreferencedEntries()
@@ -94,13 +101,13 @@ void FontCascadeCache::pruneSystemFallbackFonts()
         Ref { entry->fonts }->pruneSystemFallbacks();
 }
 
-static FontCascadeCacheKey makeFontCascadeCacheKey(const FontCascadeDescription& description, FontSelector* fontSelector)
+FontCascadeCacheKey makeFontCascadeCacheKey(const FontCascadeDescription& description, FontSelector* fontSelector)
 {
     unsigned familyCount = description.familyCount();
     auto hasComplexFontSelector = fontSelector && !fontSelector->isSimpleFontSelectorForDescription();
     return FontCascadeCacheKey {
         FontDescriptionKey(description),
-        Vector<FontFamilyName, 3>(familyCount, [&](size_t i) { return description.familyAt(i); }),
+        Vector<FontFamilyName, 3>(familyCount, [&](size_t familyIndex) { return description.familyAt(familyIndex).name; }),
         hasComplexFontSelector ? fontSelector->uniqueId() : 0,
         hasComplexFontSelector ? fontSelector->version() : 0,
         hasComplexFontSelector

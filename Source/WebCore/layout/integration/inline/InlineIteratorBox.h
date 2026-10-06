@@ -32,8 +32,11 @@ namespace WebCore {
 
 class RenderLineBreak;
 class RenderObject;
-class RenderStyle;
 class RenderSVGText;
+
+namespace Style {
+class ComputedStyle;
+}
 
 namespace InlineIterator {
 
@@ -56,6 +59,7 @@ public:
     bool isText() const;
     bool isSVGText() const;
     bool isInlineBox() const;
+    bool isRubyBase() const;
     bool isRootInlineBox() const;
     bool isLineBreak() const;
     bool isBlockLevelBox() const;
@@ -94,12 +98,12 @@ public:
 
     const RenderObject& renderer() const;
     const RenderBlockFlow& formattingContextRoot() const;
-    const RenderStyle& style() const;
-    WritingMode writingMode() const { return style().writingMode(); }
+    CheckedRef<const Style::ComputedStyle> style() const;
+    WritingMode writingMode() const { return style()->writingMode(); }
 
     // FIXME: Remove. For intermediate porting steps only.
-    const LegacyInlineBox* legacyInlineBox() const;
-    const InlineDisplay::Box* inlineBox() const;
+    const LegacyInlineBox* legacyInlineBox() const LIFETIME_BOUND;
+    const InlineDisplay::Box* inlineBox() const LIFETIME_BOUND;
 
     // Text-relative left/right
     LeafBoxIterator nextLineRightwardOnLine() const;
@@ -118,8 +122,8 @@ public:
     LineBoxIterator lineBox() const;
     size_t lineIndex() const;
 
-    const BoxModernPath& modernPath() const;
-    const BoxLegacyPath& legacyPath() const;
+    const BoxModernPath& modernPath() const LIFETIME_BOUND;
+    const BoxLegacyPath& legacyPath() const LIFETIME_BOUND;
 
 protected:
     friend class BoxIterator;
@@ -144,8 +148,8 @@ public:
     bool operator==(const BoxIterator&) const;
     bool operator==(EndIterator) const { return atEnd(); }
 
-    const Box& operator*() const { return m_box; }
-    const Box* operator->() const { return &m_box; }
+    const Box& operator*() const LIFETIME_BOUND { return m_box; }
+    const Box* operator->() const LIFETIME_BOUND { return &m_box; }
 
     BoxIterator& traverseLineRightwardOnLine();
     BoxIterator& traverseLineRightwardOnLineSkippingChildren();
@@ -228,6 +232,13 @@ inline bool Box::isRootInlineBox() const
     });
 }
 
+inline bool Box::isRubyBase() const
+{
+    return WTF::switchOn(m_pathVariant, [](auto& path) {
+        return path.isRubyBase();
+    });
+}
+
 inline FloatRect Box::visualRectIgnoringBlockDirection() const
 {
     return WTF::switchOn(m_pathVariant, [](auto& path) {
@@ -305,9 +316,9 @@ inline const RenderBlockFlow& Box::formattingContextRoot() const
     });
 }
 
-inline const RenderStyle& Box::style() const
+inline CheckedRef<const Style::ComputedStyle> Box::style() const
 {
-    return WTF::switchOn(m_pathVariant, [](auto& path) -> const RenderStyle& {
+    return WTF::switchOn(m_pathVariant, [](auto& path) -> CheckedRef<const Style::ComputedStyle> {
         return path.style();
     });
 }

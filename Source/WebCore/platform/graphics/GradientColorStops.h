@@ -88,7 +88,7 @@ public:
     StopVector::const_iterator begin() const LIFETIME_BOUND { return m_stops.begin(); }
     StopVector::const_iterator end() const LIFETIME_BOUND { return m_stops.end(); }
 
-    template<typename MapFunction> GradientColorStops mapColors(MapFunction&& mapFunction) const
+    template<typename MapFunction> GradientColorStops mapColors(NOESCAPE const MapFunction& mapFunction) const
     {
         return {
             m_stops.map<StopVector>([&] (const GradientColorStop& stop) -> GradientColorStop {
@@ -98,7 +98,7 @@ public:
         };
     }
 
-    const StopVector& stops() const { return m_stops; }
+    const StopVector& stops() const LIFETIME_BOUND { return m_stops; }
 
 private:
     GradientColorStops(StopVector stops, bool isSorted)

@@ -29,8 +29,6 @@
 #include "config.h"
 
 #include <climits>
-#include <locale>
-#include <cmath>
 
 #include <wtf/dtoa/double-conversion.h>
 
@@ -446,14 +444,14 @@ void DoubleToStringConverter::DoubleToAscii(double v,
 const int kMaxSignificantDigits = 772;
 
 
-static double SignedZero(bool sign) {
+static double NODELETE SignedZero(bool sign) {
   return sign ? -0.0 : 0.0;
 }
 
 
 // Returns true, when the iterator is equal to end.
 template<class Iterator>
-static inline bool Advance(Iterator* it, Iterator& end) {
+static inline bool NODELETE Advance(Iterator* it, Iterator& end) {
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
   ++(*it);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -32,6 +32,7 @@
 #include "CDMInstance.h"
 #include "CDMInstanceSession.h"
 #include "CDMPrivate.h"
+#include "CDMSessionType.h"
 #include "MediaKeyEncryptionScheme.h"
 #include "MediaKeysRequirement.h"
 #include <wtf/HashMap.h>
@@ -45,18 +46,19 @@ namespace WebCore {
 class MockCDMFactory : public RefCounted<MockCDMFactory>, public CDMFactory {
 public:
     static Ref<MockCDMFactory> create() { return adoptRef(*new MockCDMFactory); }
+    static void unregisterAllMockFactories();
     ~MockCDMFactory();
 
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    const Vector<String>& supportedDataTypes() const { return m_supportedDataTypes; }
+    const Vector<String>& supportedDataTypes() const LIFETIME_BOUND { return m_supportedDataTypes; }
     void setSupportedDataTypes(Vector<String>&&);
 
-    const Vector<MediaKeySessionType>& supportedSessionTypes() const { return m_supportedSessionTypes; }
+    const Vector<MediaKeySessionType>& supportedSessionTypes() const LIFETIME_BOUND { return m_supportedSessionTypes; }
     void setSupportedSessionTypes(Vector<MediaKeySessionType>&& types) { m_supportedSessionTypes = WTF::move(types); }
 
-    const Vector<String>& supportedRobustness() const { return m_supportedRobustness; }
+    const Vector<String>& supportedRobustness() const LIFETIME_BOUND { return m_supportedRobustness; }
     void setSupportedRobustness(Vector<String>&& supportedRobustness) { m_supportedRobustness = WTF::move(supportedRobustness); }
 
     MediaKeysRequirement distinctiveIdentifiersRequirement() const { return m_distinctiveIdentifiersRequirement; }
@@ -74,8 +76,11 @@ public:
     bool supportsSessions() const { return m_supportsSessions; }
     void setSupportsSessions(bool flag) { m_supportsSessions = flag; }
 
-    const Vector<MediaKeyEncryptionScheme>& supportedEncryptionSchemes() const { return m_supportedEncryptionSchemes; }
+    const Vector<MediaKeyEncryptionScheme>& supportedEncryptionSchemes() const LIFETIME_BOUND { return m_supportedEncryptionSchemes; }
     void setSupportedEncryptionSchemes(Vector<MediaKeyEncryptionScheme>&& schemes) { m_supportedEncryptionSchemes = WTF::move(schemes); }
+
+    const Vector<String>& unsupportedVideoCodecs() const LIFETIME_BOUND { return m_unsupportedVideoCodecs; }
+    void setUnsupportedVideoCodecs(Vector<String>&& codecs) { m_unsupportedVideoCodecs = WTF::move(codecs); }
 
     void unregister();
 
@@ -84,6 +89,13 @@ public:
     void addKeysToSessionWithID(const String& id, Vector<Ref<SharedBuffer>>&&);
     const Vector<Ref<SharedBuffer>>* keysForSessionWithID(const String& id) const;
     Vector<Ref<SharedBuffer>> removeKeysFromSessionWithID(const String& id);
+    size_t keyCountForSession(const String& id) const;
+
+    void setSessionType(const String& id, CDMSessionType type) { m_sessionTypes.set(id, type); }
+    std::optional<CDMSessionType> sessionType(const String& id) const;
+
+    double expirationOnUpdate() const { return m_expirationOnUpdate; }
+    void setExpirationOnUpdate(double t) { m_expirationOnUpdate = t; }
 
 private:
     MockCDMFactory();
@@ -96,11 +108,14 @@ private:
     Vector<MediaKeySessionType> m_supportedSessionTypes;
     Vector<String> m_supportedRobustness;
     Vector<MediaKeyEncryptionScheme> m_supportedEncryptionSchemes;
+    Vector<String> m_unsupportedVideoCodecs;
     bool m_registered { true };
     bool m_canCreateInstances { true };
     bool m_supportsServerCertificates { true };
     bool m_supportsSessions { true };
     HashMap<String, Vector<Ref<SharedBuffer>>> m_sessions;
+    HashMap<String, CDMSessionType> m_sessionTypes;
+    double m_expirationOnUpdate { std::numeric_limits<double>::quiet_NaN() };
 };
 
 class MockCDM : public CDMPrivate {
@@ -109,8 +124,8 @@ class MockCDM : public CDMPrivate {
 public:
     MockCDM(WeakPtr<MockCDMFactory>, const String&);
 
-    MockCDMFactory* factory() { return m_factory.get(); }
-    const String& mediaKeysHashSalt() const { return m_mediaKeysHashSalt; }
+    RefPtr<MockCDMFactory> factory() const { return m_factory.get(); }
+    const String& mediaKeysHashSalt() const LIFETIME_BOUND { return m_mediaKeysHashSalt; }
 
 private:
     friend class MockCDMInstance;
@@ -139,7 +154,7 @@ class MockCDMInstance : public CDMInstance, public CanMakeWeakPtr<MockCDMInstanc
 public:
     static Ref<MockCDMInstance> create(MockCDM&);
 
-    MockCDMFactory* factory() const { return m_cdm ? m_cdm->factory() : nullptr; }
+    RefPtr<MockCDMFactory> factory() const;
     bool distinctiveIdentifiersAllowed() const { return m_distinctiveIdentifiersAllowed; }
     bool persistentStateAllowed() const { return m_persistentStateAllowed; }
 
@@ -161,6 +176,8 @@ private:
 class MockCDMInstanceSession : public CDMInstanceSession {
 public:
     explicit MockCDMInstanceSession(WeakPtr<MockCDMInstance>&&);
+
+    RefPtr<MockCDMFactory> factory() const;
 
 private:
     void requestLicense(LicenseType, KeyGroupingStrategy, const String& initDataType, Ref<SharedBuffer>&& initData, LicenseCallback&&) final;

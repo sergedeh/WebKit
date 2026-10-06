@@ -25,10 +25,10 @@
 
 #pragma once
 
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/KeyboardScroll.h>
 #include <WebCore/RectEdges.h>
 #include <WebCore/ScrollAlignment.h>
-#include <WebCore/ScrollAnchoringController.h>
 #include <WebCore/ScrollSnapOffsetsInfo.h>
 #include <WebCore/ScrollTypes.h>
 #include <WebCore/Scrollbar.h>
@@ -54,6 +54,7 @@ class PlatformWheelEvent;
 class ScrollAnimator;
 class ScrollbarsController;
 class GraphicsLayer;
+class ScrollAnchoringController;
 class TiledBacking;
 class Element;
 
@@ -151,6 +152,9 @@ public:
     virtual OverscrollBehavior horizontalOverscrollBehavior() const { return OverscrollBehavior::Auto; }
     virtual OverscrollBehavior verticalOverscrollBehavior() const { return OverscrollBehavior::Auto; }
 
+    void setScrollbarRevealBehavior(ScrollbarRevealBehavior behavior) { m_scrollbarRevealBehavior = behavior; }
+    ScrollbarRevealBehavior scrollbarRevealBehavior() const { return m_scrollbarRevealBehavior; }
+
     WEBCORE_EXPORT virtual Color scrollbarThumbColorStyle() const;
     WEBCORE_EXPORT virtual Color scrollbarTrackColorStyle() const;
     WEBCORE_EXPORT virtual Style::ScrollbarGutter scrollbarGutterStyle() const;
@@ -210,10 +214,10 @@ public:
     ScrollingNodeID scrollingNodeIDForTesting();
 
     WEBCORE_EXPORT ScrollAnimator& scrollAnimator() const;
-    ScrollAnimator* existingScrollAnimator() const { return m_scrollAnimator.get(); }
+    ScrollAnimator* existingScrollAnimator() const LIFETIME_BOUND { return m_scrollAnimator.get(); }
 
     WEBCORE_EXPORT ScrollbarsController& scrollbarsController() const;
-    ScrollbarsController* existingScrollbarsController() const { return m_scrollbarsController.get(); }
+    ScrollbarsController* existingScrollbarsController() const LIFETIME_BOUND { return m_scrollbarsController.get(); }
     WEBCORE_EXPORT virtual void createScrollbarsController();
 
     virtual bool isActive() const = 0;
@@ -249,9 +253,7 @@ public:
     WEBCORE_EXPORT IntSize scrollbarIntrusion() const;
 
     virtual Scrollbar* horizontalScrollbar() const { return nullptr; }
-    RefPtr<Scrollbar> protectedHorizontalScrollbar() const { return horizontalScrollbar(); }
     virtual Scrollbar* verticalScrollbar() const { return nullptr; }
-    RefPtr<Scrollbar> protectedVerticalScrollbar() const { return verticalScrollbar(); }
     virtual void scrollbarFrameRectChanged(const Scrollbar&) const { };
 
     Scrollbar* scrollbarForDirection(ScrollDirection direction) const
@@ -267,12 +269,17 @@ public:
         return nullptr;
     }
 
-    const IntPoint& scrollOrigin() const { return m_scrollOrigin; }
+    const IntPoint& scrollOrigin() const LIFETIME_BOUND { return m_scrollOrigin; }
     bool scrollOriginChanged() const { return m_scrollOriginChanged; }
 
     virtual ScrollPosition scrollPosition() const = 0;
     WEBCORE_EXPORT virtual ScrollPosition minimumScrollPosition() const;
     WEBCORE_EXPORT virtual ScrollPosition maximumScrollPosition() const;
+
+    virtual ScrollPosition adjustScrollPositionWithinRange(const ScrollPosition& position) const
+    {
+        return constrainedScrollPosition(position);
+    }
 
     ScrollPosition constrainedScrollPosition(const ScrollPosition& position) const
     {
@@ -284,8 +291,8 @@ public:
     ScrollOffset minimumScrollOffset() const { return { }; }
     ScrollOffset maximumScrollOffset() const;
 
-    WEBCORE_EXPORT ScrollPosition scrollPositionFromOffset(ScrollOffset) const;
-    WEBCORE_EXPORT ScrollOffset scrollOffsetFromPosition(ScrollPosition) const;
+    WEBCORE_EXPORT ScrollPosition NODELETE scrollPositionFromOffset(ScrollOffset) const;
+    WEBCORE_EXPORT ScrollOffset NODELETE scrollOffsetFromPosition(ScrollPosition) const;
 
     template<typename PositionType, typename SizeType>
     static PositionType scrollPositionFromOffset(PositionType offset, SizeType scrollOrigin)
@@ -335,10 +342,17 @@ public:
     int visibleHeight() const { return visibleSize().height(); }
     virtual IntSize visibleSize() const = 0;
 
+    // The snapport, in the coordinates the snap offsets and areas were computed in. Same as visibleSize()
+    // unless a subclass scales the two differently.
+    virtual IntSize snapportSize() const { return visibleSize(); }
+
     virtual IntSize contentsSize() const = 0;
     virtual IntSize overhangAmount() const { return IntSize(); }
     virtual IntPoint lastKnownMousePositionInView() const { return IntPoint(); }
     virtual bool isHandlingWheelEvent() const { return false; }
+
+    void willDispatchScrollEvent();
+    void didDispatchScrollEvent();
 
     virtual int headerHeight() const { return 0; }
     virtual int footerHeight() const { return 0; }
@@ -370,6 +384,10 @@ public:
 
     virtual bool isInStableState() const { return true; }
 
+#if USE(COORDINATED_GRAPHICS_ASYNC_SCROLLBAR)
+    float scrollbarOpacity() const;
+#endif
+
     // NOTE: Only called from Internals for testing.
     WEBCORE_EXPORT void setScrollOffsetFromInternals(const ScrollOffset&);
 
@@ -378,9 +396,9 @@ public:
 
     // Computes the double value for the scrollbar's current position and the current overhang amount.
     // This function is static so that it can be called from the main thread or the scrolling thread.
-    WEBCORE_EXPORT static void computeScrollbarValueAndOverhang(float currentPosition, float totalSize, float visibleSize, float& scrollbarValue, float& overhangAmount);
+    WEBCORE_EXPORT static void NODELETE computeScrollbarValueAndOverhang(float currentPosition, float totalSize, float visibleSize, float& scrollbarValue, float& overhangAmount);
 
-    WEBCORE_EXPORT static std::optional<BoxSide> targetSideForScrollDelta(FloatSize, ScrollEventAxis);
+    WEBCORE_EXPORT static std::optional<BoxSide> NODELETE targetSideForScrollDelta(FloatSize, ScrollEventAxis);
 
     // "Pinned" means scrolled at or beyond the edge.
     WEBCORE_EXPORT bool isPinnedOnSide(BoxSide) const;
@@ -423,12 +441,26 @@ public:
     bool overscrollBehaviorAllowsRubberBand() const { return horizontalOverscrollBehavior() != OverscrollBehavior::None || verticalOverscrollBehavior() != OverscrollBehavior::None; }
     bool shouldBlockScrollPropagation(const FloatSize&) const;
     FloatSize deltaForPropagation(const FloatSize&) const;
+
     WEBCORE_EXPORT virtual float adjustVerticalPageScrollStepForFixedContent(float step);
-    virtual bool needsAnimatedScroll() const { return false; }
-    virtual void updateScrollAnchoringElement() { }
-    virtual void updateScrollPositionForScrollAnchoringController() { }
-    virtual void invalidateScrollAnchoringElement() { }
+
+    // Anchor positioning
     virtual void updateAnchorPositionedAfterScroll() { }
+
+    // Scroll anchoring
+    enum class ComputeNewScrollAnchor : bool {
+        No,
+        Yes
+    };
+
+    enum class IncludeAncestors : bool {
+        No,
+        Yes
+    };
+    void clearScrollAnchor(IncludeAncestors = IncludeAncestors::No);
+    void adjustScrollAnchoringPosition();
+    virtual ScrollAnchoringController* scrollAnchoringController() const { return nullptr; }
+
     virtual std::optional<FrameIdentifier> rootFrameID() const { return std::nullopt; }
 
     WEBCORE_EXPORT void setScrollbarsController(std::unique_ptr<ScrollbarsController>&&);
@@ -441,6 +473,7 @@ public:
     virtual bool formControlRefreshEnabled() const { return false; }
 #endif
     virtual void scrollDidEnd() { }
+    virtual void scrollOriginDidChange() { }
 
 protected:
     WEBCORE_EXPORT ScrollableArea();
@@ -508,8 +541,40 @@ private:
     bool m_scrollOriginChanged { false };
     bool m_scrollShouldClearLatchedState { false };
     bool m_isAwaitingScrollend { false };
+    ScrollbarRevealBehavior m_scrollbarRevealBehavior { ScrollbarRevealBehavior::Default };
 
     Markable<ScrollingNodeID> m_scrollingNodeIDForTesting;
+};
+
+class ScrollbarRevealBehaviorScope {
+public:
+    ScrollbarRevealBehaviorScope(ScrollableArea&, ScrollbarRevealBehavior);
+    ~ScrollbarRevealBehaviorScope();
+
+private:
+    WeakRef<ScrollableArea> m_scrollableArea;
+    ScrollbarRevealBehavior m_oldBehavior;
+};
+
+class ScrollAnchoringSuppressionScope {
+public:
+    ScrollAnchoringSuppressionScope(ScrollableArea&);
+    ~ScrollAnchoringSuppressionScope();
+
+private:
+    WeakPtr<ScrollableArea> m_scrollableArea;
+};
+
+class ScrollTypeScope {
+public:
+    WEBCORE_EXPORT ScrollTypeScope(ScrollableArea&, ScrollType);
+    WEBCORE_EXPORT ~ScrollTypeScope();
+
+    void NODELETE restore();
+
+private:
+    WeakRef<ScrollableArea> m_scrollableArea;
+    std::optional<ScrollType> m_oldScrollType;
 };
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const ScrollableArea&);

@@ -26,7 +26,7 @@
 
 #pragma once
 
-#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSObject.h>
 
 namespace JSC {
@@ -50,7 +50,7 @@ public:
 
     static ShadowRealmObject* create(VM&, Structure*, JSGlobalObject*);
 
-    JSGlobalObject* globalObject() { return m_globalObject.get(); }
+    JSGlobalObject* globalObject() LIFETIME_BOUND { return m_globalObject.get(); }
 
 private:
     ShadowRealmObject(VM&, Structure*);

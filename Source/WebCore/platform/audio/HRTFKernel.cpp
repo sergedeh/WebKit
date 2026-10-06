@@ -56,7 +56,7 @@ static float extractAverageGroupDelay(AudioChannel* channel, size_t analysisFFTS
         return 0;
     
     // Check for power-of-2.
-    ASSERT(1UL << static_cast<unsigned>(log2(analysisFFTSize)) == analysisFFTSize);
+    ASSERT(isPowerOfTwo(analysisFFTSize));
 
     FFTFrame estimationFrame(analysisFFTSize);
     estimationFrame.doFFT(impulseP);
@@ -91,7 +91,7 @@ HRTFKernel::HRTFKernel(AudioChannel* channel, size_t fftSize, float sampleRate)
         }
     }
 
-    m_fftFrame = makeUnique<FFTFrame>(fftSize);
+    lazyInitialize(m_fftFrame, makeUnique<FFTFrame>(fftSize));
     m_fftFrame->doPaddedFFT(impulseResponse.first(truncatedResponseLength));
 }
 

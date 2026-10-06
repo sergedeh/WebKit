@@ -439,7 +439,7 @@ static RetainPtr<ViewType> makeLabel(NSAttributedString *attributedString)
     RetainPtr<ButtonType> showDetails = box.get().subviews.lastObject;
     [showDetails removeFromSuperview];
 
-    auto text = adoptNS([self._protectedWarning->details() mutableCopy]);
+    auto text = adoptNS([protect(_warning)->details() mutableCopy]);
     [text addAttributes:@{ NSFontAttributeName:fontOfSize(WarningTextSize::Body).get() } range:NSMakeRange(0, [text length])];
     auto details = adoptNS([[_WKWarningViewTextView alloc] initWithAttributedString:text.get() forWarning:self]);
     _details = details.get();
@@ -602,11 +602,6 @@ static RetainPtr<ViewType> makeLabel(NSAttributedString *attributedString)
     return _warning->forMainFrameNavigation();
 }
 
-- (RefPtr<const WebKit::BrowsingWarning>)_protectedWarning
-{
-    return _warning;
-}
-
 @end
 
 @implementation _WKWarningViewTextView
@@ -638,7 +633,7 @@ static RetainPtr<ViewType> makeLabel(NSAttributedString *attributedString)
     [retainPtr(self.layoutManager) ensureLayoutForTextContainer:retainPtr(self.textContainer).get()];
     return { NSViewNoIntrinsicMetric, [retainPtr(self.layoutManager) usedRectForTextContainer:retainPtr(self.textContainer).get()].size.height };
 #elif HAVE(SAFE_BROWSING)
-    auto width = std::min<CGFloat>(maxWidth, [_warning frame].size.width) - 2 * marginSize;
+    auto width = std::min<CGFloat>(maxWidth, [_warning.get() frame].size.width) - 2 * marginSize;
     constexpr auto noHeightConstraint = CGFLOAT_MAX;
     return { width, [self sizeThatFits: { width, noHeightConstraint }].height };
 #else

@@ -41,12 +41,14 @@
 #include "HTMLParserIdioms.h"
 #include "InputTypeNames.h"
 #include "KeyboardEvent.h"
+#include "LocalizedStrings.h"
 #include "NodeRenderStyle.h"
-#include "RenderScrollbar.h"
+#include "Page.h"
+#include "RenderObjectInlines.h"
 #include "RenderSearchField.h"
-#include "RenderStyle+GettersInlines.h"
 #include "ScriptDisallowedScope.h"
 #include "ShadowRoot.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StylePreferredSize.h"
 #include "TextControlInnerElements.h"
 #include "UserAgentParts.h"
@@ -104,16 +106,6 @@ String SearchInputType::itemText(unsigned listIndex) const
     return m_recentSearches[listIndex - 1].string;
 }
 
-String SearchInputType::itemLabel(unsigned) const
-{
-    return String();
-}
-
-String SearchInputType::itemIcon(unsigned) const
-{
-    return String();
-}
-
 bool SearchInputType::itemIsEnabled(unsigned listIndex) const
 {
     if (!listIndex || itemIsSeparator(listIndex))
@@ -128,8 +120,8 @@ PopupMenuStyle SearchInputType::itemStyle(unsigned) const
 
 PopupMenuStyle SearchInputType::menuStyle() const
 {
-    auto defaultStyle = RenderStyle::create();
-    CheckedPtr renderer = dynamicDowncast<RenderSearchField>(protectedElement()->renderer());
+    auto defaultStyle = Style::ComputedStyle::create();
+    CheckedPtr renderer = dynamicDowncast<RenderSearchField>(element()->renderer());
     CheckedRef style = renderer ? renderer->style() : defaultStyle;
     return PopupMenuStyle(
         style->visitedDependentColorApplyingColorFilter(),
@@ -137,7 +129,7 @@ PopupMenuStyle SearchInputType::menuStyle() const
         style->fontCascade(),
         nullString(),
         style->usedVisibility() == Visibility::Visible,
-        style->display() == DisplayType::None,
+        style->display() == Style::DisplayType::None,
         true,
         style->writingMode().bidiDirection(),
         isOverride(style->unicodeBidi()),
@@ -145,6 +137,7 @@ PopupMenuStyle SearchInputType::menuStyle() const
     );
 }
 
+#if PLATFORM(WIN)
 int SearchInputType::clientInsetLeft() const
 {
     // Inset the menu by the radius of the cap on the left so that
@@ -162,15 +155,28 @@ int SearchInputType::clientInsetRight() const
 
 LayoutUnit SearchInputType::clientPaddingLeft() const
 {
-    CheckedPtr renderer = dynamicDowncast<RenderSearchField>(protectedElement()->renderer());
+    CheckedPtr renderer = dynamicDowncast<RenderSearchField>(element()->renderer());
     return renderer ? renderer->clientPaddingLeft() : 0_lu;
 }
 
 LayoutUnit SearchInputType::clientPaddingRight() const
 {
-    CheckedPtr renderer = dynamicDowncast<RenderSearchField>(protectedElement()->renderer());
+    CheckedPtr renderer = dynamicDowncast<RenderSearchField>(element()->renderer());
     return renderer ? renderer->clientPaddingRight() : 0_lu;
 }
+
+FontSelector* SearchInputType::fontSelector() const
+{
+    return &protect(protect(element())->document())->fontSelector();
+}
+
+HostWindow* SearchInputType::hostWindow() const
+{
+    if (CheckedPtr renderer = dynamicDowncast<RenderSearchField>(protect(element())->renderer()))
+        return renderer->hostWindow();
+    return nullptr;
+}
+#endif
 
 int SearchInputType::listSize() const
 {
@@ -181,14 +187,9 @@ int SearchInputType::listSize() const
     return m_recentSearches.size() + 3;
 }
 
-int SearchInputType::popupSelectedIndex() const
-{
-    return -1;
-}
-
 void SearchInputType::popupDidHide()
 {
-    if (CheckedPtr renderer = dynamicDowncast<RenderSearchField>(protectedElement()->renderer()))
+    if (CheckedPtr renderer = dynamicDowncast<RenderSearchField>(element()->renderer()))
         renderer->popupDidHide();
 }
 
@@ -208,30 +209,12 @@ bool SearchInputType::itemIsSelected(unsigned) const
     return false;
 }
 
+#if !PLATFORM(COCOA)
 void SearchInputType::setTextFromItem(unsigned listIndex)
 {
-    protectedElement()->setValue(itemText(listIndex));
+    protect(element())->setValue(itemText(listIndex));
 }
-
-FontSelector* SearchInputType::fontSelector() const
-{
-    return &protectedElement()->protectedDocument()->fontSelector();
-}
-
-HostWindow* SearchInputType::hostWindow() const
-{
-    if (CheckedPtr renderer = dynamicDowncast<RenderSearchField>(protectedElement()->renderer()))
-        return renderer->hostWindow();
-    return nullptr;
-}
-
-Ref<Scrollbar> SearchInputType::createScrollbar(ScrollableArea& scrollableArea, ScrollbarOrientation orientation, ScrollbarWidth widthStyle)
-{
-    CheckedPtr renderer = dynamicDowncast<RenderSearchField>(protectedElement()->renderer());
-    if (renderer && renderer->checkedStyle()->usesLegacyScrollbarStyle())
-        return RenderScrollbar::createCustomScrollbar(scrollableArea, orientation, protectedElement().get());
-    return Scrollbar::createNativeScrollbar(scrollableArea, orientation, widthStyle);
-}
+#endif
 
 void SearchInputType::addSearchResult()
 {
@@ -284,11 +267,10 @@ void SearchInputType::attributeChanged(const QualifiedName& name)
     BaseTextInputType::attributeChanged(name);
 }
 
-RenderPtr<RenderElement> SearchInputType::createInputRenderer(RenderStyle&& style)
+RenderPtr<RenderElement> SearchInputType::createInputRenderer(Style::ComputedStyle&& style)
 {
     ASSERT(element());
-    // FIXME: https://github.com/llvm/llvm-project/pull/142471 Moving style is not unsafe.
-    SUPPRESS_UNCOUNTED_ARG return createRenderer<RenderSearchField>(*protectedElement(), WTF::move(style));
+    return createRenderer<RenderSearchField>(*protect(element()), WTF::move(style));
 }
 
 const AtomString& SearchInputType::formControlType() const
@@ -316,13 +298,14 @@ void SearchInputType::createShadowSubtree()
     ASSERT(container);
     ASSERT(textWrapper);
 
+    // Always created, since it is also the ::-webkit-search-decoration element when there is no results attribute.
     Ref resultsButton = SearchFieldResultsButtonElement::create(document);
     container->insertBefore(resultsButton, textWrapper.copyRef());
     updateResultButtonPseudoType(resultsButton, element()->maxResults());
     m_resultsButton = WTF::move(resultsButton);
 
     Ref cancelButton = SearchFieldCancelButtonElement::create(document);
-    container->insertBefore(cancelButton, textWrapper->protectedNextSibling());
+    container->insertBefore(cancelButton, protect(textWrapper->nextSibling()));
     m_cancelButton = WTF::move(cancelButton);
 }
 
@@ -388,15 +371,15 @@ bool SearchInputType::sizeShouldIncludeDecoration(int, int& preferredSize) const
 float SearchInputType::decorationWidth(float) const
 {
     float width = 0;
-    if (RefPtr resultsButton = m_resultsButton; resultsButton && resultsButton->renderStyle()) {
+    if (auto* resultsButton = m_resultsButton.get(); resultsButton && resultsButton->renderStyle()) {
         // FIXME: Document what invariant holds to allow only using fixed logical widths?
-        CheckedPtr renderStyle = resultsButton->renderStyle();
+        auto* renderStyle = resultsButton->renderStyle();
         if (auto fixedLogicalWidth = renderStyle->logicalWidth().tryFixed())
             width += fixedLogicalWidth->resolveZoom(renderStyle->usedZoomForLength());
     }
-    if (RefPtr cancelButton = m_cancelButton; cancelButton && cancelButton->renderStyle()) {
+    if (auto* cancelButton = m_cancelButton.get(); cancelButton && cancelButton->renderStyle()) {
         // FIXME: Document what invariant holds to allow only using fixed logical widths?
-        CheckedPtr renderStyle = cancelButton->renderStyle();
+        auto* renderStyle = cancelButton->renderStyle();
         if (auto fixedLogicalWidth = renderStyle->logicalWidth().tryFixed())
             width += fixedLogicalWidth->resolveZoom(renderStyle->usedZoomForLength());
     }
@@ -405,7 +388,7 @@ float SearchInputType::decorationWidth(float) const
 
 void SearchInputType::setValue(const String& sanitizedValue, bool valueChanged, TextFieldEventBehavior eventBehavior, TextControlSetValueSelection selection)
 {
-    bool emptinessChanged = valueChanged && sanitizedValue.isEmpty() != protectedElement()->value()->isEmpty();
+    bool emptinessChanged = valueChanged && sanitizedValue.isEmpty() != protect(element())->value()->isEmpty();
 
     BaseTextInputType::setValue(sanitizedValue, valueChanged, eventBehavior, selection);
 
@@ -413,7 +396,7 @@ void SearchInputType::setValue(const String& sanitizedValue, bool valueChanged, 
         return;
 
     if (RefPtr cancelButton = m_cancelButton)
-        cancelButton->invalidateStyleInternal();
+        cancelButton->invalidateStyle();
 }
 
 } // namespace WebCore

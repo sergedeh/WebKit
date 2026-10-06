@@ -42,12 +42,13 @@ public:
         CanUseSimpleFontCodepath,
         ShouldUseSimpleGlyphOverflowCodePath,
         HasPositionDependentContentWidth,
-        HasStrongDirectionalityContent
+        HasStrongDirectionalityContent,
+        HasSynthesizedGlyph // A list marker's disc, circle or square: the text is the character the counter style produced.
     };
-    InlineTextBox(String, bool isCombined, EnumSet<ContentCharacteristic>, RenderStyle&&, std::unique_ptr<RenderStyle>&& firstLineStyle = nullptr);
+    InlineTextBox(String, bool isCombined, EnumSet<ContentCharacteristic>, Style::ComputedStyle&&, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle = nullptr);
     virtual ~InlineTextBox() = default;
 
-    const String& content() const { return m_content; }
+    const String& content() const LIFETIME_BOUND { return m_content; }
     bool isCombined() const { return m_isCombined; }
     // FIXME: This should not be a box's property.
     bool canUseSimplifiedContentMeasuring() const { return m_contentCharacteristicSet.contains(ContentCharacteristic::CanUseSimplifiedContentMeasuring); }
@@ -55,6 +56,7 @@ public:
     bool shouldUseSimpleGlyphOverflowCodePath() const { return m_contentCharacteristicSet.contains(ContentCharacteristic::ShouldUseSimpleGlyphOverflowCodePath); }
     bool hasPositionDependentContentWidth() const { return m_contentCharacteristicSet.contains(ContentCharacteristic::HasPositionDependentContentWidth); }
     bool hasStrongDirectionalityContent() const { return m_contentCharacteristicSet.contains(ContentCharacteristic::HasStrongDirectionalityContent); }
+    bool hasSynthesizedGlyph() const { return m_contentCharacteristicSet.contains(ContentCharacteristic::HasSynthesizedGlyph); }
 
     void setContent(String newContent, EnumSet<ContentCharacteristic>);
     void setContentCharacteristic(EnumSet<ContentCharacteristic> contentCharacteristicSet) { m_contentCharacteristicSet = contentCharacteristicSet; }

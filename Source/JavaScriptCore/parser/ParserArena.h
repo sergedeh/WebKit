@@ -137,9 +137,8 @@ namespace JSC {
     inline const Identifier& IdentifierArena::makeNumericIdentifier(VM& vm, double number)
     {
         Identifier token;
-        // This is possible that number can be -0, but it is OK since ToString(-0) is "0".
-        if (canBeInt32(number))
-            token = Identifier::from(vm, static_cast<int32_t>(number));
+        if (auto int32Value = tryConvertToStrictInt32(number))
+            token = Identifier::from(vm, int32Value.value());
         else
             token = Identifier::from(vm, number);
         m_identifiers.append(WTF::move(token));
@@ -176,7 +175,7 @@ namespace JSC {
             return block;
         }
 
-        template<typename T, typename = std::enable_if_t<std::is_base_of<ParserArenaDeletable, T>::value>>
+        template<std::derived_from<ParserArenaDeletable> T>
         void* allocateDeletable(size_t size)
         {
             // T may extend ParserArenaDeletable via multiple inheritance, but not as T's first
@@ -204,7 +203,7 @@ namespace JSC {
             return (size + sizeof(WTF::AllocAlignmentInteger) - 1) & ~(sizeof(WTF::AllocAlignmentInteger) - 1);
         }
 
-        void* freeablePool();
+        void* NODELETE freeablePool();
         void allocateFreeablePool();
         void deallocateObjects();
 

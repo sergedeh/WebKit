@@ -144,7 +144,7 @@ void RenderSelection::set(const RenderRange& selection, RepaintMode blockRepaint
 void RenderSelection::clear()
 {
     if (!m_selectionWasCaret)
-        m_renderView->checkedLayer()->repaintBlockSelectionGaps();
+        protect(m_renderView->layer())->repaintBlockSelectionGaps();
     set({ }, RenderSelection::RepaintMode::NewMinusOld);
 }
 
@@ -201,8 +201,8 @@ IntRect RenderSelection::collectBounds(ClipToVisibleContent clipToVisibleContent
 
     // Now create a single bounding box rect that encloses the whole selection.
     LayoutRect selectionRect;
-    for (auto slectionEntry : renderers) {
-        auto* selectionGeometry = slectionEntry.value.get();
+    for (auto selectionEntry : renderers) {
+        auto* selectionGeometry = selectionEntry.value.get();
         // RenderSelectionGeometry::rect() is in the coordinates of the repaintContainer, so map to page coordinates.
         LayoutRect currentRect = selectionGeometry->rect();
         if (currentRect.isEmpty())
@@ -255,7 +255,7 @@ void RenderSelection::apply(const RenderRange& newSelection, RepaintMode blockRe
     }
 
     if (blockRepaintMode != RepaintMode::Nothing)
-        m_renderView->checkedLayer()->clearBlockSelectionGapsBounds();
+        m_renderView->layer()->clearBlockSelectionGapsBounds();
 
     // Now that the selection state has been updated for the new objects, walk them again and
     // put them in the new objects list.
@@ -267,7 +267,7 @@ void RenderSelection::apply(const RenderRange& newSelection, RepaintMode blockRe
             auto selectionGeometry = makeUnique<RenderSelectionGeometry>(*currentRenderer, true);
 #if ENABLE(SERVICE_CONTROLS)
             for (auto& quad : selectionGeometry->collectedSelectionQuads())
-                m_selectionGeometryGatherer.addQuad(selectionGeometry->checkedRepaintContainer().get(), quad);
+                m_selectionGeometryGatherer.addQuad(protect(selectionGeometry->repaintContainer()).get(), quad);
             if (!currentRenderer->isRenderTextOrLineBreak())
                 m_selectionGeometryGatherer.setTextOnly(false);
 #endif
@@ -280,7 +280,7 @@ void RenderSelection::apply(const RenderRange& newSelection, RepaintMode blockRe
                 blockSelectionGeometry = makeUnique<RenderBlockSelectionGeometry>(*containingBlock);
                 containingBlock = containingBlock->containingBlock();
 #if ENABLE(SERVICE_CONTROLS)
-                m_selectionGeometryGatherer.addGapRects(blockSelectionGeometry->checkedRepaintContainer().get(), blockSelectionGeometry->rects());
+                m_selectionGeometryGatherer.addGapRects(protect(blockSelectionGeometry->repaintContainer()).get(), blockSelectionGeometry->rects());
 #endif
             }
         }

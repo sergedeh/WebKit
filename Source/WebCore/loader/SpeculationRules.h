@@ -83,7 +83,7 @@ public:
         DocumentPredicate(DocumentPredicate&&) = default;
         DocumentPredicate& operator=(DocumentPredicate&&) = default;
 
-        const PredicateVariant& value() const;
+        const PredicateVariant& NODELETE value() const;
 
     private:
         PredicateVariant m_value;
@@ -108,7 +108,9 @@ public:
     // https://html.spec.whatwg.org/multipage/webappapis.html#unregister-speculation-rules
     Vector<URL> unregisterSpeculationRules(Node& sourceNode);
 
-    const WeakHashMap<Node, Vector<Rule>, WeakPtrImplWithEventTargetData>& prefetchRules() const { return m_prefetchRulesByNode; }
+    const WeakHashMap<Node, Vector<Rule>, WeakPtrImplWithEventTargetData>& prefetchRules() const LIFETIME_BOUND { return m_prefetchRulesByNode; }
+
+    bool NODELETE hasNonConservativePrefetchRules() const;
 
 private:
     SpeculationRules() = default;

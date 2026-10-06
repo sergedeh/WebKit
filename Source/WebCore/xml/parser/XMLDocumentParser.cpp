@@ -51,7 +51,7 @@
 #include "SVGStyleElement.h"
 #include "ScriptElement.h"
 #include "ScriptSourceCode.h"
-#include "StyleScope.h"
+#include "StyleDocumentScope.h"
 #include "TextResourceDecoder.h"
 #include "XMLNSNames.h"
 #include <wtf/Ref.h>
@@ -128,13 +128,13 @@ void XMLDocumentParser::append(RefPtr<StringImpl>&& inputSource)
         return;
     }
 
-    doWrite(source);
+    doWrite(WTF::move(source));
 }
 
 void XMLDocumentParser::handleError(XMLErrors::Type type, const char* m, TextPosition position)
 {
     if (!m_xmlErrors)
-        m_xmlErrors = makeUnique<XMLErrors>(*protectedDocument());
+        lazyInitialize(m_xmlErrors, makeUnique<XMLErrors>(*protect(document())));
     m_xmlErrors->handleError(type, m, position);
     if (type != XMLErrors::Type::Warning)
         m_sawError = true;
@@ -149,9 +149,9 @@ void XMLDocumentParser::createLeafTextNode()
 
     ASSERT(m_bufferedText.size() == 0);
     ASSERT(!m_leafTextNode);
-    m_leafTextNode = Text::create(m_currentNode->protectedDocument(), String { emptyString() });
+    m_leafTextNode = Text::create(protect(m_currentNode->document()), String { emptyString() });
     if (RefPtr currentNode = m_currentNode.get())
-        currentNode->parserAppendChild(*protectedLeafTextNode());
+        currentNode->parserAppendChild(*protect(m_leafTextNode));
 }
 
 bool XMLDocumentParser::updateLeafTextNode()
@@ -162,11 +162,12 @@ bool XMLDocumentParser::updateLeafTextNode()
     if (!m_leafTextNode)
         return true;
 
-    if (isXHTMLDocument())
-        protectedLeafTextNode()->parserAppendData(String::fromUTF8(m_bufferedText.span()));
-    else {
+    if (isXHTMLDocument()) {
+        StringBuilder buffer;
+        protect(m_leafTextNode)->parserAppendData(String::fromUTF8(m_bufferedText.span()), buffer);
+    } else {
         // This operation might fire mutation event, see below.
-        protectedLeafTextNode()->appendData(String::fromUTF8(m_bufferedText.span()));
+        protect(m_leafTextNode)->appendData(String::fromUTF8(m_bufferedText.span()));
     }
     m_bufferedText = { };
 
@@ -179,6 +180,7 @@ bool XMLDocumentParser::updateLeafTextNode()
 
 void XMLDocumentParser::detach()
 {
+    m_scriptWaitingForStylesheets = nullptr;
     clearCurrentNodeStack();
     ScriptableDocumentParser::detach();
 }
@@ -206,14 +208,25 @@ void XMLDocumentParser::end()
             return;
     } else {
         updateLeafTextNode();
+
+        // Appending to the leaf text node may have fired mutation events, which can run arbitrary scripts.
+        if (isDetached())
+            return;
         document()->styleScope().didChangeStyleSheetEnvironment();
     }
 
     if (isParsing())
         prepareToStopParsing();
-    protectedDocument()->setReadyState(Document::ReadyState::Interactive);
+
+    Ref document = *this->document();
+    document->setReadyState(Document::ReadyState::Interactive);
+
+    // Setting the ready state above dispatches readystatechange, which can run arbitrary scripts.
+    if (isDetached())
+        return;
+
     clearCurrentNodeStack();
-    protectedDocument()->finishedParsing();
+    document->finishedParsing();
 }
 
 void XMLDocumentParser::finish()
@@ -247,6 +260,31 @@ void XMLDocumentParser::notifyFinished(PendingScript& pendingScript)
     pendingScript.clearClient();
 
     pendingScript.element().executePendingScript(pendingScript);
+
+    if (!isDetached() && !m_requestingScript)
+        resumeParsing();
+}
+
+bool XMLDocumentParser::hasScriptsWaitingForStylesheets() const
+{
+    return !!m_scriptWaitingForStylesheets;
+}
+
+void XMLDocumentParser::executeScriptsWaitingForStylesheets()
+{
+    ASSERT(!isDetached());
+
+    RefPtr document = this->document();
+    if (document->styleScope().hasPendingSheets())
+        return;
+
+    ASSERT(m_scriptWaitingForStylesheets);
+
+    RefPtr pendingScript = std::exchange(m_scriptWaitingForStylesheets, nullptr);
+    if (!pendingScript)
+        return;
+
+    pendingScript->element().executePendingScript(*pendingScript);
 
     if (!isDetached() && !m_requestingScript)
         resumeParsing();
@@ -297,7 +335,7 @@ bool XMLDocumentParser::parseDocumentFragment(const String& chunk, DocumentFragm
     // http://www.whatwg.org/specs/web-apps/current-work/multipage/the-xhtml-syntax.html#xml-fragment-parsing-algorithm
     // For now we have a hack for script/style innerHTML support:
     if (contextElement && (contextElement->hasLocalName(HTMLNames::scriptTag->localName()) || contextElement->hasLocalName(HTMLNames::styleTag->localName()))) {
-        fragment.parserAppendChild(fragment.protectedDocument()->createTextNode(String { chunk }));
+        fragment.parserAppendChild(protect(fragment.document())->createTextNode(String { chunk }));
         return true;
     }
 

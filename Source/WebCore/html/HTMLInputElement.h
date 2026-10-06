@@ -66,15 +66,14 @@ class HTMLInputElement final : public HTMLTextFormControlElement {
 public:
     USING_CAN_MAKE_WEAKPTR(HTMLElement);
 
-    static Ref<HTMLInputElement> create(const QualifiedName&, Document&, HTMLFormElement*, bool createdByParser);
+    static Ref<HTMLInputElement> create(const QualifiedName&, Document&, bool createdByParser);
     virtual ~HTMLInputElement();
 
-    WEBCORE_EXPORT bool alpha();
+    WEBCORE_EXPORT bool NODELETE alpha();
     bool checked() const { return m_isChecked; }
     WEBCORE_EXPORT void setChecked(bool, WasSetByJavaScript = WasSetByJavaScript::Yes);
     String colorSpace();
-    void setColorSpace(const AtomString&);
-    WEBCORE_EXPORT FileList* files();
+    WEBCORE_EXPORT FileList* NODELETE files();
     WEBCORE_EXPORT void setFiles(RefPtr<FileList>&&, WasSetByJavaScript = WasSetByJavaScript::No);
     FileList* filesForBindings() { return files(); }
     void setFilesForBindings(RefPtr<FileList>&& fileList) { return setFiles(WTF::move(fileList), WasSetByJavaScript::Yes); }
@@ -135,65 +134,64 @@ public:
     std::optional<Decimal> findClosestTickMarkValue(const Decimal&);
     std::optional<double> listOptionValueAsDouble(const HTMLOptionElement&);
 
-    bool isPresentingAttachedView() const;
+    bool NODELETE isPresentingAttachedView() const;
 
-    RefPtr<InputType> inputType() const;
+    RefPtr<InputType> NODELETE inputType() const;
 
-    bool isSteppable() const; // stepUp()/stepDown() for user-interaction.
-    WEBCORE_EXPORT bool isTextButton() const;
-    bool isRadioButton() const;
+    bool NODELETE isSteppable() const; // stepUp()/stepDown() for user-interaction.
+    WEBCORE_EXPORT bool NODELETE isTextButton() const;
+    bool NODELETE isRadioButton() const;
     WEBCORE_EXPORT bool isTextField() const final;
-    WEBCORE_EXPORT bool isSearchField() const;
-    bool isInputTypeHidden() const;
-    WEBCORE_EXPORT bool isPasswordField() const;
+    WEBCORE_EXPORT bool NODELETE isSearchField() const;
+    bool NODELETE isInputTypeHidden() const;
+    WEBCORE_EXPORT bool NODELETE isPasswordField() const;
     bool isSecureField() const { return isPasswordField() || autofilledAndObscured(); }
-    bool isCheckbox() const;
-    bool isSwitch() const;
-    bool isRangeControl() const;
-    WEBCORE_EXPORT bool isColorControl() const;
+    bool NODELETE isCheckbox() const;
+    bool NODELETE isSwitch() const;
+    bool NODELETE isCheckable() const;
+    WEBCORE_EXPORT bool NODELETE isRangeControl() const;
+    WEBCORE_EXPORT bool NODELETE isColorControl() const;
     // FIXME: It's highly likely that any call site calling this function should instead
     // be using a different one. Many input elements behave like text fields, and in addition
     // any unknown input type is treated as text. Consider, for example, isTextField or
     // isTextField && !isPasswordField.
-    WEBCORE_EXPORT bool isText() const;
-    bool isTextType() const;
+    WEBCORE_EXPORT bool NODELETE isText() const;
+    bool NODELETE isTextType() const;
     bool supportsWritingSuggestions() const;
-    WEBCORE_EXPORT bool isEmailField() const;
-    WEBCORE_EXPORT bool isFileUpload() const;
-    bool isImageButton() const;
-    WEBCORE_EXPORT bool isNumberField() const;
+    WEBCORE_EXPORT bool NODELETE isEmailField() const;
+    WEBCORE_EXPORT bool NODELETE isFileUpload() const;
+    bool NODELETE isImageButton() const;
+    WEBCORE_EXPORT bool NODELETE isNumberField() const;
     WEBCORE_EXPORT bool isSubmitButton() const final;
-    WEBCORE_EXPORT bool isTelephoneField() const;
-    WEBCORE_EXPORT bool isURLField() const;
-    WEBCORE_EXPORT bool isDateField() const;
-    WEBCORE_EXPORT bool isDateTimeLocalField() const;
-    WEBCORE_EXPORT bool isMonthField() const;
-    WEBCORE_EXPORT bool isTimeField() const;
-    WEBCORE_EXPORT bool isWeekField() const;
+    WEBCORE_EXPORT bool NODELETE isTelephoneField() const;
+    WEBCORE_EXPORT bool NODELETE isURLField() const;
+    WEBCORE_EXPORT bool NODELETE isDateField() const;
+    WEBCORE_EXPORT bool NODELETE isDateTimeLocalField() const;
+    WEBCORE_EXPORT bool NODELETE isMonthField() const;
+    WEBCORE_EXPORT bool NODELETE isTimeField() const;
+    WEBCORE_EXPORT bool NODELETE isWeekField() const;
 
     bool isDevolvableWidget() const override;
 
-    DateComponentsType dateType() const;
+    DateComponentsType NODELETE dateType() const;
 
     HTMLElement* containerElement() const;
 
     RefPtr<TextControlInnerTextElement> innerTextElement() const final;
     RefPtr<TextControlInnerTextElement> innerTextElementCreatingShadowSubtreeIfNeeded() final;
-    RenderStyle createInnerTextStyle(const RenderStyle&) final;
+    Style::ComputedStyle createInnerTextStyle(const Style::ComputedStyle&) final;
 
     HTMLElement* innerBlockElement() const;
     HTMLElement* innerSpinButtonElement() const;
     HTMLElement* resultsButtonElement() const;
     HTMLElement* cancelButtonElement() const;
     HTMLElement* sliderThumbElement() const;
-    RefPtr<HTMLElement> protectedSliderThumbElement() const { return sliderThumbElement(); }
     HTMLElement* sliderTrackElement() const;
-    RefPtr<HTMLElement> protectedSliderTrackElement() const { return sliderTrackElement(); }
     HTMLElement* placeholderElement() const final;
     WEBCORE_EXPORT HTMLElement* autoFillButtonElement() const;
     WEBCORE_EXPORT HTMLElement* dataListButtonElement() const;
 
-    bool matchesCheckedPseudoClass() const;
+    bool NODELETE matchesCheckedPseudoClass() const;
     bool matchesIndeterminatePseudoClass() const final;
     void setDefaultCheckedState(bool);
 
@@ -202,7 +200,7 @@ public:
 
     // Checks if the specified string would be a valid value.
     // We should not call this for types with no string value such as CHECKBOX and RADIO.
-    bool isValidValue(const String&) const;
+    bool isValidValue(StringView) const;
     bool hasDirtyValue() const { return !m_valueIfDirty.isNull(); }
 
     String placeholder() const;
@@ -221,9 +219,10 @@ public:
     // delay the 'input' event with EventQueueScope.
     void setValueFromRenderer(const String&);
 
-    bool rendererIsNeeded(const RenderStyle&) final;
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isReplaced(const RenderStyle* = nullptr) const final;
+    bool rendererIsNeeded(const Style::ComputedStyle&) final;
+    bool NODELETE supportsBaseAppearance(StyleAppearance) const final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
     void willAttachRenderers() final;
     void didAttachRenderers() final;
     void didDetachRenderers() final;
@@ -245,7 +244,7 @@ public:
 
     unsigned effectiveMaxLength() const;
 
-    WEBCORE_EXPORT bool multiple() const;
+    WEBCORE_EXPORT bool NODELETE multiple() const;
 
     // AutoFill.
     using AutofillButtonType = WebCore::AutoFillButtonType;
@@ -266,18 +265,19 @@ public:
         Visible,
         Hidden,
     };
-    AutofillVisibility autofillVisibility() const;
+    AutofillVisibility NODELETE autofillVisibility() const;
     void setAutofillVisibility(AutofillVisibility);
     bool autofillSpellcheck() const { return !m_isSpellcheckDisabledExceptTextReplacement; }
     void setAutofillSpellcheck(bool value) { m_isSpellcheckDisabledExceptTextReplacement = !value; }
+    void didCompleteAutofill();
 
 #if ENABLE(DRAG_SUPPORT)
     // Returns true if the given DragData has more than one dropped file.
     bool receiveDroppedFiles(const DragData&);
 #endif
 
-    Icon* icon() const;
-    String displayString() const;
+    Icon* NODELETE icon() const;
+    String NODELETE displayString() const;
 
     // These functions are used for rendering the input active during a drag-and-drop operation.
     bool canReceiveDroppedFiles() const { return m_canReceiveDroppedFiles; }
@@ -286,6 +286,7 @@ public:
     void addSearchResult();
 
     bool willRespondToMouseClickEventsWithEditability(Editability) const final;
+    bool hasActivationBehavior() const final;
 
     WEBCORE_EXPORT bool isFocusingWithDataListDropdown() const;
     bool hasDataList() const;
@@ -303,9 +304,9 @@ public:
     bool isTextFormControlMouseFocusable() const;
     bool valueAttributeWasUpdatedAfterParsing() const { return m_valueAttributeWasUpdatedAfterParsing; }
 
-    bool hasCustomFocusLogic() const final;
+    bool NODELETE hasCustomFocusLogic() const final;
 
-    void cacheSelectionInResponseToSetValue(int caretOffset) { cacheSelection(caretOffset, caretOffset, SelectionHasNoDirection); }
+    void cacheSelectionInResponseToSetValue(int caretOffset) { cacheSelection(caretOffset, caretOffset, normalizeSelectionDirection(SelectionHasNoDirection)); }
 
     WEBCORE_EXPORT Color valueAsColor() const; // Returns transparent color if not type=color.
     WEBCORE_EXPORT void selectColor(StringView); // Does nothing if not type=color. Simulates user selection of color; intended for testing.
@@ -339,11 +340,10 @@ public:
 
     HTMLImageLoader* imageLoader() { return m_imageLoader.get(); }
     HTMLImageLoader& ensureImageLoader();
-    Ref<HTMLImageLoader> ensureProtectedImageLoader();
 
     void capsLockStateMayHaveChanged();
 
-    bool shouldTruncateText(const RenderStyle&) const;
+    bool NODELETE shouldTruncateText(const Style::ComputedStyle&) const;
 
     String resultForDialogSubmit() const final;
 
@@ -353,9 +353,9 @@ public:
     bool hasEverBeenPasswordField() const { return m_hasEverBeenPasswordField; }
 
     float switchAnimationVisuallyOnProgress() const;
-    bool isSwitchVisuallyOn() const;
+    bool NODELETE isSwitchVisuallyOn() const;
     float switchAnimationHeldProgress() const;
-    bool isSwitchHeld() const;
+    bool NODELETE isSwitchHeld() const;
 
     void initializeInputTypeAfterParsingOrCloning();
 
@@ -365,7 +365,7 @@ public:
 
 private:
     enum class CreationType : uint8_t { Normal, ByParser, ByCloning };
-    HTMLInputElement(const QualifiedName&, Document&, HTMLFormElement*, CreationType);
+    HTMLInputElement(const QualifiedName&, Document&, CreationType);
 
     void defaultEventHandler(Event&) final;
 
@@ -376,15 +376,16 @@ private:
 
     void willChangeForm() final;
     void didChangeForm() final;
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void didFinishInsertingNode() final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps() final;
+    void removingSteps(RemovalType, ContainerNode&) final;
+    void movingSteps(MovingType, ContainerNode&) final;
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
 
     int defaultTabIndex() const final;
     bool isKeyboardFocusable(const FocusEventData&) const final;
     bool isMouseFocusable() const final;
-    bool isEnumeratable() const final;
+    bool NODELETE isEnumeratable() const final;
     bool isLabelable() const final;
     void updateFocusAppearance(SelectionRestorationMode, SelectionRevealMode) final;
     bool shouldUseInputMethod() final;
@@ -401,7 +402,7 @@ private:
 
     void resignStrongPasswordAppearance();
 
-    bool canHaveSelection() const;
+    bool NODELETE canHaveSelection() const;
     bool canStartSelection() const final;
 
     bool accessKeyAction(bool sendMouseEvents) final;
@@ -419,23 +420,23 @@ private:
 
     void reset() final;
 
-    bool isURLAttribute(const Attribute&) const final;
+    bool NODELETE isURLAttribute(const Attribute&) const final;
     bool isInRange() const final;
     bool isOutOfRange() const final;
 
     void resumeFromDocumentSuspension() final;
     void prepareForDocumentSuspension() final;
 
-    void addSubresourceAttributeURLs(ListHashSet<URL>&) const final;
+    void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const final;
 
-    bool needsSuspensionCallback();
+    bool NODELETE needsSuspensionCallback();
     void registerForSuspensionCallbackIfNeeded();
     void unregisterForSuspensionCallbackIfNeeded();
 
     bool supportsReadOnly() const final;
     bool supportsMinLength() const { return isTextType(); }
     bool supportsMaxLength() const { return isTextType(); }
-    bool tooShort(StringView, NeedsToCheckDirtyFlag) const;
+    bool NODELETE tooShort(StringView, NeedsToCheckDirtyFlag) const;
     bool tooLong(StringView, NeedsToCheckDirtyFlag) const;
 
     bool supportsPlaceholder() const final;
@@ -444,8 +445,8 @@ private:
     void handleFocusEvent(Node* oldFocusedNode, FocusDirection) final;
     void handleBlurEvent() final;
 
-    bool isOptionalFormControl() const final { return !isRequiredFormControl(); }
-    bool isRequiredFormControl() const final;
+    bool NODELETE isOptionalFormControl() const final { return !isRequiredFormControl(); }
+    bool NODELETE isRequiredFormControl() const final;
     bool computeWillValidate() const final;
     void requiredStateChanged() final;
 
@@ -487,8 +488,8 @@ private:
     bool m_isAutoFilled : 1 { false };
     bool m_isAutoFilledAndViewable : 1 { false };
     bool m_isAutoFilledAndObscured : 1 { false };
-    unsigned m_autoFillButtonType : 3 { enumToUnderlyingType(AutoFillButtonType::None) }; // AutoFillButtonType
-    unsigned m_lastAutoFillButtonType : 3 { enumToUnderlyingType(AutoFillButtonType::None) }; // AutoFillButtonType
+    unsigned m_autoFillButtonType : 3 { std::to_underlying(AutoFillButtonType::None) }; // AutoFillButtonType
+    unsigned m_lastAutoFillButtonType : 3 { std::to_underlying(AutoFillButtonType::None) }; // AutoFillButtonType
     bool m_isAutoFillAvailable : 1 { false };
     bool m_hasNonEmptyList : 1 { false };
     bool m_stateRestored : 1 { false };

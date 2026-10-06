@@ -228,6 +228,8 @@ function BranchSelector(callback) {
     fetch('api/commits/branches').then(response => {
         response.json().then(json => {
             let branchNames = new Set();
+            if (branchModifier.current().length)
+                branchNames.add(branchModifier.current()[branchModifier.current().length -1]);
             Object.keys(json).forEach(repo => {
                 json[repo].forEach(branch => {
                     if (!defaultBranches.has(branch))
@@ -324,7 +326,7 @@ function ConfigurationSelectors(callback) {
 
                 let switches = {};
 
-                let isExpanded = false;
+                let isExpanded = modifier.current().length > 0;
                 let expander = REF.createRef({
                     onElementMount: (element) => {
                         element.onclick = () => {
@@ -356,7 +358,7 @@ function ConfigurationSelectors(callback) {
                 };
 
 
-                DOM.inject(element, `<a class="link-button text medium" ref="${expander}">+</a>
+                DOM.inject(element, `<a class="link-button text medium" ref="${expander}">${isExpanded ? '-' : '+'}</a>
                     ${details.name} <br>
                     ${options.map(option => {
                         let isChecked = false;

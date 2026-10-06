@@ -27,27 +27,23 @@
 
 namespace WebCore {
 
-class SVGGlyphElement;
-
 class SVGAltGlyphElement final : public SVGTextPositioningElement, public SVGURIReference {
     WTF_MAKE_TZONE_ALLOCATED(SVGAltGlyphElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGAltGlyphElement);
 public:
     static Ref<SVGAltGlyphElement> create(const QualifiedName&, Document&);
 
-    const AtomString& glyphRef() const;
+    const AtomString& NODELETE glyphRef() const;
     ExceptionOr<void> setGlyphRef(const AtomString&);
-    const AtomString& format() const;
+    const AtomString& NODELETE format() const;
     ExceptionOr<void> setFormat(const AtomString&);
-
-    bool hasValidGlyphElements(Vector<String>& glyphNames) const;
 
     using PropertyRegistry = SVGPropertyOwnerRegistry<SVGAltGlyphElement, SVGTextPositioningElement, SVGURIReference>;
 
 private:
     SVGAltGlyphElement(const QualifiedName&, Document&);
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
     bool childShouldCreateRenderer(const Node&) const override;
 };
 

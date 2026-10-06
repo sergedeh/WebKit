@@ -29,6 +29,7 @@
 
 #import "config.h"
 #import "WebExtensionAPIStorageArea.h"
+#import "WebExtensionAPIKeys.h"
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
@@ -44,15 +45,12 @@
 #import "WebProcess.h"
 #import <wtf/cocoa/VectorCocoa.h>
 
-static NSString * const accessLevelKey = @"accessLevel";
-static NSString * const accessLevelTrustedContexts = @"TRUSTED_CONTEXTS";
-static NSString * const accessLevelTrustedAndUntrustedContexts = @"TRUSTED_AND_UNTRUSTED_CONTEXTS";
 
 namespace WebKit {
 
 bool WebExtensionAPIStorageArea::isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*)
 {
-    if (protectedExtensionContext()->isUnsupportedAPI(propertyPath(), propertyName)) [[unlikely]]
+    if (protect(extensionContext())->isUnsupportedAPI(propertyPath(), propertyName)) [[unlikely]]
         return false;
 
     static NeverDestroyed<HashSet<AtomString>> syncStorageProperties { HashSet { AtomString("QUOTA_BYTES_PER_ITEM"_s), AtomString("MAX_ITEMS"_s), AtomString("MAX_WRITE_OPERATIONS_PER_HOUR"_s), AtomString("MAX_WRITE_OPERATIONS_PER_MINUTE"_s) } };
@@ -61,7 +59,7 @@ bool WebExtensionAPIStorageArea::isPropertyAllowed(const ASCIILiteral& propertyN
         return m_type == WebExtensionDataType::Sync;
 
     if (propertyName == "setAccessLevel"_s)
-        return m_type == WebExtensionDataType::Session;
+        return isForTrustedContext();
 
     ASSERT_NOT_REACHED();
     return false;
@@ -101,7 +99,7 @@ void WebExtensionAPIStorageArea::get(WebPageProxyIdentifier webPageProxyIdentifi
     if (NSString *key = dynamic_objc_cast<NSString>(items))
         keysVector = { key };
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageGet(webPageProxyIdentifier, m_type, keysVector), [keysWithDefaultValues, protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<Vector<String>, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageGet(webPageProxyIdentifier, m_type, keysVector), [keysWithDefaultValues, protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<Vector<String>, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -124,7 +122,7 @@ void WebExtensionAPIStorageArea::get(WebPageProxyIdentifier webPageProxyIdentifi
 
 void WebExtensionAPIStorageArea::getKeys(WebPageProxyIdentifier webPageProxyIdentifier, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageGetKeys(webPageProxyIdentifier, m_type), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<Vector<String>, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageGetKeys(webPageProxyIdentifier, m_type), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<Vector<String>, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -150,7 +148,7 @@ void WebExtensionAPIStorageArea::getBytesInUse(WebPageProxyIdentifier webPagePro
     else if (NSString *key = dynamic_objc_cast<NSString>(keys))
         keysVector = { key };
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageGetBytesInUse(webPageProxyIdentifier, m_type, keysVector), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<uint64_t, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageGetBytesInUse(webPageProxyIdentifier, m_type, keysVector), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<uint64_t, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -197,7 +195,12 @@ void WebExtensionAPIStorageArea::set(WebPageProxyIdentifier webPageProxyIdentifi
         return;
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageSet(webPageProxyIdentifier, m_type, encodeJSONString(serializedData)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    if (storageSizeOf(serializedData) > webExtensionStorageAreaMaximumBytesPerCall) {
+        *outExceptionString = toErrorString(nullString(), nullString(), @"it exceeded maximum data size allowed per call").createNSString().autorelease();
+        return;
+    }
+
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageSet(webPageProxyIdentifier, m_type, encodeJSONString(serializedData)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -214,7 +217,7 @@ void WebExtensionAPIStorageArea::remove(WebPageProxyIdentifier webPageProxyIdent
 
     Vector<String> keysVector = [keys isKindOfClass:NSArray.class] ? makeVector<String>((NSArray *)keys) : Vector<String> { keys };
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageRemove(webPageProxyIdentifier, m_type, keysVector), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageRemove(webPageProxyIdentifier, m_type, keysVector), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -224,7 +227,7 @@ void WebExtensionAPIStorageArea::remove(WebPageProxyIdentifier webPageProxyIdent
 
 void WebExtensionAPIStorageArea::clear(WebPageProxyIdentifier webPageProxyIdentifier, Ref<WebExtensionCallbackHandler>&& callback)
 {
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageClear(webPageProxyIdentifier, m_type), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageClear(webPageProxyIdentifier, m_type), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -253,7 +256,7 @@ void WebExtensionAPIStorageArea::setAccessLevel(WebPageProxyIdentifier webPagePr
 
     WebExtensionStorageAccessLevel accessLevel = [accessLevelString isEqualToString:accessLevelTrustedContexts] ? WebExtensionStorageAccessLevel::TrustedContexts : WebExtensionStorageAccessLevel::TrustedAndUntrustedContexts;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageSetAccessLevel(webPageProxyIdentifier, m_type, accessLevel), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageSetAccessLevel(webPageProxyIdentifier, m_type, accessLevel), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
             callback->reportError(result.error().createNSString().get());
         else
@@ -266,7 +269,7 @@ WebExtensionAPIEvent& WebExtensionAPIStorageArea::onChanged()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/storage/StorageArea/onChanged
 
     if (!m_onChanged)
-        m_onChanged = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::StorageOnChanged);
+        lazyInitialize(m_onChanged, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::StorageOnChanged));
 
     return *m_onChanged;
 }

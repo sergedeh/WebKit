@@ -60,19 +60,20 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    const URL& scriptURL() const { return m_data.scriptURL; }
+    const URL& scriptURL() const LIFETIME_BOUND { return m_data.scriptURL; }
 
     State state() const { return m_data.state; }
     
     void updateState(State);
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
+    ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, Vector<JSC::Strong<JSC::JSObject>>&&);
 
     ServiceWorkerIdentifier identifier() const { return m_data.identifier; }
     ServiceWorkerRegistrationIdentifier registrationIdentifier() const { return m_data.registrationIdentifier; }
     WorkerType workerType() const { return m_data.type; }
 
-    const ServiceWorkerData& data() const { return m_data; }
+    const ServiceWorkerData& data() const LIFETIME_BOUND { return m_data; }
 
 private:
     ServiceWorker(ScriptExecutionContext&, ServiceWorkerData&&);
@@ -80,7 +81,6 @@ private:
 
     enum EventTargetInterfaceType eventTargetInterface() const final;
     ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
@@ -88,7 +88,6 @@ private:
     void stop() final;
 
     SWClientConnection& swConnection();
-    Ref<SWClientConnection> protectedSWConnection();
 
     ServiceWorkerData m_data;
     bool m_isStopped { false };

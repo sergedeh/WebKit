@@ -10,12 +10,14 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
+/LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/WEB_FEATURES.yml
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-popup-appearance-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-popup-appearance.tentative-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-popup-appearance.tentative.html
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-popup-keyboard-behavior.tentative.html
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-popup-mouse-behavior.tentative.html
+/LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-validity-invalidation.tentative.html
+/LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/selectedcontent-multiple-restore.optional.html
+/LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/selectedcontent-multiple.tentative.html

@@ -42,15 +42,15 @@ class StaticRange final : public AbstractRange, public SimpleRange {
     WTF_MAKE_TZONE_ALLOCATED(StaticRange);
 public:
     struct Init {
-        RefPtr<Node> startContainer;
+        Ref<Node> startContainer;
         unsigned startOffset { 0 };
-        RefPtr<Node> endContainer;
+        Ref<Node> endContainer;
         unsigned endOffset { 0 };
     };
 
     static ExceptionOr<Ref<StaticRange>> create(Init&&);
     WEBCORE_EXPORT static Ref<StaticRange> create(const SimpleRange&);
-    static Ref<StaticRange> create(SimpleRange&&);
+    WEBCORE_EXPORT static Ref<StaticRange> create(SimpleRange&&);
 
     Node& startContainer() const final { return SimpleRange::startContainer(); }
     unsigned startOffset() const final { return SimpleRange::startOffset(); }
@@ -59,9 +59,9 @@ public:
     bool collapsed() const final { return SimpleRange::collapsed(); }
 
     // https://dom.spec.whatwg.org/#staticrange-valid
-    bool computeValidity() const;
+    WEBCORE_EXPORT bool computeValidity() const;
 
-    void visitNodesConcurrently(JSC::AbstractSlotVisitor&) const;
+    void visitNodesInGCThread(JSC::AbstractSlotVisitor&) const;
 
 private:
     explicit StaticRange(SimpleRange&&);

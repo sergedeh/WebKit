@@ -9,9 +9,9 @@
 #include "include/core/SkPoint.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkTo.h"
 #include "modules/skshaper/include/SkShaper.h"
-#include "src/base/SkUTF.h"
+#include "src/core/SkUTF.h"
 
 #if !defined(SK_DISABLE_LEGACY_SKSHAPER_FUNCTIONS)
 #include "include/core/SkFontMgr.h"
@@ -48,6 +48,16 @@ private:
                LanguageRunIterator&,
                const Feature*, size_t featureSize,
                SkScalar width,
+               RunHandler*) const override;
+
+    void shape(const char* utf8, size_t utf8Bytes,
+               FontRunIterator&,
+               BiDiRunIterator&,
+               ScriptRunIterator&,
+               LanguageRunIterator&,
+               const Feature*, size_t featureSize,
+               SkScalar width,
+               float textTracking,
                RunHandler*) const override;
 };
 
@@ -172,12 +182,26 @@ void SkShaperPrimitive::shape(const char* utf8,
 void SkShaperPrimitive::shape(const char* utf8,
                               size_t utf8Bytes,
                               FontRunIterator& fontRuns,
+                              BiDiRunIterator& bidi,
+                              ScriptRunIterator& script,
+                              LanguageRunIterator& lang,
+                              const Feature* features, size_t featuresSize,
+                              SkScalar width,
+                              RunHandler* handler) const {
+    return this->shape(utf8, utf8Bytes, fontRuns, bidi, script, lang, features, featuresSize,
+                       width, /*textTracking=*/0, handler);
+}
+
+void SkShaperPrimitive::shape(const char* utf8,
+                              size_t utf8Bytes,
+                              FontRunIterator& fontRuns,
                               BiDiRunIterator&,
                               ScriptRunIterator&,
                               LanguageRunIterator&,
                               const Feature*,
                               size_t,
                               SkScalar width,
+                              float textTracking,
                               RunHandler* handler) const {
     SkFont font;
     if (!fontRuns.atEnd()) {
@@ -197,6 +221,14 @@ void SkShaperPrimitive::shape(const char* utf8,
     std::unique_ptr<SkScalar[]> advances(new SkScalar[glyphCount]);
     font.getWidths({glyphs.get(), (size_t)glyphCount}, {advances.get(), (size_t)glyphCount});
 
+    // Tracking is specified in em units; turn it into an absolute advance increment.
+    const auto trackingAdvance = textTracking * font.getSize() * font.getScaleX();
+    if (trackingAdvance != 0) {
+        for (int i = 0; i < glyphCount; ++i) {
+            advances[i] += trackingAdvance;
+        }
+    }
+
     size_t glyphOffset = 0;
     size_t utf8Offset = 0;
     do {
@@ -208,7 +240,8 @@ void SkShaperPrimitive::shape(const char* utf8,
         size_t numGlyphs = SkUTF::CountUTF8(utf8, bytesVisible);
         const RunHandler::RunInfo info = {
             font, 0, 0, "",
-            { font.measureText(utf8, bytesVisible, SkTextEncoding::kUTF8), 0 },
+            { font.measureText(utf8, bytesVisible, SkTextEncoding::kUTF8) +
+                  numGlyphs*trackingAdvance, 0 },
             numGlyphs,
             RunHandler::Range(utf8Offset, bytesVisible)
         };

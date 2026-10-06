@@ -40,6 +40,15 @@
 /**
  * WPEClipboard:
  *
+ * A clipboard for copy and paste.
+ *
+ * [class@Clipboard] is an abstract class that gives access to the platform's
+ * clipboard. Get the clipboard of a display with [method@Display.get_clipboard].
+ *
+ * Clipboard contents are represented by [struct@ClipboardContent], which can hold
+ * text and arbitrary data identified by MIME type. Set the contents with
+ * [method@Clipboard.set_content] and read them with
+ * [method@Clipboard.read_text] or [method@Clipboard.read_bytes].
  */
 struct _WPEClipboardPrivate {
     GWeakPtr<WPEDisplay> display;
@@ -51,7 +60,7 @@ struct _WPEClipboardPrivate {
 WEBKIT_DEFINE_TYPE(WPEClipboard, wpe_clipboard, G_TYPE_OBJECT)
 
 struct _WPEClipboardContent {
-    std::optional<CString> text;
+    std::optional<UTF8CString> text;
     std::optional<HashMap<const char*, GRefPtr<GBytes>>> buffers;
     int referenceCount { 1 };
 };
@@ -161,7 +170,7 @@ WPEClipboard* wpe_clipboard_new(WPEDisplay* display)
 
 /**
  * wpe_clipboard_get_display:
- * @clipboard: a #WPEClipoard
+ * @clipboard: a #WPEClipboard
  *
  * Get the #WPEDisplay of @clipboard
  *
@@ -176,7 +185,7 @@ WPEDisplay* wpe_clipboard_get_display(WPEClipboard* clipboard)
 
 /**
  * wpe_clipboard_get_change_count:
- * @clipboard: a #WPEClipoard
+ * @clipboard: a #WPEClipboard
  *
  * Get the amount of times @clipboard changed since it was created.
  *
@@ -191,7 +200,7 @@ gint64 wpe_clipboard_get_change_count(WPEClipboard* clipboard)
 
 /**
  * wpe_clipboard_get_formats:
- * @clipboard: a #WPEClipoard
+ * @clipboard: a #WPEClipboard
  *
  * Get the MIME type formats that clipboard can provide
  *
@@ -208,7 +217,7 @@ const char* const* wpe_clipboard_get_formats(WPEClipboard* clipboard)
 
 /**
  * wpe_clipboard_set_content:
- * @clipboard: a #WPEClipoard
+ * @clipboard: a #WPEClipboard
  * @content: (transfer none) (nullable): a #WPEClipboardContent, or %NULL to clear the clipboard
  *
  * Set @content on @clipboard. Passing a %NULL @content will clear the @clipboard.
@@ -239,7 +248,7 @@ void wpe_clipboard_set_content(WPEClipboard* clipboard, WPEClipboardContent* con
 
 /**
  * wpe_clipboard_get_content:
- * @clipboard: a #WPEClipoard
+ * @clipboard: a #WPEClipboard
  *
  * Get the #WPEClipboardContent previously set with wpe_clipboard_set_content().
  * This function returns %NULL if @clipboard is empty or its contents are owned
@@ -256,8 +265,8 @@ WPEClipboardContent* wpe_clipboard_get_content(WPEClipboard* clipboard)
 
 /**
  * wpe_clipboard_read_bytes:
- * @clipboard: a #WPEClipoard
- * @format: the MIME type format of the text to read
+ * @clipboard: a #WPEClipboard
+ * @format: the MIME type format of the data to read
  *
  * Get the contents of @clipboard for the given MIME type @format as bytes.
  *
@@ -294,13 +303,13 @@ GBytes* wpe_clipboard_read_bytes(WPEClipboard* clipboard, const char* format)
 
 /**
  * wpe_clipboard_read_text:
- * @clipboard: a #WPEClipoard
+ * @clipboard: a #WPEClipboard
  * @format: the MIME type format of the text to read
  * @size: (out) (optional): location to return size of returned text.
  *
  * Get the contents of @clipboard for the given MIME type @format as text.
  *
- * Returns: (transfer full) (nullable): a new allocated string.
+ * Returns: (transfer full) (nullable): a newly allocated string.
  */
 char* wpe_clipboard_read_text(WPEClipboard* clipboard, const char* format, gsize* size)
 {
@@ -353,7 +362,7 @@ WPEClipboardContent* wpe_clipboard_content_ref(WPEClipboardContent* content)
  *
  * Atomically releases a reference on the given @content.
  *
- * If the reference was the last, the resources associated to the
+ * If the reference was the last, the resources associated with the
  * @content are freed. This function is MT-safe and may be called from
  * any thread.
  */
@@ -378,7 +387,7 @@ void wpe_clipboard_content_set_text(WPEClipboardContent* content, const char* te
 {
     g_return_if_fail(content);
 
-    content->text = CString(text);
+    content->text = UTF8CString::unsafeFromUTF8(text);
 }
 
 /**
@@ -393,7 +402,7 @@ const char* wpe_clipboard_content_get_text(WPEClipboardContent* content)
 {
     g_return_val_if_fail(content, nullptr);
 
-    return content->text ? content->text->data() : nullptr;
+    return content->text ? content->text->legacyCStringPointer() : nullptr;
 }
 
 /**

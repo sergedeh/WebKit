@@ -33,8 +33,11 @@
 #include "FloatRect.h"
 #include "IntRect.h"
 #include "LayoutRect.h"
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <float.h>
+#include <limits>
 #include <wtf/Assertions.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
@@ -88,7 +91,7 @@ const TransformationMatrix TransformationMatrix::identity { };
 //
 //  calculate the determinant of a 2x2 matrix.
 
-static double determinant2x2(double a, double b, double c, double d)
+static double NODELETE determinant2x2(double a, double b, double c, double d)
 {
     return a * d - b * c;
 }
@@ -102,7 +105,7 @@ static double determinant2x2(double a, double b, double c, double d)
 //      | a2,  b2,  c2 |
 //      | a3,  b3,  c3 |
 
-static double determinant3x3(double a1, double a2, double a3, double b1, double b2, double b3, double c1, double c2, double c3)
+static double NODELETE determinant3x3(double a1, double a2, double a3, double b1, double b2, double b3, double c1, double c2, double c3)
 {
     return a1 * determinant2x2(b2, b3, c2, c3)
          - b1 * determinant2x2(a2, a3, c2, c3)
@@ -113,7 +116,7 @@ static double determinant3x3(double a1, double a2, double a3, double b1, double 
 //
 //  calculate the determinant of a 4x4 matrix.
 
-static double determinant4x4(const TransformationMatrix::Matrix4& m)
+static double NODELETE determinant4x4(const TransformationMatrix::Matrix4& m)
 {
     // Assign to individual variable names to aid selecting
     // correct elements
@@ -144,6 +147,7 @@ static double determinant4x4(const TransformationMatrix::Matrix4& m)
          - d1 * determinant3x3(a2, a3, a4, b2, b3, b4, c2, c3, c4);
 }
 
+#if !CPU(ARM64) || !CPU(ADDRESS64)
 // adjoint( original_matrix, inverse_matrix )
 //
 //   calculate the adjoint of a 4x4 matrix
@@ -160,7 +164,7 @@ static double determinant4x4(const TransformationMatrix::Matrix4& m)
 //  The matrix B = (b  ) is the adjoint of A
 //                   ij
 
-static inline void adjoint(const TransformationMatrix::Matrix4& matrix, TransformationMatrix::Matrix4& result)
+[[maybe_unused]] static inline void NODELETE adjoint(const TransformationMatrix::Matrix4& matrix, TransformationMatrix::Matrix4& result)
 {
     // Assign to individual variable names to aid
     // selecting correct values
@@ -205,6 +209,7 @@ static inline void adjoint(const TransformationMatrix::Matrix4& matrix, Transfor
     result[2][3]  = - determinant3x3(a1, a2, a3, b1, b2, b3, d1, d2, d3);
     result[3][3]  =   determinant3x3(a1, a2, a3, b1, b2, b3, c1, c2, c3);
 }
+#endif
 
 // Returns false if the matrix is not invertible
 static bool inverse(const TransformationMatrix::Matrix4& matrix, TransformationMatrix::Matrix4& result)
@@ -350,7 +355,7 @@ static bool inverse(const TransformationMatrix::Matrix4& matrix, TransformationM
 // From Graphics Gems: unmatrix.c
 
 // Transpose rotation portion of matrix a, return b
-static void transposeMatrix4(const TransformationMatrix::Matrix4& a, TransformationMatrix::Matrix4& b)
+static void NODELETE transposeMatrix4(const TransformationMatrix::Matrix4& a, TransformationMatrix::Matrix4& b)
 {
     for (int i = 0; i < 4; i++)
         for (int j = 0; j < 4; j++)
@@ -358,7 +363,7 @@ static void transposeMatrix4(const TransformationMatrix::Matrix4& a, Transformat
 }
 
 // Multiply a homogeneous point by a matrix and return the transformed point
-static void v4MulPointByMatrix(const Vector4& p, const TransformationMatrix::Matrix4& m, Vector4& result)
+static void NODELETE v4MulPointByMatrix(const Vector4& p, const TransformationMatrix::Matrix4& m, Vector4& result)
 {
     result[0] = (p[0] * m[0][0]) + (p[1] * m[1][0]) +
                 (p[2] * m[2][0]) + (p[3] * m[3][0]);
@@ -370,12 +375,12 @@ static void v4MulPointByMatrix(const Vector4& p, const TransformationMatrix::Mat
                 (p[2] * m[2][3]) + (p[3] * m[3][3]);
 }
 
-static double v3Length(const Vector3& a)
+static double NODELETE v3Length(const Vector3& a)
 {
     return std::hypot(a[0], a[1], a[2]);
 }
 
-static void v3Scale(Vector3& v, double desiredLength)
+static void NODELETE v3Scale(Vector3& v, double desiredLength)
 {
     double len = v3Length(v);
     if (len != 0) {
@@ -386,14 +391,14 @@ static void v3Scale(Vector3& v, double desiredLength)
     }
 }
 
-static double v3Dot(const Vector3& a, const Vector3& b)
+static double NODELETE v3Dot(const Vector3& a, const Vector3& b)
 {
     return (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
 }
 
 // Make a linear combination of two vectors and return the result.
 // result = (a * ascl) + (b * bscl)
-static void v3Combine(const Vector3& a, const Vector3& b, Vector3& result, double ascl, double bscl)
+static void NODELETE v3Combine(const Vector3& a, const Vector3& b, Vector3& result, double ascl, double bscl)
 {
     result[0] = (ascl * a[0]) + (bscl * b[0]);
     result[1] = (ascl * a[1]) + (bscl * b[1]);
@@ -401,7 +406,7 @@ static void v3Combine(const Vector3& a, const Vector3& b, Vector3& result, doubl
 }
 
 // Return the cross product result = a cross b */
-static void v3Cross(const Vector3& a, const Vector3& b, Vector3& result)
+static void NODELETE v3Cross(const Vector3& a, const Vector3& b, Vector3& result)
 {
     result[0] = (a[1] * b[2]) - (a[2] * b[1]);
     result[1] = (a[2] * b[0]) - (a[0] * b[2]);
@@ -644,7 +649,7 @@ static bool decompose4(const TransformationMatrix::Matrix4& mat, TransformationM
         r = std::sqrt(1.0 + column[0][0] - column[1][1] - column[2][2]);
         s = 0.5 / r;
         x = 0.5 * r;
-        y = (column[1][0] - column[0][1]) * s;
+        y = (column[1][0] + column[0][1]) * s;
         z = (column[2][0] + column[0][2]) * s;
         w = (column[1][2] - column[2][1]) * s;
     } else if (column[1][1] > column[2][2]) {
@@ -717,8 +722,8 @@ TransformationMatrix TransformationMatrix::fromProjection(double fovUp, double f
 
 TransformationMatrix TransformationMatrix::fromProjection(double fovy, double aspect, double depthNear, double depthFar)
 {
-    double f = 1.0f / tanf(fovy / 2);
-    double invDepth = 1.0f / (depthNear - depthFar);
+    double f = 1.0 / tan(fovy / 2);
+    double invDepth = 1.0 / (depthNear - depthFar);
 
     return TransformationMatrix(f / aspect, 0.0f, 0.0f, 0.0f,
         0.0f, f, 0.0f, 0.0f,
@@ -820,40 +825,77 @@ FloatQuad TransformationMatrix::projectQuad(const FloatQuad& q, bool* clamped) c
     return projectedQuad;
 }
 
-static float clampEdgeValue(float f)
+static float clampEdgeValue(double value)
 {
-    ASSERT(!std::isnan(f));
-    return std::min<float>(std::max<float>(f, -LayoutUnit::max() / 2), LayoutUnit::max() / 2);
+    ASSERT(!std::isnan(value));
+    const double maxEdgeValue = (LayoutUnit::max() / 2).toDouble();
+    return std::clamp(value, -maxEdgeValue, maxEdgeValue);
 }
 
 LayoutRect TransformationMatrix::clampedBoundsOfProjectedQuad(const FloatQuad& q) const
 {
-    FloatRect mappedQuadBounds = projectQuad(q).boundingBox();
+    if (!m33())
+        return { };
 
-    float left = clampEdgeValue(floorf(mappedQuadBounds.x()));
-    float top = clampEdgeValue(floorf(mappedQuadBounds.y()));
+    struct HomogeneousPoint {
+        double x { 0.0 };
+        double y { 0.0 };
+        double w { 0.0 };
+    };
 
-    float right;
-    if (std::isinf(mappedQuadBounds.x()) && std::isinf(mappedQuadBounds.width()))
-        right = LayoutUnit::max() / 2;
-    else
-        right = clampEdgeValue(ceilf(mappedQuadBounds.maxX()));
+    auto project = [&](const FloatPoint& p) -> HomogeneousPoint {
+        double x = p.x();
+        double y = p.y();
+        double z = -(m13() * x + m23() * y + m43()) / m33();
+        return {
+            x * m11() + y * m21() + z * m31() + m41(),
+            x * m12() + y * m22() + z * m32() + m42(),
+            x * m14() + y * m24() + z * m34() + m44()
+        };
+    };
 
-    float bottom;
-    if (std::isinf(mappedQuadBounds.y()) && std::isinf(mappedQuadBounds.height()))
-        bottom = LayoutUnit::max() / 2;
-    else
-        bottom = clampEdgeValue(ceilf(mappedQuadBounds.maxY()));
+    const std::array<HomogeneousPoint, 4> vertices { project(q.p1()), project(q.p2()), project(q.p3()), project(q.p4()) };
+    const double minW = std::numeric_limits<float>::epsilon();
 
-    return LayoutRect(LayoutUnit::clamp(left), LayoutUnit::clamp(top),  LayoutUnit::clamp(right - left), LayoutUnit::clamp(bottom - top));
+    double minX = std::numeric_limits<double>::infinity();
+    double minY = std::numeric_limits<double>::infinity();
+    double maxX = -std::numeric_limits<double>::infinity();
+    double maxY = -std::numeric_limits<double>::infinity();
+    auto include = [&](const HomogeneousPoint& p) {
+        minX = std::min(minX, p.x / p.w);
+        minY = std::min(minY, p.y / p.w);
+        maxX = std::max(maxX, p.x / p.w);
+        maxY = std::max(maxY, p.y / p.w);
+    };
+
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        const auto& p = vertices[i];
+        const auto& next = vertices[(i + 1) % vertices.size()];
+        if (p.w >= minW)
+            include(p);
+        if ((p.w >= minW) != (next.w >= minW)) {
+            const double t = (minW - p.w) / (next.w - p.w);
+            include({ p.x + t * (next.x - p.x), p.y + t * (next.y - p.y), minW });
+        }
+    }
+
+    // A quad entirely behind the eye is not visible.
+    if (minX > maxX)
+        return { };
+
+    float left = clampEdgeValue(std::floor(minX));
+    float top = clampEdgeValue(std::floor(minY));
+    float right = clampEdgeValue(std::ceil(maxX));
+    float bottom = clampEdgeValue(std::ceil(maxY));
+    return LayoutRect(LayoutUnit::clamp(left), LayoutUnit::clamp(top), LayoutUnit::clamp(right - left), LayoutUnit::clamp(bottom - top));
 }
 
 void TransformationMatrix::map4ComponentPoint(double& x, double& y, double& z, double& w) const
 {
     if (isIdentityOrTranslation()) {
-        x += m_matrix[3][0];
-        y += m_matrix[3][1];
-        z += m_matrix[3][2];
+        x += w * m_matrix[3][0];
+        y += w * m_matrix[3][1];
+        z += w * m_matrix[3][2];
         return;
     }
 
@@ -1006,10 +1048,10 @@ TransformationMatrix& TransformationMatrix::scale3d(double sx, double sy, double
     return *this;
 }
 
-static double roundEpsilonToZero(double val)
+static double NODELETE roundEpsilonToZero(double val)
 {
     if (-DBL_EPSILON < val && val < DBL_EPSILON)
-        return 0.0f;
+        return 0.0;
     return val;
 }
 
@@ -1277,6 +1319,17 @@ TransformationMatrix& TransformationMatrix::zoom(double zoomFactor)
     m_matrix[3][0] *= zoomFactor;
     m_matrix[3][1] *= zoomFactor;
     m_matrix[3][2] *= zoomFactor;
+    return *this;
+}
+
+TransformationMatrix& TransformationMatrix::unzoom(double zoomFactor)
+{
+    m_matrix[0][3] *= zoomFactor;
+    m_matrix[1][3] *= zoomFactor;
+    m_matrix[2][3] *= zoomFactor;
+    m_matrix[3][0] /= zoomFactor;
+    m_matrix[3][1] /= zoomFactor;
+    m_matrix[3][2] /= zoomFactor;
     return *this;
 }
 
@@ -1783,7 +1836,58 @@ AffineTransform TransformationMatrix::toAffineTransform() const
                            m_matrix[1][1], m_matrix[3][0], m_matrix[3][1]);
 }
 
-static inline void blendFloat(double& from, double to, double progress, CompositeOperation compositeOperation)
+auto TransformationMatrix::ipcData() const -> IPCData
+{
+    if (isIdentity())
+        return std::monostate { };
+
+    if (isIdentityOrTranslation()) {
+        if (!m43())
+            return Translation2DIPCData { m41(), m42() };
+        return Translation3DIPCData { m41(), m42(), m43() };
+    }
+
+    if (isAffine())
+        return toAffineTransform();
+
+    return FullIPCData { { {
+        m11(), m12(), m13(), m14(),
+        m21(), m22(), m23(), m24(),
+        m31(), m32(), m33(), m34(),
+        m41(), m42(), m43(), m44(),
+    } } };
+}
+
+TransformationMatrix TransformationMatrix::fromIPCData(IPCData&& data)
+{
+    return WTF::switchOn(WTF::move(data),
+        [] (std::monostate) {
+            return TransformationMatrix { };
+        }, [] (const Translation2DIPCData& translation) {
+            TransformationMatrix matrix;
+            matrix.setM41(translation.m41);
+            matrix.setM42(translation.m42);
+            return matrix;
+        }, [] (const Translation3DIPCData& translation) {
+            TransformationMatrix matrix;
+            matrix.setM41(translation.m41);
+            matrix.setM42(translation.m42);
+            matrix.setM43(translation.m43);
+            return matrix;
+        }, [] (const AffineTransform& affineTransform) {
+            return TransformationMatrix { affineTransform };
+        }, [] (const FullIPCData& full) {
+            auto& values = full.values;
+            return TransformationMatrix {
+                values[0], values[1], values[2], values[3],
+                values[4], values[5], values[6], values[7],
+                values[8], values[9], values[10], values[11],
+                values[12], values[13], values[14], values[15]
+            };
+        });
+}
+
+static inline void NODELETE blendFloat(double& from, double to, double progress, CompositeOperation compositeOperation)
 {
     switch (compositeOperation) {
     case CompositeOperation::Replace:
@@ -1919,6 +2023,7 @@ bool TransformationMatrix::decompose4(Decomposed4Type& decomp) const
         decomp.scaleX = 1;
         decomp.scaleY = 1;
         decomp.scaleZ = 1;
+        decomp.quaternion.w = 1;
         return true;
     }
 

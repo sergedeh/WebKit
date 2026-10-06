@@ -13,8 +13,10 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "api/rtp_parameters.h"
 #include "api/rtp_sender_interface.h"
 #include "api/scoped_refptr.h"
@@ -47,14 +49,15 @@ void TransceiverStableState::SetRemoteStreamIds(
 }
 
 void TransceiverStableState::SetInitSendEncodings(
-    const std::vector<RtpEncodingParameters>& encodings) {
-  init_send_encodings_ = encodings;
+    std::vector<RtpEncodingParameters> encodings) {
+  init_send_encodings_ = std::move(encodings);
 }
 
 std::vector<RtpTransceiver*> TransceiverList::ListInternal() const {
   RTC_DCHECK_RUN_ON(&sequence_checker_);
   std::vector<RtpTransceiver*> internals;
-  for (auto transceiver : transceivers_) {
+  internals.reserve(transceivers_.size());
+  for (const auto& transceiver : transceivers_) {
     internals.push_back(transceiver->internal());
   }
   return internals;
@@ -63,7 +66,7 @@ std::vector<RtpTransceiver*> TransceiverList::ListInternal() const {
 RtpTransceiverProxyRefPtr TransceiverList::FindBySender(
     scoped_refptr<RtpSenderInterface> sender) const {
   RTC_DCHECK_RUN_ON(&sequence_checker_);
-  for (auto transceiver : transceivers_) {
+  for (const auto& transceiver : transceivers_) {
     if (transceiver->sender() == sender) {
       return transceiver;
     }
@@ -72,9 +75,9 @@ RtpTransceiverProxyRefPtr TransceiverList::FindBySender(
 }
 
 RtpTransceiverProxyRefPtr TransceiverList::FindByMid(
-    const std::string& mid) const {
+    absl::string_view mid) const {
   RTC_DCHECK_RUN_ON(&sequence_checker_);
-  for (auto transceiver : transceivers_) {
+  for (const auto& transceiver : transceivers_) {
     if (transceiver->mid() == mid) {
       return transceiver;
     }
@@ -85,7 +88,7 @@ RtpTransceiverProxyRefPtr TransceiverList::FindByMid(
 RtpTransceiverProxyRefPtr TransceiverList::FindByMLineIndex(
     size_t mline_index) const {
   RTC_DCHECK_RUN_ON(&sequence_checker_);
-  for (auto transceiver : transceivers_) {
+  for (const auto& transceiver : transceivers_) {
     if (transceiver->internal()->mline_index() == mline_index) {
       return transceiver;
     }

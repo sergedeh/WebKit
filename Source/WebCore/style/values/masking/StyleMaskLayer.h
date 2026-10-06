@@ -73,15 +73,15 @@ struct MaskLayer {
     MaskLayer();
     MaskLayer(CSS::Keyword::None);
     MaskLayer(ImageOrNone&&);
-    MaskLayer(RefPtr<StyleImage>&&);
+    MaskLayer(RefPtr<Image>&&);
 
-    const ImageOrNone& image() const { return m_image; }
-    const PositionX& positionX() const { return m_positionX; }
-    const PositionY& positionY() const { return m_positionY; }
-    const BackgroundSize& size() const { return m_size; }
+    const ImageOrNone& image() const LIFETIME_BOUND { return m_image; }
+    const PositionX& positionX() const LIFETIME_BOUND { return m_positionX; }
+    const PositionY& positionY() const LIFETIME_BOUND { return m_positionY; }
+    const BackgroundSize& size() const LIFETIME_BOUND { return m_size; }
     FillBox clip() const { return static_cast<FillBox>(m_clip); }
     FillBox origin() const { return static_cast<FillBox>(m_origin); }
-    const RepeatStyle& repeat() const { return m_repeat; }
+    const RepeatStyle& repeat() const LIFETIME_BOUND { return m_repeat; }
     CompositeOperator composite() const { return static_cast<CompositeOperator>(m_composite); }
     MaskMode maskMode() const { return static_cast<MaskMode>(m_maskMode); }
 
@@ -131,9 +131,8 @@ struct MaskLayer {
 
     // CoordinatedValueList interface.
 
-    static constexpr auto computedValueUsesUsedValues = true;
     static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyMaskImage> { };
-    static constexpr auto properties =  std::tuple { FOR_EACH_MASK_LAYER_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
+    static constexpr auto properties = std::tuple { FOR_EACH_MASK_LAYER_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
     static MaskLayer clone(const MaskLayer& other) { return other; }
     bool isInitial() const { return m_image.isNone(); }
 
@@ -165,7 +164,7 @@ FOR_EACH_MASK_LAYER_SHORTHAND(DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_S
 // MARK: - Blending
 
 template<> struct Blending<MaskLayer> {
-    auto canBlend(const MaskLayer&, const MaskLayer&) -> bool;
+    bool NODELETE canBlend(const MaskLayer&, const MaskLayer&);
 };
 
 // MARK: - Logging

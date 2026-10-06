@@ -47,9 +47,9 @@ public:
     
     void setDelayFrames(double numberOfFrames) { m_desiredDelayFrames = numberOfFrames; }
 
-    double tailTime() const override;
-    double latencyTime() const override;
-    bool requiresTailProcessing() const final;
+    double NODELETE tailTime() const override;
+    double NODELETE latencyTime() const override;
+    bool NODELETE requiresTailProcessing() const final;
 
 private:
     void processARate(std::span<const float> source, std::span<float> destination);
@@ -58,7 +58,7 @@ private:
     AudioFloatArray m_buffer;
     double m_maxDelayTime;
     size_t m_writeIndex { 0 };
-    double m_desiredDelayFrames;
+    double m_desiredDelayFrames { 0 };
 
     AudioFloatArray m_delayTimes;
     // Temporary buffer used to hold the second sample for interpolation if needed.

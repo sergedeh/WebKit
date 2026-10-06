@@ -182,7 +182,7 @@ void Type::dump(PrintStream& out) const
         });
 }
 
-constexpr unsigned primitivePair(Types::Primitive::Kind first, Types::Primitive::Kind second)
+constexpr unsigned NODELETE primitivePair(Types::Primitive::Kind first, Types::Primitive::Kind second)
 {
     static_assert(sizeof(Types::Primitive::Kind) == 1);
     return static_cast<unsigned>(first) << 8 | second;
@@ -470,6 +470,9 @@ Packing Type::packing() const
             return Packing::PackedStruct;
     } else if (auto* vectorType = std::get_if<Types::Vector>(this)) {
         if (vectorType->size == 3)
+            return Packing::PackedVec3;
+    } else if (auto* matrixType = std::get_if<Types::Matrix>(this)) {
+        if (matrixType->rows == 3)
             return Packing::PackedVec3;
     } else if (auto* arrayType = std::get_if<Types::Array>(this)) {
         auto elementPacking = arrayType->element->packing();

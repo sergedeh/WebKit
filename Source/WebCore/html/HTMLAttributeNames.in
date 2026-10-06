@@ -16,6 +16,7 @@ alpha
 alt
 archive
 aria-activedescendant
+aria-actions
 aria-atomic
 aria-autocomplete
 aria-braillelabel
@@ -86,6 +87,7 @@ axis
 background
 behavior
 bgcolor
+bottommargin
 blocking
 border
 bordercolor
@@ -102,6 +104,7 @@ cite
 class
 classid
 clear
+closedby
 code
 codebase
 codetype
@@ -156,6 +159,8 @@ formtarget
 frame
 frameborder
 headers
+headingoffset
+headingreset
 height
 hidden
 high
@@ -385,6 +390,7 @@ required
 results
 rev
 reversed
+rightmargin
 role
 rows
 rowspan
@@ -404,6 +410,7 @@ shadowrootdelegatesfocus
 shadowrootmode
 shadowrootreferencetarget
 shadowrootserializable
+shadowrootslotassignment
 shape
 size
 sizes
@@ -455,4 +462,8 @@ x-apple-data-detectors-type
 x-apple-pdf-annotation
 x-itunes-inherit-uri-query-component
 x-webkit-airplay
+x-webkit-fieldofview
+x-webkit-pitch
+x-webkit-projection
 x-webkit-wirelessvideoplaybackdisabled
+x-webkit-yaw

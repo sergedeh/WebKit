@@ -46,7 +46,7 @@
 namespace WebCore {
 using namespace FragmentDirectiveUtilities;
 
-constexpr int maximumInlineStringLength = 300;
+constexpr int maximumInlineStringLength = 100;
 constexpr int minimumContextlessStringLength = 20;
 constexpr int defaultWordsOfContext = 3;
 constexpr int maximumExtraWordsOfContext = 4;
@@ -66,8 +66,8 @@ static bool positionsHaveSameBlockAncestor(const VisiblePosition& a, const Visib
 static VisiblePosition beforeStartOfCurrentBlock(const VisiblePosition& visiblePosition)
 {
     auto position = visiblePosition.deepEquivalent();
-    Ref blockContainer = nearestBlockAncestor(*position.protectedContainerNode().get());
-    VisiblePosition firstPositionInBlock = firstPositionInNode(blockContainer.ptr());
+    Ref blockContainer = nearestBlockAncestor(*protect(position.containerNode()).get());
+    VisiblePosition firstPositionInBlock = firstPositionInNode(blockContainer);
     if (firstPositionInBlock == visiblePosition)
         return visiblePosition.previous();
     return visiblePosition;
@@ -76,8 +76,8 @@ static VisiblePosition beforeStartOfCurrentBlock(const VisiblePosition& visibleP
 static VisiblePosition afterEndOfCurrentBlock(const VisiblePosition& visiblePosition)
 {
     auto position = visiblePosition.deepEquivalent();
-    Ref blockContainer = nearestBlockAncestor(*position.protectedContainerNode().get());
-    VisiblePosition lastPositionInBlock = lastPositionInNode(blockContainer.ptr());
+    Ref blockContainer = nearestBlockAncestor(*protect(position.containerNode()).get());
+    VisiblePosition lastPositionInBlock = lastPositionInNode(blockContainer);
     if (lastPositionInBlock == visiblePosition)
         return visiblePosition.next();
     return visiblePosition;

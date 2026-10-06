@@ -87,7 +87,7 @@ private:
 
     String keywordValue(ASCIILiteral, bool isBoolean = false) const;
 
-    CString m_localeID;
+    ASCIICString m_localeID;
 
     String m_maximal;
     String m_minimal;
@@ -97,6 +97,7 @@ private:
     String m_script;
     String m_region;
     String m_variants;
+    String m_nonUnicodeExtensions;
     std::optional<String> m_calendar;
     std::optional<String> m_caseFirst;
     std::optional<String> m_collation;

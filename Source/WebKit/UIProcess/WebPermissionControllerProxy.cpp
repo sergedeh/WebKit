@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebPermissionControllerProxy.h"
 
+#include "MessageSenderInlines.h"
 #include "WebPageProxy.h"
 #include "WebPermissionControllerProxyMessages.h"
 #include "WebProcessProxy.h"
@@ -39,6 +40,24 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakHashSet.h>
+
+#define MESSAGE_CHECK_COMPLETION(assertion, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, m_process->connection(), completion)
+
+#define EXTRACT_WITH_MESSAGE_CHECK(name, untrusted, ...) \
+    auto name##Validated = WTF::move(untrusted).validate(__VA_ARGS__); \
+    MESSAGE_CHECK(IPC::valueMayBeLegitimate(name##Validated)); \
+    if (!name##Validated) \
+        return; \
+    auto name = WTF::move(*name##Validated)
+
+#define EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(name, untrusted, completion, ...) \
+    auto name##Validated = WTF::move(untrusted).validate(__VA_ARGS__); \
+    MESSAGE_CHECK_COMPLETION(IPC::valueMayBeLegitimate(name##Validated), completion); \
+    if (!name##Validated) { \
+        { completion; } \
+        return; \
+    } \
+    auto name = WTF::move(*name##Validated)
 
 namespace WebKit {
 
@@ -65,10 +84,13 @@ void WebPermissionControllerProxy::deref() const
     m_process->deref();
 }
 
-void WebPermissionControllerProxy::query(const WebCore::ClientOrigin& clientOrigin, const WebCore::PermissionDescriptor& descriptor, std::optional<WebPageProxyIdentifier> identifier, WebCore::PermissionQuerySource source, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
+void WebPermissionControllerProxy::query(IPC::Untrusted<WebCore::ClientOrigin>&& untrustedOrigin, const WebCore::PermissionDescriptor& descriptor, std::optional<WebPageProxyIdentifier> identifier, WebCore::PermissionQuerySource source, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
 {
-    auto webPageProxy = identifier ? RefPtr { m_process->webPage(identifier.value()) } : mostReasonableWebPageProxy(clientOrigin.topOrigin, source);
+    auto clientOrigin = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
 
+    MESSAGE_CHECK_COMPLETION(identifier || (source == WebCore::PermissionQuerySource::SharedWorker || source == WebCore::PermissionQuerySource::ServiceWorker), completionHandler(std::nullopt));
+
+    RefPtr webPageProxy = identifier ? RefPtr { m_process->webPage(identifier.value()) } : mostReasonableWebPageProxy(clientOrigin.topOrigin, source);
     if (!webPageProxy) {
         completionHandler(WebCore::PermissionState::Prompt);
         return;
@@ -121,3 +143,7 @@ std::optional<SharedPreferencesForWebProcess> WebPermissionControllerProxy::shar
 }
 
 } // namespace WebKit
+
+#undef MESSAGE_CHECK_COMPLETION
+#undef EXTRACT_WITH_MESSAGE_CHECK
+#undef EXTRACT_WITH_MESSAGE_CHECK_COMPLETION

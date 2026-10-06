@@ -42,9 +42,7 @@ namespace WebCore {
 static const auto defaultPreflightCacheTimeout = 5_s;
 static const auto maxPreflightCacheTimeout = 600_s; // Should be short enough to minimize the risk of using a poisoned cache after switching to a secure network.
 
-CrossOriginPreflightResultCache::CrossOriginPreflightResultCache()
-{
-}
+CrossOriginPreflightResultCache::CrossOriginPreflightResultCache() = default;
 
 static bool parseAccessControlMaxAge(const String& string, Seconds& expiryDelta)
 {
@@ -54,7 +52,7 @@ static bool parseAccessControlMaxAge(const String& string, Seconds& expiryDelta)
     return parsedInteger.has_value();
 }
 
-Expected<UniqueRef<CrossOriginPreflightResultCacheItem>, String> CrossOriginPreflightResultCacheItem::create(StoredCredentialsPolicy policy, const ResourceResponse& response)
+std::expected<UniqueRef<CrossOriginPreflightResultCacheItem>, String> CrossOriginPreflightResultCacheItem::create(StoredCredentialsPolicy policy, const ResourceResponse& response)
 {
     auto methods = parseAccessControlAllowList(response.httpHeaderField(HTTPHeaderName::AccessControlAllowMethods));
     if (!methods)

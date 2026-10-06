@@ -7,13 +7,12 @@
 //   Performance tests for ANGLE draw call overhead.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
 #include "ANGLEPerfTest.h"
 #include "DrawCallPerfParams.h"
 #include "common/PackedEnums.h"
+#include "common/unsafe_buffers.h"
 #include "test_utils/draw_call_perf_utils.h"
 #include "util/shader_utils.h"
 
@@ -161,6 +160,11 @@ DrawCallPerfBenchmark::DrawCallPerfBenchmark() : ANGLERenderTest("DrawCallPerf",
          params.stateChange == StateChange::Program))
     {
         skipTest("https://issuetracker.google.com/issues/298407224 Fails on Pixel 6 GLES");
+    }
+
+    if (IsWindows() && IsQualcomm() && params.driver == GLESDriverType::SystemWGL)
+    {
+        skipTest("anglebug.com/546189136 Fails on Windows ARM64 Qualcomm");
     }
 }
 
@@ -314,7 +318,7 @@ void main()
 
     if (params.stateChange == StateChange::ManyTextureDraw)
     {
-        GLint program3TexLocs[kManyTexturesCount];
+        std::array<GLint, kManyTexturesCount> program3TexLocs;
 
         for (size_t i = 0; i < mTextures.size(); ++i)
         {

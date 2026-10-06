@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2000 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -26,7 +26,9 @@
 #include <WebCore/HTMLElement.h>
 
 namespace WebCore {
-    
+
+class HTMLDivElement;
+class HTMLLegendElement;
 class HTMLSelectElement;
 
 class HTMLOptGroupElement final : public HTMLElement {
@@ -36,20 +38,25 @@ public:
     static Ref<HTMLOptGroupElement> create(const QualifiedName&, Document&);
 
     bool isDisabledFormControl() const final;
-    WEBCORE_EXPORT HTMLSelectElement* ownerSelectElement() const;
-    
+    bool isActuallyDisabled() const final;
+    WEBCORE_EXPORT HTMLSelectElement* NODELETE ownerSelectElement() const;
+
     WEBCORE_EXPORT String groupLabelText() const;
+
+    void updateUserAgentShadowTree() final;
 
 private:
     HTMLOptGroupElement(const QualifiedName&, Document&);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
 
     const AtomString& formControlType() const;
     bool isFocusable() const final;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    void parseDisabledAttribute(const AtomString&);
+
+    void didAddUserAgentShadowRoot(ShadowRoot&) final;
 
     void childrenChanged(const ChildChange&) final;
 
@@ -57,8 +64,14 @@ private:
 
     void recalcSelectOptions();
 
+    HTMLLegendElement* NODELETE legendElement() const;
+
+    void invalidateShadowTree();
+
     bool m_isDisabled { false };
+    bool m_shadowTreeNeedsUpdate { false };
     WeakPtr<HTMLSelectElement, WeakPtrImplWithEventTargetData> m_ownerSelect;
+    WeakPtr<HTMLDivElement, WeakPtrImplWithEventTargetData> m_labelContainer;
 };
 
 } // namespace WebCore

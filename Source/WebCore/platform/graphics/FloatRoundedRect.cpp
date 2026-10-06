@@ -65,7 +65,7 @@ FloatRoundedRect::FloatRoundedRect(const FloatRect& rect, const FloatSize& topLe
 {
 }
 
-static inline float cornerRectIntercept(float y, const FloatRect& cornerRect)
+static inline float NODELETE cornerRectIntercept(float y, const FloatRect& cornerRect)
 {
     ASSERT(cornerRect.height() > 0);
     return cornerRect.width() * sqrt(1 - (y * y) / (cornerRect.height() * cornerRect.height()));
@@ -76,7 +76,7 @@ bool FloatRoundedRect::xInterceptsAtY(float y, float& minXIntercept, float& maxX
     if (y < rect().y() || y >  rect().maxY())
         return false;
 
-    if (!isRounded()) {
+    if (!hasNonZeroRadii()) {
         minXIntercept = rect().x();
         maxXIntercept = rect().maxX();
         return true;
@@ -169,7 +169,7 @@ Region approximateAsRegion(const FloatRoundedRect& roundedRect, unsigned stepLen
     auto rect = LayoutRect(roundedRect.rect());
     region.unite(enclosingIntRect(rect));
 
-    if (!roundedRect.isRounded())
+    if (!roundedRect.hasNonZeroRadii())
         return region;
 
     auto& radii = roundedRect.radii();

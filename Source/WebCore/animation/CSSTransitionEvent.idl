@@ -24,20 +24,22 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
+// https://drafts.csswg.org/css-transitions/#transitionevent
 [
     Exposed=Window,
     InterfaceName=TransitionEvent
 ] interface CSSTransitionEvent : Event {
     constructor([AtomString] DOMString type, optional TransitionEventInit transitionEventInitDict = {});
 
+    [ImplementedAs=cssTransition] readonly attribute CSSTransition? animation;
     readonly attribute DOMString propertyName;
     readonly attribute double elapsedTime;
     readonly attribute DOMString pseudoElement;
 };
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary TransitionEventInit : EventInit {
+// https://drafts.csswg.org/css-transitions/#dictdef-transitioneventinit
+dictionary TransitionEventInit : EventInit {
+    CSSTransition? animation = null;
     DOMString propertyName = "";
     double elapsedTime = 0.0;
     DOMString pseudoElement = "";

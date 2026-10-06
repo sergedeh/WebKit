@@ -50,13 +50,13 @@ public:
     ~WebXRRay();
     const DOMPointReadOnly& origin();
     const DOMPointReadOnly& direction();
-    const Float32Array& matrix();
+    const Float32Array& NODELETE matrix();
 
 private:
     WebXRRay(Ref<DOMPointReadOnly>&& origin, Ref<DOMPointReadOnly>&& direction);
 
-    Ref<DOMPointReadOnly> m_origin;
-    Ref<DOMPointReadOnly> m_direction;
+    const Ref<DOMPointReadOnly> m_origin;
+    const Ref<DOMPointReadOnly> m_direction;
     RefPtr<Float32Array> m_matrix;
 };
 

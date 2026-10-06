@@ -31,6 +31,9 @@
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
+#include <wtf/spi/cocoa/OSLogSPI.h>
+#include <wtf/text/ASCIILiteral.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
 #include "StreamMessageReceiver.h"
@@ -46,7 +49,9 @@ constexpr size_t logCategoryMaxSize = 32;
 constexpr size_t logSubsystemMaxSize = 32;
 constexpr size_t logStringMaxSize = 256;
 
-class WebProcessProxy;
+void logWithProcessNamePrefix(os_log_t, os_log_type_t, ASCIILiteral processName, int pid, UTF8CStringView message);
+
+class AuxiliaryProcessProxy;
 // Type which receives log messages from another process and invokes the platform logging.
 // The messages are found from generated LogStream.messages.in in build directory,
 // DerivedSources/WebKit/LogStream.messages.in.
@@ -63,9 +68,9 @@ class LogStream final :
 #endif
 public:
 #if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
-    static RefPtr<LogStream> create(WebProcessProxy&, IPC::StreamServerConnectionHandle&&, LogStreamIdentifier, CompletionHandler<void(IPC::Semaphore& streamWakeUpSemaphore, IPC::Semaphore& streamClientWaitSemaphore)>&&);
+    static RefPtr<LogStream> create(AuxiliaryProcessProxy&, ASCIILiteral processName, IPC::StreamServerConnectionHandle&&, LogStreamIdentifier);
 #else
-    static Ref<LogStream> create(WebProcessProxy&, Ref<IPC::Connection>&&, LogStreamIdentifier);
+    static Ref<LogStream> create(AuxiliaryProcessProxy&, ASCIILiteral processName, Ref<IPC::Connection>&&, LogStreamIdentifier);
 #endif
     ~LogStream();
 
@@ -86,7 +91,7 @@ private:
 #else
     using ConnectionType = IPC::Connection;
 #endif
-    LogStream(WebProcessProxy&, Ref<ConnectionType>&&, LogStreamIdentifier);
+    LogStream(AuxiliaryProcessProxy&, ASCIILiteral processName, Ref<ConnectionType>&&, LogStreamIdentifier);
 
 #if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
     // IPC::StreamServerConnection::Client overrides.
@@ -97,7 +102,7 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 #endif
 
-    void logOnBehalfOfWebContent(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<const uint8_t> logString, uint8_t logType);
+    void logOnBehalfOfWebContent(std::span<const char8_t> logChannel, std::span<const char8_t> logCategory, std::span<const char8_t> logString, uint8_t logType);
 
 #if __has_include("LogMessagesDeclarations.h")
 #include "LogMessagesDeclarations.h"
@@ -105,12 +110,13 @@ private:
 
 #if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
     const Ref<IPC::StreamServerConnection> m_connection;
-    WeakPtr<WebProcessProxy> m_process;
+    WeakPtr<AuxiliaryProcessProxy> m_process;
 #else
     ThreadSafeWeakPtr<IPC::Connection> m_connection;
 #endif
     const LogStreamIdentifier m_identifier;
     const ProcessID m_pid;
+    const ASCIILiteral m_processName;
 };
 
 } // namespace WebKit

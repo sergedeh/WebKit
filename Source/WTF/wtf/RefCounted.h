@@ -21,6 +21,7 @@
 #pragma once
 
 #include <wtf/RefCountDebugger.h>
+#include <wtf/SwiftBridging.h>
 
 namespace WTF {
 
@@ -39,10 +40,8 @@ public:
     uint32_t refCount() const { return m_refCount; }
 
     // Debug APIs
-    void adopted() { m_refCountDebugger.adopted(); }
-    void relaxAdoptionRequirement() { m_refCountDebugger.relaxAdoptionRequirement(); }
     void disableThreadingChecks() { m_refCountDebugger.disableThreadingChecks(); }
-    RefCountDebugger& refCountDebugger() { return m_refCountDebugger; }
+    RefCountDebugger& refCountDebugger() LIFETIME_BOUND { return m_refCountDebugger; }
 
 protected:
     RefCountedBase() = default;
@@ -83,29 +82,17 @@ public:
             delete const_cast<T*>(static_cast<const T*>(this));
     }
 
+#if defined(__swift__) && ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+    void swiftRef() const
+    {
+        ref();
+    }
+#endif
+
 protected:
     RefCounted() = default;
     ~RefCounted() = default;
-} SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
-
-template<typename T>
-inline void ref(T* obj)
-{
-    obj->ref();
-}
-
-template<typename T>
-inline void deref(T* obj)
-{
-    obj->deref();
-}
-
-inline void adopted(RefCountedBase* object)
-{
-    if (!object)
-        return;
-    object->adopted();
-}
+} SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT BASE_CLASS_SWIFT_SHARED_REFERENCE(.swiftRef, .deref);
 
 } // namespace WTF
 

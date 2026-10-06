@@ -44,6 +44,7 @@ WI.JavaScriptRuntimeCompletionProvider = class JavaScriptRuntimeCompletionProvid
         this._ongoingCompletionRequests = 0;
 
         WI.debuggerManager.addEventListener(WI.DebuggerManager.Event.ActiveCallFrameDidChange, this.clearCachedPropertyNames, this);
+        WI.runtimeManager.addEventListener(WI.RuntimeManager.Event.ActiveExecutionContextChanged, this.clearCachedPropertyNames, this);
     }
 
     // Static
@@ -132,7 +133,7 @@ WI.JavaScriptRuntimeCompletionProvider = class JavaScriptRuntimeCompletionProvid
 
             // Don't allow non-forced empty prefix completions if the user is entering a number, since it might be a float.
             // But allow number completions if the base already has a decimal, so "10.0." will suggest Number properties.
-            if (!forced && !prefix && dotNotation && base.indexOf(".") === -1 && parseInt(base, 10) == base) {
+            if (!forced && !prefix && dotNotation && base.indexOf(".") === -1 && parseInt(base, 10) === Number(base)) {
                 completionController.updateCompletions(null);
                 return;
             }
@@ -160,7 +161,7 @@ WI.JavaScriptRuntimeCompletionProvider = class JavaScriptRuntimeCompletionProvid
         this._lastBase = base;
         this._lastPropertyNames = null;
 
-        var activeCallFrame = WI.debuggerManager.activeCallFrame;
+        let activeCallFrame = WI.runtimeManager.useActiveCallFrame ? WI.debuggerManager.activeCallFrame : null;
         if (!base && activeCallFrame && !this._alwaysEvaluateInWindowContext)
             activeCallFrame.collectScopeChainVariableNames(receivedPropertyNames.bind(this));
         else {
@@ -227,6 +228,8 @@ WI.JavaScriptRuntimeCompletionProvider = class JavaScriptRuntimeCompletionProvid
                     object = new Boolean(false);
                 else if (primitiveType === "symbol")
                     object = Symbol();
+                else if (primitiveType === "bigint")
+                    object = Object(BigInt(0));
                 else
                     object = this;
 
@@ -236,7 +239,7 @@ WI.JavaScriptRuntimeCompletionProvider = class JavaScriptRuntimeCompletionProvid
                         var names = Object.getOwnPropertyNames(o);
                         for (var i = 0; i < names.length; ++i)
                             resultSet[names[i]] = true;
-                    } catch (e) { }
+                    } catch { }
                 }
 
                 return resultSet;
@@ -246,7 +249,7 @@ WI.JavaScriptRuntimeCompletionProvider = class JavaScriptRuntimeCompletionProvid
                 result.callFunctionJSON(inspectedPage_evalResult_getArrayCompletions, undefined, receivedArrayPropertyNames.bind(this));
             else if (result.type === "object" || result.type === "function")
                 result.callFunctionJSON(inspectedPage_evalResult_getCompletions, undefined, receivedObjectPropertyNames.bind(this));
-            else if (result.type === "string" || result.type === "number" || result.type === "boolean" || result.type === "symbol") {
+            else if (result.type === "string" || result.type === "number" || result.type === "boolean" || result.type === "symbol" || result.type === "bigint") {
                 let options = {objectGroup: "completion", includeCommandLineAPI: false, doNotPauseOnExceptionsAndMuteConsole: true, returnByValue: true, generatePreview: false, saveResult: false};
                 WI.runtimeManager.evaluateInInspectedWindow("(" + inspectedPage_evalResult_getCompletions + ")(\"" + result.type + "\")", options, receivedPropertyNamesFromEvaluate.bind(this));
             } else
@@ -260,7 +263,7 @@ WI.JavaScriptRuntimeCompletionProvider = class JavaScriptRuntimeCompletionProvid
 
         function receivedObjectPropertyNames(propertyNames)
         {
-            receivedPropertyNames.call(this, Object.keys(propertyNames));
+            receivedPropertyNames.call(this, propertyNames ? Object.keys(propertyNames) : null);
         }
 
         function receivedArrayPropertyNames(propertyNames)
@@ -358,10 +361,9 @@ WI.JavaScriptRuntimeCompletionProvider = class JavaScriptRuntimeCompletionProvid
                     implicitSuffix = "]";
             }
 
-            var completions = defaultCompletions;
+            let completions = defaultCompletions;
             let knownCompletions = new Set(completions);
             let prefixLowerCase = prefix.toLowerCase();
-            let caseSensitiveMatching = WI.settings.experimentalShowCaseSensitiveAutocomplete.value;
 
             for (var i = 0; i < propertyNames.length; ++i) {
                 var property = propertyNames[i];
@@ -370,15 +372,14 @@ WI.JavaScriptRuntimeCompletionProvider = class JavaScriptRuntimeCompletionProvid
                     continue;
 
                 if (bracketNotation) {
-                    if (parseInt(property) != property)
+                    if (parseInt(property) !== Number(property))
                         property = quoteUsed + property.escapeCharacters(quoteUsed + "\\") + (suffix !== quoteUsed ? quoteUsed : "");
                 }
 
                 if (knownCompletions.has(property))
                     continue;
 
-                let startsWithPrefix = caseSensitiveMatching ? property.startsWith(prefix) : property.toLowerCase().startsWith(prefixLowerCase);
-                if (!startsWithPrefix)
+                if (!property.toLowerCase().startsWith(prefixLowerCase))
                     continue;
 
                 completions.push(property);

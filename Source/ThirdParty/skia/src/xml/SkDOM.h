@@ -10,9 +10,9 @@
 
 #include "include/core/SkScalar.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkNoncopyable.h"
-#include "include/private/base/SkTemplates.h"
-#include "src/base/SkArenaAlloc.h"
+#include "include/private/SkNoncopyable.h"
+#include "include/private/SkTemplates.h"
+#include "src/core/SkArenaAlloc.h"
 
 struct SkDOMNode;
 struct SkDOMAttr;
@@ -31,7 +31,7 @@ public:
 
     /**
      *  Returns null on failure, and if errorOnLineNumber is present, it is set
-     *  to the line number where the error occured. On success, returns the
+     *  to the line number where the error occurred. On success, returns the
      *  root node, and, if present, sets errorOnLineNumber to -1 (no error).
      */
     const Node* build(SkStream&, int* errorOnLineNumber = nullptr);

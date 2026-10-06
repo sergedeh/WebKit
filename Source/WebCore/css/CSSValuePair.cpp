@@ -26,9 +26,9 @@
 #include "config.h"
 #include "CSSValuePair.h"
 
+#include "DeprecatedCSSOMPrimitiveValue.h"
 #include <wtf/Hasher.h>
 #include <wtf/text/MakeString.h>
-#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
@@ -43,17 +43,17 @@ CSSValuePair::CSSValuePair(ValueSeparator separator, Ref<CSSValue> first, Ref<CS
 
 Ref<CSSValuePair> CSSValuePair::create(Ref<CSSValue> first, Ref<CSSValue> second)
 {
-    return adoptRef(*new CSSValuePair(SpaceSeparator, WTF::move(first), WTF::move(second), IdenticalValueSerialization::Coalesce));
+    return adoptRef(*new CSSValuePair(ValueSeparator::Space, WTF::move(first), WTF::move(second), IdenticalValueSerialization::Coalesce));
 }
 
 Ref<CSSValuePair> CSSValuePair::createSlashSeparated(Ref<CSSValue> first, Ref<CSSValue> second)
 {
-    return adoptRef(*new CSSValuePair(SlashSeparator, WTF::move(first), WTF::move(second), IdenticalValueSerialization::DoNotCoalesce));
+    return adoptRef(*new CSSValuePair(ValueSeparator::Slash, WTF::move(first), WTF::move(second), IdenticalValueSerialization::DoNotCoalesce));
 }
 
 Ref<CSSValuePair> CSSValuePair::createNoncoalescing(Ref<CSSValue> first, Ref<CSSValue> second)
 {
-    return adoptRef(*new CSSValuePair(SpaceSeparator, WTF::move(first), WTF::move(second), IdenticalValueSerialization::DoNotCoalesce));
+    return adoptRef(*new CSSValuePair(ValueSeparator::Space, WTF::move(first), WTF::move(second), IdenticalValueSerialization::DoNotCoalesce));
 }
 
 bool CSSValuePair::canBeCoalesced() const
@@ -82,6 +82,13 @@ bool CSSValuePair::addDerivedHash(Hasher& hasher) const
 {
     add(hasher, m_valueSeparator, m_coalesceIdenticalValues);
     return m_first->addHash(hasher) && m_second->addHash(hasher);
+}
+
+Ref<DeprecatedCSSOMValue> CSSValuePair::customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration& owner) const
+{
+    return DeprecatedCSSOMPrimitiveValue::create([copy = protect(*this)](const CSS::SerializationContext& context) {
+        return copy->cssText(context);
+    }, owner);
 }
 
 } // namespace WebCore

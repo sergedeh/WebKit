@@ -19,9 +19,10 @@
 
 #pragma once
 
+#include <JavaScriptCore/SourceTaintedOrigin.h>
 #include <JavaScriptCore/Strong.h>
-#include <JavaScriptCore/StrongInlines.h>
 #include <memory>
+#include <wtf/FixedVector.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/WTFString.h>
 
@@ -46,7 +47,7 @@ public:
     void addArguments(FixedVector<JSC::Strong<JSC::Unknown>>&&);
 
     enum class Type { Code, Function };
-    Type type() const;
+    Type NODELETE type() const;
 
     StringView code() const { return m_code; }
 

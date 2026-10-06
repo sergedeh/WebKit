@@ -27,14 +27,17 @@
 
 #include "BridgeJSC.h"
 #include "JSDOMBinding.h"
+#include "JSDOMWrapperCache.h"
 #include "objc_header.h"
+#include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/StructureInlines.h>
 #include <wtf/RetainPtr.h>
 
 namespace JSC::Bindings {
 
-ClassStructPtr webScriptObjectClass();
-ClassStructPtr webUndefinedClass();
+ClassStructPtr webScriptObjectClassSingleton();
+ClassStructPtr webUndefinedClassSingleton();
 
 class ObjcInstance;
 
@@ -62,9 +65,9 @@ public:
 
     bool isFallbackMethod() const;
     void setJavaScriptName(CFStringRef n) { _javaScriptName = n; }
-    CFStringRef javaScriptName() const { return _javaScriptName.get(); }
+    CFStringRef javaScriptName() const LIFETIME_BOUND { return _javaScriptName.get(); }
     
-    SELStructPtr selector() const { return _selector; }
+    SELStructPtr selector() const LIFETIME_BOUND { return _selector; }
 
 private:
     bool isObjcMethod() const final { return true; }
@@ -83,7 +86,7 @@ public:
     virtual unsigned int getLength() const;
 
 #ifdef __OBJC__
-    ObjectStructPtr getObjcArray() const { return _array.get(); }
+    ObjectStructPtr getObjcArray() const LIFETIME_BOUND { return _array.get(); }
 #endif
 
 private:
@@ -114,7 +117,7 @@ public:
 
     DECLARE_INFO;
 
-    const String& propertyName() const { return m_item; }
+    const String& propertyName() const LIFETIME_BOUND { return m_item; }
 
     static ObjectPrototype* createPrototype(VM&, JSGlobalObject& globalObject)
     {
@@ -135,13 +138,13 @@ private:
     void finishCreation(JSGlobalObject*);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-    static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    static bool NODELETE put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static CallData getCallData(JSCell*);
-    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+    static bool NODELETE deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
     bool toBoolean(JSGlobalObject*) const; // FIXME: Currently this is broken because none of the superclasses are marked virtual. We need to solve this in the longer term.
 
-    static GCClient::IsoSubspace* subspaceForImpl(VM&);
+    static GCClient::IsoSubspace* NODELETE subspaceForImpl(VM&);
 
     RefPtr<ObjcInstance> _instance;
     String m_item;

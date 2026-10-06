@@ -27,19 +27,19 @@
 #include "config.h"
 #include "StyleChangedAnimatableProperties.h"
 
-#include "RenderStyle+GettersInlines.h"
 #include "StyleChangedAnimatablePropertiesGenerated.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 namespace Style {
 
-void conservativelyCollectChangedAnimatableProperties(const RenderStyle& a, const RenderStyle& b, CSSPropertiesBitSet& changingProperties)
+void conservativelyCollectChangedAnimatableProperties(const Style::ComputedStyle& a, const Style::ComputedStyle& b, CSSPropertiesBitSet& changingProperties, EnumSet<AnimatablePropertiesCollectionQuirks> quirks)
 {
-    // Check property values on RenderStyle for changes.
+    // Check property values on ComputedStyle for changes.
 
-    ChangedAnimatablePropertiesGenerated::conservativelyCollectChangedAnimatableProperties(a.computedStyle(), b.computedStyle(), changingProperties);
+    ChangedAnimatablePropertiesGenerated::conservativelyCollectChangedAnimatableProperties(a, b, changingProperties);
 
-    // Also, check some non-property and/or derived values on RenderStyle for changes.
+    // Also, check some non-property and/or derived values on ComputedStyle for changes.
 
     // `writingMode` changes conversion of logical -> physical properties, thus, we need to add all physical properties.
     if (a.writingMode() != b.writingMode()) {
@@ -51,6 +51,18 @@ void conservativelyCollectChangedAnimatableProperties(const RenderStyle& a, cons
     // `insideLink` changes visited / non-visited colors, thus, we need to add all color properties.
     if (a.insideLink() != b.insideLink())
         changingProperties.m_properties.merge(CSSProperty::colorProperties);
+
+    if (quirks.contains(AnimatablePropertiesCollectionQuirks::ComparareUsedValuesForBorderWidth)) {
+        // Don't transition if the used value does not change. This is also affected by `border-*-style`.
+        if (a.usedBorderTopWidth() == b.usedBorderTopWidth())
+            changingProperties.m_properties.clear(CSSPropertyBorderTopWidth);
+        if (a.usedBorderRightWidth() == b.usedBorderRightWidth())
+            changingProperties.m_properties.clear(CSSPropertyBorderRightWidth);
+        if (a.usedBorderBottomWidth() == b.usedBorderBottomWidth())
+            changingProperties.m_properties.clear(CSSPropertyBorderBottomWidth);
+        if (a.usedBorderLeftWidth() == b.usedBorderLeftWidth())
+            changingProperties.m_properties.clear(CSSPropertyBorderLeftWidth);
+    }
 }
 
 } // namespace Style

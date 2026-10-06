@@ -71,7 +71,7 @@ public:
     void bringToFront();
     void inspectedURLChanged(const String&);
 
-    bool supportsShowCertificate() const;
+    bool NODELETE supportsShowCertificate() const;
     bool showCertificate(const String& serializedCertificate);
 
     void setZoomFactor(float);
@@ -166,7 +166,7 @@ public:
 
     // IDL extensions.
 
-    String getPath(const File&) const;
+    String NODELETE getPath(const File&) const;
 
     float getCurrentX(const CanvasRenderingContext2D&) const;
     float getCurrentY(const CanvasRenderingContext2D&) const;

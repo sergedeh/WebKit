@@ -31,7 +31,7 @@
 #include "DocumentTimeline.h"
 #include "InspectorInstrumentation.h"
 #include "KeyframeEffect.h"
-#include "RenderStyle.h"
+#include "StyleComputedStyle.h"
 #include "StyleOriginatedTimelinesController.h"
 #include "ViewTimeline.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -40,13 +40,13 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CSSAnimation);
 
-Ref<CSSAnimation> CSSAnimation::create(const Styleable& owningElement, Style::Animation&& backingStyleAnimation, const RenderStyle* oldStyle, const RenderStyle& newStyle, const Style::ResolutionContext& resolutionContext)
+Ref<CSSAnimation> CSSAnimation::create(const Styleable& owningElement, Style::Animation&& backingStyleAnimation, Style::ZoomFactor backingStyleZoomForLength, const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle, const Style::ResolutionContext& resolutionContext)
 {
     // CSSAnimation should only ever be created with non-"none" animation names.
     auto name = backingStyleAnimation.name().tryKeyframesName();
     RELEASE_ASSERT(name);
 
-    auto result = adoptRef(*new CSSAnimation(owningElement, WTF::move(*name), WTF::move(backingStyleAnimation)));
+    auto result = adoptRef(*new CSSAnimation(owningElement, WTF::move(*name), WTF::move(backingStyleAnimation), backingStyleZoomForLength));
     result->initialize(oldStyle, newStyle, resolutionContext);
 
     InspectorInstrumentation::didCreateWebAnimation(result.get());
@@ -54,16 +54,18 @@ Ref<CSSAnimation> CSSAnimation::create(const Styleable& owningElement, Style::An
     return result;
 }
 
-CSSAnimation::CSSAnimation(const Styleable& element, Style::ScopedName&& animationName, Style::Animation&& backingStyleAnimation)
+CSSAnimation::CSSAnimation(const Styleable& element, Style::ScopedName&& animationName, Style::Animation&& backingStyleAnimation, Style::ZoomFactor backingStyleZoomForLength)
     : StyleOriginatedAnimation(element)
     , m_animationName(WTF::move(animationName))
     , m_backingStyleAnimation(WTF::move(backingStyleAnimation))
+    , m_backingStyleZoomForLength(backingStyleZoomForLength)
 {
 }
 
-void CSSAnimation::setBackingStyleAnimation(const Style::Animation& backingStyleAnimation)
+void CSSAnimation::setBackingStyleAnimation(const Style::Animation& backingStyleAnimation, Style::ZoomFactor backingStyleZoomForLength)
 {
     m_backingStyleAnimation = backingStyleAnimation;
+    m_backingStyleZoomForLength = backingStyleZoomForLength;
     syncPropertiesWithBackingAnimation();
 }
 
@@ -155,20 +157,32 @@ void CSSAnimation::syncPropertiesWithBackingAnimation()
     }
 
     if (!m_overriddenProperties.contains(Property::RangeStart))
-        setRangeStart(Style::SingleAnimationRangeStart { animation.range().start });
+        setRangeStart(Style::SingleAnimationRangeStart { animation.range().start }, m_backingStyleZoomForLength);
     if (!m_overriddenProperties.contains(Property::RangeEnd))
-        setRangeEnd(Style::SingleAnimationRangeEnd { animation.range().end });
+        setRangeEnd(Style::SingleAnimationRangeEnd { animation.range().end }, m_backingStyleZoomForLength);
 
     effectTimingDidChange();
 
     // Synchronize the play state
+    // https://drafts.csswg.org/css-animations-2/#animation-play-state
     if (!m_overriddenProperties.contains(Property::PlayState)) {
         auto styleOriginatedPlayState = animation.playState();
         if (m_lastStyleOriginatedPlayState != styleOriginatedPlayState) {
-            if (styleOriginatedPlayState == AnimationPlayState::Running && playState() == WebAnimation::PlayState::Paused)
-                play();
-            else if (styleOriginatedPlayState == AnimationPlayState::Paused && playState() == WebAnimation::PlayState::Running)
+            if (styleOriginatedPlayState == AnimationPlayState::Running) {
+                // If at any time, including when the animation is first generated, the resolved value of
+                // animation-play-state corresponding to an animation is newly running, the implementation
+                // must run the procedure to play an animation for the given animation with the auto-rewind
+                // flag set to false.
+                play(WebAnimation::AutoRewind::No);
+            } else if (playState() != WebAnimation::PlayState::Idle) {
+                // If at any time, including when the animation is first generated, the resolved value of
+                // animation-play-state corresponding to an animation is newly paused, the implementation
+                // must run the procedure to pause an animation for the given animation.
+                // FIXME: we should not have to check for playState() != WebAnimation::PlayState::Idle
+                // but this is needed so that we don't rewind canceled animations.
+                // https://github.com/w3c/csswg-drafts/issues/13503
                 pause();
+            }
         }
         m_lastStyleOriginatedPlayState = styleOriginatedPlayState;
     }
@@ -203,17 +217,25 @@ void CSSAnimation::syncStyleOriginatedTimeline()
         [&](const CSS::Keyword::None&) {
             setTimeline(nullptr);
         },
-        [&](const CustomIdentifier&) {
+        [&](const Style::ScopedName&) {
             CheckedRef styleOriginatedTimelinesController = document->ensureStyleOriginatedTimelinesController();
             styleOriginatedTimelinesController->attachAnimation(*this);
         },
         [&](const Style::ScrollFunction& scrollFunction) {
+            if (auto* existingScrollTimeline = dynamicDowncast<ScrollTimeline>(timeline())) {
+                if (existingScrollTimeline->matchesAnonymousScrollFunctionForSource(scrollFunction, *owningElement()))
+                    return;
+            }
             auto scrollTimeline = ScrollTimeline::create(scrollFunction->scroller, scrollFunction->axis);
             scrollTimeline->setSource(*owningElement());
             setTimeline(WTF::move(scrollTimeline));
         },
         [&](const Style::ViewFunction& viewFunction) {
-            auto viewTimeline = ViewTimeline::create(nullAtom(), viewFunction->axis, viewFunction->insets);
+            if (RefPtr existingViewTimeline = dynamicDowncast<ViewTimeline>(timeline())) {
+                if (existingViewTimeline->matchesAnonymousViewFunctionForSubject(viewFunction, m_backingStyleZoomForLength, *owningElement()))
+                    return;
+            }
+            auto viewTimeline = ViewTimeline::create({ nullAtom() }, viewFunction->axis, viewFunction->insets, m_backingStyleZoomForLength);
             viewTimeline->setSubject(*owningElement());
             setTimeline(WTF::move(viewTimeline));
         }
@@ -221,7 +243,7 @@ void CSSAnimation::syncStyleOriginatedTimeline()
 
     // If we're not dealing with a named timeline, we should make sure we have no
     // pending attachment operation for this timeline name.
-    if (!m_backingStyleAnimation.timeline().isCustomIdentifier()) {
+    if (!m_backingStyleAnimation.timeline().isScopedName()) {
         CheckedRef styleOriginatedTimelinesController = document->ensureStyleOriginatedTimelinesController();
         styleOriginatedTimelinesController->removePendingOperationsForCSSAnimation(*this);
     }
@@ -241,16 +263,20 @@ void CSSAnimation::setBindingsTimeline(RefPtr<AnimationTimeline>&& timeline)
     StyleOriginatedAnimation::setBindingsTimeline(WTF::move(timeline));
 }
 
-void CSSAnimation::setBindingsRangeStart(TimelineRangeValue&& range)
+ExceptionOr<void> CSSAnimation::setBindingsRangeStart(Document& document, TimelineRangeValue&& range)
 {
-    m_overriddenProperties.add(Property::RangeStart);
-    StyleOriginatedAnimation::setBindingsRangeStart(WTF::move(range));
+    auto result = StyleOriginatedAnimation::setBindingsRangeStart(document, WTF::move(range));
+    if (!result.hasException())
+        m_overriddenProperties.add(Property::RangeStart);
+    return result;
 }
 
-void CSSAnimation::setBindingsRangeEnd(TimelineRangeValue&& range)
+ExceptionOr<void> CSSAnimation::setBindingsRangeEnd(Document& document, TimelineRangeValue&& range)
 {
-    m_overriddenProperties.add(Property::RangeEnd);
-    StyleOriginatedAnimation::setBindingsRangeEnd(WTF::move(range));
+    auto result = StyleOriginatedAnimation::setBindingsRangeEnd(document, WTF::move(range));
+    if (!result.hasException())
+        m_overriddenProperties.add(Property::RangeEnd);
+    return result;
 }
 
 ExceptionOr<void> CSSAnimation::bindingsPlay()
@@ -399,7 +425,7 @@ void CSSAnimation::keyframesRuleDidChange()
     owningElement->keyframesRuleDidChange();
 }
 
-void CSSAnimation::updateKeyframesIfNeeded(const RenderStyle* oldStyle, const RenderStyle& newStyle, const Style::ResolutionContext& resolutionContext)
+void CSSAnimation::updateKeyframesIfNeeded(const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle, const Style::ResolutionContext& resolutionContext)
 {
     if (m_overriddenProperties.contains(Property::Keyframes))
         return;

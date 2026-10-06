@@ -32,6 +32,7 @@
 #import "FELighting.h"
 #import "Filter.h"
 #import "FilterImage.h"
+#import "Logging.h"
 #import "PointLightSource.h"
 #import "SpotLightSource.h"
 #import <CoreImage/CoreImage.h>
@@ -480,7 +481,7 @@ bool FELightingCoreImageApplier::apply(const Filter& filter, std::span<const Ref
         .pointsAt = { },
     };
 
-    if (RefPtr distantLight = dynamicDowncast<DistantLightSource>(m_effect->lightSource())) {
+    if (auto* distantLight = dynamicDowncast<DistantLightSource>(m_effect->lightSource())) {
         lightSourceConstants.azimuthRadians = deg2rad(distantLight->azimuth());
         lightSourceConstants.elevationRadians = deg2rad(distantLight->elevation());
     }

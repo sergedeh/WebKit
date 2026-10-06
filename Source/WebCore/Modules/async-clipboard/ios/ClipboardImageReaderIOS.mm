@@ -30,6 +30,7 @@
 
 #import "Document.h"
 #import "SharedBuffer.h"
+#import "markup.h"
 #import <wtf/cocoa/VectorCocoa.h>
 
 #import <pal/ios/UIKitSoftLink.h>
@@ -40,9 +41,11 @@ void ClipboardImageReader::readBuffer(const String&, const String&, Ref<SharedBu
 {
     if (m_mimeType == "image/png"_s) {
         auto image = adoptNS([PAL::allocUIImageInstance() initWithData:buffer->createNSData().get()]);
-        if (auto nsData = UIImagePNGRepresentation(image.get()))
+        if (RetainPtr nsData = UIImagePNGRepresentation(image.get()))
             m_result = Blob::create(m_document.get(), makeVector(nsData), m_mimeType);
     }
+    if (m_mimeType == "image/svg+xml"_s)
+        readSVG(buffer);
 }
 
 } // namespace WebCore

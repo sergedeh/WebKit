@@ -34,7 +34,7 @@
 
 namespace WebCore {
 
-static inline float ellipseXIntercept(float y, float rx, float ry)
+static inline float NODELETE ellipseXIntercept(float y, float rx, float ry)
 {
     ASSERT(ry > 0);
     return rx * sqrt(1 - (y * y) / (ry * ry));
@@ -86,7 +86,7 @@ LineSegment RectangleLayoutShape::getExcludedInterval(LayoutUnit logicalTop, Lay
     }
 
     if (shouldFlipStartAndEndPoints(writingMode()))
-        return { std::max(0.f, m_boxLogicalWidth - x2), std::max(0.f, m_boxLogicalWidth - x1) };
+        return { std::max(0.f, m_borderBoxLogicalWidth - x2), std::max(0.f, m_borderBoxLogicalWidth - x1) };
     return { x1, x2 };
 }
 

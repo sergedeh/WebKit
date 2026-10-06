@@ -30,6 +30,7 @@
 #include "Logging.h"
 #include "ReferencedSVGResources.h"
 #include "RenderElement.h"
+#include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
 #include "SVGFilterElement.h"
 #include "SVGFilterRenderer.h"
@@ -42,53 +43,58 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CSSFilterRenderer);
 
-RefPtr<CSSFilterRenderer> CSSFilterRenderer::create(RenderElement& renderer, const Style::Filter& filter, const FilterGeometry& geometry, OptionSet<FilterRenderingMode> preferredRenderingModes, bool showDebugOverlay, const GraphicsContext& destinationContext)
+RefPtr<CSSFilterRenderer> CSSFilterRenderer::create(RenderElement& renderer, const Style::Filter& filter, const FilterGeometry& geometry, OptionSet<FilterRenderingMode> preferredRenderingModes, OptionSet<FilterRenderingOption> renderingOptions, const GraphicsContext& destinationContext)
 {
     bool hasFilterThatMovesPixels = filter.hasFilterThatMovesPixels();
     bool hasFilterThatShouldBeRestrictedBySecurityOrigin = filter.hasFilterThatShouldBeRestrictedBySecurityOrigin();
 
-    auto filterRenderer = adoptRef(*new CSSFilterRenderer(geometry, hasFilterThatMovesPixels, hasFilterThatShouldBeRestrictedBySecurityOrigin));
+    Ref filterRenderer = adoptRef(*new CSSFilterRenderer(geometry, renderingOptions, hasFilterThatMovesPixels, hasFilterThatShouldBeRestrictedBySecurityOrigin));
 
-    if (!filterRenderer->buildFilterFunctions(renderer, filter, preferredRenderingModes, destinationContext)) {
+    if (!filterRenderer->buildFilterFunctions(renderer, filter, preferredRenderingModes, renderingOptions, destinationContext)) {
         LOG_WITH_STREAM(Filters, stream << "CSSFilterRenderer::create: failed to build filters " << filter);
         return nullptr;
     }
 
+    if (renderingOptions.contains(FilterRenderingOption::ApplyToSVGRenderer)) {
+        filterRenderer->expandFilterRegionForSVGReferences();
+        filterRenderer->computeEnclosingFilterRegion(renderingOptions);
+    }
+
     filterRenderer->setFilterRenderingModes(preferredRenderingModes);
-    filterRenderer->setIsShowingDebugOverlay(showDebugOverlay);
 
     LOG_WITH_STREAM(Filters, stream << "CSSFilterRenderer::create built filter " << filterRenderer.get() << " for " << filter << " supported rendering mode(s) " << filterRenderer->filterRenderingModes());
 
     return filterRenderer;
 }
 
-Ref<CSSFilterRenderer> CSSFilterRenderer::create(Vector<Ref<FilterFunction>>&& functions, const FilterGeometry& geometry, OptionSet<FilterRenderingMode> preferredRenderingModes, bool showDebugOverlay)
+Ref<CSSFilterRenderer> CSSFilterRenderer::create(Vector<Ref<FilterFunction>>&& functions, const FilterGeometry& geometry, OptionSet<FilterRenderingMode> preferredRenderingModes, OptionSet<FilterRenderingOption> renderingOptions)
 {
-    Ref filter = adoptRef(*new CSSFilterRenderer(WTF::move(functions), geometry));
+    Ref filter = adoptRef(*new CSSFilterRenderer(WTF::move(functions), geometry, renderingOptions));
     // Setting filter rendering modes cannot be moved to the constructor because it ends up
     // calling supportedFilterRenderingModes() which is a virtual function.
     filter->setFilterRenderingModes(preferredRenderingModes);
-    filter->setIsShowingDebugOverlay(showDebugOverlay);
+    if (renderingOptions.contains(FilterRenderingOption::ApplyToSVGRenderer))
+        filter->computeEnclosingFilterRegion(renderingOptions);
     return filter;
 }
 
-CSSFilterRenderer::CSSFilterRenderer(const FilterGeometry& geometry, bool hasFilterThatMovesPixels, bool hasFilterThatShouldBeRestrictedBySecurityOrigin)
-    : Filter(Filter::Type::CSSFilterRenderer, geometry)
+CSSFilterRenderer::CSSFilterRenderer(const FilterGeometry& geometry, OptionSet<FilterRenderingOption> renderingOptions, bool hasFilterThatMovesPixels, bool hasFilterThatShouldBeRestrictedBySecurityOrigin)
+    : Filter(Filter::Type::CSSFilterRenderer, geometry, renderingOptions)
     , m_hasFilterThatMovesPixels(hasFilterThatMovesPixels)
     , m_hasFilterThatShouldBeRestrictedBySecurityOrigin(hasFilterThatShouldBeRestrictedBySecurityOrigin)
 {
 }
 
-CSSFilterRenderer::CSSFilterRenderer(Vector<Ref<FilterFunction>>&& functions, const FilterGeometry& geometry)
-    : Filter(Type::CSSFilterRenderer, geometry)
+CSSFilterRenderer::CSSFilterRenderer(Vector<Ref<FilterFunction>>&& functions, const FilterGeometry& geometry, OptionSet<FilterRenderingOption> renderingOptions)
+    : Filter(Type::CSSFilterRenderer, geometry, renderingOptions)
     , m_functions(WTF::move(functions))
 {
     clampFilterRegionIfNeeded();
 }
 
-static RefPtr<SVGFilterElement> referenceFilterElement(const Style::FilterReference& filterReference, RenderElement& renderer)
+static RefPtr<SVGFilterElement> referenceFilterElement(const Style::FilterReference& filterReference, const RenderElement& renderer)
 {
-    RefPtr filterElement = ReferencedSVGResources::referencedFilterElement(renderer.protectedTreeScopeForSVGReferences(), filterReference);
+    RefPtr filterElement = ReferencedSVGResources::referencedFilterElement(protect(renderer.treeScopeForSVGReferences()), filterReference);
 
     if (!filterElement) {
         LOG_WITH_STREAM(Filters, stream << " buildReferenceFilter: failed to find filter renderer, adding pending resource " << filterReference.url);
@@ -101,7 +107,7 @@ static RefPtr<SVGFilterElement> referenceFilterElement(const Style::FilterRefere
     return filterElement;
 }
 
-static bool isIdentityReferenceFilter(const Style::FilterReference& filterReference, RenderElement& renderer)
+static bool isIdentityReferenceFilter(const Style::FilterReference& filterReference, const RenderElement& renderer)
 {
     RefPtr filterElement = referenceFilterElement(filterReference, renderer);
     if (!filterElement)
@@ -110,7 +116,7 @@ static bool isIdentityReferenceFilter(const Style::FilterReference& filterRefere
     return SVGFilterRenderer::isIdentity(*filterElement);
 }
 
-static IntOutsets calculateReferenceFilterOutsets(const Style::FilterReference& filterReference, RenderElement& renderer, const FloatRect& targetBoundingBox)
+static IntOutsets calculateReferenceFilterOutsets(const Style::FilterReference& filterReference, const RenderElement& renderer, const FloatRect& targetBoundingBox)
 {
     RefPtr filterElement = referenceFilterElement(filterReference, renderer);
     if (!filterElement)
@@ -119,7 +125,7 @@ static IntOutsets calculateReferenceFilterOutsets(const Style::FilterReference& 
     return SVGFilterRenderer::calculateOutsets(*filterElement, targetBoundingBox);
 }
 
-static RefPtr<SVGFilterRenderer> createReferenceFilter(const CSSFilterRenderer& filter, const Style::FilterReference& filterReference, RenderElement& renderer, OptionSet<FilterRenderingMode> preferredRenderingModes, const GraphicsContext& destinationContext)
+static RefPtr<SVGFilterRenderer> createReferenceFilter(const CSSFilterRenderer& filter, const Style::FilterReference& filterReference, RenderElement& renderer, OptionSet<FilterRenderingMode> preferredRenderingModes, OptionSet<FilterRenderingOption> renderingOptions, const GraphicsContext& destinationContext)
 {
     RefPtr filterElement = referenceFilterElement(filterReference, renderer);
     if (!filterElement)
@@ -132,17 +138,17 @@ static RefPtr<SVGFilterRenderer> createReferenceFilter(const CSSFilterRenderer& 
     if (geometry.filterRegion.isEmpty())
         return nullptr;
 
-    auto filterRenderer = SVGFilterRenderer::create(contextElement.get(), *filterElement, geometry, preferredRenderingModes, destinationContext);
-    if (filterRenderer)
-        filterRenderer->setIsShowingDebugOverlay(filter.isShowingDebugOverlay());
-    return filterRenderer;
+    if (renderingOptions.contains(FilterRenderingOption::ApplyToSVGRenderer))
+        ImageBuffer::sizeNeedsClamping(geometry.filterRegion.size(), geometry.scale);
+
+    return SVGFilterRenderer::create(contextElement.get(), *filterElement, geometry, preferredRenderingModes, renderingOptions, destinationContext);
 }
 
-RefPtr<FilterFunction> CSSFilterRenderer::buildFilterFunction(RenderElement& renderer, const Style::FilterValue& filterValue, OptionSet<FilterRenderingMode> preferredRenderingModes, const GraphicsContext& destinationContext)
+RefPtr<FilterFunction> CSSFilterRenderer::buildFilterFunction(RenderElement& renderer, const Style::FilterValue& filterValue, OptionSet<FilterRenderingMode> preferredRenderingModes, OptionSet<FilterRenderingOption> renderingOptions, const GraphicsContext& destinationContext)
 {
     return WTF::switchOn(filterValue,
         [&](const Style::FilterReference& filterReference) -> RefPtr<FilterFunction> {
-            return createReferenceFilter(*this, filterReference, renderer, preferredRenderingModes, destinationContext);
+            return createReferenceFilter(*this, filterReference, renderer, preferredRenderingModes, renderingOptions, destinationContext);
         },
         [&](const Style::BlurFunction& blurFunction) -> RefPtr<FilterFunction> {
             return Style::evaluate<Ref<FilterEffect>>(blurFunction, renderer.style());
@@ -156,10 +162,10 @@ RefPtr<FilterFunction> CSSFilterRenderer::buildFilterFunction(RenderElement& ren
     );
 }
 
-bool CSSFilterRenderer::buildFilterFunctions(RenderElement& renderer, const Style::Filter& filter, OptionSet<FilterRenderingMode> preferredRenderingModes, const GraphicsContext& destinationContext)
+bool CSSFilterRenderer::buildFilterFunctions(RenderElement& renderer, const Style::Filter& filter, OptionSet<FilterRenderingMode> preferredRenderingModes, OptionSet<FilterRenderingOption> renderingOptions, const GraphicsContext& destinationContext)
 {
     for (auto& value : filter) {
-        auto function = buildFilterFunction(renderer, value, preferredRenderingModes, destinationContext);
+        auto function = buildFilterFunction(renderer, value, preferredRenderingModes, renderingOptions, destinationContext);
         if (!function)
             continue;
 
@@ -205,7 +211,47 @@ OptionSet<FilterRenderingMode> CSSFilterRenderer::supportedFilterRenderingModes(
     return modes;
 }
 
-void CSSFilterRenderer::computeEnclosingFilterRegion()
+void CSSFilterRenderer::expandFilterRegionForSVGReferences()
+{
+    // Each function contributes the area it paints into, and the filter region is their union.
+    // A referenced <filter> brings its own region, which alone decides where it paints. The CSS
+    // shorthand functions instead operate on the source graphic, so they contribute the region
+    // we already have, which is based on the object bounding box.
+    //
+    // Starting from that bounding box unconditionally would be wrong: an element with a very
+    // large bounding box and a small userSpaceOnUse filter region would end up with a region far
+    // bigger than the image buffer limits, and the resulting scale clamping would make the filter
+    // output vanish.
+    auto expandedRegion = FloatRect();
+    auto minScale = filterScale();
+
+    for (auto& function : m_functions) {
+        RefPtr svgFilter = dynamicDowncast<SVGFilterRenderer>(function);
+        if (!svgFilter) {
+            // SourceGraphic is the input of the chain, not a function that paints on its own.
+            if (function->filterType() != FilterEffect::Type::SourceGraphic)
+                expandedRegion.unite(filterRegion());
+            continue;
+        }
+
+        expandedRegion.unite(svgFilter->filterRegion());
+
+        auto candidateScale = svgFilter->filterScale();
+        minScale = { std::min(minScale.width(), candidateScale.width()), std::min(minScale.height(), candidateScale.height()) };
+    }
+
+    Filter::setFilterRegion(expandedRegion);
+    setFilterScale(minScale);
+
+    for (auto& function : m_functions) {
+        if (RefPtr svgFilter = dynamicDowncast<SVGFilterRenderer>(function))
+            svgFilter->setFilterScale(minScale);
+    }
+
+    clampFilterRegionIfNeeded();
+}
+
+void CSSFilterRenderer::computeEnclosingFilterRegion(OptionSet<FilterRenderingOption> renderingOptions)
 {
 #if USE(CORE_IMAGE)
     auto enclosingFilterRegion = filterRegion();
@@ -214,6 +260,16 @@ void CSSFilterRenderer::computeEnclosingFilterRegion()
             enclosingFilterRegion.unite(filter->filterRegion());
     }
     setEnclosingFilterRegion(enclosingFilterRegion);
+
+    if (renderingOptions.contains(FilterRenderingOption::ApplyToSVGRenderer)) {
+        // Propagate to inner filters so CoreImage coordinate spaces stay consistent across the chain.
+        for (auto& function : m_functions) {
+            if (RefPtr filter = dynamicDowncast<Filter>(function))
+                filter->setEnclosingFilterRegion(enclosingFilterRegion);
+        }
+    }
+#else
+    UNUSED_PARAM(renderingOptions);
 #endif
 }
 
@@ -264,7 +320,7 @@ void CSSFilterRenderer::setFilterRegion(const FloatRect& filterRegion)
     clampFilterRegionIfNeeded();
 }
 
-bool CSSFilterRenderer::isIdentity(RenderElement& renderer, const Style::Filter& filter)
+bool CSSFilterRenderer::isIdentity(const RenderElement& renderer, const Style::Filter& filter)
 {
     if (filter.hasFilterThatShouldBeRestrictedBySecurityOrigin())
         return false;
@@ -285,7 +341,7 @@ bool CSSFilterRenderer::isIdentity(RenderElement& renderer, const Style::Filter&
     return true;
 }
 
-IntOutsets CSSFilterRenderer::calculateOutsets(RenderElement& renderer, const Style::Filter& filter, const FloatRect& targetBoundingBox)
+IntOutsets CSSFilterRenderer::calculateOutsets(const RenderElement& renderer, const Style::Filter& filter, const FloatRect& targetBoundingBox)
 {
     IntOutsets outsets;
 

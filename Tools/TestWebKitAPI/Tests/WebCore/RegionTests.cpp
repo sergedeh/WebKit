@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include "WebCoreTestUtilities.h"
+#include "Helpers/WebCoreTestUtilities.h"
 #include <WebCore/Region.h>
 #include <random>
 #include <wtf/text/StringBuilder.h>
@@ -239,8 +239,8 @@ TEST(RegionTests, FuzzOperationsIsValidShape)
                 ASSERT_TRUE(Shape::isValidShape(segments.span(), spans.span())) << commands.toString() << r.dataForTesting();
         }
         if (printPassed) {
-            WTFLogAlways("%s", commands.toString().utf8().data());
-            WTFLogAlways("Shape: %s", convertToString(r.dataForTesting()).utf8().data());
+            SAFE_WTFLOGALWAYS("%s", commands.toString().utf8());
+            SAFE_WTFLOGALWAYS("Shape: %s", convertToString(r.dataForTesting()).utf8());
         }
     }
 }
@@ -265,6 +265,15 @@ TEST(RegionTests, IsValidShape2)
     r.subtract(IntRect { 1745551117, 534538086, 297055811, 1154752629 });
     auto [segments, spans] = r.dataForTesting().dataForTesting();
     ASSERT_TRUE(Shape::isValidShape(segments.span(), spans.span())) << r.dataForTesting();
+}
+
+TEST(RegionTests, TotalAreaDoesNotOverflowSignedInt)
+{
+    // 50000 * 50000 == 2,500,000,000, which exceeds INT_MAX (2,147,483,647).
+    // Region::totalArea computes width() * height() in int before promoting
+    // to uint64_t, so the multiplication wraps.
+    Region region(IntRect { 0, 0, 50000, 50000 });
+    EXPECT_EQ(region.totalArea(), 2'500'000'000ULL);
 }
 
 }

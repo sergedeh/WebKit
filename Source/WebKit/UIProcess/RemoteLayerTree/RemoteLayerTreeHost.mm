@@ -39,7 +39,7 @@
 #import "WebProcessProxy.h"
 #import "WindowKind.h"
 #import <QuartzCore/QuartzCore.h>
-#import <WebCore/DestinationColorSpace.h>
+#import <WebCore/ColorSpace.h>
 #import <WebCore/GraphicsContextCG.h>
 #import <WebCore/IOSurface.h>
 #import <WebCore/PlatformLayer.h>
@@ -56,7 +56,7 @@
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIView.h>
 #if ENABLE(MODEL_PROCESS)
-#import "ModelPresentationManagerProxy.h"
+#import "PortalPresentationManagerProxy.h"
 #endif
 #endif
 
@@ -88,11 +88,6 @@ RemoteLayerTreeDrawingAreaProxy& RemoteLayerTreeHost::drawingArea() const
     return *m_drawingArea;
 }
 
-Ref<RemoteLayerTreeDrawingAreaProxy> RemoteLayerTreeHost::protectedDrawingArea() const
-{
-    return drawingArea();
-}
-
 bool RemoteLayerTreeHost::replayDynamicContentScalingDisplayListsIntoBackingStore() const
 {
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
@@ -105,7 +100,7 @@ bool RemoteLayerTreeHost::replayDynamicContentScalingDisplayListsIntoBackingStor
 
 bool RemoteLayerTreeHost::threadedAnimationsEnabled() const
 {
-    if (RefPtr page = protectedDrawingArea()->page()) {
+    if (RefPtr page = drawingArea().page()) {
         Ref preferences = page->preferences();
         return preferences->threadedScrollDrivenAnimationsEnabled() || preferences->threadedTimeBasedAnimationsEnabled();
     }
@@ -114,7 +109,7 @@ bool RemoteLayerTreeHost::threadedAnimationsEnabled() const
 
 bool RemoteLayerTreeHost::cssUnprefixedBackdropFilterEnabled() const
 {
-    RefPtr page = protectedDrawingArea()->page();
+    RefPtr page = drawingArea().page();
     return page && protect(page->preferences())->cssUnprefixedBackdropFilterEnabled();
 }
 
@@ -139,7 +134,7 @@ bool RemoteLayerTreeHost::updateBannerLayers(const std::optional<MainFrameData>&
         return true;
     };
 
-    RefPtr page = protectedDrawingArea()->page();
+    RefPtr page = drawingArea().page();
     if (!page)
         return false;
 
@@ -162,7 +157,7 @@ bool RemoteLayerTreeHost::updateLayerTree(const IPC::Connection& connection, con
     auto processIdentifier = sender->coreProcessIdentifier();
 
     for (const auto& createdLayer : transaction.createdLayers())
-        createLayer(createdLayer);
+        createLayer(connection, createdLayer);
 
     bool rootLayerChanged = false;
     RefPtr rootNode = nodeForID(transaction.rootLayerID());
@@ -170,7 +165,7 @@ bool RemoteLayerTreeHost::updateLayerTree(const IPC::Connection& connection, con
     if (!rootNode)
         REMOTE_LAYER_TREE_HOST_RELEASE_LOG("%p RemoteLayerTreeHost::updateLayerTree - failed to find root layer with ID %llu", this, transaction.rootLayerID() ? transaction.rootLayerID()->object().toUInt64() : 0);
 
-    if (m_rootNode.get() != rootNode.get() && mainFrameData) {
+    if (m_rootNode.get() != rootNode && mainFrameData) {
         m_rootNode = rootNode;
         rootLayerChanged = true;
     }
@@ -194,7 +189,14 @@ bool RemoteLayerTreeHost::updateLayerTree(const IPC::Connection& connection, con
         RemoteLayerTreePropertyApplier::applyHierarchyUpdates(*node, properties.get(), m_nodes);
     }
 
-    if (auto contextHostedID = transaction.remoteContextHostedIdentifier()) {
+    if (auto contextHostedID = transaction.remoteContextHostedIdentifier(); contextHostedID && rootNode) {
+        // The hosting context identifier is reused across a cross-process navigation, so the
+        // outgoing process's root layer is still parented here. Detach it before hosting the
+        // incoming one, or it stays visible until that process exits.
+        if (auto previousLayerID = m_hostedLayers.getOptional(*contextHostedID); previousLayerID && *previousLayerID != rootNode->layerID()) {
+            if (RefPtr previousNode = nodeForID(*previousLayerID))
+                previousNode->removeFromHostingNode();
+        }
         m_hostedLayers.set(*contextHostedID, rootNode->layerID());
         m_hostedLayersInProcess.ensure(processIdentifier, [] {
             return HashSet<WebCore::PlatformLayerIdentifier>();
@@ -238,7 +240,7 @@ bool RemoteLayerTreeHost::updateLayerTree(const IPC::Connection& connection, con
     }
     
     for (const auto& layerAndClone : clonesToUpdate)
-        protectedLayerForID(layerAndClone.layerID).get().contents = protectedLayerForID(layerAndClone.cloneLayerID).get().contents;
+        [layerForID(layerAndClone.layerID) setContents:[layerForID(layerAndClone.cloneLayerID) contents]];
 
     for (auto& destroyedLayer : transaction.destroyedLayers())
         layerWillBeRemoved(processIdentifier, destroyedLayer);
@@ -249,7 +251,7 @@ bool RemoteLayerTreeHost::updateLayerTree(const IPC::Connection& connection, con
         RefPtr node = nodeForID(newlyUnreachableLayerID);
         ASSERT(node);
         if (node) {
-            node->protectedLayer().get().contents = nullptr;
+            protect(node->layer()).get().contents = nullptr;
             node->setAsyncContentsIdentifier(std::nullopt);
         }
     }
@@ -291,16 +293,26 @@ void RemoteLayerTreeHost::layerWillBeRemoved(WebCore::ProcessIdentifier processI
 #if ENABLE(THREADED_ANIMATIONS)
         animationsWereRemovedFromNode(*node);
 #endif
-        if (auto hostingIdentifier = node->remoteContextHostingIdentifier())
-            m_hostingLayers.remove(*hostingIdentifier);
+        // A hosting context identifier outlives the layers on both of its sides, so its entry may
+        // already have been reassigned to a layer that is still in use. Only clear an entry that
+        // still refers to the layer going away.
+        if (auto hostingIdentifier = node->remoteContextHostingIdentifier()) {
+            if (m_hostingLayers.getOptional(*hostingIdentifier) == layerID)
+                m_hostingLayers.remove(*hostingIdentifier);
+        }
         if (auto hostedIdentifier = node->remoteContextHostedIdentifier()) {
-            if (auto layerID = m_hostedLayers.takeOptional(*hostedIdentifier)) {
-                auto it = m_hostedLayersInProcess.find(processIdentifier);
-                if (it != m_hostedLayersInProcess.end()) {
-                    it->value.remove(*layerID);
-                    if (it->value.isEmpty())
-                        m_hostedLayersInProcess.remove(it);
-                }
+            // The hosting node retains this layer, so dropping the node does not stop it being
+            // drawn.
+            node->removeFromHostingNode();
+
+            if (m_hostedLayers.getOptional(*hostedIdentifier) == layerID)
+                m_hostedLayers.remove(*hostedIdentifier);
+
+            auto it = m_hostedLayersInProcess.find(processIdentifier);
+            if (it != m_hostedLayersInProcess.end()) {
+                it->value.remove(layerID);
+                if (it->value.isEmpty())
+                    m_hostedLayersInProcess.remove(it);
             }
         }
     }
@@ -308,7 +320,7 @@ void RemoteLayerTreeHost::layerWillBeRemoved(WebCore::ProcessIdentifier processI
 #if HAVE(AVKIT)
     auto videoLayerIter = m_videoLayers.find(layerID);
     if (videoLayerIter != m_videoLayers.end()) {
-        RefPtr page = protectedDrawingArea()->page();
+        RefPtr page = drawingArea().page();
         if (RefPtr videoManager = page ? page->videoPresentationManager() : nullptr)
             videoManager->willRemoveLayerForID(videoLayerIter->value);
         m_videoLayers.remove(videoLayerIter);
@@ -317,9 +329,9 @@ void RemoteLayerTreeHost::layerWillBeRemoved(WebCore::ProcessIdentifier processI
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
     if (m_modelLayers.contains(layerID)) {
-        RefPtr page = protectedDrawingArea()->page();
-        if (auto modelPresentationManager = page ? page->modelPresentationManagerProxy() : nullptr)
-            modelPresentationManager->invalidateModel(layerID);
+        RefPtr page = drawingArea().page();
+        if (auto portalPresentationManager = page ? page->portalPresentationManagerProxy() : nullptr)
+            portalPresentationManager->invalidateModel(layerID);
         m_modelLayers.remove(layerID);
     }
 #endif
@@ -343,7 +355,7 @@ void RemoteLayerTreeHost::animationDidStart(std::optional<WebCore::PlatformLayer
     }
 
     if (!animationKey.isEmpty())
-        protectedDrawingArea()->acceleratedAnimationDidStart(*layerID, animationKey, startTime);
+        protect(drawingArea())->acceleratedAnimationDidStart(*layerID, animationKey, startTime);
 }
 
 void RemoteLayerTreeHost::animationDidEnd(std::optional<WebCore::PlatformLayerIdentifier> layerID, CAAnimation *animation)
@@ -364,7 +376,7 @@ void RemoteLayerTreeHost::animationDidEnd(std::optional<WebCore::PlatformLayerId
     }
 
     if (!animationKey.isEmpty())
-        protectedDrawingArea()->acceleratedAnimationDidEnd(*layerID, animationKey);
+        protect(drawingArea())->acceleratedAnimationDidEnd(*layerID, animationKey);
 }
 
 void RemoteLayerTreeHost::detachFromDrawingArea()
@@ -383,12 +395,12 @@ void RemoteLayerTreeHost::clearLayers()
     m_rootNode = nullptr;
 }
 
-CALayer *RemoteLayerTreeHost::layerWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
+RetainPtr<CALayer> RemoteLayerTreeHost::layerWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
 {
     return layerForID(layerID);
 }
 
-CALayer *RemoteLayerTreeHost::layerForID(std::optional<WebCore::PlatformLayerIdentifier> layerID) const
+RetainPtr<CALayer> RemoteLayerTreeHost::layerForID(std::optional<WebCore::PlatformLayerIdentifier> layerID) const
 {
     RefPtr node = nodeForID(layerID);
     if (!node)
@@ -396,26 +408,17 @@ CALayer *RemoteLayerTreeHost::layerForID(std::optional<WebCore::PlatformLayerIde
     return node->layer();
 }
 
-RetainPtr<CALayer> RemoteLayerTreeHost::protectedLayerForID(std::optional<WebCore::PlatformLayerIdentifier> layerID) const
+RetainPtr<CALayer> RemoteLayerTreeHost::rootLayer() const
 {
-    return layerForID(layerID);
+    RefPtr rootNode = m_rootNode.get();
+    return rootNode ? rootNode->layer() : nil;
 }
 
-CALayer *RemoteLayerTreeHost::rootLayer() const
-{
-    return m_rootNode ? m_rootNode->layer() : nil;
-}
-
-RetainPtr<CALayer> RemoteLayerTreeHost::protectedRootLayer() const
-{
-    return rootLayer();
-}
-
-void RemoteLayerTreeHost::createLayer(const RemoteLayerTreeTransaction::LayerCreationProperties& properties)
+void RemoteLayerTreeHost::createLayer(const IPC::Connection& connection, const RemoteLayerTreeTransaction::LayerCreationProperties& properties)
 {
     ASSERT(!m_nodes.contains(*properties.layerID));
 
-    auto node = makeNode(properties);
+    auto node = makeNode(connection, properties);
     RetainPtr layer = node->layer();
     if ([layer respondsToSelector:@selector(setUsesWebKitBehavior:)]) {
         [layer setUsesWebKitBehavior:YES];
@@ -435,7 +438,7 @@ void RemoteLayerTreeHost::createLayer(const RemoteLayerTreeTransaction::LayerCre
 }
 
 #if !PLATFORM(IOS_FAMILY)
-RefPtr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteLayerTreeTransaction::LayerCreationProperties& properties)
+RefPtr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const IPC::Connection& connection, const RemoteLayerTreeTransaction::LayerCreationProperties& properties)
 {
     auto makeWithLayer = [&] (RetainPtr<CALayer>&& layer) {
         return RemoteLayerTreeNode::create(*properties.layerID, properties.hostIdentifier(), WTF::move(layer));
@@ -461,7 +464,7 @@ RefPtr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteLayerTreeT
         auto layer = RemoteLayerTreeNode::createWithPlainLayer(*properties.layerID);
         // So that the scrolling thread's performance logging code can find all the tiles, mark this as being a tile.
         if (properties.type == PlatformCALayer::LayerType::LayerTypeTiledBackingTileLayer)
-            [layer->protectedLayer() setValue:@YES forKey:@"isTile"];
+            [protect(layer->layer()) setValue:@YES forKey:@"isTile"];
         return layer;
     }
 
@@ -492,10 +495,11 @@ RefPtr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteLayerTreeT
 
 #if HAVE(AVKIT)
         if (properties.videoElementData) {
-            RefPtr page = protectedDrawingArea()->page();
+            RefPtr page = drawingArea().page();
             if (RefPtr videoManager = page ? page->videoPresentationManager() : nullptr) {
-                m_videoLayers.add(*properties.layerID, properties.videoElementData->playerIdentifier);
-                return makeWithLayer(videoManager->createLayerWithID(properties.videoElementData->playerIdentifier, { properties.hostingContextID() }, properties.videoElementData->initialSize, properties.videoElementData->naturalSize, properties.hostingDeviceScaleFactor()));
+                auto playerIdentifier = PlaybackSessionContextIdentifier { properties.videoElementData->playerIdentifier, WebProcessProxy::fromConnection(connection)->coreProcessIdentifier() };
+                m_videoLayers.add(*properties.layerID, playerIdentifier);
+                return makeWithLayer(videoManager->createLayerWithID(playerIdentifier, { properties.hostingContextID() }, properties.videoElementData->initialSize, properties.videoElementData->naturalSize, properties.hostingDeviceScaleFactor()));
             }
         }
 #endif
@@ -519,17 +523,17 @@ void RemoteLayerTreeHost::detachRootLayer()
 #if ENABLE(THREADED_ANIMATIONS)
 void RemoteLayerTreeHost::animationsWereAddedToNode(RemoteLayerTreeNode& node)
 {
-    protectedDrawingArea()->animationsWereAddedToNode(node);
+    protect(drawingArea())->animationsWereAddedToNode(node);
 }
 
 void RemoteLayerTreeHost::animationsWereRemovedFromNode(RemoteLayerTreeNode& node)
 {
-    protectedDrawingArea()->animationsWereRemovedFromNode(node);
+    protect(drawingArea())->animationsWereRemovedFromNode(node);
 }
 
 RefPtr<const RemoteAnimationTimeline> RemoteLayerTreeHost::timeline(const TimelineID& timelineID) const
 {
-    return protectedDrawingArea()->timeline(timelineID);
+    return protect(drawingArea())->timeline(timelineID);
 }
 
 RefPtr<const RemoteAnimationStack> RemoteLayerTreeHost::animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
@@ -542,11 +546,15 @@ RefPtr<const RemoteAnimationStack> RemoteLayerTreeHost::animationStackForNodeWit
 
 void RemoteLayerTreeHost::remotePageProcessDidTerminate(WebCore::ProcessIdentifier processIdentifier)
 {
-    for (auto layerID : m_hostedLayersInProcess.take(processIdentifier)) {
-        if (RefPtr node = nodeForID(layerID))
-            node->removeFromHostingNode();
+    for (auto layerID : m_hostedLayersInProcess.take(processIdentifier))
         layerWillBeRemoved(processIdentifier, layerID);
+
+#if ENABLE(THREADED_ANIMATIONS)
+    for (auto& [layerID, node] : m_nodes) {
+        if (layerID.processIdentifier() == processIdentifier)
+            protect(node)->setAcceleratedEffectsAndBaseValues({ }, { }, *this);
     }
+#endif
 }
 
 } // namespace WebKit

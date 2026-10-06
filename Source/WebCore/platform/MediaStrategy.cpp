@@ -51,6 +51,16 @@ std::unique_ptr<NowPlayingManager> MediaStrategy::createNowPlayingManager() cons
     return makeUnique<NowPlayingManager>();
 }
 
+void MediaStrategy::isActiveNowPlayingSessionInGPUProcessForTesting(MediaSessionIdentifier, CompletionHandler<void(bool)>&& completion)
+{
+    completion(false);
+}
+
+void MediaStrategy::isRemoteCommandTargetSessionInGPUProcessForTesting(MediaSessionIdentifier, CompletionHandler<void(bool)>&& completion)
+{
+    completion(false);
+}
+
 void MediaStrategy::resetMediaEngines()
 {
 #if ENABLE(VIDEO)
@@ -97,16 +107,6 @@ RefPtr<AudioVideoRenderer> MediaStrategy::createAudioVideoRenderer(WTF::LoggerHe
     UNUSED_PARAM(loggerHelper);
     return nullptr;
 #endif
-}
-
-bool MediaStrategy::hasRemoteRendererFor(MediaPlayerMediaEngineIdentifier type) const
-{
-    return m_remoteRenderersEnabled.get(static_cast<uint16_t>(type));
-}
-
-void MediaStrategy::enableRemoteRenderer(MediaPlayerMediaEngineIdentifier type, bool enabled)
-{
-    m_remoteRenderersEnabled.set(static_cast<uint16_t>(type), enabled);
 }
 #endif
 

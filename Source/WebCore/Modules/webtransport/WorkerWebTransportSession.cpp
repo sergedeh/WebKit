@@ -26,8 +26,10 @@
 #include "config.h"
 #include "WorkerWebTransportSession.h"
 
+#include "Exception.h"
 #include "ScriptExecutionContext.h"
 #include "WebTransport.h"
+#include "WebTransportConnectionInfo.h"
 #include "WebTransportConnectionStats.h"
 #include "WebTransportReceiveStreamStats.h"
 #include "WebTransportSendStreamStats.h"
@@ -53,7 +55,7 @@ WorkerWebTransportSession::WorkerWebTransportSession(ScriptExecutionContextIdent
 void WorkerWebTransportSession::attachSession(Ref<WebTransportSession>&& session)
 {
     ASSERT(!m_session);
-    m_session = WTF::move(session);
+    lazyInitialize(m_session, WTF::move(session));
 }
 
 void WorkerWebTransportSession::receiveDatagram(std::span<const uint8_t> span, bool withFin, std::optional<Exception>&& exception)
@@ -144,6 +146,14 @@ void WorkerWebTransportSession::streamSendError(WebTransportStreamIdentifier ide
     });
 }
 
+Ref<WebTransportSessionInitializationPromise> WorkerWebTransportSession::initialize(ScriptExecutionContext& context, const URL& url, const WebTransportOptions& options, const Vector<KeyValuePair<String, String>>& additionalHeaders, const ClientOrigin& origin)
+{
+    ASSERT(!RunLoop::isMain());
+    if (RefPtr session = m_session)
+        return session->initialize(context, url, options, additionalHeaders, origin);
+    return WebTransportSessionInitializationPromise::createAndReject();
+}
+
 Ref<WebTransportSendPromise> WorkerWebTransportSession::sendDatagram(std::optional<WebTransportSendGroupIdentifier> identifier, std::span<const uint8_t> datagram)
 {
     ASSERT(!RunLoop::isMain());
@@ -215,7 +225,16 @@ Ref<WebTransportSendStreamStatsPromise> WorkerWebTransportSession::getSendGroupS
     return WebTransportSendStreamStatsPromise::createAndReject();
 }
 
-void WorkerWebTransportSession::terminate(WebTransportSessionErrorCode code, CString&& reason)
+Ref<WebTransportExportKeyingMaterialPromise> WorkerWebTransportSession::exportKeyingMaterial(std::span<const uint8_t> label, std::span<const uint8_t> context, uint32_t outputLength)
+{
+    ASSERT(!RunLoop::isMain());
+    if (RefPtr session = m_session)
+        return session->exportKeyingMaterial(label, context, outputLength);
+    ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
+    return WebTransportExportKeyingMaterialPromise::createAndReject();
+}
+
+void WorkerWebTransportSession::terminate(WebTransportSessionErrorCode code, UTF8CString&& reason)
 {
     ASSERT(!RunLoop::isMain());
     if (RefPtr session = m_session)
@@ -269,20 +288,20 @@ void WorkerWebTransportSession::datagramOutgoingMaxAgeUpdated(std::optional<doub
         ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
 }
 
-void WorkerWebTransportSession::datagramIncomingHighWaterMarkUpdated(double watermark)
+void WorkerWebTransportSession::incomingMaxBufferedDatagramsUpdated(uint32_t value)
 {
     ASSERT(!RunLoop::isMain());
     if (RefPtr session = m_session)
-        session->datagramIncomingHighWaterMarkUpdated(watermark);
+        session->incomingMaxBufferedDatagramsUpdated(value);
     else
         ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
 }
 
-void WorkerWebTransportSession::datagramOutgoingHighWaterMarkUpdated(double watermark)
+void WorkerWebTransportSession::outgoingMaxBufferedDatagramsUpdated(uint32_t value)
 {
     ASSERT(!RunLoop::isMain());
     if (RefPtr session = m_session)
-        session->datagramOutgoingHighWaterMarkUpdated(watermark);
+        session->outgoingMaxBufferedDatagramsUpdated(value);
     else
         ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
 }

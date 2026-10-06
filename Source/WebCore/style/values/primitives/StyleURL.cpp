@@ -26,6 +26,7 @@
 #include "StyleURL.h"
 
 #include "CSSURLValue.h"
+#include "DeprecatedCSSOMValue.h"
 #include "Document.h"
 #include "StyleBuilderChecking.h"
 #include "StyleBuilderState.h"
@@ -52,11 +53,22 @@ namespace Style {
 //      CSS:    [.specified = "foo/bar.png", .resolved = null-url]
 //      Style:  [.resolved = "foo/bar.png"]
 
+AtomString URL::fragment() const
+{
+    if (resolved.hasFragmentIdentifier())
+        return resolved.fragmentIdentifier().toAtomString();
+
+    // A bare "#id" same-document reference is stored unresolved (an invalid URL), so WTF::URL can't
+    // report its fragment; read it directly from the string.
+    auto string = resolved.string();
+    return string.startsWith('#') ? StringView(string).substring(1).toAtomString() : nullAtom();
+}
+
 auto toStyleWithScriptExecutionContext(const CSS::URL& url, const ScriptExecutionContext& context) -> URL
 {
     if (url.resolved.isNull()) {
         return {
-            .resolved = context.completeURL(url.specified),
+            .resolved = context.encodingParseURL(url.specified),
             .modifiers = url.modifiers,
         };
     }
@@ -67,7 +79,7 @@ auto toStyleWithScriptExecutionContext(const CSS::URL& url, const ScriptExecutio
     };
 }
 
-auto ToCSS<URL>::operator()(const URL& url, const RenderStyle&) -> CSS::URL
+auto ToCSS<URL>::operator()(const URL& url, const Style::ComputedStyle&) -> CSS::URL
 {
     return {
         .specified = url.resolved.string(),
@@ -78,12 +90,17 @@ auto ToCSS<URL>::operator()(const URL& url, const RenderStyle&) -> CSS::URL
 
 auto ToStyle<CSS::URL>::operator()(const CSS::URL& url, const BuilderState& state) -> URL
 {
-    return toStyleWithScriptExecutionContext(url, state.protectedDocument());
+    return toStyleWithScriptExecutionContext(url, protect(state.document()));
 }
 
-Ref<CSSValue> CSSValueCreation<URL>::operator()(CSSValuePool&, const RenderStyle& style, const URL& value)
+Ref<CSSValue> CSSValueCreation<URL>::operator()(CSSValuePool& pool, const Style::ComputedStyle& style, const URL& value)
 {
-    return CSSURLValue::create(toCSS(value, style));
+    return CSS::createCSSValue(pool, toCSS(value, style));
+}
+
+auto CSSValueConversion<URL>::operator()(BuilderState& state, const CSSURLValue& value) -> URL
+{
+    return toStyle(value.url(), state);
 }
 
 auto CSSValueConversion<URL>::operator()(BuilderState& state, const CSSValue& value) -> URL
@@ -93,9 +110,14 @@ auto CSSValueConversion<URL>::operator()(BuilderState& state, const CSSValue& va
     return { .resolved = WTF::URL { emptyString() }, .modifiers = { } };
 }
 
+Ref<DeprecatedCSSOMValue> DeprecatedCSSOMValueCreation<URL>::operator()(CSSValuePool& pool, const Style::ComputedStyle& style, CSSStyleDeclaration& owner, const URL& value)
+{
+    return CSS::createDeprecatedCSSOMValue(pool, owner, toCSS(value, style));
+}
+
 // MARK: - Serialization
 
-void Serialize<URL>::operator()(StringBuilder& builder, const CSS::SerializationContext& context, const RenderStyle& style, const URL& value)
+void Serialize<URL>::operator()(StringBuilder& builder, const CSS::SerializationContext& context, const Style::ComputedStyle& style, const URL& value)
 {
     CSS::serializationForCSS(builder, context, toCSS(value, style));
 }
@@ -124,6 +146,15 @@ TextStream& operator<<(TextStream& ts, const URL& value)
             ts << alternative;
         });
         ts << ")"_s;
+    }
+    for (auto& parameter : value.modifiers.linkParameters) {
+        ts << " param("_s;
+        parameter->spec.switchOn(
+            [&](CSS::Keyword::Color) { ts << "color"_s; },
+            [&](CSS::Keyword::AccentColor) { ts << "accent-color"_s; },
+            [&](const CSS::ParamSpec::Custom& custom) { ts << custom.name.value; }
+        );
+        ts << ", "_s << parameter->value << ")"_s;
     }
 
     ts << ")";

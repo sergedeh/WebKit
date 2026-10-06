@@ -42,13 +42,13 @@ void testLotsOfHeapsAndThreads(unsigned numHeaps, unsigned numThreads, unsigned 
     pas_heap_ref* heaps = new pas_heap_ref[numHeaps];
 
     for (unsigned i = numHeaps; i--;)
-        heaps[i] = BMALLOC_HEAP_REF_INITIALIZER(new bmalloc_type(BMALLOC_TYPE_INITIALIZER(16, 16, "test")), pas_bmalloc_heap_ref_kind_non_compact);
+        heaps[i] = BMALLOC_HEAP_REF_INITIALIZER(new bmalloc_type(BMALLOC_TYPE_INITIALIZER(16, 16, "test")));
 
     for (unsigned i = numThreads; i--;) {
         threads[i] = thread([&] () {
             for (unsigned j = count; j--;) {
                 for (unsigned k = numHeaps; k--;) {
-                    void* ptr = bmalloc_iso_allocate(heaps + k, pas_non_compact_allocation_mode);
+                    void* ptr = bmalloc_iso_allocate(heaps + k);
                     CHECK_EQUAL(pas_get_heap(ptr, BMALLOC_HEAP_CONFIG),
                                 bmalloc_heap_ref_get_heap(heaps + k));
                     bmalloc_deallocate(ptr);
@@ -68,9 +68,9 @@ void testLotsOfHeapsAndThreads(unsigned numHeaps, unsigned numThreads, unsigned 
 void addLotsOfHeapsAndThreadsTests()
 {
 #if PAS_ENABLE_BMALLOC
+    (void)testLotsOfHeapsAndThreads;
     ForceTLAs forceTLAs;
-    ForcePartials forcePartials;
-    
+
     ADD_TEST(testLotsOfHeapsAndThreads(10000, 100, 10));
     ADD_TEST(testLotsOfHeapsAndThreads(25000, 100, 10));
     ADD_TEST(testLotsOfHeapsAndThreads(30000, 100, 10)); // This is about as high as we can reliably go right now!

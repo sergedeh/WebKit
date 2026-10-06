@@ -35,6 +35,7 @@
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
 #if USE(SOUP)
@@ -92,7 +93,8 @@ public:
         // Optional connection, as the message might be generated without a connection object available (e.g. inside a method handler).
         // In this case, it gets associated to the connection when sending the message back to the client.
         Connection connection;
-        const CString payload;
+        // WebSocket text frames are UTF-8 by RFC 6455.
+        const UTF8CString payload;
 
         static Message fail(CommandResult::ErrorCode, std::optional<Connection>, std::optional<String> errorMessage = std::nullopt, std::optional<int> commandId = std::nullopt);
         static Message reply(const String& type, unsigned id, Ref<JSON::Value>&& result);
@@ -145,7 +147,6 @@ private:
     void sendMessage(WebSocketMessageHandler::Connection, const String& message);
     void sendErrorResponse(WebSocketMessageHandler::Connection, std::optional<unsigned> commandId, CommandResult::ErrorCode, const String& errorMessage, std::optional<String> stacktrace = std::nullopt);
     WebSocketMessageHandler& m_messageHandler;
-    String m_listenerURL;
     RefPtr<WebSocketListener> m_listener;
     HashMap<WebSocketMessageHandler::Connection, String> m_connectionToSession;
 

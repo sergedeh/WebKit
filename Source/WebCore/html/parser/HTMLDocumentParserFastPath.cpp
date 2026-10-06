@@ -98,7 +98,7 @@ namespace WebCore {
 
 static constexpr unsigned s_maxCachedStringSize = 40000;
 
-unsigned maxCachedSetInnerHTMLStringSize()
+unsigned NODELETE maxCachedSetInnerHTMLStringSize()
 {
     return s_maxCachedStringSize;
 }
@@ -119,7 +119,7 @@ ALWAYS_INLINE static bool isCachedSubtreeValid(Node& cachedContainer)
 }
 
 template<typename CharacterType>
-static bool isCachedPrefixMatch(const CachedSetInnerHTML& cache, std::span<const CharacterType> source, const ElementName& elementName)
+static bool NODELETE isCachedPrefixMatch(const CachedSetInnerHTML& cache, std::span<const CharacterType> source, const ElementName& elementName)
 {
     if (cache.source.length() > source.size())
         return false;
@@ -146,12 +146,13 @@ static bool isCachedPrefixMatch(const CachedSetInnerHTML& cache, std::span<const
 template<typename CharacterType>
 static FragmentReuseResult tryAvoidParsingByCloningExistingSubtree(std::span<const CharacterType> source, ContainerNode& destinationParent, Element& contextElement)
 {
-    auto& cache = destinationParent.protectedDocument()->cachedSetInnerHTML();
+    Ref destinationParentDocument = destinationParent.document();
+    auto& cache = destinationParentDocument->cachedSetInnerHTML();
     RefPtr cachedContainer = cache.cachedContainer.get();
     if (!cachedContainer)
         return FragmentReuseResult::CannotReuse;
     if (!isCachedSubtreeValid(*cachedContainer)) {
-        destinationParent.protectedDocument()->invalidateCachedSetInnerHTML();
+        destinationParentDocument->invalidateCachedSetInnerHTML();
         return FragmentReuseResult::CannotReuse;
     }
 
@@ -177,9 +178,9 @@ static FragmentReuseResult cloneCachedPrefixAndParseSuffix(std::span<const Chara
     ASSERT(cachedContainer->hasChildNodes());
 
     for (RefPtr nodeToClone = cachedContainer->firstChild(); nodeToClone; nodeToClone = nodeToClone->nextSibling()) {
-        Ref<Node> clonedChild = nodeToClone->cloneNodeInternal(destinationParent.protectedDocument(), Node::CloningOperation::SelfOnly, nullptr);
+        Ref<Node> clonedChild = nodeToClone->cloneNodeInternal(protect(destinationParent.document()), Node::CloningOperation::SelfOnly, nullptr);
         if (RefPtr nodeToCloneAsContainer = dynamicDowncast<ContainerNode>(*nodeToClone))
-            nodeToCloneAsContainer->cloneSubtreeForFastParser(destinationParent.protectedDocument(), nullptr, downcast<ContainerNode>(clonedChild.get()), 0);
+            nodeToCloneAsContainer->cloneSubtreeForFastParser(protect(destinationParent.document()), nullptr, downcast<ContainerNode>(clonedChild.get()), 0);
         destinationParent.parserAppendChildIntoIsolatedTree(clonedChild.get());
     }
 
@@ -223,30 +224,30 @@ enum class HTMLFastPathResult : uint8_t {
     FailedCssPseudoDirEnabledAndDirAttributeDirty
 };
 
-template<typename CharacterType> static inline bool isQuoteCharacter(CharacterType character)
+template<typename CharacterType> static inline bool NODELETE isQuoteCharacter(CharacterType character)
 {
     return character == '"' || character == '\'';
 }
 
-template<typename CharacterType> static inline bool isValidUnquotedAttributeValueChar(CharacterType character)
+template<typename CharacterType> static inline bool NODELETE isValidUnquotedAttributeValueChar(CharacterType character)
 {
     return isASCIIAlphanumeric(character) || character == '_' || character == '-';
 }
 
 // https://html.spec.whatwg.org/#syntax-attribute-name
-template<typename CharacterType> static inline bool isValidAttributeNameChar(CharacterType character)
+template<typename CharacterType> static inline bool NODELETE isValidAttributeNameChar(CharacterType character)
 {
     if (character == '=') // Early return for the most common way to end an attribute.
         return false;
-    return isASCIIAlphanumeric(character) || character == '-';
+    return isASCIIAlphanumeric(character) || character == '-' || character == '_';
 }
 
-template<typename CharacterType> static inline bool isCharAfterTagNameOrAttribute(CharacterType character)
+template<typename CharacterType> static inline bool NODELETE isCharAfterTagNameOrAttribute(CharacterType character)
 {
     return character == ' ' || character == '>' || isASCIIWhitespace(character) || character == '/';
 }
 
-template<typename CharacterType> static inline bool isCharAfterUnquotedAttribute(CharacterType character)
+template<typename CharacterType> static inline bool NODELETE isCharAfterUnquotedAttribute(CharacterType character)
 {
     return character == ' ' || character == '>' || isASCIIWhitespace(character);
 }
@@ -344,7 +345,7 @@ public:
         return false;
     }
 
-    HTMLFastPathResult parseResult() const { return m_parseResult; }
+    HTMLFastPathResult NODELETE parseResult() const { return m_parseResult; }
 
 private:
     const Ref<Document> m_document;
@@ -397,11 +398,11 @@ private:
             {
                 return HTMLElementClass::create(document);
             }
-            static constexpr bool allowedInPhrasingOrFlowContent()
+            static constexpr bool NODELETE allowedInPhrasingOrFlowContent()
             {
                 return permittedParents == PermittedParents::PhrasingOrFlowContent;
             }
-            static constexpr bool allowedInFlowContent()
+            static constexpr bool NODELETE allowedInFlowContent()
             {
                 return permittedParents == PermittedParents::PhrasingOrFlowContent || permittedParents == PermittedParents::FlowContent;
             }
@@ -518,13 +519,22 @@ private:
 
             static Ref<HTMLInputElement> create(Document& document)
             {
-                return HTMLInputElement::create(HTMLNames::inputTag, document, /* form */ nullptr, /* createdByParser */ true);
+                return HTMLInputElement::create(HTMLNames::inputTag, document, /* createdByParser */ true);
             }
         };
 
         struct Li : ContainerTag<HTMLLIElement, PermittedParents::FlowContent> {
             static constexpr ElementName tagName = ElementNames::HTML::li;
             static constexpr std::array<CharacterType, 2> tagNameCharacters { 'l', 'i' };
+
+            static RefPtr<HTMLElement> parseChild(ContainerNode& parent, HTMLFastPathParser& self)
+            {
+                bool wasInsideOfTagLi = self.m_insideOfTagLi;
+                self.m_insideOfTagLi = true;
+                auto result = ContainerTag<HTMLLIElement, PermittedParents::FlowContent>::parseChild(parent, self);
+                self.m_insideOfTagLi = wasInsideOfTagLi;
+                return result;
+            }
         };
 
         struct Label : ContainsPhrasingContentTag<HTMLLabelElement, PermittedParents::PhrasingOrFlowContent> {
@@ -536,7 +546,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::option;
             static constexpr std::array<CharacterType, 6> tagNameCharacters { 'o', 'p', 't', 'i', 'o', 'n' };
 
-            static RefPtr<HTMLElement> parseChild(ContainerNode&, HTMLFastPathParser& self)
+            static RefPtr<HTMLElement> NODELETE parseChild(ContainerNode&, HTMLFastPathParser& self)
             {
                 // <option> can only contain a text content.
                 return self.didFail(HTMLFastPathResult::FailedOptionWithChild, nullptr);
@@ -601,6 +611,30 @@ private:
             didFail(HTMLFastPathResult::FailedDidntReachEndOfInput);
     }
 
+    // Shared SIMD helper: given a low-nibble lookup table (as a vectorEquals8Bit
+    // callable) and a scalar fallback, find the first special character in |span|.
+    // https://lemire.me/blog/2024/06/08/scan-html-faster-with-simd-instructions-chrome-edition/
+    template<typename VectorEquals8BitFunction, typename ScalarMatchFunction>
+    ALWAYS_INLINE static std::span<const CharacterType> findSpecialCharacter(std::span<const CharacterType> span, NOESCAPE const VectorEquals8BitFunction& vectorEquals8Bit, NOESCAPE const ScalarMatchFunction& scalarMatch)
+    {
+        if constexpr (sizeof(CharacterType) == 1) {
+            auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
+                return SIMD::findFirstNonZeroIndex(vectorEquals8Bit(input));
+            };
+            auto* it = SIMD::find(span, vectorMatch, scalarMatch);
+            return span.subspan(it - span.data());
+        } else {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+            auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
+                constexpr simde_uint8x16_t zeros = SIMD::splat8(0);
+                return SIMD::findFirstNonZeroIndex(SIMD::bitAnd(vectorEquals8Bit(input.val[0]), SIMD::equal(input.val[1], zeros)));
+            };
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            auto* it = SIMD::findInterleaved(span, vectorMatch, scalarMatch);
+            return span.subspan(it - span.data());
+        }
+    }
+
     // We first try to scan text as an unmodified subsequence of the input.
     // However, if there are escape sequences, we have to copy the text to a
     // separate buffer and we might go outside of `Char` range if we are in an
@@ -626,7 +660,6 @@ private:
         };
 
         auto vectorEquals8Bit = [&](auto input) ALWAYS_INLINE_LAMBDA {
-            // https://lemire.me/blog/2024/06/08/scan-html-faster-with-simd-instructions-chrome-edition/
             // By looking up the table via lower 4bit, we can identify the category.
             // '\0' => 0000 0000
             // '&'  => 0010 0110
@@ -637,23 +670,7 @@ private:
             return SIMD::equal(simde_vqtbl1q_u8(lowNibbleMask, SIMD::bitAnd(input, v0f)), input);
         };
 
-        std::span<const CharacterType> cursor;
-        if constexpr (sizeof(CharacterType) == 1) {
-            auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
-                return SIMD::findFirstNonZeroIndex(vectorEquals8Bit(input));
-            };
-            auto* it = SIMD::find(start, vectorMatch, scalarMatch);
-            cursor = start.subspan(it - start.data());
-        } else {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-            auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
-                constexpr simde_uint8x16_t zeros = SIMD::splat8(0);
-                return SIMD::findFirstNonZeroIndex(SIMD::bitAnd(vectorEquals8Bit(input.val[0]), SIMD::equal(input.val[1], zeros)));
-            };
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-            auto* it = SIMD::findInterleaved(start, vectorMatch, scalarMatch);
-            cursor = start.subspan(it - start.data());
-        }
+        auto cursor = findSpecialCharacter(start, vectorEquals8Bit, scalarMatch);
         m_parsingBuffer.setPosition(cursor);
 
         if (!cursor.empty()) {
@@ -699,7 +716,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         }
         if (m_ucharBuffer.size() >= Text::defaultLengthLimit) [[unlikely]]
             return didFail(HTMLFastPathResult::FailedBigText, String());
-        return m_ucharBuffer.isEmpty() ? String() : String(std::exchange(m_ucharBuffer, { }));
+        return m_ucharBuffer.isEmpty() ? String() : String(m_ucharBuffer.span());
     }
 
     // Scan a tagName and convert to lowercase if necessary.
@@ -784,7 +801,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                 };
 
                 auto vectorEquals8Bit = [&](auto input) ALWAYS_INLINE_LAMBDA {
-                    // https://lemire.me/blog/2024/06/08/scan-html-faster-with-simd-instructions-chrome-edition/
                     // By looking up the table via lower 4bit, we can identify the category.
                     // '\0' => 0000 0000
                     // '&'  => 0010 0110
@@ -802,22 +818,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                     return SIMD::equal(simde_vqtbl1q_u8(lowNibbleMask, SIMD::bitAnd(input, v0f)), input);
                 };
 
-                if constexpr (sizeof(CharacterType) == 1) {
-                    auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
-                        return SIMD::findFirstNonZeroIndex(vectorEquals8Bit(input));
-                    };
-                    auto* it = SIMD::find(span, vectorMatch, scalarMatch);
-                    return span.subspan(it - span.data());
-                } else {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-                    auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
-                        constexpr simde_uint8x16_t zeros = SIMD::splat8(0);
-                        return SIMD::findFirstNonZeroIndex(SIMD::bitAnd(vectorEquals8Bit(input.val[0]), SIMD::equal(input.val[1], zeros)));
-                    };
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-                    auto* it = SIMD::findInterleaved(span, vectorMatch, scalarMatch);
-                    return span.subspan(it - span.data());
-                }
+                return findSpecialCharacter(span, vectorEquals8Bit, scalarMatch);
             };
 
             start = m_parsingBuffer.span();
@@ -853,19 +854,21 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             return didFail(HTMLFastPathResult::FailedParsingUnquotedEscapedAttributeValue, emptyAtom());
 
         auto quoteChar = m_parsingBuffer.consume();
-        if (m_parsingBuffer.hasCharactersRemaining() && *m_parsingBuffer != quoteChar) {
+        while (m_parsingBuffer.hasCharactersRemaining() && *m_parsingBuffer != quoteChar) {
             if (parsingFailed())
                 return emptyAtom();
             auto c = *m_parsingBuffer;
             if (c == '&')
-                scanHTMLCharacterReference(m_ucharBuffer);
+                scanHTMLCharacterReference(m_ucharBuffer, quoteChar);
             else if (c == '\r') {
                 m_parsingBuffer.advance();
                 // Normalize "\r\n" to "\n" according to https://infra.spec.whatwg.org/#normalize-newlines.
                 if (m_parsingBuffer.hasCharactersRemaining() && *m_parsingBuffer == '\n')
                     m_parsingBuffer.advance();
                 m_ucharBuffer.append('\n');
-            } else {
+            } else if (c == '\0') [[unlikely]]
+                return didFail(HTMLFastPathResult::FailedContainsNull, emptyAtom());
+            else {
                 m_ucharBuffer.append(c);
                 m_parsingBuffer.advance();
             }
@@ -876,13 +879,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         return HTMLNameCache::makeAttributeValue(m_ucharBuffer.span());
     }
 
-    void scanHTMLCharacterReference(Vector<char16_t>& out)
+    void scanHTMLCharacterReference(Vector<char16_t>& out, char16_t additionalAllowedCharacter = 0)
     {
         ASSERT(*m_parsingBuffer == '&');
         m_parsingBuffer.advance();
 
         if (m_parsingBuffer.lengthRemaining() >= 2) [[likely]] {
-            if (auto entity = consumeHTMLEntity(m_parsingBuffer); !entity.failed()) {
+            if (auto entity = consumeHTMLEntity(m_parsingBuffer, additionalAllowedCharacter); !entity.failed()) {
                 out.append(entity.span());
                 return;
             }
@@ -890,7 +893,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         out.append('&');
     }
 
-    bool parsingFailed() const { return m_parseResult != HTMLFastPathResult::Succeeded; }
+    bool NODELETE parsingFailed() const { return m_parseResult != HTMLFastPathResult::Succeeded; }
 
     void didFail(HTMLFastPathResult result)
     {
@@ -989,7 +992,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         return parseSpecificElements<Tags...>(tagName, parent);
     }
 
-    template<void* = nullptr> RefPtr<HTMLElement> parseSpecificElements(ElementName, ContainerNode&)
+    template<void* = nullptr> RefPtr<HTMLElement> NODELETE parseSpecificElements(ElementName, ContainerNode&)
     {
         return didFail(HTMLFastPathResult::FailedParsingSpecificElements, nullptr);
     }

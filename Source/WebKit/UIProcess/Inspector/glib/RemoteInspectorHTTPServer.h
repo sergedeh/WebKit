@@ -39,7 +39,7 @@ public:
 
     bool start(GRefPtr<GSocketAddress>&&, unsigned inspectorPort);
     bool isRunning() const { return !!m_server; }
-    const String& inspectorServerAddress() const;
+    const String& inspectorServerAddress() const LIFETIME_BOUND;
 
     void sendMessageToFrontend(uint64_t connectionID, uint64_t targetID, const String& message) const;
     void targetDidClose(uint64_t connectionID, uint64_t targetID);
@@ -55,7 +55,7 @@ private:
     void connectionClosed(RemoteInspectorClient&) override { }
 
     GRefPtr<SoupServer> m_server;
-    std::unique_ptr<RemoteInspectorClient> m_client;
+    const std::unique_ptr<RemoteInspectorClient> m_client;
     HashMap<std::pair<uint64_t, uint64_t>, GRefPtr<SoupWebsocketConnection>> m_webSocketConnectionMap;
     HashMap<SoupWebsocketConnection*, std::pair<uint64_t, uint64_t>> m_webSocketConnectionToTargetMap;
 };

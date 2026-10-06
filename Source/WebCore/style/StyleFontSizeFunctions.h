@@ -38,15 +38,15 @@ class ComputedStyle;
 
 enum class MinimumFontSizeRule : uint8_t { None, Absolute, AbsoluteAndRelative };
 
-struct ComputedFontSize {
+struct UsedFontSize {
     float size { 0.0f };
-    float usedZoomFactor { 1.0f };
+    float zoomFactor { 1.0f };
 };
 
-float computedFontSizeFromSpecifiedSize(float specifiedSize, bool isAbsoluteSize, float zoomFactor, MinimumFontSizeRule, const SettingsValues&);
-ComputedFontSize computedFontSizeFromSpecifiedSize(float specifiedSize, bool isAbsoluteSize, bool useSVGZoomRules, const ComputedStyle&, const Document&);
-float computedFontSizeFromSpecifiedSizeForSVGInlineText(float specifiedSize, bool isAbsoluteSize, float zoomFactor, const Document&);
-float adjustedFontSize(float size, const WebCore::FontSizeAdjust&, const FontMetrics&);
+float usedFontSizeFromComputedSize(float computedSize, bool isAbsoluteSize, float zoomFactor, MinimumFontSizeRule, const SettingsValues&);
+UsedFontSize usedFontSizeFromComputedSize(float computedSize, bool isAbsoluteSize, bool useSVGZoomRules, const ComputedStyle&, const Document&);
+float usedFontSizeFromComputedSizeForSVGInlineText(float computedSize, bool isAbsoluteSize, float zoomFactor, const Document&);
+float NODELETE adjustedFontSize(float size, const WebCore::FontSizeAdjust&, const FontMetrics&);
 
 // Given a CSS keyword id in the range (CSSValueXxSmall to CSSValueXxxLarge), this function will return
 // the correct font size scaled relative to the user's default (medium).
@@ -54,7 +54,7 @@ float fontSizeForKeyword(unsigned keywordID, bool shouldUseFixedDefaultSize, con
 float fontSizeForKeyword(unsigned keywordID, bool shouldUseFixedDefaultSize, const Document&);
 
 // Given a font size in pixel, this function will return legacy font size between 1 and 7.
-int legacyFontSizeForPixelSize(int pixelFontSize, bool shouldUseFixedDefaultSize, const Document&);
+int NODELETE legacyFontSizeForPixelSize(int pixelFontSize, bool shouldUseFixedDefaultSize, const Document&);
 
 } // namespace Style
 } // namespace WebCore

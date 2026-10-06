@@ -111,13 +111,16 @@ ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, s
     compile(&vm, charSize, sampleString);
 }
 
-template<typename VectorType, Yarr::MatchFrom matchFrom>
-ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, VectorType& ovector)
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
 {
 #if ENABLE(REGEXP_TRACING)
     m_rtMatchCallCount++;
     m_rtMatchTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
+
+    if (s.length() - startOffset < m_minimumSize)
+        return -1;
 
     compileIfNecessary(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
@@ -136,8 +139,8 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
     if (m_state == ParseError)
         return throwError();
 
-    ovector.resize(offsetVectorSize());
-    int* offsetVector = ovector.mutableSpan().data();
+    ASSERT(ovector.size() >= static_cast<size_t>(offsetVectorSize()));
+    int* offsetVector = ovector.data();
 
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
         if (hasValidAtom()) {
@@ -164,10 +167,18 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
         }
 
         if (result == static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure)) {
-            // JIT'ed code couldn't handle expression, so punt back to the interpreter.
-            byteCodeCompileIfNecessary(&vm);
-            if (m_state == ParseError)
-                return throwError();
+            // Punt to the bytecode interpreter. Only the mutator may compile bytecode; the compiler
+            // thread must use the bytecode that already exists, and bails out if there is no
+            // bytecode.
+            if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+                byteCodeCompileIfNecessary(&vm);
+                if (m_state == ParseError)
+                    return throwError();
+            }
+            if (!m_regExpBytecode) {
+                ASSERT(matchFrom == Yarr::MatchFrom::CompilerThread);
+                return result;
+            }
             {
                 Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
                 result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
@@ -242,6 +253,9 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
     m_rtMatchOnlyTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
 
+    if (s.length() - startOffset < m_minimumSize)
+        return MatchResult::failed();
+
     compileIfNecessaryMatchOnly(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
     auto throwError = [&] {
@@ -288,10 +302,18 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
         if (result.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure))
             return result;
 
-        // JIT'ed code couldn't handle expression, so punt back to the interpreter.
-        byteCodeCompileIfNecessary(&vm);
-        if (m_state == ParseError)
-            return throwError();
+        // Punt to the bytecode interpreter. Only the mutator may compile bytecode; the compiler
+        // thread must use the bytecode that already exists, and bails out if there is no
+        // bytecode.
+        if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+            byteCodeCompileIfNecessary(&vm);
+            if (m_state == ParseError)
+                return throwError();
+        }
+        if (!m_regExpBytecode) {
+            ASSERT(matchFrom == Yarr::MatchFrom::CompilerThread);
+            return result;
+        }
     }
 #endif
 

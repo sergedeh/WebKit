@@ -27,10 +27,10 @@
 
 #include "GPUShaderModule.h"
 #include "WebGPUProgrammableStage.h"
+#include <wtf/Forward.h>
 #include <wtf/KeyValuePair.h>
-#include <wtf/RefPtr.h>
+#include <wtf/Ref.h>
 #include <wtf/Vector.h>
-#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
@@ -39,7 +39,6 @@ using GPUPipelineConstantValue = double; // May represent WGSL’s bool, f32, i3
 struct GPUProgrammableStage {
     WebGPU::ProgrammableStage convertToBacking() const
     {
-        ASSERT(module);
         return {
             module->backing(),
             entryPoint,
@@ -47,8 +46,10 @@ struct GPUProgrammableStage {
         };
     }
 
-    WeakPtr<GPUShaderModule> module;
-    std::optional<String> entryPoint;
+    Ref<JSON::Object> toJSON() const;
+
+    Ref<GPUShaderModule> module;
+    String entryPoint;
     Vector<KeyValuePair<String, GPUPipelineConstantValue>> constants;
 };
 

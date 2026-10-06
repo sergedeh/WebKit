@@ -76,11 +76,12 @@ public:
     void attemptToResumePlaybackOnClients();
 
     bool hasOpenSessions() const;
+    bool hasOpenSessionWithIdForOrigin(const String& sessionId, const String& origin) const;
     CDMInstance& cdmInstance() { return m_instance; }
     const CDMInstance& cdmInstance() const { return m_instance; }
 
 #if !RELEASE_LOG_DISABLED
-    uint64_t nextChildIdentifier() const;
+    uint64_t NODELETE nextChildIdentifier() const;
 #endif
 
     unsigned internalInstanceObjectRefCount() const { return m_instance->refCount(); }

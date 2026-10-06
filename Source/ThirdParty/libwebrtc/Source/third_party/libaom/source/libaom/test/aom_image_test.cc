@@ -9,6 +9,7 @@
  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
  */
 
+#include <array>
 #include <climits>
 
 #include "aom/aom_image.h"
@@ -49,14 +50,19 @@ TEST(AomImageTest, AomImgSetRectOverflow) {
             0);
 }
 
-TEST(AomImageTest, AomImgAllocNone) {
-  const int kWidth = 128;
-  const int kHeight = 128;
+TEST(AomImageTest, AomImgAllocInvalidImageFormats) {
+  static constexpr std::array<int, 7> kImageFormats = {
+    AOM_IMG_FMT_NONE,       AOM_IMG_FMT_NONE - 1,   AOM_IMG_FMT_NV12 + 1,
+    AOM_IMG_FMT_I42016 - 1, AOM_IMG_FMT_I44416 + 1, AOM_IMG_FMT_AOMYV12,
+    AOM_IMG_FMT_AOMI420
+  };
 
-  aom_image_t img;
-  aom_img_fmt_t format = AOM_IMG_FMT_NONE;
-  unsigned int align = 32;
-  ASSERT_EQ(aom_img_alloc(&img, format, kWidth, kHeight, align), nullptr);
+  for (const auto img_fmt : kImageFormats) {
+    EXPECT_EQ(
+        aom_img_alloc(/*img=*/nullptr, static_cast<aom_img_fmt_t>(img_fmt),
+                      /*d_w=*/32, /*d_h=*/32, /*align=*/1),
+        nullptr);
+  }
 }
 
 TEST(AomImageTest, AomImgAllocNv12) {
@@ -133,5 +139,81 @@ TEST(AomImageTest, AomImgAllocHugeWidth) {
     y_plane[0] = 0;
     y_plane[image->d_w - 1] = 0;
     aom_img_free(image);
+  }
+}
+
+TEST(AomImageTest, AomImgFlipNoAlpha) {
+  aom_image_t *img = aom_img_alloc(nullptr, AOM_IMG_FMT_I420, 64, 64, 16);
+  ASSERT_NE(img, nullptr);
+  aom_img_flip(img);
+  aom_img_free(img);
+}
+
+TEST(AomImageTest, AomImgFlipOneRow) {
+  aom_image_t *img = aom_img_alloc(nullptr, AOM_IMG_FMT_I420, 16, 1, 1);
+  ASSERT_NE(img, nullptr);
+  unsigned char *const y_plane = img->planes[AOM_PLANE_Y];
+  unsigned char *const u_plane = img->planes[AOM_PLANE_U];
+  unsigned char *const v_plane = img->planes[AOM_PLANE_V];
+  const int y_stride = img->stride[AOM_PLANE_Y];
+  const int u_stride = img->stride[AOM_PLANE_U];
+  const int v_stride = img->stride[AOM_PLANE_V];
+
+  aom_img_flip(img);
+
+  EXPECT_EQ(img->planes[AOM_PLANE_Y], y_plane);
+  EXPECT_EQ(img->planes[AOM_PLANE_U], u_plane);
+  EXPECT_EQ(img->planes[AOM_PLANE_V], v_plane);
+  EXPECT_EQ(img->stride[AOM_PLANE_Y], -y_stride);
+  EXPECT_EQ(img->stride[AOM_PLANE_U], -u_stride);
+  EXPECT_EQ(img->stride[AOM_PLANE_V], -v_stride);
+
+  aom_img_flip(img);
+
+  EXPECT_EQ(img->planes[AOM_PLANE_Y], y_plane);
+  EXPECT_EQ(img->planes[AOM_PLANE_U], u_plane);
+  EXPECT_EQ(img->planes[AOM_PLANE_V], v_plane);
+  EXPECT_EQ(img->stride[AOM_PLANE_Y], y_stride);
+  EXPECT_EQ(img->stride[AOM_PLANE_U], u_stride);
+  EXPECT_EQ(img->stride[AOM_PLANE_V], v_stride);
+
+  aom_img_free(img);
+}
+
+TEST(AomImageTest, AomImgFlipOddHeight) {
+  static constexpr aom_img_fmt_t kFormats[] = {
+    AOM_IMG_FMT_YV12,   AOM_IMG_FMT_I420,   AOM_IMG_FMT_NV12,
+    AOM_IMG_FMT_I42016, AOM_IMG_FMT_YV1216,
+  };
+
+  for (const aom_img_fmt_t format : kFormats) {
+    aom_image_t *img = aom_img_alloc(nullptr, format, 16, 3, 1);
+    ASSERT_NE(img, nullptr);
+    unsigned char *const y_plane = img->planes[AOM_PLANE_Y];
+    unsigned char *const u_plane = img->planes[AOM_PLANE_U];
+    unsigned char *const v_plane = img->planes[AOM_PLANE_V];
+    const int y_stride = img->stride[AOM_PLANE_Y];
+    const int u_stride = img->stride[AOM_PLANE_U];
+    const int v_stride = img->stride[AOM_PLANE_V];
+
+    aom_img_flip(img);
+
+    EXPECT_EQ(img->planes[AOM_PLANE_Y], y_plane + 2 * y_stride);
+    EXPECT_EQ(img->planes[AOM_PLANE_U], u_plane + u_stride);
+    EXPECT_EQ(img->planes[AOM_PLANE_V], v_plane + v_stride);
+    EXPECT_EQ(img->stride[AOM_PLANE_Y], -y_stride);
+    EXPECT_EQ(img->stride[AOM_PLANE_U], -u_stride);
+    EXPECT_EQ(img->stride[AOM_PLANE_V], -v_stride);
+
+    aom_img_flip(img);
+
+    EXPECT_EQ(img->planes[AOM_PLANE_Y], y_plane);
+    EXPECT_EQ(img->planes[AOM_PLANE_U], u_plane);
+    EXPECT_EQ(img->planes[AOM_PLANE_V], v_plane);
+    EXPECT_EQ(img->stride[AOM_PLANE_Y], y_stride);
+    EXPECT_EQ(img->stride[AOM_PLANE_U], u_stride);
+    EXPECT_EQ(img->stride[AOM_PLANE_V], v_stride);
+
+    aom_img_free(img);
   }
 }

@@ -43,6 +43,7 @@
 #include "WebExtensionAPIMenus.h"
 #include "WebExtensionAPINotifications.h"
 #include "WebExtensionAPIObject.h"
+#include "WebExtensionAPIOffscreen.h"
 #include "WebExtensionAPIPermissions.h"
 #include "WebExtensionAPIRuntime.h"
 #include "WebExtensionAPIScripting.h"
@@ -64,11 +65,12 @@ class WebExtensionAPINamespace : public WebExtensionAPIObject, public JSWebExten
     WEB_EXTENSION_DECLARE_JS_WRAPPER_CLASS(WebExtensionAPINamespace, namespace, browser);
 
 public:
-#if PLATFORM(COCOA)
     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
-
+#if PLATFORM(COCOA)
     WebExtensionAPIAction& action();
+#endif
     WebExtensionAPIAlarms& alarms();
+#if PLATFORM(COCOA)
     WebExtensionAPIAction& browserAction() { return action(); }
     WebExtensionAPICommands& commands();
     WebExtensionAPICookies& cookies();
@@ -82,10 +84,14 @@ public:
     WebExtensionAPILocalization& i18n();
     WebExtensionAPIMenus& menus();
     WebExtensionAPINotifications& notifications();
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    WebExtensionAPIOffscreen& offscreen();
+#endif
     WebExtensionAPIAction& pageAction() { return action(); }
     WebExtensionAPIPermissions& permissions();
+#endif
     WebExtensionAPIRuntime& runtime() const final;
-    Ref<WebExtensionAPIRuntime> protectedRuntime() const { return runtime(); }
+#if PLATFORM(COCOA)
     WebExtensionAPIScripting& scripting();
 #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
     WebExtensionAPISidePanel& sidePanel();
@@ -96,42 +102,47 @@ public:
 #endif
     WebExtensionAPIStorage& storage();
     WebExtensionAPITabs& tabs();
+#endif
     WebExtensionAPITest& test();
+#if PLATFORM(COCOA)
     WebExtensionAPIWindows& windows();
     WebExtensionAPIWebNavigation& webNavigation();
     WebExtensionAPIWebRequest& webRequest();
 #endif
 
 private:
-    RefPtr<WebExtensionAPIAction> m_action;
-    RefPtr<WebExtensionAPIAlarms> m_alarms;
-    RefPtr<WebExtensionAPICommands> m_commands;
-    RefPtr<WebExtensionAPICookies> m_cookies;
-    RefPtr<WebExtensionAPIDeclarativeNetRequest> m_declarativeNetRequest;
+    const RefPtr<WebExtensionAPIAction> m_action;
+    const RefPtr<WebExtensionAPIAlarms> m_alarms;
+    const RefPtr<WebExtensionAPICommands> m_commands;
+    const RefPtr<WebExtensionAPICookies> m_cookies;
+    const RefPtr<WebExtensionAPIDeclarativeNetRequest> m_declarativeNetRequest;
 #if ENABLE(INSPECTOR_EXTENSIONS)
-    RefPtr<WebExtensionAPIDevTools> m_devtools;
+    const RefPtr<WebExtensionAPIDevTools> m_devtools;
 #endif
-    RefPtr<WebExtensionAPIDOM> m_dom;
-    RefPtr<WebExtensionAPIExtension> m_extension;
-    RefPtr<WebExtensionAPILocalization> m_i18n;
-    RefPtr<WebExtensionAPIMenus> m_menus;
-    RefPtr<WebExtensionAPINotifications> m_notifications;
-    RefPtr<WebExtensionAPIPermissions> m_permissions;
+    const RefPtr<WebExtensionAPIDOM> m_dom;
+    const RefPtr<WebExtensionAPIExtension> m_extension;
+    const RefPtr<WebExtensionAPILocalization> m_i18n;
+    const RefPtr<WebExtensionAPIMenus> m_menus;
+    const RefPtr<WebExtensionAPINotifications> m_notifications;
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    const RefPtr<WebExtensionAPIOffscreen> m_offscreen;
+#endif
+    const RefPtr<WebExtensionAPIPermissions> m_permissions;
     mutable RefPtr<WebExtensionAPIRuntime> m_runtime;
-    RefPtr<WebExtensionAPIScripting> m_scripting;
+    const RefPtr<WebExtensionAPIScripting> m_scripting;
 #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
-    RefPtr<WebExtensionAPISidePanel> m_sidePanel;
-    RefPtr<WebExtensionAPISidebarAction> m_sidebarAction;
+    const RefPtr<WebExtensionAPISidePanel> m_sidePanel;
+    const RefPtr<WebExtensionAPISidebarAction> m_sidebarAction;
 #endif
 #if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
-    RefPtr<WebExtensionAPIBookmarks> m_bookmarks;
+    const RefPtr<WebExtensionAPIBookmarks> m_bookmarks;
 #endif
-    RefPtr<WebExtensionAPIStorage> m_storage;
-    RefPtr<WebExtensionAPITabs> m_tabs;
-    RefPtr<WebExtensionAPITest> m_test;
-    RefPtr<WebExtensionAPIWindows> m_windows;
-    RefPtr<WebExtensionAPIWebNavigation> m_webNavigation;
-    RefPtr<WebExtensionAPIWebRequest> m_webRequest;
+    const RefPtr<WebExtensionAPIStorage> m_storage;
+    const RefPtr<WebExtensionAPITabs> m_tabs;
+    const RefPtr<WebExtensionAPITest> m_test;
+    const RefPtr<WebExtensionAPIWindows> m_windows;
+    const RefPtr<WebExtensionAPIWebNavigation> m_webNavigation;
+    const RefPtr<WebExtensionAPIWebRequest> m_webRequest;
 };
 
 } // namespace WebKit

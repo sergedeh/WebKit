@@ -52,7 +52,7 @@ ScrollingStateFrameScrollingNode::ScrollingStateFrameScrollingNode(
 #if ENABLE(SCROLLING_THREAD)
     OptionSet<SynchronousScrollingReason> synchronousScrollingReasons,
 #endif
-    RequestedScrollData&& requestedScrollData,
+    ScrollRequestData&& requestedScrollData,
     FloatScrollSnapOffsetsInfo&& snapOffsetsInfo,
     std::optional<unsigned> currentHorizontalSnapPointIndex,
     std::optional<unsigned> currentVerticalSnapPointIndex,
@@ -80,6 +80,9 @@ ScrollingStateFrameScrollingNode::ScrollingStateFrameScrollingNode(
     int footerHeight,
     ScrollBehaviorForFixedElements&& scrollBehaviorForFixedElements,
     FloatBoxExtent&& obscuredContentInsets,
+#if HAVE(NSREFRESHCONTROLLER)
+    float topScrollStretchForRefreshController,
+#endif
     bool visualViewportIsSmallerThanLayoutViewport,
     bool asyncFrameOrOverflowScrollingEnabled,
     bool wheelEventGesturesBecomeNonBlocking,
@@ -89,7 +92,8 @@ ScrollingStateFrameScrollingNode::ScrollingStateFrameScrollingNode(
     FloatPoint minLayoutViewportOrigin,
     FloatPoint maxLayoutViewportOrigin,
     std::optional<FloatSize> overrideVisualViewportSize,
-    bool overlayScrollbarsEnabled
+    bool overlayScrollbarsEnabled,
+    int insetForLeftScrollbarSpace
 ) : ScrollingStateScrollingNode(
     isMainFrame ? ScrollingNodeType::MainFrame : ScrollingNodeType::Subframe,
     scrollingNodeID,
@@ -135,8 +139,12 @@ ScrollingStateFrameScrollingNode::ScrollingStateFrameScrollingNode(
     , m_overrideVisualViewportSize(overrideVisualViewportSize)
     , m_frameScaleFactor(frameScaleFactor)
     , m_obscuredContentInsets(obscuredContentInsets)
+#if HAVE(NSREFRESHCONTROLLER)
+    , m_topScrollStretchForRefreshController(topScrollStretchForRefreshController)
+#endif
     , m_headerHeight(headerHeight)
     , m_footerHeight(footerHeight)
+    , m_insetForLeftScrollbarSpace(insetForLeftScrollbarSpace)
     , m_behaviorForFixed(WTF::move(scrollBehaviorForFixedElements))
 
     , m_visualViewportIsSmallerThanLayoutViewport(visualViewportIsSmallerThanLayoutViewport)
@@ -164,8 +172,12 @@ ScrollingStateFrameScrollingNode::ScrollingStateFrameScrollingNode(const Scrolli
     , m_overrideVisualViewportSize(stateNode.overrideVisualViewportSize())
     , m_frameScaleFactor(stateNode.frameScaleFactor())
     , m_obscuredContentInsets(stateNode.obscuredContentInsets())
+#if HAVE(NSREFRESHCONTROLLER)
+    , m_topScrollStretchForRefreshController(stateNode.topScrollStretchForRefreshController())
+#endif
     , m_headerHeight(stateNode.headerHeight())
     , m_footerHeight(stateNode.footerHeight())
+    , m_insetForLeftScrollbarSpace(stateNode.insetForLeftScrollbarSpace())
     , m_behaviorForFixed(stateNode.scrollBehaviorForFixedElements())
     , m_visualViewportIsSmallerThanLayoutViewport(stateNode.visualViewportIsSmallerThanLayoutViewport())
     , m_asyncFrameOrOverflowScrollingEnabled(stateNode.asyncFrameOrOverflowScrollingEnabled())
@@ -214,6 +226,9 @@ OptionSet<ScrollingStateNode::Property> ScrollingStateFrameScrollingNode::applic
         Property::FooterLayer,
         Property::BehaviorForFixedElements,
         Property::ObscuredContentInsets,
+#if HAVE(NSREFRESHCONTROLLER)
+        Property::TopScrollStretchForRefreshController,
+#endif
         Property::VisualViewportIsSmallerThanLayoutViewport,
         Property::AsyncFrameOrOverflowScrollingEnabled,
         Property::WheelEventGesturesBecomeNonBlocking,
@@ -224,6 +239,7 @@ OptionSet<ScrollingStateNode::Property> ScrollingStateFrameScrollingNode::applic
         Property::MaxLayoutViewportOrigin,
         Property::OverrideVisualViewportSize,
         Property::OverlayScrollbarsEnabled,
+        Property::InsetForLeftScrollbarSpace,
     };
 
     auto properties = ScrollingStateScrollingNode::applicableProperties();
@@ -330,6 +346,28 @@ void ScrollingStateFrameScrollingNode::setObscuredContentInsets(const FloatBoxEx
     m_obscuredContentInsets = obscuredContentInsets;
     setPropertyChanged(Property::ObscuredContentInsets);
 }
+
+void ScrollingStateFrameScrollingNode::setInsetForLeftScrollbarSpace(int insetForLeftScrollbarSpace)
+{
+    if (m_insetForLeftScrollbarSpace == insetForLeftScrollbarSpace)
+        return;
+
+    m_insetForLeftScrollbarSpace = insetForLeftScrollbarSpace;
+    setPropertyChanged(Property::InsetForLeftScrollbarSpace);
+}
+
+#if HAVE(NSREFRESHCONTROLLER)
+
+void ScrollingStateFrameScrollingNode::setTopScrollStretchForRefreshController(float topScrollStretchForRefreshController)
+{
+    if (m_topScrollStretchForRefreshController == topScrollStretchForRefreshController)
+        return;
+
+    m_topScrollStretchForRefreshController = topScrollStretchForRefreshController;
+    setPropertyChanged(Property::TopScrollStretchForRefreshController);
+}
+
+#endif
 
 void ScrollingStateFrameScrollingNode::setRootContentsLayer(const LayerRepresentation& layerRepresentation)
 {
@@ -464,6 +502,10 @@ void ScrollingStateFrameScrollingNode::dumpProperties(TextStream& ts, OptionSet<
         ts.dumpProperty("left content inset"_s, m_obscuredContentInsets.left());
     if (m_obscuredContentInsets.right())
         ts.dumpProperty("right content inset"_s, m_obscuredContentInsets.right());
+#if HAVE(NSREFRESHCONTROLLER)
+    if (m_topScrollStretchForRefreshController)
+        ts.dumpProperty("top scroll stretch for refresh controller"_s, m_topScrollStretchForRefreshController);
+#endif
     if (m_headerHeight)
         ts.dumpProperty("header height"_s, m_headerHeight);
     if (m_footerHeight)

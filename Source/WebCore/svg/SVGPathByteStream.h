@@ -40,9 +40,9 @@ namespace WebCore {
 class SVGPathByteStream final : public CanMakeSingleThreadWeakPtr<SVGPathByteStream> {
     WTF_MAKE_TZONE_ALLOCATED(SVGPathByteStream);
 public:
-    class Data final : public RefCounted<Data> {
+    class Data final : public ThreadSafeRefCounted<Data> {
     public:
-        friend class NeverDestroyed<Data, MainThreadAccessTraits>;
+        friend class NeverDestroyed<Data>;
 
         using Bytes = Vector<uint8_t>;
 
@@ -58,11 +58,11 @@ public:
 
         static Ref<Data> empty()
         {
-            static MainThreadNeverDestroyed<Data> singleton;
+            static NeverDestroyed<Data> singleton;
             return Ref { singleton.get() };
         }
 
-        const Bytes& bytes() const { return m_bytes; }
+        const Bytes& bytes() const LIFETIME_BOUND { return m_bytes; }
 
         void append(uint8_t byte)
         {
@@ -127,6 +127,16 @@ public:
         buildSVGPathByteStreamFromString(string, *this, UnalteredParsing);
     }
 
+    // Returns std::nullopt when the string is not a legal path. An empty string is a legal
+    // (empty) path, so callers that must reject an empty value should check that separately.
+    static std::optional<SVGPathByteStream> create(StringView string)
+    {
+        SVGPathByteStream stream;
+        if (!buildSVGPathByteStreamFromString(string, stream, UnalteredParsing))
+            return std::nullopt;
+        return stream;
+    }
+
     SVGPathByteStream(const SVGPathByteStream& other)
         : CanMakeSingleThreadWeakPtr<SVGPathByteStream>()
         , m_data(other.m_data)
@@ -151,7 +161,7 @@ public:
 
     static SVGPathByteStream& empty()
     {
-        static MainThreadNeverDestroyed<SVGPathByteStream> singleton;
+        static NeverDestroyed<SVGPathByteStream> singleton;
         return singleton;
     }
 
@@ -184,9 +194,9 @@ public:
     DataIterator begin() const LIFETIME_BOUND { return m_data->bytes().begin(); }
     DataIterator end() const LIFETIME_BOUND { return m_data->bytes().end(); }
 
-    void append(uint8_t byte) { m_data.access().append(byte); }
-    void append(std::span<const uint8_t> bytes) { m_data.access().append(bytes); }
-    void append(const SVGPathByteStream& other) { m_data.access().append(other.m_data->bytes()); }
+    void append(uint8_t byte) { protect(m_data.access())->append(byte); }
+    void append(std::span<const uint8_t> bytes) { protect(m_data.access())->append(bytes); }
+    void append(const SVGPathByteStream& other) { protect(m_data.access())->append(other.m_data->bytes()); }
     void clear() { m_data = Data::empty(); }
     bool isEmpty() const { return m_data->isEmpty(); }
     unsigned size() const { return m_data->size(); }
@@ -202,7 +212,7 @@ public:
 
     void cachePath(const Path& path) const
     {
-        m_data->updatePath(path);
+        protect(*m_data)->updatePath(path);
     }
 
     const Data::Bytes& bytes() const LIFETIME_BOUND { return m_data->bytes(); }

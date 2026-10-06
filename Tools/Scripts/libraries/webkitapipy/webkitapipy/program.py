@@ -72,6 +72,8 @@ ALLOWED_SYMBOL_GLOBS = (
     '_$s*7SwiftUI*',
     # rdar://79109142
     '__swift_FORCE_LOAD_$_*',
+    # Swift stdlib emits calls to this libSystem symbol in OS version checks.
+    '__availability_version_check',
 )
 
 # TBDs from the active SDK whose symbols are treated as implicitly available.
@@ -149,6 +151,13 @@ def get_parser() -> argparse.ArgumentParser:
     output.add_argument('--errors',
                         action=argparse.BooleanOptionalAction, default=True,
                         help='whether to report SPI use as an error')
+
+    debug = parser.add_argument_group('debugging options')
+    debug.add_argument('--backup-temp-data', dest='sdkdb_temp', type=Path,
+                       help='dump internal sqlite database (including temp data) to this path')
+    debug.add_argument('--explain-query-plan', action='store_true',
+                       help='instead of performing the audit query, print its query plan')
+
     return parser
 
 
@@ -297,7 +306,7 @@ def main(argv: Optional[list[str]] = None):
         with db:
             db.add_allowlist(use_input(path))
     if args.defines:
-        db.add_defines(args.defines)
+        db.add_conditions({d: 1 for d in args.defines})
 
     if program_additions:
         reporter = program_additions.configure_reporter(args, db)
@@ -308,7 +317,10 @@ def main(argv: Optional[list[str]] = None):
         add_corresponding_sdkdb(binary_path)
         db.add_binary(use_input(binary_path), arch=args.arch_name,
                       for_auditing=True)
-    for diagnostic in db.audit():
+    if args.sdkdb_temp:
+        with db:
+            db.backup_temp_data(args.sdkdb_temp)
+    for diagnostic in db.audit(debug_query_plan=args.explain_query_plan):
         reporter.emit_diagnostic(diagnostic)
 
     reporter.finished()

@@ -72,7 +72,7 @@ template<size_t I> const auto& get(const BorderRadius& value)
 
 // MARK: - Conversion
 
-template<> struct ToCSS<BorderRadius> { auto operator()(const BorderRadius&, const RenderStyle&) -> CSS::BorderRadius; };
+template<> struct ToCSS<BorderRadius> { auto operator()(const BorderRadius&, const Style::ComputedStyle&) -> CSS::BorderRadius; };
 template<> struct ToStyle<CSS::BorderRadius> { auto operator()(const CSS::BorderRadius&, const BuilderState&) -> BorderRadius; };
 
 template<> struct CSSValueConversion<BorderRadiusValue> { auto operator()(BuilderState&, const CSSValue&) -> BorderRadiusValue; };
@@ -80,10 +80,10 @@ template<> struct CSSValueConversion<BorderRadiusValue> { auto operator()(Builde
 // MARK: - Evaluation
 
 template<> struct Evaluation<BorderRadius, CornerRadii> {
-    auto operator()(const BorderRadius&, FloatSize, ZoomNeeded) -> CornerRadii;
+    auto operator()(const BorderRadius&, FloatSize, ZoomFactor) -> CornerRadii;
 };
 template<> struct Evaluation<BorderRadius, LayoutRoundedRect::Radii> {
-    auto operator()(const BorderRadius&, LayoutSize, ZoomNeeded) -> LayoutRoundedRect::Radii;
+    auto operator()(const BorderRadius&, LayoutSize, ZoomFactor) -> LayoutRoundedRect::Radii;
 };
 
 } // namespace Style

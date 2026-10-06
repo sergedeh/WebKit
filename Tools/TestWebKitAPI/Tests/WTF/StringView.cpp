@@ -41,6 +41,29 @@ StringView stringViewFromUTF8(String& ref, const char* characters)
     return ref;
 }
 
+TEST(WTF, StringViewASCII)
+{
+    // Null StringView.
+    EXPECT_STREQ("", StringView().ascii().data());
+
+    // Empty StringView.
+    EXPECT_STREQ("", emptyStringView().ascii().data());
+
+    // 8-bit StringView.
+    String eightBit("foobar"_s);
+    EXPECT_STREQ("foobar", StringView(eightBit).ascii().data());
+
+    // Substring, to check the view's own length is used rather than the underlying string's.
+    EXPECT_STREQ("oob", StringView(eightBit).substring(1, 3).ascii().data());
+
+    // Characters outside 32..127 become '?', in both 8-bit and 16-bit views.
+    String backingStore;
+    EXPECT_STREQ("caf?", stringViewFromUTF8(backingStore, "caf\xC3\xA9").ascii().data());
+    EXPECT_STREQ("caf?", stringViewFromUTF8(backingStore, "caf\xE6\xBC\xA2").ascii().data());
+    String withTab("a\tb"_s);
+    EXPECT_STREQ("a?b", StringView(withTab).ascii().data());
+}
+
 TEST(WTF, StringViewStartsWithEmptyVsNull)
 {
     StringView nullView;
@@ -236,6 +259,30 @@ TEST(WTF, StringViewIterators)
         StringView(b.span<char16_t>().subspan(3, 3)) }));
 }
 
+TEST(WTF, StringViewCodePointCount)
+{
+    EXPECT_EQ(StringView().codePointCount(), 0u);
+    EXPECT_EQ(emptyStringView().codePointCount(), 0u);
+    EXPECT_EQ(StringView("webkit"_s).codePointCount(), 6u);
+
+    auto codePointCount = [](std::vector<char16_t> input) {
+        StringBuilder builder;
+        build(builder, WTF::move(input));
+        return StringView(builder.toString()).codePointCount();
+    };
+
+    EXPECT_EQ(codePointCount({ 'a', 0x00E9, 0x4E2D }), 3u);
+    EXPECT_EQ(codePointCount({ 0xD800, 0xDD55 }), 1u);
+    EXPECT_EQ(codePointCount({ 'a', 0xD800, 0xDD55, 'b', 0xD83D, 0xDE00 }), 4u);
+    EXPECT_EQ(codePointCount({ 0xD800 }), 1u);
+    EXPECT_EQ(codePointCount({ 0xDD55 }), 1u);
+    EXPECT_EQ(codePointCount({ 0xD800, 'a' }), 2u);
+    EXPECT_EQ(codePointCount({ 'a', 0xDD55, 'b' }), 3u);
+    EXPECT_EQ(codePointCount({ 'a', 0xD800 }), 2u);
+    EXPECT_EQ(codePointCount({ 0xDD55, 0xD800 }), 2u);
+    EXPECT_EQ(codePointCount({ 0xD800, 0xD800, 0xDD55 }), 2u);
+}
+
 static Vector<String> vectorFromSplitResult(const StringView::SplitResult& substrings)
 {
     Vector<String> result;
@@ -269,32 +316,32 @@ TEST(WTF, StringViewSplitBasic)
     Vector<String> expected({ "his is a sentence."_s });
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split('.'));
     expected = { "This is a sentence"_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split('a'));
     expected = { "This is "_s, " sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split(' '));
     expected = { "This"_s, "is"_s, "a"_s, "sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     // Non-existent separator
     actual = vectorFromSplitResult(a.split('z'));
     expected = { "This is a sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 }
 
 TEST(WTF, StringViewSplitWithConsecutiveSeparators)
@@ -306,13 +353,13 @@ TEST(WTF, StringViewSplitWithConsecutiveSeparators)
     Vector<String> expected({ "This"_s, "is"_s, "a"_s, "sentence."_s });
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.splitAllowingEmptyEntries(' '));
     expected = { ""_s, "This"_s, ""_s, ""_s, ""_s, ""_s, "is"_s, ""_s, "a"_s, ""_s, ""_s, ""_s, ""_s, ""_s, ""_s, "sentence."_s, ""_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 }
 
 TEST(WTF, StringViewEqualBasic)
@@ -954,6 +1001,38 @@ TEST(WTF, StringViewReverseFindBasic)
     EXPECT_EQ(reference.reverseFind('c', 4), notFound);
 }
 
+TEST(WTF, StringViewReverseFindStringView)
+{
+    auto reference = stringViewFromLiteral("Cappuccino");
+
+    // Basic substring search.
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral("ccino")), 5U);
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral("Cap")), 0U);
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral("puc")), 3U);
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral("xyz")), notFound);
+
+    // Search with start position.
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral("cc"), 6), 5U);
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral("cc"), 4), notFound);
+
+    // Empty match string returns clamped start position.
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral("")), 10U);
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral(""), 5), 5U);
+
+    // Match string longer than haystack.
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral("Cappuccino!")), notFound);
+
+    // Null haystack.
+    StringView nullView;
+    EXPECT_EQ(nullView.reverseFind(stringViewFromLiteral("abc")), notFound);
+
+    // Null match string.
+    EXPECT_EQ(reference.reverseFind(nullView), notFound);
+
+    // Full string match.
+    EXPECT_EQ(reference.reverseFind(stringViewFromLiteral("Cappuccino")), 0U);
+}
+
 TEST(WTF, StringViewTrim)
 {
     auto isA = [] (char16_t c) { 
@@ -999,6 +1078,53 @@ TEST(WTF, StringViewUpconvert)
         for (unsigned index = 1; index < string.length(); ++index)
             EXPECT_EQ(characters[index], string[index]) << index << " " << literal.characters();
     }
+}
+
+TEST(WTF, StringViewCodePointAtASCII)
+{
+    StringView string("Hello"_s);
+    ASSERT_EQ(string.codePointAt(0), static_cast<char32_t>('H'));
+    ASSERT_EQ(string.codePointAt(4), static_cast<char32_t>('o'));
+}
+
+TEST(WTF, StringViewCodePointAtBMP)
+{
+    auto string = String::fromUTF8("caf\xC3\xA9");
+    ASSERT_FALSE(StringView(string).is8Bit());
+    ASSERT_EQ(StringView(string).codePointAt(0), static_cast<char32_t>('c'));
+    ASSERT_EQ(StringView(string).codePointAt(3), 0x00E9u);
+}
+
+TEST(WTF, StringViewCodePointAtSupplementary)
+{
+    auto string = String::fromUTF8("A\xF0\x9F\x98\x80Z");
+    StringView view(string);
+    ASSERT_FALSE(view.is8Bit());
+    ASSERT_EQ(view.length(), 4u);
+    ASSERT_EQ(view.codePointAt(0), static_cast<char32_t>('A'));
+    ASSERT_EQ(view.codePointAt(1), 0x1F600u);
+    ASSERT_EQ(view.codePointAt(3), static_cast<char32_t>('Z'));
+}
+
+TEST(WTF, StringViewCodePointAtLoneSurrogate)
+{
+    std::array<char16_t, 5> data { 0xD800, u'A', 0xDC00, u'B', 0xD83D };
+    StringView view(std::span<const UChar> { data });
+    ASSERT_EQ(view.length(), 5u);
+
+    ASSERT_EQ(view.codePointAt(0), 0xD800u);
+    ASSERT_EQ(view.codePointAt(1), static_cast<char32_t>('A'));
+    ASSERT_EQ(view.codePointAt(2), 0xDC00u);
+    ASSERT_EQ(view.codePointAt(3), static_cast<char32_t>('B'));
+    ASSERT_EQ(view.codePointAt(4), 0xD83Du);
+}
+
+TEST(WTF, StringViewCodePointAtNUL)
+{
+    std::array<char16_t, 2> data { 0x0000, 0xD800 };
+    StringView view(std::span<const UChar> { data });
+    ASSERT_EQ(view.codePointAt(0), 0u);
+    ASSERT_EQ(view.codePointAt(1), 0xD800u);
 }
 
 } // namespace TestWebKitAPI

@@ -25,12 +25,15 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
+#if !PLATFORM(COCOA) || !__has_feature(modules) || (defined(WK_SUPPORTS_SWIFT_OBJCXX_INTEROP) && WK_SUPPORTS_SWIFT_OBJCXX_INTEROP)
+
 #include <wtf/HashTable.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Platform.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
-#include <wtf/RetainReleaseSwift.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 #if PLATFORM(COCOA)
@@ -125,6 +128,7 @@ public:
         DebuggableInfo,
         Download,
         Feature,
+        FormInfo,
         FormSubmissionListener,
         Frame,
         FrameInfo,
@@ -144,7 +148,6 @@ public:
 #if ENABLE(INSPECTOR_EXTENSIONS)
         InspectorExtension,
 #endif
-        JSBuffer,
         KeyValueStorageManager,
         MediaCacheManager,
         MessageListener,
@@ -175,7 +178,6 @@ public:
         RunJavaScriptPromptResultListener,
         ScriptMessage,
         SerializedNode,
-        SpeechRecognitionPermissionCallback,
         TextChecker,
         TextRun,
         URLSchemeTask,
@@ -286,7 +288,11 @@ private:
 
     CFTypeRef m_wrapper;
 #endif // DELEGATE_REF_COUNTING_TO_COCOA
-} SWIFT_SHARED_REFERENCE(refObject, derefObject);
+#if ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS) && DELEGATE_REF_COUNTING_TO_COCOA
+} SWIFT_SHARED_REFERENCE(.ref, .deref) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
+#else
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refObject, derefObject);
+#endif
 
 template <Object::Type ArgumentType>
 class ObjectImpl : public Object {
@@ -318,25 +324,22 @@ inline API::Object* Object::unwrap(void* object)
 }
 #endif
 
+using VectorRefPtrAPIObject = Vector<RefPtr<Object>>;
+using RefPtrAPIObject = RefPtr<Object>;
+
 } // namespace API
 
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
 inline void refObject(API::Object* WTF_NONNULL obj)
 {
-#if DELEGATE_REF_COUNTING_TO_COCOA
     obj->ref();
-#else
-    WTF::ref(obj);
-#endif
 }
 
 inline void derefObject(API::Object* WTF_NONNULL obj)
 {
-#if DELEGATE_REF_COUNTING_TO_COCOA
     obj->deref();
-#else
-    WTF::deref(obj);
-#endif
 }
+#endif
 
 #undef DELEGATE_REF_COUNTING_TO_COCOA
 
@@ -344,3 +347,5 @@ inline void derefObject(API::Object* WTF_NONNULL obj)
 SPECIALIZE_TYPE_TRAITS_BEGIN(API::ClassName) \
 static bool isType(const API::Object& object) { return object.type() == API::Object::Type::ClassName; } \
 SPECIALIZE_TYPE_TRAITS_END()
+
+#endif // !PLATFORM(COCOA) || !__has_feature(modules) || (defined(WK_SUPPORTS_SWIFT_OBJCXX_INTEROP) && WK_SUPPORTS_SWIFT_OBJCXX_INTEROP)

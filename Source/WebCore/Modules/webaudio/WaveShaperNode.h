@@ -30,6 +30,7 @@
 #include "OverSampleType.h"
 #include "WaveShaperOptions.h"
 #include "WaveShaperProcessor.h"
+#include <JavaScriptCore/Forward.h>
 #include <wtf/Forward.h>
 
 namespace WebCore {
@@ -45,7 +46,7 @@ public:
     RefPtr<Float32Array> curveForBindings();
 
     void setOversampleForBindings(OverSampleType);
-    OverSampleType oversampleForBindings() const;
+    OverSampleType NODELETE oversampleForBindings() const;
 
     double latency() const { return latencyTime(); }
 

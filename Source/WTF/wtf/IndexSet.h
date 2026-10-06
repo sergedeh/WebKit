@@ -139,12 +139,12 @@ public:
     // For values, you do:
     // indexSet.values(procedure.values());
     template<typename CollectionType>
-    Iterable<CollectionType> values(const CollectionType& collection) const
+    Iterable<CollectionType> values(const CollectionType& collection) const LIFETIME_BOUND
     {
         return Iterable<CollectionType>(collection, indices());
     }
 
-    const BitVector& indices() const { return m_set; }
+    const BitVector& indices() const LIFETIME_BOUND { return m_set; }
 
     void dump(PrintStream& out) const
     {

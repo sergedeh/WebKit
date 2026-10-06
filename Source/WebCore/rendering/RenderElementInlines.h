@@ -23,7 +23,7 @@
 #include <WebCore/RenderBox.h>
 #include <WebCore/RenderObjectDocument.h>
 #include <WebCore/RenderObjectNode.h>
-#include <WebCore/RenderStyle+GettersInlines.h>
+#include <WebCore/StyleComputedStyle+GettersInlines.h>
 #include <WebCore/StyleOpacity.h>
 #include <WebCore/StyleShapeOutside.h>
 
@@ -32,9 +32,16 @@ namespace WebCore {
 inline Overflow RenderElement::effectiveOverflowBlockDirection() const { return writingMode().isHorizontal() ? effectiveOverflowY() : effectiveOverflowX(); }
 inline Overflow RenderElement::effectiveOverflowInlineDirection() const { return writingMode().isHorizontal() ? effectiveOverflowX() : effectiveOverflowY(); }
 inline Element* RenderElement::element() const { return downcast<Element>(RenderObject::node()); }
-inline RefPtr<Element> RenderElement::protectedElement() const { return element(); }
 inline Element* RenderElement::nonPseudoElement() const { return downcast<Element>(RenderObject::nonPseudoNode()); }
-inline RefPtr<Element> RenderElement::protectedNonPseudoElement() const { return nonPseudoElement(); }
+
+inline std::optional<FloatSize> RenderElement::usedZoomedImageSize() const
+{
+    auto size = usedImageSize();
+    if (!size)
+        return std::nullopt;
+    size->scale(style().usedZoom());
+    return size;
+}
 
 inline bool RenderElement::isFixedPositioned() const
 {
@@ -55,19 +62,19 @@ inline bool RenderElement::isBlockLevelBox() const
 
     if (renderBox->isFlexItem() || renderBox->isGridItem() || renderBox->isRenderTableCell())
         return false;
-    return style().isDisplayBlockLevel();
+    return style().display().isBlockType();
 }
 
 inline bool RenderElement::isAnonymousBlock() const
 {
     return isAnonymous()
-        && (style().display() == DisplayType::Block || style().display() == DisplayType::Box)
+        && (style().display() == Style::DisplayType::BlockFlow || style().display() == Style::DisplayType::BlockDeprecatedFlex)
         && !style().pseudoElementType()
         && isRenderBlock()
 #if ENABLE(MATHML)
         && !isRenderMathMLBlock()
 #endif
-        && !isRenderListMarker()
+        && !isRenderListOutsideMarker()
         && !isRenderFragmentedFlow()
         && !isRenderMultiColumnSet()
         && !isRenderView()
@@ -76,13 +83,7 @@ inline bool RenderElement::isAnonymousBlock() const
 
 inline bool RenderElement::isBlockContainer() const
 {
-    auto display = style().display();
-    return (display == DisplayType::Block
-        || display == DisplayType::InlineBlock
-        || display == DisplayType::FlowRoot
-        || display == DisplayType::ListItem
-        || display == DisplayType::TableCell
-        || display == DisplayType::TableCaption) && !isRenderReplaced();
+    return style().display().doesGenerateBlockContainer() && !isRenderReplaced();
 }
 
 inline bool RenderElement::isBlockBox() const

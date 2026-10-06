@@ -27,11 +27,13 @@
 #import "DaemonConnection.h"
 
 #import "DaemonEncoder.h"
+#import "Logging.h"
 #import "PrivateClickMeasurementConnection.h"
 #import "WebPushDaemonConnection.h"
 #import <wtf/BlockPtr.h>
 #import <wtf/RunLoop.h>
 #import <wtf/darwin/DispatchExtras.h>
+#import <wtf/text/UTF8CStringView.h>
 
 namespace WebKit {
 
@@ -60,30 +62,40 @@ void Connection::sendWithReply(xpc_object_t message, CompletionHandler<void(xpc_
     }).get());
 }
 
+// Workaround a bug in clang static analyer that [[clang::suppress]] doesn't work in some template function.
+static void logMachServiceInterrupted(const UTF8CString& machServiceName)
+{
+    RELEASE_LOG(IPC, "Connection to mach service %s is interrupted", machServiceName);
+}
+
 template<typename Traits>
 void ConnectionToMachService<Traits>::initializeConnectionIfNeeded() const
 {
     if (m_connection)
         return;
-    // FIXME: This is a false positive. <rdar://164843889>
-    SUPPRESS_RETAINPTR_CTOR_ADOPT m_connection = adoptXPCObject(xpc_connection_create_mach_service(m_machServiceName.data(), mainDispatchQueueSingleton(), 0));
+    m_connection = adoptOSObject(xpc_connection_create_mach_service(m_machServiceName.legacyCStringPointer(), mainDispatchQueueSingleton(), 0));
     xpc_connection_set_event_handler(m_connection.get(), [weakThis = WeakPtr { *this }](xpc_object_t event) {
-        if (!weakThis)
+        // Promote `weakThis` to a stack-local strong reference before doing anything else.
+        // Clearing m_connection below may release the last strong reference to the
+        // xpc_connection (and thus to this very event-handler block), which would free
+        // the captured `weakThis` while we are still executing inside the block.
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
             return;
         if (event == XPC_ERROR_CONNECTION_INVALID) {
 #if HAVE(XPC_CONNECTION_COPY_INVALIDATION_REASON)
-            auto reason = std::unique_ptr<char[]>(xpc_connection_copy_invalidation_reason(weakThis->m_connection.get()));
-            WTFLogAlways("Failed to connect to mach service %s, reason: %s", weakThis->m_machServiceName.data(), reason.get());
+            auto reason = std::unique_ptr<char[]>(xpc_connection_copy_invalidation_reason(protectedThis->m_connection.get()));
+            SAFE_WTFLOGALWAYS("Failed to connect to mach service %s, reason: %s", protectedThis->m_machServiceName, UTF8CStringView::unsafeFromUTF8(reason.get()));
 #else
-            WTFLogAlways("Failed to connect to mach service %s, likely because it is not registered with launchd", weakThis->m_machServiceName.data());
+            SAFE_WTFLOGALWAYS("Failed to connect to mach service %s, likely because it is not registered with launchd", protectedThis->m_machServiceName);
 #endif
         }
         if (event == XPC_ERROR_CONNECTION_INTERRUPTED) {
-            RELEASE_LOG(IPC, "Connection to mach service %s is interrupted", weakThis->m_machServiceName.data());
+            logMachServiceInterrupted(protectedThis->m_machServiceName);
             // Daemon crashed, we will need to make a new connection to a new instance of the daemon.
-            weakThis->m_connection = nullptr;
+            protectedThis->m_connection = nullptr;
         }
-        weakThis->connectionReceivedEvent(event);
+        protectedThis->connectionReceivedEvent(event);
     });
     xpc_connection_activate(m_connection.get());
 

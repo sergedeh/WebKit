@@ -39,7 +39,7 @@ namespace {
 
 class Validater {
 public:
-    Validater(Code& code, const char* dumpBefore)
+    Validater(Code& code, UTF8CStringView dumpBefore)
         : m_code(code)
         , m_dumpBefore(dumpBefore)
     {
@@ -48,7 +48,7 @@ public:
 #define VALIDATE(condition, message) do {                               \
         if (condition)                                                  \
             break;                                                      \
-        fail(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, #condition, toCString message); \
+        fail(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, #condition, toUTF8CString message); \
     } while (false)
     
     void run()
@@ -71,7 +71,7 @@ public:
             
             for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
                 Inst& inst = block->at(instIndex);
-                for (Arg& arg : inst.args) {
+                for (Arg& arg : inst.args()) {
                     switch (arg.kind()) {
                     case Arg::Stack:
                         VALIDATE(validSlots.contains(arg.stackSlot()), ("At ", inst, " in ", *block));
@@ -92,8 +92,8 @@ public:
                 // forEachArg must return Arg&'s that point into the args array.
                 inst.forEachArg(
                     [&] (Arg& arg, Arg::Role role, Bank, Width width) {
-                        VALIDATE(&arg >= &inst.args[0], ("At ", arg, " in ", inst, " in ", *block));
-                        VALIDATE(&arg <= &inst.args.last(), ("At ", arg, " in ", inst, " in ", *block));
+                        VALIDATE(&arg >= &inst.args()[0], ("At ", arg, " in ", inst, " in ", *block));
+                        VALIDATE(&arg <= &inst.args().back(), ("At ", arg, " in ", inst, " in ", *block));
 
                         // FIXME: replace with a check for wasm simd instructions.
                         VALIDATE(Options::useWasmSIMD()
@@ -113,16 +113,16 @@ public:
                     break;
                 case VectorExtendLow:
                 case VectorExtendHigh:
-                    VALIDATE(elementByteSize(inst.args[0].simdInfo().lane) <= 8, ("At ", inst, " in ", *block));
-                    VALIDATE(elementByteSize(inst.args[0].simdInfo().lane) >= 2, ("At ", inst, " in ", *block));
+                    VALIDATE(elementByteSize(inst.args()[0].simdInfo().lane) <= 8, ("At ", inst, " in ", *block));
+                    VALIDATE(elementByteSize(inst.args()[0].simdInfo().lane) >= 2, ("At ", inst, " in ", *block));
                     break;
                 case ExtractRegister64:
-                    VALIDATE(inst.args[2].isImm(), ("At ", inst, " in ", *block));
-                    VALIDATE(inst.args[2].asTrustedImm32().m_value < 64, ("At ", inst, " in ", *block));
+                    VALIDATE(inst.args()[2].isImm(), ("At ", inst, " in ", *block));
+                    VALIDATE(inst.args()[2].asTrustedImm32().m_value < 64, ("At ", inst, " in ", *block));
                     break;
                 case ExtractRegister32:
-                    VALIDATE(inst.args[2].isImm(), ("At ", inst, " in ", *block));
-                    VALIDATE(inst.args[2].asTrustedImm32().m_value < 32, ("At ", inst, " in ", *block));
+                    VALIDATE(inst.args()[2].isImm(), ("At ", inst, " in ", *block));
+                    VALIDATE(inst.args()[2].asTrustedImm32().m_value < 32, ("At ", inst, " in ", *block));
                     break;
                 default:
                     break;
@@ -144,16 +144,16 @@ public:
 private:
     NO_RETURN_DUE_TO_CRASH void fail(
         const char* filename, int lineNumber, const char* function, const char* condition,
-        CString message)
+        UTF8CString message)
     {
-        CString failureMessage;
+        UTF8CString failureMessage;
         {
             StringPrintStream out;
             out.print("AIR VALIDATION FAILURE\n");
             out.print("    ", condition, " (", filename, ":", lineNumber, ")\n");
             out.print("    ", message, "\n");
             out.print("    After ", m_code.lastPhaseName(), "\n");
-            failureMessage = out.toCString();
+            failureMessage = out.toUTF8CString();
         }
 
         dataLog(failureMessage);
@@ -170,12 +170,12 @@ private:
     }
     
     Code& m_code;
-    const char* m_dumpBefore;
+    UTF8CStringView m_dumpBefore;
 };
 
 } // anonymous namespace
 
-void validate(Code& code, const char* dumpBefore)
+void validate(Code& code, UTF8CStringView dumpBefore)
 {
     Validater validater(code, dumpBefore);
     validater.run();

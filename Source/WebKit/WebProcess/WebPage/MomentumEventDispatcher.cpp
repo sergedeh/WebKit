@@ -75,7 +75,7 @@ bool MomentumEventDispatcher::eventShouldStartSyntheticMomentumPhase(WebCore::Pa
 bool MomentumEventDispatcher::handleWheelEvent(WebCore::PageIdentifier pageIdentifier, const WebWheelEvent& event, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
 {
     m_lastRubberBandableEdges = rubberBandableEdges;
-    m_lastIncomingEvent = event;
+    m_lastIncomingEvent = &event;
 
     bool isMomentumEvent = event.isMomentumEvent();
 
@@ -169,7 +169,7 @@ void MomentumEventDispatcher::dispatchSyntheticMomentumEvent(WebWheelEvent::Phas
     ASSERT(m_currentGesture.active);
     ASSERT(m_currentGesture.initiatingEvent);
 
-    CheckedRef initiatingEvent = *m_currentGesture.initiatingEvent;
+    Ref<const WebWheelEvent> initiatingEvent = *m_currentGesture.initiatingEvent;
     auto appKitScrollMultiplier = appKitScrollMultiplierForEvent(initiatingEvent);
     auto appKitAcceleratedDelta = delta * appKitScrollMultiplier;
     auto wheelTicks = appKitAcceleratedDelta / WebCore::Scrollbar::pixelsPerLineStep();
@@ -177,22 +177,23 @@ void MomentumEventDispatcher::dispatchSyntheticMomentumEvent(WebWheelEvent::Phas
 
     // FIXME: Ideally we would stick legitimate rawPlatformDeltas on the event,
     // but currently nothing will consume them, and we'd have to keep track of them separately.
-    WebWheelEvent syntheticEvent(
-        { WebEventType::Wheel, m_lastIncomingEvent->modifiers(), time },
-        initiatingEvent->position(),
-        initiatingEvent->globalPosition(),
-        appKitAcceleratedDelta,
-        wheelTicks,
-        WebWheelEvent::Granularity::ScrollByPixelWheelEvent,
-        initiatingEvent->directionInvertedFromDevice(),
-        WebWheelEvent::Phase::None,
-        phase,
-        true,
-        initiatingEvent->scrollCount(),
-        delta,
-        time,
-        { },
-        WebWheelEvent::MomentumEndType::Unknown);
+    Ref syntheticEvent = WebWheelEvent::create({ WebEventType::Wheel, m_lastIncomingEvent->modifiers(), time }, {
+        .position = initiatingEvent->position(),
+        .globalPosition = initiatingEvent->globalPosition(),
+        .delta = appKitAcceleratedDelta,
+        .wheelTicks = wheelTicks,
+        .granularity = WebWheelEvent::Granularity::ScrollByPixelWheelEvent,
+        .directionInvertedFromDevice = initiatingEvent->directionInvertedFromDevice(),
+        .phase = WebWheelEvent::Phase::None,
+        .momentumPhase = phase,
+        .hasPreciseScrollingDeltas = true,
+        .scrollCount = initiatingEvent->scrollCount(),
+        .unacceleratedScrollingDelta = delta,
+        .ioHIDEventTimestamp = time,
+        .rawPlatformDelta = { },
+        .momentumEndType = WebWheelEvent::MomentumEndType::Unknown,
+        .inputSource = initiatingEvent->inputSource(),
+    });
 
     m_client->handleSyntheticWheelEvent(*m_currentGesture.pageIdentifier, syntheticEvent, m_lastRubberBandableEdges);
 
@@ -211,8 +212,9 @@ void MomentumEventDispatcher::didStartMomentumPhase(WebCore::PageIdentifier page
     tracePoint(SyntheticMomentumStart);
 
     m_currentGesture.active = true;
+    m_currentGesture.momentumCurve = event.inputSource() == WebEventInputSource::Automation ? MomentumCurve::Simple : MomentumCurve::Default;
     m_currentGesture.pageIdentifier = pageIdentifier;
-    m_currentGesture.initiatingEvent = event;
+    m_currentGesture.initiatingEvent = &event;
     m_currentGesture.currentOffset = { };
     m_currentGesture.startTime = MonotonicTime::now();
     m_currentGesture.displayNominalFrameRate = displayProperties->nominalFrameRate;
@@ -224,7 +226,7 @@ void MomentumEventDispatcher::didStartMomentumPhase(WebCore::PageIdentifier page
     // directly when the frame interval is within 20fps of idealCurveFrameRate;
     // we should perhaps do the same.
     float idealCurveMultiplier = m_currentGesture.accelerationCurve->frameRate() / idealCurveFrameRate;
-    buildOffsetTableWithInitialDelta(*event.rawPlatformDelta() * idealCurveMultiplier);
+    buildOffsetTableWithInitialDelta(*event.rawPlatformDelta() * idealCurveMultiplier * event.momentumFastScrollMultiplier());
 
     WebCore::FloatSize consumedDelta = event.delta();
     if (m_currentGesture.initiatingEvent->directionInvertedFromDevice())
@@ -239,6 +241,8 @@ void MomentumEventDispatcher::didEndMomentumPhase()
     ASSERT(m_currentGesture.active);
 
     dispatchSyntheticMomentumEvent(WebWheelEvent::Phase::Ended, { });
+
+    m_client->didEndSyntheticMomentumScrolling();
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)
     RELEASE_LOG(ScrollAnimations, "MomentumEventDispatcher ending synthetic momentum phase with total offset %.1f %.1f, duration %f (event offset would have been %.1f %.1f) (tail index %d of %zu)", m_currentGesture.currentOffset.width(), m_currentGesture.currentOffset.height(), (MonotonicTime::now() - m_currentGesture.startTime).seconds(), m_currentGesture.accumulatedEventOffset.width(), m_currentGesture.accumulatedEventOffset.height(), m_currentGesture.currentTailDeltaIndex, m_currentGesture.tailDeltaTable.size());
@@ -256,7 +260,7 @@ void MomentumEventDispatcher::setScrollingAccelerationCurve(WebCore::PageIdentif
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)
     WTF::TextStream stream(WTF::TextStream::LineMode::SingleLine);
     stream << curve;
-    RELEASE_LOG(ScrollAnimations, "MomentumEventDispatcher set curve %" PUBLIC_LOG_STRING, stream.release().utf8().data());
+    RELEASE_LOG(ScrollAnimations, "MomentumEventDispatcher set curve %" PUBLIC_LOG_STRING, stream.release().utf8());
 #endif
 
     Locker locker { m_accelerationCurvesLock };
@@ -423,9 +427,11 @@ void MomentumEventDispatcher::buildOffsetTableWithInitialDelta(WebCore::FloatSiz
     bool inTail = false;
     WebCore::FloatSize tailCarry;
 
+    bool useSimpleDeceleration = m_currentGesture.momentumCurve == MomentumCurve::Simple;
+
     do {
         WebCore::FloatSize acceleratedDelta;
-        std::tie(unacceleratedDelta, acceleratedDelta) = computeNextDelta(unacceleratedDelta);
+        std::tie(unacceleratedDelta, acceleratedDelta) = useSimpleDeceleration ? computeNextDeltaSimple(unacceleratedDelta) : computeNextDelta(unacceleratedDelta);
 
         const float tailStartUnacceleratedDelta = 6.f;
         if (!inTail && std::abs(unacceleratedDelta.width()) < tailStartUnacceleratedDelta && std::abs(unacceleratedDelta.height()) < tailStartUnacceleratedDelta) {
@@ -544,7 +550,7 @@ void MomentumEventDispatcher::equalizeTailGaps()
     table.shrink(finalTableSize);
 }
 
-static float interpolate(float a, float b, float t)
+static float NODELETE interpolate(float a, float b, float t)
 {
     return a + t * (b - a);
 }
@@ -581,7 +587,7 @@ static float momentumDecayRate(WebCore::FloatSize delta, Seconds frameInterval)
     return std::pow(alpha, (frameInterval.seconds() / 0.008f));
 }
 
-static constexpr float fromFixedPoint(float value)
+static constexpr float NODELETE fromFixedPoint(float value)
 {
     return value / 65536.0f;
 }
@@ -648,6 +654,16 @@ std::pair<WebCore::FloatSize, WebCore::FloatSize> MomentumEventDispatcher::compu
 #endif
 
     return { unacceleratedDelta, acceleratedDelta };
+}
+
+std::pair<WebCore::FloatSize, WebCore::FloatSize> MomentumEventDispatcher::computeNextDeltaSimple(WebCore::FloatSize currentUnacceleratedDelta)
+{
+    static constexpr float lnDecelerationRate = -0.00200200267; // log(.998) but log() is not constexpr-able.
+
+    float velocityFactor = exp(lnDecelerationRate * idealCurveFrameInterval.milliseconds());
+    currentUnacceleratedDelta.scale(velocityFactor);
+
+    return { currentUnacceleratedDelta, currentUnacceleratedDelta };
 }
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)

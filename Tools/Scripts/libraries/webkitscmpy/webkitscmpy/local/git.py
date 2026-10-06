@@ -20,10 +20,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import calendar
+import json
 import logging
 import os
-import json
 import re
 import subprocess
 import sys
@@ -133,7 +132,7 @@ class Git(Scm):
             try:
                 self._last_populated[branch] = time.time()
                 log = subprocess.Popen(
-                    [self.repo.executable(), 'log', '{}/{}'.format(remote, branch) if remote else branch, '--no-decorate', '--date=unix', '--'],
+                    [self.repo.executable(), '--no-replace-objects', 'log', '{}/{}'.format(remote, branch) if remote else branch, '--no-decorate', '--date=unix', '--'],
                     cwd=self.repo.root_path,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -321,6 +320,7 @@ class Git(Scm):
         'webkitscmpy.auto-prune': ['only-source', 'true', 'false'],
         'webkitscmpy.cc-radar': ['true', 'false'],
         'webkitscmpy.set-upstream-on-push': ['false', 'true'],
+        'webkitscmpy.update-title': ['true', 'false'],
     }
     CONFIG_LOCATIONS = ['global', 'repository', 'project']
     MERGE_BASE_SHARD_SIZE = 512  # Windows has a maximum of ~32K characters in a single command
@@ -458,6 +458,23 @@ class Git(Scm):
 
     @property
     @decorators.Memoize()
+    def git_directory(self):
+        result = run([self.executable(), 'rev-parse', '--git-dir'], cwd=self.root_path, capture_output=True, encoding='utf-8')
+        if result.returncode:
+            return os.path.join(self.root_path, '.git')
+        return os.path.abspath(os.path.join(self.root_path, result.stdout.rstrip()))
+
+    @property
+    @decorators.Memoize()
+    def is_worktree(self):
+        """Return True if this repository is a git worktree.
+
+        A worktree's git_directory differs from its common_directory.
+        """
+        return self.git_directory != self.common_directory
+
+    @property
+    @decorators.Memoize()
     def default_branch(self):
         for name in ['HEAD', 'main', 'master']:
             result = run([self.executable(), 'rev-parse', '--symbolic-full-name', 'refs/remotes/{}/{}'.format(self.default_remote, name)],
@@ -537,7 +554,6 @@ class Git(Scm):
 
     @decorators.Memoize()
     def source_remotes(self, cached=True, personal=False):
-        security_levels = {}
         config = self.config(cached=cached)
 
         all_remotes = {
@@ -549,41 +565,67 @@ class Git(Scm):
             and c != 'remote..url'
         }
 
-        for candidate in config.keys():
-            if not candidate.startswith('webkitscmpy.remotes') or not candidate.endswith('url'):
-                continue
-            candidate = candidate.split('.')[-2]
-            if candidate in all_remotes:
-                security_levels[candidate] = int(config.get('webkitscmpy.remotes.{}.security-level'.format(candidate), '0'))
-        candidates = [self.default_remote] if security_levels.get(self.default_remote, 0) == 0 else []
-        for _, candidate in sorted([(v, k) for k, v in security_levels.items()]):
-            if candidate not in candidates:
-                candidates.append(candidate)
+        security_levels = {
+            remote: int(config.get(f'webkitscmpy.remotes.{remote}.security-level') or 0)
+            for remote in all_remotes
+            if f'webkitscmpy.remotes.{remote}.url' in config
+        }
+        security_levels.setdefault(self.default_remote, 0)
 
-        personal_remotes = []
-        if personal:
-            for candidate in ['fork'] + ['{}-fork'.format(og) for og in candidates]:
-                if candidate in all_remotes:
-                    personal_remotes.append(candidate)
-            usernames = []
-            rmt = self.remote()
-            for candidate in all_remotes:
-                if not candidate or '-' in candidate:
-                    continue
-                if candidate in candidates or candidate in personal_remotes:
-                    continue
-                if isinstance(rmt, remote.GitHub) and candidate == rmt.credentials(required=False)[0]:
-                    continue
-                usernames.append(candidate)
-            for username in sorted(usernames):
-                for candidate in [username] + ['{}-{}'.format(username, og) for og in candidates]:
-                    if candidate in all_remotes:
-                        personal_remotes.append(candidate)
-        return candidates + personal_remotes
+        # Sorted by security level asc, default-remote-first, and remote name asc.
+        remotes = [
+            remote
+            for remote, _ in sorted(
+                security_levels.items(),
+                key=lambda i: (i[1], i[0] != self.default_remote, i[0]),
+            )
+        ]
+
+        if not personal:
+            # These are fairly self-evident from how we construct remotes above.
+            assert set(remotes) <= (all_remotes | {self.default_remote})
+            assert len(remotes) == len(set(remotes))
+            return remotes
+
+        # Save a copy of the already-found (impersonal) remotes sequence. Note we need
+        # to preserve the order to iterate over it below.
+        impersonal_remotes = remotes[:]
+
+        personal_remotes = all_remotes - security_levels.keys()
+
+        # Ordering matters here, so we can't just use sets.
+        candidates = ['fork', *(f'{remote}-fork' for remote in impersonal_remotes)]
+        remotes.extend(c for c in candidates if c in personal_remotes)
+
+        rmt = self.remote()
+        usernames = {
+            r
+            for r in personal_remotes
+            if r != 'fork'
+            and '-' not in r
+            and (not isinstance(rmt, remote.GitHub) or r != rmt.credentials(required=False)[0])
+        }
+
+        # Ensure we haven't found anything already in remotes.
+        assert usernames.isdisjoint(remotes)
+
+        for username in sorted(usernames):
+            # This follows from the definition of usernames.
+            assert username in personal_remotes
+            remotes.append(username)
+
+            # Ordering matters here, so we can't just use sets.
+            candidates = [f'{username}-{remote}' for remote in impersonal_remotes]
+            remotes.extend(c for c in candidates if c in personal_remotes)
+
+        # Ensure we don't have duplicates, and only return extant remotes.
+        assert set(remotes) <= (all_remotes | {self.default_remote})
+        assert len(remotes) == len(set(remotes))
+        return remotes
 
     def _commit_count(self, native_parameter):
         revision_count = run(
-            [self.executable(), 'rev-list', '--count', '--no-merges', native_parameter],
+            [self.executable(), '--no-replace-objects', 'rev-list', '--count', '--no-merges', native_parameter],
             cwd=self.root_path, capture_output=True, encoding='utf-8',
         )
         if revision_count.returncode:
@@ -651,7 +693,7 @@ class Git(Scm):
         # The way the buildbot workers update the git repository does not always update the remote/origin/main reference.
         # Workaround that by checking if remote/origin/main is an ancestor of FETCH_HEAD and then updating it here of needed.
         # See https://webkit.org/b/299395 for more details.
-        fh_path = os.path.join(self.common_directory, 'FETCH_HEAD')
+        fh_path = os.path.join(self.git_directory, 'FETCH_HEAD')
         if not os.path.isfile(fh_path):
             return
         repo_url = self.url().removesuffix('.git')
@@ -786,7 +828,7 @@ class Git(Scm):
 
         default_branch = self.default_branch
         parsed_branch_point = None
-        log_format = ['-1', '--no-decorate', '--date=unix'] if include_log else ['-1', '--no-decorate', '--date=unix', '--format=short']
+        log_format = ['-1', '--no-decorate', '--date=unix', '--format=fuller'] if include_log else ['-1', '--no-decorate', '--date=unix', '--format=short']
 
         # Determine the `git log` output and branch for a given identifier
         if identifier is not None:
@@ -907,8 +949,25 @@ class Git(Scm):
         if branch_point and parsed_branch_point and branch_point != parsed_branch_point:
             raise ValueError("Provided 'branch_point' does not match branch point of specified branch")
 
+        # Parse git log output, handling both normal and merge commits (which have an extra 'Merge:' line)
+        log_lines = log.stdout.splitlines()
+        author_line = None
+        message_start_index = None
+        for i, line in enumerate(log_lines):
+            if line.startswith('Author:'):
+                author_line = line
+            # The message starts after the first blank line following the header
+            if message_start_index is None and not line.strip() and i > 0:
+                message_start_index = i + 1
+                break
+
+        if not author_line:
+            raise self.Exception("Failed to find Author line in git log output for '{}'".format(hash))
+        if message_start_index is None:
+            message_start_index = len(log_lines)
+
         # Check the commit log for a git-svn revision
-        logcontent = '\n'.join(line[4:] for line in log.stdout.splitlines()[4:])
+        logcontent = '\n'.join(line[4:] for line in log_lines[message_start_index:])
         matches = self.GIT_SVN_REVISION.findall(logcontent)
         revision = int(matches[-1].split('@')[0]) if matches else None
 
@@ -945,7 +1004,7 @@ class Git(Scm):
             branch=branch,
             timestamp=timestamp,
             order=order,
-            author=Contributor.from_scm_log(log.stdout.splitlines()[1], self.contributors),
+            author=Contributor.from_scm_log(author_line, self.contributors),
             message=logcontent if include_log else None,
         )
 
@@ -953,15 +1012,25 @@ class Git(Scm):
         author = None
         timestamp = None
 
-        for line in content.splitlines()[:4]:
+        # Parse header lines dynamically to handle merge commits (which have an extra 'Merge:' line)
+        lines = content.splitlines()
+        message_start_index = None
+        for i, line in enumerate(lines):
             split = line.split(': ')
             if split[0] == 'Author':
                 author = Contributor.from_scm_log(line.lstrip(), self.contributors)
             elif split[0] == 'CommitDate':
                 timestamp = int(line.split(' ')[-1])
+            # The message starts after the first blank line following the header
+            if message_start_index is None and not line.strip() and i > 0:
+                message_start_index = i + 1
+                break
+
+        if message_start_index is None:
+            message_start_index = len(lines)
 
         message = ''
-        for line in content.splitlines()[5:]:
+        for line in lines[message_start_index:]:
             message += line[4:] + '\n'
         matches = self.GIT_SVN_REVISION.findall(message)
 
@@ -1002,7 +1071,9 @@ class Git(Scm):
 
             line = log.stdout.readline()
             previous = [end]
+            saw_output = False
             while line:
+                saw_output = True
                 if not line.startswith('commit '):
                     raise OSError('Failed to parse `git log` format')
                 branch_point = previous[-1].branch_point
@@ -1050,10 +1121,11 @@ class Git(Scm):
                             yield cached
                     previous = [commit]
 
-            for cached in previous:
-                cached.order += begin.order
-                if scopes is None or cached.hash in in_scope:
-                    yield cached
+            if saw_output:
+                for cached in previous:
+                    cached.order += begin.order
+                    if scopes is None or cached.hash in in_scope:
+                        yield cached
         finally:
             if log and log.poll() is None:
                 log.kill()
@@ -1297,7 +1369,7 @@ class Git(Scm):
             prune = True
         elif prune is None and self.config()['webkitscmpy.auto-prune'] == 'only-source':
             prune = remote in self.source_remotes()
-        command = [self.executable(), 'fetch', remote, '{}:{}'.format(branch, branch)]
+        command = [self.executable(), 'fetch', remote, '{}:{}'.format(branch, branch), '+refs/heads/{}:refs/remotes/{}/{}'.format(branch, remote, branch)]
         if prune:
             command.append('--prune')
         return run(command, cwd=self.root_path).returncode
@@ -1308,8 +1380,11 @@ class Git(Scm):
 
         need_commit_signature = self.commit_signing_enabled()
 
+        # Note: We skip the fetch when in a worktree because 'git fetch origin
+        # main:main' fails when main is checked out in another worktree. The
+        # 'git pull' below will still update the remote tracking ref.
         code = 0
-        if branch and self.branch != branch:
+        if branch and self.branch != branch and not self.is_worktree:
             code = self.fetch(branch=branch, remote=remote, prune=prune)
         if not code:
             command = [self.executable()]
@@ -1340,6 +1415,7 @@ class Git(Scm):
                     command + ['HEAD...{}'.format('{}/{}'.format(remote, branch))],
                     cwd=self.root_path,
                     env={'FILTER_BRANCH_SQUELCH_WARNING': '1'},
+                    capture_output=True,
                 ).returncode
 
         if not code and self.is_svn and commit.revision:
@@ -1440,21 +1516,84 @@ class Git(Scm):
         return output.stdout.rstrip().splitlines()
 
     def remote_for(self, argument):
-        candidates = list(self.source_remotes())
-        while candidates:
-            if argument not in self.branches_for(remote=candidates[-1]):
-                candidates.remove(candidates[-1])
-                continue
-            up_to_date = list(self.branches_for(hash='{}/{}'.format(candidates[-1], argument), remote=None).keys())
-            for candidate in candidates:
-                if candidate in up_to_date:
-                    return candidate
-            candidates.remove(candidates[-1])
+        impersonal_candidates = [f'refs/remotes/{remote}/{argument}' for remote in self.source_remotes()]
+        all_candidates = [f'refs/remotes/{remote}/{argument}' for remote in self.source_remotes(personal=True)]
+        assert all_candidates[: len(impersonal_candidates)] == impersonal_candidates
+        personal_candidates = all_candidates[len(impersonal_candidates):]
 
-        for remote in self.source_remotes(personal=True)[len(self.source_remotes()):]:
-            if argument in self.branches_for(remote=remote):
-                return remote
-        return None
+        proc = run(
+            [self.executable(), 'for-each-ref', '--format', '%(objectname) %(refname)', *all_candidates],
+            cwd=self.root_path,
+            capture_output=True,
+            encoding='utf-8',
+            check=True,
+        )
+
+        if not proc.stdout:
+            return None
+
+        refs = dict(reversed(line.split(' ', 1)) for line in proc.stdout.rstrip('\n').split('\n'))
+
+        # Find the first and last items in impersonal_candidates which exist.
+        first_ref = None
+        last_ref = None
+        for candidate in impersonal_candidates:
+            if candidate not in refs:
+                continue
+
+            if first_ref is None:
+                first_ref = candidate
+
+            last_ref = candidate
+
+        assert (first_ref is None) == (last_ref is None)
+
+        if last_ref is not None:
+            # For last_ref to be non-None, we have something in impersonal_candidates.
+            # We want to find the first extant candidate in the sequence which is
+            # up-to-date with the last extant candidate in the sequence.
+
+            if refs[first_ref] == refs[last_ref]:
+                # If we have the same object for the first and last refs, then we don't
+                # need to run anything with --contains.
+                selected_ref = first_ref
+            else:
+                proc = run(
+                    [
+                        self.executable(),
+                        'for-each-ref',
+                        '--format', '%(refname)',
+                        '--contains', last_ref,
+                        *impersonal_candidates,
+                    ],
+                    cwd=self.root_path,
+                    capture_output=True,
+                    encoding='utf-8',
+                    check=True,
+                )
+
+                if not proc.stdout:
+                    # Because last_ref is in impersonal_candidates, we should have got
+                    # at least last_ref back.
+                    assert last_ref in impersonal_candidates
+                    raise ValueError('Unexpected git behavior.')
+
+                up_to_date_refs = set(proc.stdout.rstrip('\n').split('\n'))
+
+                if len(up_to_date_refs) == 1:
+                    selected_ref = next(iter(up_to_date_refs))
+                else:
+                    selected_ref = next(iter(ref for ref in impersonal_candidates if ref in up_to_date_refs))
+        else:
+            # None of the impersonal_candidates exist, so return the first
+            # personal_candidate, if any, which does.
+            try:
+                selected_ref = next(iter(ref for ref in personal_candidates if ref in refs))
+            except StopIteration:
+                return None
+
+        _, _, remote, _ = selected_ref.split('/', maxsplit=3)
+        return remote
 
     def merge_base(self, ref_a, ref_b, include_log=True, include_identifier=True):
         a = self.find(ref_a, include_log=False, include_identifier=False)

@@ -19,7 +19,6 @@
 
 #pragma once
 
-#include <wtf/Expected.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
@@ -37,7 +36,7 @@ void g_strfreev(char**);
 
 namespace WTF {
 
-class CStringView;
+class UTF8CStringView;
 
 struct GMalloc {
     static void* malloc(size_t size) { return g_malloc(size); }
@@ -75,68 +74,94 @@ GMallocSpan<T, Malloc> dupGMallocSpan(std::span<const T> span)
     return duplicate;
 }
 
-WTF_EXPORT_PRIVATE Expected<GMallocSpan<char>, GUniquePtr<GError>> gFileGetContents(CStringView);
-WTF_EXPORT_PRIVATE Expected<GMallocSpan<char*, GMallocStrv>, GUniquePtr<GError>> gKeyFileGetKeys(GKeyFile*, CStringView groupName);
+WTF_EXPORT_PRIVATE std::expected<GMallocSpan<char>, GUniquePtr<GError>> gFileGetContents(UTF8CStringView);
+WTF_EXPORT_PRIVATE std::expected<GMallocSpan<char*, GMallocStrv>, GUniquePtr<GError>> gKeyFileGetKeys(GKeyFile*, UTF8CStringView groupName);
 WTF_EXPORT_PRIVATE GMallocSpan<GParamSpec*> gObjectClassGetProperties(GObjectClass*);
 WTF_EXPORT_PRIVATE GMallocSpan<const char*> gVariantGetStrv(const GRefPtr<GVariant>&);
 
-inline std::span<const uint8_t> span(GBytes* bytes)
+inline std::span<const uint8_t> span(GBytes* bytes LIFETIME_BOUND)
 {
     size_t size = 0;
     const auto* ptr = static_cast<const uint8_t*>(g_bytes_get_data(bytes, &size));
     return unsafeMakeSpan<const uint8_t>(ptr, size);
 }
 
-inline std::span<const uint8_t> span(const GRefPtr<GBytes>& bytes)
+inline std::span<const uint8_t> span(const GRefPtr<GBytes>& bytes LIFETIME_BOUND)
 {
     return span(bytes.get());
 }
 
-inline std::span<const uint8_t> span(GByteArray* array)
+inline std::span<const uint8_t> span(GByteArray* array LIFETIME_BOUND)
 {
+    if (!array)
+        return { };
     return unsafeMakeSpan<const uint8_t>(array->data, array->len);
 }
 
-inline std::span<const uint8_t> span(const GRefPtr<GByteArray>& array)
+inline std::span<const uint8_t> span(const GRefPtr<GByteArray>& array LIFETIME_BOUND)
 {
     return span(array.get());
 }
 
-inline std::span<const uint8_t> span(GVariant* variant)
+template <typename T = uint8_t*, typename = std::enable_if_t<std::is_pointer_v<T>>>
+inline std::span<T> span(GArray* array LIFETIME_BOUND)
+{
+    if (!array)
+        return { };
+
+    return unsafeMakeSpan(static_cast<T*>(static_cast<void*>(array->data)), array->len);
+}
+
+template <typename T = uint8_t*, typename = std::enable_if_t<std::is_pointer_v<T>>>
+inline std::span<T> span(GRefPtr<GArray>& array LIFETIME_BOUND)
+{
+    return span<T>(array.get());
+}
+
+inline std::span<const uint8_t> span(GVariant* variant LIFETIME_BOUND)
 {
     const auto* ptr = static_cast<const uint8_t*>(g_variant_get_data(variant));
     size_t size = g_variant_get_size(variant);
     return unsafeMakeSpan<const uint8_t>(ptr, size);
 }
 
-inline std::span<const uint8_t> span(const GRefPtr<GVariant>& variant)
+inline std::span<const uint8_t> span(const GRefPtr<GVariant>& variant LIFETIME_BOUND)
 {
     return span(variant.get());
 }
 
-static inline std::span<char*> span(char** strv)
+static inline std::span<char*> span(char** strv LIFETIME_BOUND)
 {
+    if (!strv)
+        return { };
     auto size = g_strv_length(strv);
     return unsafeMakeSpan(strv, size);
 }
 
-static inline std::span<const char* const> span(const char* const* strv)
+static inline std::span<char*> span(const GUniquePtr<char*>& strv LIFETIME_BOUND)
 {
+    return span(strv.get());
+}
+
+static inline std::span<const char* const> span(const char* const* strv LIFETIME_BOUND)
+{
+    if (!strv)
+        return { };
     auto size = g_strv_length(const_cast<char**>(strv));
     return unsafeMakeSpan(strv, size);
 }
 
 template <typename T = void*, typename = std::enable_if_t<std::is_pointer_v<T>>>
-inline std::span<T> span(GPtrArray* array)
+inline std::span<T> span(GPtrArray* array LIFETIME_BOUND)
 {
     if (!array)
-        return unsafeMakeSpan<T>(nullptr, 0);
+        return { };
 
     return unsafeMakeSpan(static_cast<T*>(static_cast<void*>(array->pdata)), array->len);
 }
 
 template <typename T = void*, typename = std::enable_if_t<std::is_pointer_v<T>>>
-inline std::span<T> span(GRefPtr<GPtrArray>& array)
+inline std::span<T> span(GRefPtr<GPtrArray>& array LIFETIME_BOUND)
 {
     return span<T>(array.get());
 }

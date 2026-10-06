@@ -34,8 +34,13 @@ from unittest.mock import patch
 from webkitcorepy import OutputCapture, StringIO, decorators, mocks, string_utils
 
 from webkitscmpy import Commit, Contributor, local
+from webkitscmpy.program.canonicalize import IdentifierTrailer
 from webkitscmpy.program.canonicalize.committer import main as committer_main
 from webkitscmpy.program.canonicalize.message import main as message_main
+
+
+# 'git config' spells listing two ways, and both appear in the wild
+LIST_OPTION = re.compile(r'^(-l|--list)$')
 
 
 class Git(mocks.Subprocess):
@@ -47,18 +52,21 @@ class Git(mocks.Subprocess):
     #     merge = refs/heads/main
     RE_SINGLE_TOP = re.compile(r'^\[\s*(?P<key>\S+)\s*\]')
     RE_MULTI_TOP = re.compile(r'^\[\s*(?P<keya>\S+) "(?P<keyb>\S+)"\s*\]')
-    RE_ELEMENT = re.compile(r'^\s+(?P<key>\S+)\s*=\s*(?P<value>.*\S+)')
+    RE_ELEMENT = re.compile(r'^\s+(?P<key>[^\s=]+)\s*=\s*(?P<value>.*\S+)')
 
     def __init__(
         self, path='/.invalid-git', datafile=None,
         remote=None, tags=None,
         detached=None, default_branch='main',
         git_svn=False, remotes=None, editor=None,
+        is_worktree=False,
     ):
         self.path = path
         self.default_branch = default_branch
         self.remote = remote or 'git@example.org:mock/{}'.format(os.path.basename(path))
         self.detached = detached or False
+        self.is_worktree = is_worktree
+        self.push_error = None
 
         self.tags = tags or {}
 
@@ -244,7 +252,14 @@ nothing to commit, working tree clean
             ), mocks.Subprocess.Route(
                 self.executable, 'rev-parse', '--git-common-dir',
                 cwd=self.path,
-                completion=mocks.ProcessCompletion(
+                generator=lambda *args, **kwargs: mocks.ProcessCompletion(
+                    returncode=0,
+                    stdout='{}\n'.format('/main-repo/.git' if self.is_worktree else '.git'),
+                ),
+            ), mocks.Subprocess.Route(
+                self.executable, 'rev-parse', '--git-dir',
+                cwd=self.path,
+                generator=lambda *args, **kwargs: mocks.ProcessCompletion(
                     returncode=0,
                     stdout='.git\n',
                 ),
@@ -291,13 +306,13 @@ nothing to commit, working tree clean
                            '\n'.join(['  remotes/{}'.format(name) for name in self.remotes.keys() if default_branch not in name]) + '\n',
                 ),
             ), mocks.Subprocess.Route(
-                self.executable, 'for-each-ref', '--format', '%(refname)', '--contains', re.compile(r'.+'),
+                self.executable, 'for-each-ref', '--format', re.compile(r'.+'), '--contains', re.compile(r'.+'),
                 cwd=self.path,
-                generator=lambda *args, **kwargs: self.for_each_ref(args[5], *args[6:]),
+                generator=lambda *args, **kwargs: self.for_each_ref(args[3], args[5], *args[6:]),
             ), mocks.Subprocess.Route(
-                self.executable, 'for-each-ref', '--format', '%(refname)',
+                self.executable, 'for-each-ref', '--format', re.compile(r'.+'),
                 cwd=self.path,
-                generator=lambda *args, **kwargs: self.for_each_ref(None, *args[4:]),
+                generator=lambda *args, **kwargs: self.for_each_ref(args[3], None, *args[4:]),
             ), mocks.Subprocess.Route(
                 self.executable, 'tag',
                 cwd=self.path,
@@ -403,38 +418,37 @@ nothing to commit, working tree clean
                     ][:int(args[2].split('=')[-1])])
                 )
             ), mocks.Subprocess.Route(
-                self.executable, 'log', re.compile(r'.+'),
+                self.executable, 'log', '--oneline', re.compile(r'.+'),
                 cwd=self.path,
                 generator=lambda *args, **kwargs: mocks.ProcessCompletion(
                     returncode=0,
-                    stdout='\n'.join([
-                        'commit {hash}\n'
-                        'Author: {author} <{email}>\n'
-                        'Date:   {date}\n'
-                        '\n{log}\n'.format(
-                            hash=commit.hash,
-                            author=commit.author.name,
-                            email=commit.author.email,
-                            date=commit.timestamp if '--date=unix' in args else datetime.fromtimestamp(commit.timestamp + time.timezone, timezone.utc).strftime('%a %b %d %H:%M:%S %Y +0000'),
-                            log='\n'.join(
-                                [
-                                    ('    ' + line) if line else '' for line in commit.message.splitlines()
-                                ] + (['    git-svn-id: https://svn.{}/repository/{}/trunk@{} 268f45cc-cd09-0410-ab3c-d52691b4dbfc'.format(
-                                    self.remote.split('@')[-1].split(':')[0],
-                                    os.path.basename(path),
-                                    commit.revision,
-                                )] if git_svn else [])
-                            )
-                        ) for commit in self.rev_list(args[2])
+                    stdout=''.join([
+                        '{hash} {subject}\n'.format(
+                            hash=commit.hash[:7],
+                            subject=commit.message.splitlines()[0],
+                        ) for commit in self.rev_list(args[3])
                     ])
                 )
             ), mocks.Subprocess.Route(
+                self.executable, 'log', '--abbrev-commit', re.compile(r'.+'),
+                cwd=self.path,
+                generator=lambda *args, **kwargs: self.log(args[3], args, path, git_svn)
+            ), mocks.Subprocess.Route(
+                self.executable, '--no-replace-objects', 'log', re.compile(r'.+'),
+                cwd=self.path,
+                generator=lambda *args, **kwargs: self.log(args[3], args, path, git_svn)
+            ), mocks.Subprocess.Route(
+                self.executable, 'log', re.compile(r'.+'),
+                cwd=self.path,
+                generator=lambda *args, **kwargs: self.log(args[2], args, path, git_svn)
+            ), mocks.Subprocess.Route(
+                self.executable, '--no-replace-objects', 'rev-list', '--count', '--no-merges', re.compile(r'.+'),
+                cwd=self.path,
+                generator=lambda *args, **kwargs: self.rev_list_count(args[5]),
+            ), mocks.Subprocess.Route(
                 self.executable, 'rev-list', '--count', '--no-merges', re.compile(r'.+'),
                 cwd=self.path,
-                generator=lambda *args, **kwargs: mocks.ProcessCompletion(
-                    returncode=0,
-                    stdout='{}\n'.format(self.count(args[4]))
-                ) if self.find(args[4]) else mocks.ProcessCompletion(returncode=128),
+                generator=lambda *args, **kwargs: self.rev_list_count(args[4]),
             ), mocks.Subprocess.Route(
                 self.executable, 'rev-list', re.compile(r'.+'),
                 cwd=self.path,
@@ -467,7 +481,7 @@ nothing to commit, working tree clean
                 self.executable, 'checkout', '-B', re.compile(r'.+'),
                 cwd=self.path,
                 generator=lambda *args, **kwargs:
-                    mocks.ProcessCompletion(returncode=0) if self.checkout(args[3], source=args[4] if len(args) > 4 else None, create=False, force=True) else mocks.ProcessCompletion(returncode=1)
+                    mocks.ProcessCompletion(returncode=0) if self.checkout(args[3], source=args[4] if len(args) > 4 else None, create=True, force=True) else mocks.ProcessCompletion(returncode=1)
             ), mocks.Subprocess.Route(
                 self.executable, 'checkout', re.compile(r'.+'),
                 cwd=self.path,
@@ -483,7 +497,7 @@ nothing to commit, working tree clean
                 cwd=self.path,
                 generator=lambda *args, **kwargs: self.filter_branch(
                     args[-1],
-                    identifier_template=args[-2].split("'")[-2] if args[-3] == '--msg-filter' else None,
+                    identifier_trailer=IdentifierTrailer.from_json(kwargs['env'].get('WEBKITSCMPY_CANONICALIZE_IDENTIFIER_TRAILER')),
                     environment_shell=args[4] if args[3] == '--env-filter' and args[4] else None,
                 )
             ), mocks.Subprocess.Route(
@@ -512,12 +526,12 @@ nothing to commit, working tree clean
                 cwd=self.path,
                 generator=lambda *args, **kwargs: self.pull(autostash=True),
             ), mocks.Subprocess.Route(
-                self.executable, 'config', '-l',
+                self.executable, 'config', LIST_OPTION,
                 cwd=self.path,
                 generator=lambda *args, **kwargs:
                     mocks.ProcessCompletion(
                         returncode=0,
-                        stdout='\n'.join(['{}={}'.format(key, value) for key, value in self.config().items()])
+                        stdout='\n'.join([f'{key}={value}' for key, value in self.config_entries()])
                     ),
             ), mocks.Subprocess.Route(
                 self.executable, 'config', '--get-regexp', re.compile(r'.+'),
@@ -528,17 +542,17 @@ nothing to commit, working tree clean
                         stdout='\n'.join(['{} {}'.format(key, value) for key, value in self.config().items() if key.startswith(args[3])])
                     ),
             ), mocks.Subprocess.Route(
-                self.executable, 'config', '-l', '--file', re.compile(r'.+'),
+                self.executable, 'config', LIST_OPTION, '--file', re.compile(r'.+'),
                 cwd=self.path,
                 generator=lambda *args, **kwargs:
                     mocks.ProcessCompletion(
                         returncode=0,
                         stdout='\n'.join([
-                            '{}={}'.format(key, value) for key, value in self.config(path=os.path.join(self.path, args[4])).items()
+                            f'{key}={value}' for key, value in self.config_entries(path=os.path.join(self.path, args[4]))
                         ])
                     ),
             ), mocks.Subprocess.Route(
-                self.executable, 'config', '-l', '--global',
+                self.executable, 'config', LIST_OPTION, '--global',
                 generator=lambda *args, **kwargs:
                     mocks.ProcessCompletion(
                         returncode=0,
@@ -546,6 +560,11 @@ nothing to commit, working tree clean
                     ),
             ), mocks.Subprocess.Route(
                 self.executable, 'config', '--add', re.compile(r'.+'), re.compile(r'.+'),
+                cwd=self.path,
+                generator=lambda *args, **kwargs:
+                    self.edit_config(args[3], args[4], add=True),
+            ), mocks.Subprocess.Route(
+                self.executable, 'config', '--replace-all', re.compile(r'.+'), re.compile(r'.+'),
                 cwd=self.path,
                 generator=lambda *args, **kwargs:
                     self.edit_config(args[3], args[4]),
@@ -602,6 +621,10 @@ nothing to commit, working tree clean
                 cwd=self.path,
                 generator=lambda *args, **kwargs: self.commit(amend=True, env=kwargs.get('env', dict())),
             ), mocks.Subprocess.Route(
+                self.executable, 'commit', '--amend', '-m', re.compile(r'.+'),
+                cwd=self.path,
+                generator=lambda *args, **kwargs: self.commit(amend=True, message=args[4]),
+            ), mocks.Subprocess.Route(
                 self.executable, 'commit', '-a', '-m', re.compile(r'.+'),
                 cwd=self.path,
                 generator=lambda *args, **kwargs: self.commit(message=args[4], env=kwargs.get('env', dict())),
@@ -642,13 +665,21 @@ nothing to commit, working tree clean
                 cwd=self.path,
                 generator=lambda *args, **kwargs: self.add(args[2]),
             ), mocks.Subprocess.Route(
+                self.executable, 'show-ref', '--verify', '--quiet', re.compile(r'.+'),
+                cwd=self.path,
+                generator=lambda *args, **kwargs: self.show_ref_verify(args[4]),
+            ), mocks.Subprocess.Route(
+                self.executable, 'push', '--porcelain', re.compile(r'.+'), re.compile(r'.+'),
+                cwd=self.path,
+                generator=lambda *args, **kwargs: self.push_porcelain(args[3], args[4], force='-f' in args),
+            ), mocks.Subprocess.Route(
                 self.executable, 'push', '-f', re.compile(r'.+'), re.compile(r'.+'),
                 cwd=self.path,
                 generator=lambda *args, **kwargs: mocks.ProcessCompletion(returncode=0),
             ), mocks.Subprocess.Route(
                 self.executable, 'fetch', 'origin', re.compile(r'.+:.+'),
                 cwd=self.path,
-                generator=lambda *args, **kwargs: mocks.ProcessCompletion(returncode=0),
+                generator=lambda *args, **kwargs: self._fetch_with_refspec(args[3:]),
             ), mocks.Subprocess.Route(
                 self.executable, 'rebase', '--onto', re.compile(r'.+'), re.compile(r'.+'), re.compile(r'.+'),
                 cwd=self.path,
@@ -895,6 +926,50 @@ nothing to commit, working tree clean
         rev_list = self.rev_list(something)
         return len(rev_list)
 
+    def rev_list_count(self, ref):
+        """Helper for git rev-list --count --no-merges"""
+        return mocks.ProcessCompletion(
+            returncode=0,
+            stdout='{}\n'.format(self.count(ref))
+        ) if self.find(ref) else mocks.ProcessCompletion(returncode=128)
+
+    def decoration(self, commit):
+        branches = []
+        for branch, commits in self.commits.items():
+            if commits[-1] == commit:
+                branches.append(branch)
+        if branches:
+            return ' ({})'.format(', '.join(sorted(branches)))
+        return ''
+
+    def log(self, ref, args, path, git_svn):
+        """Helper for git log"""
+        decorate = '--decorate' in args
+        return mocks.ProcessCompletion(
+            returncode=0,
+            stdout='\n'.join([
+                'commit {hash}{decoration}\n'
+                'Author: {author} <{email}>\n'
+                'Date:   {date}\n'
+                '\n{log}\n'.format(
+                    hash=commit.hash[:7] if '--abbrev-commit' in args else commit.hash,
+                    decoration=self.decoration(commit) if decorate else '',
+                    author=commit.author.name,
+                    email=commit.author.email,
+                    date=commit.timestamp if '--date=unix' in args else datetime.fromtimestamp(commit.timestamp + time.timezone, timezone.utc).strftime('%a %b %d %H:%M:%S %Y +0000'),
+                    log='\n'.join(
+                        [
+                            ('    ' + line) if line else '' for line in commit.message.splitlines()
+                        ] + (['    git-svn-id: https://svn.{}/repository/{}/trunk@{} 268f45cc-cd09-0410-ab3c-d52691b4dbfc'.format(
+                            self.remote.split('@')[-1].split(':')[0],
+                            os.path.basename(path),
+                            commit.revision,
+                        )] if git_svn else [])
+                    )
+                ) for commit in self.rev_list(ref)
+            ])
+        )
+
     def branches_on(self, commit):
         result = set()
         found_identifier = 0
@@ -923,9 +998,19 @@ nothing to commit, working tree clean
         if create:
             if commit:
                 if force:
-                    self.head = commit
-                    self.detached = something not in self.commits.keys()
-                    return True
+                    if source == something:
+                        # checkout -B branch (no start-point): reset to current HEAD
+                        del self.commits[something]
+                        # Fall through to create branch from current HEAD
+                    else:
+                        # checkout -B branch start-point: reset branch to start-point
+                        self.head = commit
+                        self.detached = False
+                        return True
+                else:
+                    return False
+            elif source != something:
+                # Source was explicitly provided but doesn't exist: fail
                 return False
             self.commits[something] = [Commit.from_json(Commit.Encoder().default(self.head))]
             # Copy one more to create a bridge commit
@@ -943,7 +1028,7 @@ nothing to commit, working tree clean
             self.detached = something not in self.commits.keys()
         return True if commit else False
 
-    def filter_branch(self, range, identifier_template=None, environment_shell=None, sed=None, autostash=False):
+    def filter_branch(self, range, identifier_trailer=None, environment_shell=None, sed=None, autostash=False):
         if not autostash and (self.modified or self.staged):
             return mocks.ProcessCompletion(returncode=128)
 
@@ -989,12 +1074,12 @@ nothing to commit, working tree clean
                         total=len(commits_to_edit),
                     ))
 
-                if identifier_template:
+                if identifier_trailer:
                     messagefile = StringIO()
                     messagefile.write(commit.message)
                     messagefile.seek(0)
                     with OutputCapture() as captured:
-                        message_main(messagefile, identifier_template)
+                        message_main(messagefile, identifier_trailer)
                     lines = captured.stdout.getvalue().splitlines()
                     if lines[-1].startswith('git-svn-id: https://svn'):
                         lines.pop(-1)
@@ -1049,28 +1134,33 @@ nothing to commit, working tree clean
                 'sendemail.transferencoding': 'base64',
             })
 
-        top = None
-        result = Git.config()
-        path = path or os.path.join(context.path, '.git', 'config')
+        return OrderedDict(context.config_entries(path=path))
+
+    def config_entries(self, path=None):
+        """Every configured value in order, keeping the repeated keys git allows a single option."""
+        result = list(Git.config().items())
+        path = path or os.path.join(self.path, '.git', 'config')
         if not os.path.isfile(path):
             return result
+
+        top = None
         with open(path, 'r') as configfile:
             for line in configfile.readlines():
-                match = context.RE_MULTI_TOP.match(line)
+                match = self.RE_MULTI_TOP.match(line)
                 if match:
-                    top = '{}.{}'.format(match.group('keya'), match.group('keyb'))
+                    top = f"{match.group('keya')}.{match.group('keyb')}"
                     continue
-                match = context.RE_SINGLE_TOP.match(line)
+                match = self.RE_SINGLE_TOP.match(line)
                 if match:
                     top = match.group('key')
                     continue
 
-                match = context.RE_ELEMENT.match(line)
+                match = self.RE_ELEMENT.match(line)
                 if top and match:
-                    result['{}.{}'.format(top, match.group('key'))] = match.group('value')
+                    result.append((f"{top}.{match.group('key')}", match.group('value')))
         return result
 
-    def edit_config(self, key, value):
+    def edit_config(self, key, value, add=False):
         with open(os.path.join(self.path, '.git', 'config'), 'r') as configfile:
             lines = [line for line in configfile.readlines()]
 
@@ -1081,7 +1171,7 @@ nothing to commit, working tree clean
         with open(os.path.join(self.path, '.git', 'config'), 'w') as configfile:
             for line in lines:
                 match = self.RE_ELEMENT.match(line)
-                if not match or match.group('key') != key_b:
+                if add or not match or match.group('key') != key_b:
                     configfile.write(line)
                 match = self.RE_MULTI_TOP.match(line)
                 if not match or '{}.{}'.format(match.group('keya'), match.group('keyb')) != key_a:
@@ -1123,9 +1213,12 @@ nothing to commit, working tree clean
         if message:
             self.head.message = message
         else:
-            self.head.message = '{}{}\nReviewed by Jonathan Bedard\n\n * {}\n{}'.format(
-                env.get('COMMIT_MESSAGE_TITLE', '') or '[Testing] {} commits'.format('Amending' if amend else 'Creating'),
+            title = env.get('COMMIT_MESSAGE_TITLE', '') or '[Testing] {} commits'.format('Amending' if amend else 'Creating')
+            reviewed_by = '' if re.match(r'(Unreviewed|Versioning.)', title, re.IGNORECASE) else '\nReviewed by Jonathan Bedard'
+            self.head.message = '{}{}{}\n\n * {}\n{}'.format(
+                title,
                 ('\n' + env.get('COMMIT_MESSAGE_BUG', '')) if env.get('COMMIT_MESSAGE_BUG', '') else '',
+                reviewed_by,
                 '\n * '.join(self.staged.keys()),
                 env.get('COMMIT_MESSAGE_CONTENT', '')
             )
@@ -1290,6 +1383,66 @@ nothing to commit, working tree clean
             self.remotes[remote_branch] = self.commits[branch][:]
         elif remote_branch in self.remotes:
             del self.remotes[remote_branch]
+        return mocks.ProcessCompletion(returncode=0)
+
+    def show_ref_verify(self, ref):
+        branch = ref.replace('refs/heads/', '')
+        if branch in self.commits:
+            return mocks.ProcessCompletion(returncode=0)
+        return mocks.ProcessCompletion(returncode=1)
+
+    def push_porcelain(self, remote, refspec, force=False):
+        if self.push_error is not None:
+            return mocks.ProcessCompletion(returncode=self.push_error)
+
+        local_branch = refspec.split(':')[0]
+        remote_ref = refspec.split(':')[-1] if ':' in refspec else local_branch
+        remote_branch = '{}/{}'.format(remote, remote_ref)
+
+        if not force and remote_branch in self.remotes:
+            return mocks.ProcessCompletion(
+                returncode=1,
+                stdout='!\trefs/heads/{ref}:refs/heads/{ref}\t[rejected] (non-fast-forward)\n'.format(ref=remote_ref),
+            )
+
+        if local_branch in self.commits:
+            self.remotes[remote_branch] = self.commits[local_branch][:]
+        return mocks.ProcessCompletion(returncode=0)
+
+    def _fetch_with_refspec(self, refspecs):
+        """Handle fetch with one or more refspecs like 'main:main'.
+
+        Simulates git's behavior of refusing to fetch into a branch
+        that is checked out in any worktree, and updates local refs
+        from the remote.
+        """
+        for refspec in refspecs:
+            if refspec == '--prune':
+                continue
+            if refspec.startswith('-'):
+                raise ValueError('Negative refspecs are not supported by this mock: {}'.format(refspec))
+            src, dst = refspec.lstrip('+').split(':', 1)
+            if dst.startswith('refs/heads/'):
+                branch = dst[len('refs/heads/'):]
+            elif '/' not in dst:
+                branch = dst
+            else:
+                continue
+
+            if self.is_worktree:
+                return mocks.ProcessCompletion(
+                    returncode=1,
+                    stderr="fatal: refusing to fetch into branch 'refs/heads/{}' checked out at '/other/worktree'\n".format(branch),
+                )
+
+            remote_key = 'origin/{}'.format(src if '/' not in src else src.split('/')[-1])
+            if remote_key not in self.remotes:
+                return mocks.ProcessCompletion(
+                    returncode=128,
+                    stderr="fatal: couldn't find remote ref {}\n".format(src),
+                )
+            self.commits[branch] = self.remotes[remote_key][:]
+
         return mocks.ProcessCompletion(returncode=0)
 
     def dcommit(self, remote='origin', branch=None):
@@ -1532,7 +1685,7 @@ nothing to commit, working tree clean
                 self.remotes['{}/{}'.format(name, branch)] = self.remotes[existing][:]
         return mocks.ProcessCompletion(returncode=0)
 
-    def for_each_ref(self, contains_commit, *patterns):
+    def for_each_ref(self, format, contains_commit, *patterns):
         if contains_commit:
             commit = self.find(contains_commit)
             if commit is None:
@@ -1565,7 +1718,12 @@ nothing to commit, working tree clean
 
         refs = [ref for ref in candidate_refs if patterns_re.match(ref)]
 
+        if format == '%(refname)':
+            output = '\n'.join(refs)
+        elif format == '%(objectname) %(refname)':
+            output = '\n'.join(self.find(ref).hash + ' ' + ref for ref in refs)
+
         return mocks.ProcessCompletion(
             returncode=0,
-            stdout='\n'.join(refs) + '\n' if refs else '',
+            stdout=output + '\n' if refs else '',
         )

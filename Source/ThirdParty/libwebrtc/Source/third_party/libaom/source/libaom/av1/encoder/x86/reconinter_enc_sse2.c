@@ -35,36 +35,9 @@ void aom_upsampled_pred_sse2(MACROBLOCKD *xd, const struct AV1Common *const cm,
                              int subpel_x_q3, int subpel_y_q3,
                              const uint8_t *ref, int ref_stride,
                              int subpel_search) {
-  // expect xd == NULL only in tests
-  if (xd != NULL) {
-    const MB_MODE_INFO *mi = xd->mi[0];
-    const int ref_num = 0;
-    const int is_intrabc = is_intrabc_block(mi);
-    const struct scale_factors *const sf =
-        is_intrabc ? &cm->sf_identity : xd->block_ref_scale_factors[ref_num];
-    const int is_scaled = av1_is_scaled(sf);
-
-    if (is_scaled) {
-      int plane = 0;
-      const int mi_x = mi_col * MI_SIZE;
-      const int mi_y = mi_row * MI_SIZE;
-      const struct macroblockd_plane *const pd = &xd->plane[plane];
-      const struct buf_2d *const dst_buf = &pd->dst;
-      const struct buf_2d *const pre_buf =
-          is_intrabc ? dst_buf : &pd->pre[ref_num];
-
-      InterPredParams inter_pred_params;
-      inter_pred_params.conv_params = get_conv_params(0, plane, xd->bd);
-      const int_interpfilters filters =
-          av1_broadcast_interp_filter(EIGHTTAP_REGULAR);
-      av1_init_inter_params(
-          &inter_pred_params, width, height, mi_y >> pd->subsampling_y,
-          mi_x >> pd->subsampling_x, pd->subsampling_x, pd->subsampling_y,
-          xd->bd, is_cur_buf_hbd(xd), is_intrabc, sf, pre_buf, filters);
-      av1_enc_build_one_inter_predictor(comp_pred, width, mv,
-                                        &inter_pred_params);
-      return;
-    }
+  if (aom_upsampled_pred_scaled(xd, cm, mi_row, mi_col, mv, comp_pred, width,
+                                height)) {
+    return;
   }
 
   const InterpFilterParams *filter = av1_get_filter(subpel_search);
@@ -126,8 +99,7 @@ void aom_upsampled_pred_sse2(MACROBLOCKD *xd, const struct AV1Common *const cm,
     aom_convolve8_vert(ref, ref_stride, comp_pred, width, NULL, -1, kernel, 16,
                        width, height);
   } else {
-    DECLARE_ALIGNED(16, uint8_t,
-                    temp[((MAX_SB_SIZE * 2 + 16) + 16) * MAX_SB_SIZE]);
+    uint8_t *temp = comp_pred;
     const int16_t *const kernel_x =
         av1_get_interp_filter_subpel_kernel(filter, subpel_x_q3 << 1);
     const int16_t *const kernel_y =
@@ -139,7 +111,7 @@ void aom_upsampled_pred_sse2(MACROBLOCKD *xd, const struct AV1Common *const cm,
     uint8_t *temp_start_vert = temp + MAX_SB_SIZE * ((filter->taps >> 1) - 1);
     int intermediate_height =
         (((height - 1) * 8 + subpel_y_q3) >> 3) + filter_taps;
-    assert(intermediate_height <= (MAX_SB_SIZE * 2 + 16) + 16);
+    assert(intermediate_height < (MAX_SB_SIZE + SUBPEL_TAPS));
     aom_convolve8_horiz(ref_start, ref_stride, temp_start_horiz, MAX_SB_SIZE,
                         kernel_x, 16, NULL, -1, width, intermediate_height);
     aom_convolve8_vert(temp_start_vert, MAX_SB_SIZE, comp_pred, width, NULL, -1,
@@ -155,42 +127,15 @@ void aom_highbd_upsampled_pred_sse2(MACROBLOCKD *xd,
                                     int subpel_x_q3, int subpel_y_q3,
                                     const uint8_t *ref8, int ref_stride, int bd,
                                     int subpel_search) {
-  // expect xd == NULL only in tests
-  if (xd != NULL) {
-    const MB_MODE_INFO *mi = xd->mi[0];
-    const int ref_num = 0;
-    const int is_intrabc = is_intrabc_block(mi);
-    const struct scale_factors *const sf =
-        is_intrabc ? &cm->sf_identity : xd->block_ref_scale_factors[ref_num];
-    const int is_scaled = av1_is_scaled(sf);
-
-    if (is_scaled) {
-      int plane = 0;
-      const int mi_x = mi_col * MI_SIZE;
-      const int mi_y = mi_row * MI_SIZE;
-      const struct macroblockd_plane *const pd = &xd->plane[plane];
-      const struct buf_2d *const dst_buf = &pd->dst;
-      const struct buf_2d *const pre_buf =
-          is_intrabc ? dst_buf : &pd->pre[ref_num];
-
-      InterPredParams inter_pred_params;
-      inter_pred_params.conv_params = get_conv_params(0, plane, xd->bd);
-      const int_interpfilters filters =
-          av1_broadcast_interp_filter(EIGHTTAP_REGULAR);
-      av1_init_inter_params(
-          &inter_pred_params, width, height, mi_y >> pd->subsampling_y,
-          mi_x >> pd->subsampling_x, pd->subsampling_x, pd->subsampling_y,
-          xd->bd, is_cur_buf_hbd(xd), is_intrabc, sf, pre_buf, filters);
-      av1_enc_build_one_inter_predictor(comp_pred8, width, mv,
-                                        &inter_pred_params);
-      return;
-    }
+  if (aom_upsampled_pred_scaled(xd, cm, mi_row, mi_col, mv, comp_pred8, width,
+                                height)) {
+    return;
   }
 
   const InterpFilterParams *filter = av1_get_filter(subpel_search);
   int filter_taps = (subpel_search <= USE_4_TAPS) ? 4 : SUBPEL_TAPS;
   if (!subpel_x_q3 && !subpel_y_q3) {
-    uint16_t *ref = CONVERT_TO_SHORTPTR(ref8);
+    const uint16_t *ref = CONVERT_TO_SHORTPTR(ref8);
     uint16_t *comp_pred = CONVERT_TO_SHORTPTR(comp_pred8);
     if (width >= 8) {
       int i;
@@ -230,23 +175,35 @@ void aom_highbd_upsampled_pred_sse2(MACROBLOCKD *xd,
     aom_highbd_convolve8_vert(ref8, ref_stride, comp_pred8, width, NULL, -1,
                               kernel, 16, width, height, bd);
   } else {
-    DECLARE_ALIGNED(16, uint16_t,
-                    temp[((MAX_SB_SIZE + 16) + 16) * MAX_SB_SIZE]);
+    // The src and dst parameters of 'aom_highbd_convolve8_vert()' call are the
+    // same buffer ('comp_pred8') although they start from different offsets in
+    // the buffer. For any given row 'y', the 8-tap vertical filter reads a
+    // window of input rows from 'y-3' to 'y+4' (stride = MAX_SB_SIZE) and the
+    // result is written to row 'y-3' (stride = width) of the `comp_pred8`
+    // buffer. Since 'width <= MAX_SB_SIZE', output is written only after its
+    // corresponding input has already been read, eliminating any risk of
+    // overwriting data required for future iterations. The function
+    // 'aom_highbd_convolve8_vert()' must process the rows from top to bottom in
+    // increading order of row index, otherwise it will break the in-place
+    // processing of 'comp_pred8'.
+    uint16_t *temp = CONVERT_TO_SHORTPTR(comp_pred8);
+    const uint16_t *ref = CONVERT_TO_SHORTPTR(ref8);
     const int16_t *const kernel_x =
         av1_get_interp_filter_subpel_kernel(filter, subpel_x_q3 << 1);
     const int16_t *const kernel_y =
         av1_get_interp_filter_subpel_kernel(filter, subpel_y_q3 << 1);
-    const uint8_t *ref_start = ref8 - ref_stride * ((filter_taps >> 1) - 1);
+    const uint16_t *ref_start = ref - ref_stride * ((filter_taps >> 1) - 1);
     uint16_t *temp_start_horiz = (subpel_search <= USE_4_TAPS)
                                      ? temp + (filter_taps >> 1) * MAX_SB_SIZE
                                      : temp;
     uint16_t *temp_start_vert = temp + MAX_SB_SIZE * ((filter->taps >> 1) - 1);
     const int intermediate_height =
         (((height - 1) * 8 + subpel_y_q3) >> 3) + filter_taps;
-    assert(intermediate_height <= (MAX_SB_SIZE * 2 + 16) + 16);
-    aom_highbd_convolve8_horiz(
-        ref_start, ref_stride, CONVERT_TO_BYTEPTR(temp_start_horiz),
-        MAX_SB_SIZE, kernel_x, 16, NULL, -1, width, intermediate_height, bd);
+    assert(intermediate_height < (MAX_SB_SIZE + SUBPEL_TAPS));
+    aom_highbd_convolve8_horiz(CONVERT_TO_BYTEPTR(ref_start), ref_stride,
+                               CONVERT_TO_BYTEPTR(temp_start_horiz),
+                               MAX_SB_SIZE, kernel_x, 16, NULL, -1, width,
+                               intermediate_height, bd);
     aom_highbd_convolve8_vert(CONVERT_TO_BYTEPTR(temp_start_vert), MAX_SB_SIZE,
                               comp_pred8, width, NULL, -1, kernel_y, 16, width,
                               height, bd);

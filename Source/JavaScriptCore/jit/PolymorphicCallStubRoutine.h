@@ -55,9 +55,9 @@ public:
 
     void unlinkOrUpgradeImpl(VM&, CodeBlock*, CodeBlock*);
 
-    void unlinkForcefully();
+    void NODELETE unlinkForcefully();
 
-    PolymorphicCallStubRoutine* owner();
+    PolymorphicCallStubRoutine* NODELETE owner();
 
 private:
     uint8_t m_index { 0 };
@@ -91,13 +91,13 @@ public:
     friend class JITStubRoutine;
 
     CallVariantList variants() const;
-    bool hasEdges() const;
+    bool NODELETE hasEdges() const;
     CallEdgeList edges() const;
 
     void unlinkForcefully();
 
     template<typename Functor>
-    void forEachDependentCell(const Functor& functor) const
+    void forEachDependentCell(NOESCAPE const Functor& functor) const
     {
         for (unsigned i = 0, size = std::size(trailingSpan()) - 1; i < size; ++i)
             functor(trailingSpan()[i].m_calleeOrExecutable);
@@ -121,10 +121,10 @@ public:
     bool isClosureCall() const { return m_isClosureCall; }
 
 private:
-    void markRequiredObjectsImpl(AbstractSlotVisitor&);
+    void NODELETE markRequiredObjectsImpl(AbstractSlotVisitor&);
     void markRequiredObjectsImpl(SlotVisitor&);
 
-    bool visitWeakImpl(VM&);
+    bool reconcileWeakReferencesAtGCEndImpl(VM&);
 
     CallLinkInfo* m_callLinkInfo { nullptr };
     bool m_notUsingCounting : 1 { false };

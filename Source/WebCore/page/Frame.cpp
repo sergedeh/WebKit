@@ -27,25 +27,35 @@
 #include "Frame.h"
 
 #include "ContainerNodeInlines.h"
+#include "DocumentPage.h"
+#include "DocumentView.h"
+#include "FrameInlines.h"
 #include "FrameLoader.h"
 #include "FrameLoaderClient.h"
 #include "HTMLFrameOwnerElement.h"
 #include "HTMLIFrameElement.h"
 #include "LocalDOMWindow.h"
+#include "LocalFrameView.h"
 #include "NavigationScheduler.h"
 #include "NodeDocument.h"
 #include "OwnerPermissionsPolicyData.h"
 #include "Page.h"
 #include "RemoteFrame.h"
+#include "RemoteFrameLayoutInfo.h"
 #include "RenderElement.h"
 #include "RenderWidget.h"
 #include "ScrollingCoordinator.h"
 #include "Settings.h"
 #include "WindowProxy.h"
+#include <ranges>
 #include <wtf/Assertions.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
+
+static_assert(std::ranges::viewable_range<FrameAncestorRange<Frame>>);
+static_assert(std::ranges::viewable_range<FrameAncestorRange<LocalFrame>>);
+static_assert(std::ranges::viewable_range<FrameAncestorRange<RemoteFrame>>);
 
 #if ASSERT_ENABLED
 class FrameLifetimeVerifier {
@@ -121,7 +131,6 @@ Frame::Frame(Page& page, FrameIdentifier frameID, FrameType frameType, HTMLFrame
     , m_opener(opener)
     , m_frameTreeSyncData(WTF::move(frameTreeSyncData))
 {
-    relaxAdoptionRequirement();
     if (parent && addToFrameTree == AddToFrameTree::Yes)
         parent->tree().appendChild(*this);
 
@@ -138,8 +147,8 @@ Frame::Frame(Page& page, FrameIdentifier frameID, FrameType frameType, HTMLFrame
 
 Frame::~Frame()
 {
-    protectedWindowProxy()->detachFromFrame();
-    protectedNavigationScheduler()->cancel();
+    protect(windowProxy())->detachFromFrame();
+    protect(navigationScheduler())->cancel();
 
 #if ASSERT_ENABLED
     FrameLifetimeVerifier::singleton().frameDestroyed(*this);
@@ -155,11 +164,15 @@ void Frame::detachFromPage()
 {
     if (isRootFrame()) {
         if (RefPtr page = m_page.get()) {
-            page->removeRootFrame(downcast<LocalFrame>(*this));
+            // WebPage::suspendWithFrameItem may have already removed this frame from
+            // Page::rootFrames(), so there is no need to remove it again.
+            if (page->rootFrames().contains(downcast<LocalFrame>(*this)))
+                page->removeRootFrame(downcast<LocalFrame>(*this));
             if (RefPtr scrollingCoordinator = page->scrollingCoordinator())
                 scrollingCoordinator->rootFrameWasRemoved(frameID());
         }
     }
+
     m_page = nullptr;
 }
 
@@ -177,10 +190,10 @@ void Frame::takeWindowProxyAndOpenerFrom(Frame& frame)
 {
     ASSERT(is<LocalDOMWindow>(window()) != is<LocalDOMWindow>(frame.window()) || page() != frame.page());
     ASSERT(m_windowProxy->frame() == this);
-    protectedWindowProxy()->detachFromFrame();
+    protect(windowProxy())->detachFromFrame();
     m_windowProxy = frame.windowProxy();
     frame.resetWindowProxy();
-    protectedWindowProxy()->replaceFrame(*this);
+    protect(windowProxy())->replaceFrame(*this);
 
     ASSERT(!m_opener);
     m_opener = frame.m_opener;
@@ -195,28 +208,13 @@ void Frame::takeWindowProxyAndOpenerFrom(Frame& frame)
     frame.m_openedFrames.clear();
 }
 
-Ref<WindowProxy> Frame::protectedWindowProxy() const
-{
-    return m_windowProxy;
-}
-
-RefPtr<DOMWindow> Frame::protectedWindow() const
-{
-    return window();
-}
-
-Ref<NavigationScheduler> Frame::protectedNavigationScheduler() const
-{
-    return m_navigationScheduler.get();
-}
-
 std::optional<uint64_t> Frame::indexInFrameTreeSiblings() const
 {
     if (!tree().parent())
         return std::nullopt;
 
     for (uint64_t i = 0; i < tree().parent()->tree().childCount(); i++) {
-        if (RefPtr child = tree().parent()->tree().child(i); child->frameID() == this->frameID())
+        if (auto* child = tree().parent()->tree().child(i); child->frameID() == this->frameID())
             return i;
     }
 
@@ -241,7 +239,7 @@ Vector<uint64_t> Frame::pathToFrame() const
 
 RenderWidget* Frame::ownerRenderer() const
 {
-    RefPtr ownerElement = this->ownerElement();
+    auto* ownerElement = this->ownerElement();
     if (!ownerElement)
         return nullptr;
     // FIXME: If <object> is ever fixed to disassociate itself from frames
@@ -249,11 +247,6 @@ RenderWidget* Frame::ownerRenderer() const
     // since ownerElement would be nullptr when the load is canceled.
     // https://bugs.webkit.org/show_bug.cgi?id=18585
     return dynamicDowncast<RenderWidget>(ownerElement->renderer());
-}
-
-RefPtr<FrameView> Frame::protectedVirtualView() const
-{
-    return virtualView();
 }
 
 #if ASSERT_ENABLED
@@ -270,7 +263,7 @@ void Frame::updateOpener(Frame& newOpener, NotifyUIProcess notifyUIProcess)
     if (m_opener)
         m_opener->m_openedFrames.remove(*this);
     newOpener.m_openedFrames.add(*this);
-    if (RefPtr page = this->page())
+    if (auto* page = this->page())
         page->setOpenedByDOMWithOpener(true);
     m_opener = newOpener;
 
@@ -334,8 +327,8 @@ std::optional<OwnerPermissionsPolicyData> Frame::ownerPermissionsPolicy() const
     if (!owner)
         return std::nullopt;
 
-    auto documentOrigin = owner->protectedDocument()->securityOrigin().data();
-    auto documentPolicy = owner->protectedDocument()->permissionsPolicy();
+    auto documentOrigin = protect(owner->document())->securityOrigin().data();
+    auto documentPolicy = protect(owner->document())->permissionsPolicy();
 
     RefPtr iframe = dynamicDowncast<HTMLIFrameElement>(owner);
     auto containerPolicy = iframe ? PermissionsPolicy::processPermissionsPolicyAttribute(*iframe) : PermissionsPolicy::PolicyDirective { };
@@ -365,7 +358,36 @@ void Frame::updateFrameTreeSyncData(Ref<FrameTreeSyncData>&& data)
 
 void Frame::updateFrameTreeSyncData(const FrameTreeSyncSerializationData& data)
 {
-    protectedFrameTreeSyncData()->update(data);
+    if (static_cast<FrameTreeSyncDataType>(data.value.index()) != FrameTreeSyncDataType::FrameGeometry) {
+        protect(frameTreeSyncData())->update(data);
+        return;
+    }
+
+    auto invalidateChildFrameForDarkAppearanceChange = [&](const auto& oldMap, const auto& newMap) {
+        for (RefPtr child = tree().firstChild(); child; child = child->tree().nextSibling()) {
+            RefPtr localChild = dynamicDowncast<LocalFrame>(child);
+            if (!localChild)
+                continue;
+
+            RefPtr oldFrameInfo = oldMap.get(child->frameID());
+            RefPtr newFrameInfo = newMap.get(child->frameID());
+
+            if (!oldFrameInfo || !newFrameInfo || oldFrameInfo->ownerElementAppearance().contains(FrameOwnerElementAppearance::IsDark) != newFrameInfo->ownerElementAppearance().contains(FrameOwnerElementAppearance::IsDark)) {
+                RefPtr localChildView = localChild->view();
+                if (!localChildView)
+                    continue;
+
+                localChildView->invalidateForFrameOwnerColorSchemeChange();
+                protect(localChildView->layoutContext())->scheduleLayout();
+            }
+        }
+    };
+
+    auto oldChildrenFrameLayoutMap = m_frameTreeSyncData->frameGeometry.childrenFrameLayoutInfo;
+
+    protect(frameTreeSyncData())->update(data);
+
+    invalidateChildFrameForDarkAppearanceChange(oldChildrenFrameLayoutMap, m_frameTreeSyncData->frameGeometry.childrenFrameLayoutInfo);
 }
 
 bool Frame::frameCanCreatePaymentSession() const
@@ -375,9 +397,9 @@ bool Frame::frameCanCreatePaymentSession() const
     return m_frameTreeSyncData->frameCanCreatePaymentSession;
 }
 
-bool Frame::isPrinting() const
+RefPtr<Frame> Frame::parent() const
 {
-    return m_isPrinting;
+    return tree().parent();
 }
 
 void Frame::setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize shouldAdjustViewSize, NotifyUIProcess notifyUIProcess)
@@ -395,11 +417,6 @@ SecurityOrigin& Frame::topOrigin() const
     return SecurityOrigin::opaqueOrigin();
 }
 
-Ref<SecurityOrigin> Frame::protectedTopOrigin() const
-{
-    return topOrigin();
-}
-
 float Frame::frameScaleFactor() const
 {
     RefPtr page = this->page();
@@ -410,23 +427,22 @@ float Frame::frameScaleFactor() const
     // https://github.com/w3c/csswg-drafts/issues/9644
     // Check if this frame's owner element (iframe) has CSS zoom applied.
     if (!isMainFrame()) {
-        auto rootZoom = 1.0;
-
-        // FIXME: maybe pageZoomFactor should be available in remote frames?
-        if (RefPtr localMainFrame = dynamicDowncast<LocalFrame>(mainFrame()))
-            rootZoom = localMainFrame->pageZoomFactor();
-
         if (RefPtr parentFrame = tree().parent())
-            rootZoom = parentFrame->usedZoomForChild(*this) / rootZoom;
+            return parentFrame->frameScaleFactorForChild(*this);
 
-        return rootZoom;
+        return 1.0;
     }
 
-    // Main frame is scaled with respect to the container.
     if (page->delegatesScaling())
         return 1;
 
     return page->pageScaleFactor();
+}
+
+TextStream& operator<<(TextStream& ts, const Frame& frame)
+{
+    ts << frame.debugDescription();
+    return ts;
 }
 
 

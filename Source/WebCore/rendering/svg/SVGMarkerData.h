@@ -22,15 +22,16 @@
 #include "FloatConversion.h"
 #include "Path.h"
 #include <array>
+#include <numeric>
 
 namespace WebCore {
 
 class RenderSVGResourceMarker;
 
-enum SVGMarkerType {
-    StartMarker,
-    MidMarker,
-    EndMarker
+enum class SVGMarkerType : uint8_t {
+    Start,
+    Middle,
+    End
 };
 
 struct MarkerPosition {
@@ -62,12 +63,12 @@ public:
 
         // Record the marker for the previous element.
         if (markerData.m_elementIndex > 0) {
-            SVGMarkerType markerType = markerData.m_elementIndex == 1 ? StartMarker : MidMarker;
+            SVGMarkerType markerType = markerData.m_elementIndex == 1 ? SVGMarkerType::Start : SVGMarkerType::Middle;
             SVGMarkerType markerTypeForOrientation;
             if (markerData.m_previousWasMoveTo)
-                markerTypeForOrientation = StartMarker;
+                markerTypeForOrientation = SVGMarkerType::Start;
             else if (element.type == PathElement::Type::MoveToPoint)
-                markerTypeForOrientation = EndMarker;
+                markerTypeForOrientation = SVGMarkerType::End;
             else
                 markerTypeForOrientation = markerType;
             markerData.m_positions.append(MarkerPosition(markerType, markerData.m_origin, markerData.currentAngle(markerTypeForOrientation)));
@@ -81,7 +82,7 @@ public:
 
     void pathIsDone()
     {
-        m_positions.append(MarkerPosition(EndMarker, m_origin, currentAngle(EndMarker)));
+        m_positions.append(MarkerPosition(SVGMarkerType::End, m_origin, currentAngle(SVGMarkerType::End)));
     }
 
 private:
@@ -95,16 +96,16 @@ private:
         double outAngle = rad2deg(outSlope.slopeAngleRadians());
 
         switch (type) {
-        case StartMarker:
+        case SVGMarkerType::Start:
             if (m_reverseStart)
                 return narrowPrecisionToFloat(outAngle - 180);
             return narrowPrecisionToFloat(outAngle);
-        case MidMarker:
+        case SVGMarkerType::Middle:
             // WK193015: Prevent bugs due to angles being non-continuous.
             if (std::abs(inAngle - outAngle) > 180)
                 inAngle += 360;
-            return narrowPrecisionToFloat((inAngle + outAngle) / 2);
-        case EndMarker:
+            return narrowPrecisionToFloat(std::midpoint(inAngle, outAngle));
+        case SVGMarkerType::End:
             return narrowPrecisionToFloat(inAngle);
         }
 

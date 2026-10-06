@@ -30,14 +30,13 @@
 #include <WebCore/PolicyChecker.h>
 #include <WebCore/SharedBuffer.h>
 #include <wtf/CompletionHandler.h>
-#include <wtf/Expected.h>
 #include <wtf/Lock.h>
 #include <wtf/MainThreadDispatcher.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 
@@ -63,7 +62,7 @@ public:
     virtual bool isWebCoreNSURLSessionDataTaskClient() const { return false; }
 };
 
-class PlatformMediaResourceLoader : public ThreadSafeRefCounted<PlatformMediaResourceLoader, WTF::DestructionThread::Main> {
+class PlatformMediaResourceLoader : public AbstractThreadSafeRefCountedAndCanMakeWeakPtr {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(PlatformMediaResourceLoader);
     WTF_MAKE_NONCOPYABLE(PlatformMediaResourceLoader);
 public:
@@ -75,7 +74,7 @@ public:
 
     virtual ~PlatformMediaResourceLoader() = default;
 
-    virtual void sendH2Ping(const URL&, CompletionHandler<void(Expected<Seconds, ResourceError>&&)>&&) = 0;
+    virtual void sendH2Ping(const URL&, CompletionHandler<void(std::expected<Seconds, ResourceError>&&)>&&) = 0;
 
     // Can be called on any threads. Return the function dispatcher on which the PlaftormMediaResource and PlatformMediaResourceClient must be be called on.
     virtual Ref<GuaranteedSerialFunctionDispatcher> targetDispatcher() { return MainThreadDispatcher::singleton(); }

@@ -272,7 +272,6 @@ class Buffer11::PackStorage : public Buffer11::BufferStorage
     TextureHelper11 mStagingTexture;
     angle::MemoryBuffer mMemoryBuffer;
     std::unique_ptr<PackPixelsParams> mQueuedPackCommand;
-    PackPixelsParams mPackParams;
     bool mDataModified;
 };
 
@@ -354,10 +353,21 @@ angle::Result Buffer11::setData(const gl::Context *context,
                                 const void *data,
                                 size_t size,
                                 gl::BufferUsage usage,
-                                BufferFeedback *feedback)
+                                BufferFeedback *feedback,
+                                gl::ZeroFillRequired zeroFillRequired)
 {
+    const void *dataForImpl = data;
+    if (zeroFillRequired == gl::ZeroFillRequired::Yes)
+    {
+        const angle::MemoryBuffer *scratchBuffer = nullptr;
+        ANGLE_CHECK_GL_ALLOC(
+            GetImplAs<Context11>(context),
+            context->getZeroFilledBuffer(static_cast<size_t>(size), &scratchBuffer));
+        dataForImpl = scratchBuffer->data();
+    }
+
     updateD3DBufferUsage(context, usage, feedback);
-    return setSubData(context, target, data, size, 0, feedback);
+    return setSubData(context, target, dataForImpl, size, 0, feedback);
 }
 
 angle::Result Buffer11::getData(const gl::Context *context, const uint8_t **outData)
@@ -623,6 +633,15 @@ angle::Result Buffer11::checkForDeallocation(const gl::Context *context,
     mIdleness[usage]++;
 
     BufferStorage *&storage = mBufferStorages[usage];
+
+    // TODO(http://anglebug.com/505771894): Add validation that a buffer is not mapped in calls that
+    // use it (draw, etc.). Once fixed, turn this into an assert.
+    if (storage != nullptr && storage == mMappedStorage)
+    {
+        ANGLE_TRY_HR(SafeGetImplAs<Context11>(context), E_FAIL,
+                     "Error deallocating mapped storage");
+    }
+
     if (storage != nullptr && mIdleness[usage] > mDeallocThresholds[usage])
     {
         BufferStorage *latestStorage = nullptr;
@@ -850,7 +869,8 @@ angle::Result Buffer11::getConstantBufferRangeStorage(const gl::Context *context
     {
         // Keep the cacheEntry in a limited scope because it may be invalidated later in the code if
         // we need to reclaim some space.
-        BufferCacheEntry *cacheEntry = &mConstantBufferRangeStoragesCache[offset];
+        ConstantBufferKey constantBufferKey(offset, size);
+        BufferCacheEntry *cacheEntry = &mConstantBufferRangeStoragesCache[constantBufferKey];
 
         if (!cacheEntry->storage)
         {
@@ -879,7 +899,14 @@ angle::Result Buffer11::getConstantBufferRangeStorage(const gl::Context *context
                     return a.second.lruCount < b.second.lruCount;
                 });
 
-            ASSERT(iter->second.storage != newStorage);
+            // Don't remove the newly added storage. This can only happen if it is the last entry
+            // since it has the most recent LRU value.
+            if (iter->second.storage == newStorage)
+            {
+                ASSERT(mConstantBufferRangeStoragesCache.size() == 1);
+                break;
+            }
+
             ASSERT(mConstantBufferStorageAdditionalSize >= iter->second.storage->getSize());
 
             mConstantBufferStorageAdditionalSize -= iter->second.storage->getSize();
@@ -914,7 +941,7 @@ angle::Result Buffer11::getStructuredBufferRangeSRV(const gl::Context *context,
     {
         // Keep the cacheEntry in a limited scope because it may be invalidated later in the code if
         // we need to reclaim some space.
-        StructuredBufferKey structuredBufferKey = StructuredBufferKey(offset, structureByteStride);
+        StructuredBufferKey structuredBufferKey(offset, size, structureByteStride);
         BufferCacheEntry *cacheEntry = &mStructuredBufferRangeStoragesCache[structuredBufferKey];
 
         if (!cacheEntry->storage)
@@ -946,7 +973,14 @@ angle::Result Buffer11::getStructuredBufferRangeSRV(const gl::Context *context,
                                              return a.second.lruCount < b.second.lruCount;
                                          });
 
-            ASSERT(iter->second.storage != newStorage);
+            // Don't remove the newly added storage. This can only happen if it is the last entry
+            // since it has the most recent LRU value.
+            if (iter->second.storage == newStorage)
+            {
+                ASSERT(mStructuredBufferRangeStoragesCache.size() == 1);
+                break;
+            }
+
             ASSERT(mStructuredBufferStorageAdditionalSize >= iter->second.storage->getSize());
 
             mStructuredBufferStorageAdditionalSize -= iter->second.storage->getSize();
@@ -1597,23 +1631,31 @@ angle::Result Buffer11::PackStorage::packPixels(const gl::Context *context,
     RenderTarget11 *renderTarget = nullptr;
     ANGLE_TRY(readAttachment.getRenderTarget(context, 0, &renderTarget));
 
-    const TextureHelper11 &srcTexture = renderTarget->getTexture();
-    ASSERT(srcTexture.valid());
+    const TextureHelper11 *srcTexture = &renderTarget->getTexture();
+    ASSERT(srcTexture->valid());
     unsigned int srcSubresource = renderTarget->getSubresourceIndex();
+
+    TextureHelper11 resolvedTexture;
+    if (srcTexture->getSampleCount() > 1)
+    {
+        ANGLE_TRY(mRenderer->resolveMultisampledTexture(context, renderTarget, false, false,
+                                                        &resolvedTexture));
+        srcTexture     = &resolvedTexture;
+        srcSubresource = 0;
+    }
 
     mQueuedPackCommand.reset(new PackPixelsParams(params));
 
     gl::Extents srcTextureSize(params.area.width, params.area.height, 1);
-    if (!mStagingTexture.get() || mStagingTexture.getFormat() != srcTexture.getFormat() ||
-        mStagingTexture.getExtents() != srcTextureSize)
+    if (!mStagingTexture.get() || mStagingTexture.getFormat() != srcTexture->getFormat() ||
+        mStagingTexture.getExtents() != srcTextureSize ||
+        mStagingTexture.getTextureType() != srcTexture->getTextureType())
     {
-        ANGLE_TRY(mRenderer->createStagingTexture(context, srcTexture.getTextureType(),
-                                                  srcTexture.getFormatSet(), srcTextureSize,
+        mStagingTexture.reset();
+        ANGLE_TRY(mRenderer->createStagingTexture(context, srcTexture->getTextureType(),
+                                                  srcTexture->getFormatSet(), srcTextureSize,
                                                   StagingAccess::READ, &mStagingTexture));
     }
-
-    // ReadPixels from multisampled FBOs isn't supported in current GL
-    ASSERT(srcTexture.getSampleCount() <= 1);
 
     ID3D11DeviceContext *immediateContext = mRenderer->getDeviceContext();
     D3D11_BOX srcBox;
@@ -1624,14 +1666,14 @@ angle::Result Buffer11::PackStorage::packPixels(const gl::Context *context,
 
     // Select the correct layer from a 3D attachment
     srcBox.front = 0;
-    if (mStagingTexture.is3D())
+    if (srcTexture->is3D())
     {
         srcBox.front = static_cast<UINT>(readAttachment.layer());
     }
     srcBox.back = srcBox.front + 1;
 
     // Asynchronous copy
-    immediateContext->CopySubresourceRegion(mStagingTexture.get(), 0, 0, 0, 0, srcTexture.get(),
+    immediateContext->CopySubresourceRegion(mStagingTexture.get(), 0, 0, 0, 0, srcTexture->get(),
                                             srcSubresource, &srcBox);
 
     return angle::Result::Continue;

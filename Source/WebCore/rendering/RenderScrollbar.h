@@ -36,7 +36,10 @@ class Element;
 class LocalFrame;
 class RenderBox;
 class RenderScrollbarPart;
-class RenderStyle;
+
+namespace Style {
+class ComputedStyle;
+}
 
 class RenderScrollbar final : public Scrollbar {
 public:
@@ -58,7 +61,7 @@ public:
     
     bool isHiddenByStyle() const override;
 
-    std::unique_ptr<RenderStyle> getScrollbarPseudoStyle(ScrollbarPart, PseudoElementType) const;
+    std::unique_ptr<Style::ComputedStyle> getScrollbarPseudoStyle(ScrollbarPart, PseudoElementType) const;
 
 private:
     RenderScrollbar(ScrollableArea&, ScrollbarOrientation, Element*, LocalFrame*);
@@ -83,7 +86,7 @@ private:
     // so we keep a reference to the Element which caused this custom scrollbar creation.
     // This will not create a reference cycle as the Widget tree is owned by our containing
     // FrameView which this Element pointer can in no way keep alive. See webkit bug 80610.
-    RefPtr<Element> m_ownerElement;
+    const RefPtr<Element> m_ownerElement;
 
     WeakPtr<LocalFrame> m_owningFrame;
     HashMap<unsigned, RenderPtr<RenderScrollbarPart>> m_parts;

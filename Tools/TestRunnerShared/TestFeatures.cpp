@@ -140,10 +140,24 @@ static bool shouldEnableEnhancedSecurity(const std::string& pathOrURL)
     return pathContains(pathOrURL, "enhanced-security/");
 }
 
+static bool shouldEnableSiteIsolation(const std::string& pathOrURL)
+{
+    return pathContains(pathOrURL, "site-isolation/inspector/");
+}
+
 static bool shouldUseBackForwardCache(const std::string& pathOrURL)
 {
-    return pathContains(pathOrURL, "navigation-api/")
-        || pathContains(pathOrURL, "websockets/back-forward-cache");
+    return pathContains(pathOrURL, "://web-platform.test");
+}
+
+static bool shouldEnableTouchEventRegions(const std::string& pathOrURL)
+{
+    return pathContains(pathOrURL, "touch-event-regions-layer-tree/");
+}
+
+static bool shouldEnableGlobalPrivacyControl(const std::string& pathOrURL)
+{
+    return pathContains(pathOrURL, "/gpc/");
 }
 
 TestFeatures hardcodedFeaturesBasedOnPathForTest(const TestCommand& command)
@@ -173,8 +187,14 @@ TestFeatures hardcodedFeaturesBasedOnPathForTest(const TestCommand& command)
         features.boolWebPreferenceFeatures.insert({ "LockdownModeEnabled", true });
     if (shouldEnableEnhancedSecurity(command.pathOrURL))
         features.boolTestRunnerFeatures.insert({ "enhancedSecurityEnabled", true });
+    if (shouldEnableSiteIsolation(command.pathOrURL))
+        features.boolWebPreferenceFeatures.insert({ "SiteIsolationEnabled", true });
     if (shouldUseBackForwardCache(command.pathOrURL))
         features.boolWebPreferenceFeatures.insert({ "UsesBackForwardCache", true });
+    if (shouldEnableTouchEventRegions(command.pathOrURL))
+        features.boolWebPreferenceFeatures.insert({ "AlwaysUseTouchEventRegions", true });
+    if (shouldEnableGlobalPrivacyControl(command.pathOrURL))
+        features.boolTestRunnerFeatures.insert({ "globalPrivacyControl", true });
 
     return features;
 }
@@ -300,7 +320,7 @@ static std::optional<TestFeatures> parseTestHeaderString(const std::string& pair
         size_t equalsLocation = pairString.find("=", pairStart);
         if (equalsLocation == std::string::npos) {
             if (!path.empty())
-                LOG_ERROR("Malformed option in test header (could not find '=' character) in %s", path.c_str());
+                LOG_ERROR("Malformed option in test header (could not find '=' character) in %s", path.string().c_str());
             else
                 LOG_ERROR("Malformed option in --additional-header option value (could not find '=' character)");
             break;
@@ -310,7 +330,7 @@ static std::optional<TestFeatures> parseTestHeaderString(const std::string& pair
 
         if (!parseTestHeaderFeature(features, key, value, path, keyTypeMap)) {
             if (!path.empty())
-                LOG_ERROR("Unknown key, '%s', in test header in %s", key.c_str(), path.c_str());
+                LOG_ERROR("Unknown key, '%s', in test header in %s", key.c_str(), path.string().c_str());
             else
                 LOG_ERROR("Unknown key, '%s', in --additional-header option value", key.c_str());
         }
@@ -328,7 +348,7 @@ static TestFeatures parseTestHeader(std::filesystem::path path, const std::unord
 
     std::ifstream file(path);
     if (!file.good()) {
-        LOG_ERROR("Could not open file to inspect test headers in %s", path.c_str());
+        LOG_ERROR("Could not open file to inspect test headers in %s", path.string().c_str());
         return { };
     }
 
@@ -341,7 +361,7 @@ static TestFeatures parseTestHeader(std::filesystem::path path, const std::unord
         return { };
     size_t endLocation = options.find(endString, beginLocation);
     if (endLocation == std::string::npos) {
-        LOG_ERROR("Could not find end of test header in %s", path.c_str());
+        LOG_ERROR("Could not find end of test header in %s", path.string().c_str());
         return { };
     }
     std::string pairString = options.substr(beginLocation + beginString.size(), endLocation - (beginLocation + beginString.size()));

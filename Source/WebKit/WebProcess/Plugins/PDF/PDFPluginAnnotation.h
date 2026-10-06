@@ -55,10 +55,7 @@ public:
 
     WebCore::Element* element() const { return m_element.get(); }
     PDFAnnotation *annotation() const { return m_annotation.get(); }
-    RetainPtr<PDFAnnotation> protectedAnnotation() const { return m_annotation; }
     PDFPluginBase* plugin() const { return m_plugin.get(); }
-
-    RefPtr<WebCore::Element> protectedElement() const { return element(); }
 
     virtual void updateGeometry();
     virtual void commit();
@@ -105,7 +102,7 @@ private:
 
     WeakPtr<WebCore::Element, WebCore::WeakPtrImplWithEventTargetData> m_parent;
 
-    RefPtr<WebCore::Element> m_element;
+    const RefPtr<WebCore::Element> m_element;
     const RetainPtr<PDFAnnotation> m_annotation;
 
     const RefPtr<PDFPluginAnnotationEventListener> m_eventListener;

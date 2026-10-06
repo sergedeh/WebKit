@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/OrderedHashSet.h>
 #include "Element.h"
 #include "JSDOMSetLike.h"
 #include "ScriptWrappable.h"
@@ -47,7 +48,7 @@ public:
     void clearFromSetLike();
     void initializeSetLike(DOMSetAdapter&) { };
 
-    bool has(const AtomString&) const;
+    bool NODELETE has(const AtomString&) const;
 
 private:
     explicit CustomStateSet(Element& element)
@@ -55,7 +56,7 @@ private:
     {
     }
 
-    ListHashSet<AtomString> m_states;
+    OrderedHashSet<AtomString> m_states;
 
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_element;
 };

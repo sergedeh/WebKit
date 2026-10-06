@@ -56,12 +56,19 @@ TEST_SUPPORT_EXPORT void monitorWheelEvents(WebCore::LocalFrame&, bool clearLatc
 TEST_SUPPORT_EXPORT void setWheelEventMonitorTestCallbackAndStartMonitoring(bool expectWheelEndOrCancel, bool expectMomentumEnd, WebCore::LocalFrame&, JSContextRef, JSObjectRef);
 TEST_SUPPORT_EXPORT void clearWheelEventTestMonitor(WebCore::LocalFrame&);
 
-TEST_SUPPORT_EXPORT void setLogChannelToAccumulate(const String& name);
-TEST_SUPPORT_EXPORT void clearAllLogChannelsToAccumulate();
+TEST_SUPPORT_EXPORT void NODELETE setLogChannelToAccumulate(const String& name);
+TEST_SUPPORT_EXPORT void NODELETE clearAllLogChannelsToAccumulate();
 TEST_SUPPORT_EXPORT void initializeLogChannelsIfNecessary();
 TEST_SUPPORT_EXPORT void setAllowsAnySSLCertificate(bool);
 TEST_SUPPORT_EXPORT bool allowsAnySSLCertificate();
 TEST_SUPPORT_EXPORT void setLinkedOnOrAfterEverythingForTesting();
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+TEST_SUPPORT_EXPORT void setAccessibilityIsolatedTreeEnabled(bool);
+TEST_SUPPORT_EXPORT bool isAccessibilityIsolatedTreeModeEnabled();
+TEST_SUPPORT_EXPORT void setAccessibilityTestTeardownCallback(Function<void()>&&);
+TEST_SUPPORT_EXPORT void notifyAccessibilityTestTeardown();
+#endif
 
 TEST_SUPPORT_EXPORT void installMockGamepadProvider();
 TEST_SUPPORT_EXPORT void connectMockGamepad(unsigned index);

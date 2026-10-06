@@ -49,15 +49,15 @@
 
 namespace WebKit {
 
-using namespace PAL;
 using namespace WebCore;
 
 class MediaPlayerRemoteFactory final : public MediaPlayerFactory {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(MediaPlayerRemoteFactory);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MediaPlayerRemoteFactory);
 public:
-    MediaPlayerRemoteFactory(MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier, RemoteMediaPlayerManager& manager)
+    MediaPlayerRemoteFactory(MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier, PlatformMediaDecodingType platformType, RemoteMediaPlayerManager& manager)
         : m_remoteEngineIdentifier(remoteEngineIdentifier)
+        , m_platformType(platformType)
         , m_manager(manager)
     {
     }
@@ -76,6 +76,8 @@ public:
 
     MediaPlayer::SupportsType supportsTypeAndCodecs(const MediaEngineSupportParameters& parameters) const final
     {
+        if (parameters.platformType != m_platformType)
+            return MediaPlayer::SupportsType::IsNotSupported;
         return manager()->supportsTypeAndCodecs(m_remoteEngineIdentifier, parameters);
     }
 
@@ -104,6 +106,7 @@ private:
     Ref<RemoteMediaPlayerManager> manager() const { return m_manager.get(); }
 
     MediaPlayerEnums::MediaEngineIdentifier m_remoteEngineIdentifier;
+    const PlatformMediaDecodingType m_platformType;
     ThreadSafeWeakRef<RemoteMediaPlayerManager> m_manager;
 };
 
@@ -119,7 +122,7 @@ RemoteMediaPlayerManager::RemoteMediaPlayerManager() = default;
 RemoteMediaPlayerManager::~RemoteMediaPlayerManager() = default;
 
 using RemotePlayerTypeCache = HashMap<MediaPlayerEnums::MediaEngineIdentifier, std::unique_ptr<RemoteMediaPlayerMIMETypeCache>, WTF::IntHash<MediaPlayerEnums::MediaEngineIdentifier>, WTF::StrongEnumHashTraits<MediaPlayerEnums::MediaEngineIdentifier>>;
-static RemotePlayerTypeCache& mimeCaches()
+static RemotePlayerTypeCache& NODELETE mimeCaches()
 {
     static NeverDestroyed<RemotePlayerTypeCache> caches;
     return caches;
@@ -132,11 +135,6 @@ RemoteMediaPlayerMIMETypeCache& RemoteMediaPlayerManager::typeCache(MediaPlayerE
         cachePtr = makeUnique<RemoteMediaPlayerMIMETypeCache>(*this, remoteEngineIdentifier);
 
     return *cachePtr;
-}
-
-CheckedRef<RemoteMediaPlayerMIMETypeCache> RemoteMediaPlayerManager::checkedTypeCache(MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier)
-{
-    return typeCache(remoteEngineIdentifier);
 }
 
 void RemoteMediaPlayerManager::initialize(const WebProcessCreationParameters& parameters)
@@ -200,7 +198,7 @@ Ref<MediaPlayerPrivateInterface> RemoteMediaPlayerManager::createRemoteMediaPlay
 
     auto identifier = MediaPlayerIdentifier::generate();
     auto clientIdentifier = player.clientIdentifier();
-    gpuProcessConnection().connection().send(Messages::RemoteMediaPlayerManagerProxy::CreateMediaPlayer(identifier, clientIdentifier, remoteEngineIdentifier, proxyConfiguration), 0);
+    protect(gpuProcessConnection().connection())->send(Messages::RemoteMediaPlayerManagerProxy::CreateMediaPlayer(identifier, clientIdentifier, remoteEngineIdentifier, proxyConfiguration), 0);
 
     auto remotePlayer = MediaPlayerPrivateRemote::create(player, remoteEngineIdentifier, identifier, *this);
     m_players.add(identifier, remotePlayer.get());
@@ -211,7 +209,7 @@ Ref<MediaPlayerPrivateInterface> RemoteMediaPlayerManager::createRemoteMediaPlay
 void RemoteMediaPlayerManager::deleteRemoteMediaPlayer(MediaPlayerIdentifier identifier)
 {
     m_players.remove(identifier);
-    gpuProcessConnection().connection().send(Messages::RemoteMediaPlayerManagerProxy::DeleteMediaPlayer(identifier), 0);
+    protect(gpuProcessConnection().connection())->send(Messages::RemoteMediaPlayerManagerProxy::DeleteMediaPlayer(identifier), 0);
 }
 
 std::optional<MediaPlayerIdentifier> RemoteMediaPlayerManager::findRemotePlayerId(const MediaPlayerPrivateInterface* player)
@@ -226,20 +224,15 @@ std::optional<MediaPlayerIdentifier> RemoteMediaPlayerManager::findRemotePlayerI
 
 void RemoteMediaPlayerManager::getSupportedTypes(MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier, HashSet<String>& result)
 {
-    result = checkedTypeCache(remoteEngineIdentifier)->supportedTypes();
+    result = protect(typeCache(remoteEngineIdentifier))->supportedTypes();
 }
 
 MediaPlayer::SupportsType RemoteMediaPlayerManager::supportsTypeAndCodecs(MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier, const MediaEngineSupportParameters& parameters)
 {
-#if ENABLE(MEDIA_STREAM)
-    if (parameters.isMediaStream)
-        return MediaPlayer::SupportsType::IsNotSupported;
-#endif
-
     if (!contentTypeMeetsContainerAndCodecTypeRequirements(parameters.type, parameters.allowedMediaContainerTypes, parameters.allowedMediaCodecTypes))
         return MediaPlayer::SupportsType::IsNotSupported;
 
-    return checkedTypeCache(remoteEngineIdentifier)->supportsTypeAndCodecs(parameters);
+    return protect(typeCache(remoteEngineIdentifier))->supportsTypeAndCodecs(parameters);
 }
 
 bool RemoteMediaPlayerManager::supportsKeySystem(MediaPlayerEnums::MediaEngineIdentifier, const String& keySystem, const String& mimeType)
@@ -257,8 +250,8 @@ void RemoteMediaPlayerManager::didReceivePlayerMessage(IPC::Connection& connecti
 
 void RemoteMediaPlayerManager::setUseGPUProcess(bool useGPUProcess)
 {
-    auto registerEngine = [weakThis = ThreadSafeWeakPtr { *this }](MediaEngineRegistrar registrar, MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier) {
-        registrar(makeUnique<MediaPlayerRemoteFactory>(remoteEngineIdentifier, *weakThis.get()));
+    auto registerEngine = [weakThis = ThreadSafeWeakPtr { *this }](MediaEngineRegistrar registrar, MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier, PlatformMediaDecodingType platformType) {
+        registrar(makeUnique<MediaPlayerRemoteFactory>(remoteEngineIdentifier, platformType, *weakThis.get()));
     };
 
     RemoteMediaPlayerSupport::setRegisterRemotePlayerCallback(useGPUProcess ? WTF::move(registerEngine) : RemoteMediaPlayerSupport::RegisterRemotePlayerCallback());
@@ -266,10 +259,10 @@ void RemoteMediaPlayerManager::setUseGPUProcess(bool useGPUProcess)
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
     if (useGPUProcess) {
         WebCore::SampleBufferDisplayLayer::setCreator([](auto& client) -> RefPtr<WebCore::SampleBufferDisplayLayer> {
-            return WebProcess::singleton().ensureProtectedGPUProcessConnection()->sampleBufferDisplayLayerManager().createLayer(client);
+            return protect(WebProcess::singleton().ensureGPUProcessConnection())->sampleBufferDisplayLayerManager().createLayer(client);
         });
         WebCore::MediaPlayerPrivateMediaStreamAVFObjC::setNativeImageCreator([](auto& videoFrame) {
-            return WebProcess::singleton().ensureProtectedGPUProcessConnection()->videoFrameObjectHeapProxy().getNativeImage(videoFrame);
+            return protect(WebProcess::singleton().ensureGPUProcessConnection())->videoFrameObjectHeapProxy().getNativeImage(videoFrame);
         });
     }
 #endif
@@ -284,11 +277,6 @@ GPUProcessConnection& RemoteMediaPlayerManager::gpuProcessConnection()
     }
     ASSERT(m_gpuProcessConnection.get() == &WebProcess::singleton().ensureGPUProcessConnection());
     return WebProcess::singleton().ensureGPUProcessConnection();
-}
-
-Ref<GPUProcessConnection> RemoteMediaPlayerManager::protectedGPUProcessConnection()
-{
-    return gpuProcessConnection();
 }
 
 void RemoteMediaPlayerManager::gpuProcessConnectionDidClose(GPUProcessConnection& connection)

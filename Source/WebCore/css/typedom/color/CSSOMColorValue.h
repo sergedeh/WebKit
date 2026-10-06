@@ -25,27 +25,27 @@
 
 #pragma once
 
-#include "CSSKeywordValue.h"
 #include "CSSNumericValue.h"
+#include "CSSOMKeywordValue.h"
 #include "CSSStyleValue.h"
 
 namespace WebCore {
 
-class CSSKeywordValue;
+class CSSOMKeywordValue;
 
-using CSSKeywordish = Variant<String, RefPtr<CSSKeywordValue>>;
-using CSSColorPercent = Variant<double, RefPtr<CSSNumericValue>, String, RefPtr<CSSKeywordValue>>;
-using RectifiedCSSColorPercent = Variant<RefPtr<CSSNumericValue>, RefPtr<CSSKeywordValue>>;
-using CSSColorNumber = Variant<double, RefPtr<CSSNumericValue>, String, RefPtr<CSSKeywordValue>>;
-using RectifiedCSSColorNumber = Variant<RefPtr<CSSNumericValue>, RefPtr<CSSKeywordValue>>;
-using CSSColorAngle = Variant<double, RefPtr<CSSNumericValue>, String, RefPtr<CSSKeywordValue>>;
-using RectifiedCSSColorAngle = Variant<RefPtr<CSSNumericValue>, RefPtr<CSSKeywordValue>>;
+using CSSOMKeywordish = Variant<String, Ref<CSSOMKeywordValue>>;
+using CSSColorPercent = Variant<double, Ref<CSSNumericValue>, String, Ref<CSSOMKeywordValue>>;
+using RectifiedCSSColorPercent = Variant<Ref<CSSNumericValue>, Ref<CSSOMKeywordValue>>;
+using CSSColorNumber = Variant<double, Ref<CSSNumericValue>, String, Ref<CSSOMKeywordValue>>;
+using RectifiedCSSColorNumber = Variant<Ref<CSSNumericValue>, Ref<CSSOMKeywordValue>>;
+using CSSColorAngle = Variant<double, Ref<CSSNumericValue>, String, Ref<CSSOMKeywordValue>>;
+using RectifiedCSSColorAngle = Variant<Ref<CSSNumericValue>, Ref<CSSOMKeywordValue>>;
 
 class CSSOMColorValue : public CSSStyleValue {
 public:
-    RefPtr<CSSKeywordValue> colorSpace();
-    RefPtr<CSSOMColorValue> to(CSSKeywordish);
-    static Variant<RefPtr<CSSOMColorValue>, RefPtr<CSSStyleValue>> parse(const String&);
+    RefPtr<CSSOMKeywordValue> NODELETE colorSpace();
+    RefPtr<CSSOMColorValue> to(CSSOMKeywordish);
+    static std::optional<Variant<Ref<CSSOMColorValue>, Ref<CSSStyleValue>>> NODELETE parse(const String&);
 
     static ExceptionOr<RectifiedCSSColorPercent> rectifyCSSColorPercent(CSSColorPercent&&);
     static ExceptionOr<RectifiedCSSColorAngle> rectifyCSSColorAngle(CSSColorAngle&&);

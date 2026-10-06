@@ -39,9 +39,17 @@
 #include "DocumentSecurityOrigin.h"
 #include "FrameDestructionObserverInlines.h"
 #include "JSBasicCredential.h"
+#include "LegacySchemeRegistry.h"
+#include "LocalFrameInlines.h"
 #include "JSCredentialCreationOptions.h"
 #include "JSCredentialRequestOptions.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertNullable.h"
+#include "JSDOMConvertRecord.h"
+#include "JSDOMConvertStrings.h"
 #include "JSDOMPromiseDeferred.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "LoginStatus.h"
 #include "Page.h"
 #include "PermissionsPolicy.h"
@@ -49,7 +57,7 @@
 #include "PublicKeyCredentialCreationOptions.h"
 #include "PublicKeyCredentialRequestOptions.h"
 #include "RegistrableDomain.h"
-#include "LegacySchemeRegistry.h"
+#include "RemoteFrame.h"
 #include "UnknownCredentialOptions.h"
 #include "WebAuthenticationConstants.h"
 #include "WebAuthenticationUtils.h"
@@ -101,11 +109,12 @@ static ScopeAndCrossOriginParent scopeAndCrossOriginParent(const Document& docum
     Ref origin = document.securityOrigin();
     auto url = document.url();
     std::optional<SecurityOriginData> crossOriginParent;
-    for (RefPtr parentDocument = document.parentDocument(); parentDocument; parentDocument = parentDocument->parentDocument()) {
-        if (!origin->isSameOriginDomain(parentDocument->protectedSecurityOrigin()) && !areRegistrableDomainsEqual(url, parentDocument->url()))
+    for (Ref parentFrame : ancestorFrames(document.frame())) {
+        RefPtr parentOrigin = parentFrame->frameDocumentSecurityOrigin();
+        if (!parentOrigin || is<RemoteFrame>(parentFrame) || RegistrableDomain(parentOrigin->data()) != RegistrableDomain(origin->data()))
             isSameSite = false;
-        if (!crossOriginParent && !origin->isSameOriginAs(parentDocument->protectedSecurityOrigin()))
-            crossOriginParent = parentDocument->securityOrigin().data();
+        if (parentOrigin && !origin->isSameOriginAs(*parentOrigin))
+            crossOriginParent = parentOrigin->data();
     }
 
     if (!crossOriginParent)
@@ -165,7 +174,7 @@ void AuthenticatorCoordinator::create(const Document& document, CredentialCreati
     }
 
     // Step 5.
-    if (options.user.id.length() < 1 || options.user.id.length() > 64) {
+    if (options.user.id.byteLength() < 1 || options.user.id.byteLength() > 64) {
         promise.reject(Exception { ExceptionCode::TypeError, "The length options.user.id must be between 1-64 bytes."_s });
         return;
     }
@@ -244,7 +253,7 @@ void AuthenticatorCoordinator::create(const Document& document, CredentialCreati
 
     auto callback = [promise = WTF::move(promise), abortSignal = WTF::move(abortSignal)](AuthenticatorResponseData&& data, AuthenticatorAttachment attachment, ExceptionData&& exception) mutable {
         if (abortSignal && abortSignal->aborted()) {
-            promise.reject(Exception { ExceptionCode::AbortError, "Aborted by AbortSignal."_s });
+            promise.rejectType<IDLAny>(abortSignal->reason().getValue());
             return;
         }
 
@@ -363,7 +372,7 @@ void AuthenticatorCoordinator::discoverFromExternalSource(const Document& docume
 
     auto callback = [weakThis = WeakPtr { *this }, promise = WTF::move(promise), abortSignal = WTF::move(requestOptions.signal), weakPage = WeakPtr { document.page() }] (AuthenticatorResponseData&& data, AuthenticatorAttachment attachment, ExceptionData&& exception) mutable {
         if (abortSignal && abortSignal->aborted()) {
-            promise.reject(Exception { ExceptionCode::AbortError, "Aborted by AbortSignal."_s });
+            promise.rejectType<IDLAny>(abortSignal->reason().getValue());
             return;
         }
 
@@ -409,7 +418,7 @@ void AuthenticatorCoordinator::isUserVerifyingPlatformAuthenticatorAvailable(con
     };
 
     // Async operation are dispatched and handled in the messenger.
-    m_client->isUserVerifyingPlatformAuthenticatorAvailable(document.protectedSecurityOrigin().get(), WTF::move(completionHandler));
+    m_client->isUserVerifyingPlatformAuthenticatorAvailable(protect(document.securityOrigin()).get(), WTF::move(completionHandler));
 }
 
 
@@ -424,7 +433,7 @@ void AuthenticatorCoordinator::isConditionalMediationAvailable(const Document& d
         promise.resolve(result);
     };
     // Async operations are dispatched and handled in the messenger.
-    m_client->isConditionalMediationAvailable(document.protectedSecurityOrigin().get(), WTF::move(completionHandler));
+    m_client->isConditionalMediationAvailable(protect(document.securityOrigin()).get(), WTF::move(completionHandler));
 }
 
 void AuthenticatorCoordinator::getClientCapabilities(const Document& document, DOMPromiseDeferred<PublicKeyCredentialClientCapabilities>&& promise) const
@@ -438,7 +447,7 @@ void AuthenticatorCoordinator::getClientCapabilities(const Document& document, D
         promise.resolve(result);
     };
 
-    m_client->getClientCapabilities(document.protectedSecurityOrigin().get(), WTF::move(completionHandler));
+    m_client->getClientCapabilities(protect(document.securityOrigin()).get(), WTF::move(completionHandler));
 }
 
 void AuthenticatorCoordinator::signalUnknownCredential(const Document& document, UnknownCredentialOptions&& options, DOMPromiseDeferred<void>&& promise)

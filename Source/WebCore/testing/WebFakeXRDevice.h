@@ -32,6 +32,7 @@
 #include "FakeXRInputSourceInit.h"
 #include "FakeXRViewInit.h"
 #include "FakeXRWorldInit.h"
+#include "IntSize.h"
 #include "IntSizeHash.h"
 #include "JSDOMPromiseDeferredForward.h"
 #include "PlatformXR.h"
@@ -56,9 +57,9 @@ public:
     using Fov = PlatformXR::FrameData::Fov;
 
     XREye eye() const { return m_eye; }
-    const Pose& offset() const { return m_offset; }
-    const std::array<float, 16>& projection() const { return m_projection; }
-    const std::optional<Fov>& fieldOfView() const { return m_fov;}
+    const Pose& offset() const LIFETIME_BOUND { return m_offset; }
+    const std::array<float, 16>& projection() const LIFETIME_BOUND { return m_projection; }
+    const std::optional<Fov>& fieldOfView() const LIFETIME_BOUND { return m_fov; }
 
     void setResolution(FakeXRViewInit::DeviceResolution resolution) { m_resolution = resolution; }
     void setOffset(Pose&& offset) { m_offset = WTF::move(offset); }
@@ -104,7 +105,11 @@ private:
     void initializeReferenceSpace(PlatformXR::ReferenceSpaceType) final { }
     Vector<PlatformXR::Device::ViewData> views(PlatformXR::SessionMode) const final;
     void requestFrame(std::optional<PlatformXR::RequestData>&&, RequestFrameCallback&&) final;
-    std::optional<PlatformXR::LayerHandle> createLayerProjection(uint32_t width, uint32_t height, bool alpha) final;
+    std::optional<PlatformXR::LayerHandle> createLayer(IntSize);
+    std::optional<PlatformXR::LayerInfo> createLayerProjection(uint32_t width, uint32_t height, bool alpha) final;
+#if ENABLE(WEBXR_LAYERS)
+    std::optional<PlatformXR::LayerInfo> createCompositionLayer(PlatformXR::CompositionLayerType, IntSize, PlatformXR::LayerLayout) final;
+#endif
     void deleteLayer(PlatformXR::LayerHandle) final;
 #if ENABLE(WEBXR_HIT_TEST)
     void requestHitTestSource(const PlatformXR::HitTestOptions&, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::HitTestSource>)>&&) final;
@@ -125,8 +130,6 @@ private:
     HashMap<PlatformXR::LayerHandle, WebCore::IntSize> m_layers;
     uint32_t m_layerIndex { 0 };
 #if ENABLE(WEBXR_HIT_TEST)
-    PlatformXR::HitTestSource m_nextHitTestSource { 1 };
-    PlatformXR::TransientInputHitTestSource m_nextTransientInputHitTestSource { 1 };
     HashMap<PlatformXR::HitTestSource, UniqueRef<PlatformXR::HitTestOptions>> m_hitTestSources;
     HashMap<PlatformXR::TransientInputHitTestSource, UniqueRef<PlatformXR::TransientInputHitTestOptions>> m_transientInputHitTestSources;
     FakeXRWorldInit m_world;

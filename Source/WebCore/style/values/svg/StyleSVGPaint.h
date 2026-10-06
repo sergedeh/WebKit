@@ -110,10 +110,10 @@ struct SVGPaint {
     std::optional<Color> tryAnyColor() const { return hasColor() ? std::make_optional(m_color) : std::nullopt; }
     std::optional<URL> tryAnyURL() const { return hasURL() ? std::make_optional(m_url) : std::nullopt; }
 
-    const Color& colorDisregardingType() const { return m_color; }
-    const URL& urlDisregardingType() const { return m_url; }
+    const Color& colorDisregardingType() const LIFETIME_BOUND { return m_color; }
+    const URL& urlDisregardingType() const LIFETIME_BOUND { return m_url; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -175,9 +175,9 @@ template<> struct CSSValueConversion<SVGPaint> { auto operator()(BuilderState&, 
 // MARK: - Blending
 
 template<> struct Blending<SVGPaint> {
-    auto equals(const SVGPaint&, const SVGPaint&, const RenderStyle&, const RenderStyle&) -> bool;
+    auto equals(const SVGPaint&, const SVGPaint&, const Style::ComputedStyle&, const Style::ComputedStyle&) -> bool;
     auto canBlend(const SVGPaint&, const SVGPaint&) -> bool;
-    auto blend(const SVGPaint&, const SVGPaint&, const RenderStyle&, const RenderStyle&, const BlendingContext&) -> SVGPaint;
+    auto blend(const SVGPaint&, const SVGPaint&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> SVGPaint;
 };
 
 } // namespace Style

@@ -40,6 +40,10 @@
 #include <wtf/WeakRef.h>
 #include <wtf/text/WTFString.h>
 
+namespace JSC {
+class Debugger;
+}
+
 namespace Inspector {
 class BackendDispatcher;
 class FrontendChannel;
@@ -48,7 +52,9 @@ class FrontendRouter;
 
 namespace WebCore {
 
+class FrameDebugger;
 class InspectorBackendClient;
+class InspectorController;
 class InspectorFrontendClient;
 class InspectorInstrumentation;
 class InstrumentingAgents;
@@ -72,16 +78,22 @@ public:
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
     void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
-    WEBCORE_EXPORT void ref() const;
+    WEBCORE_EXPORT void NODELETE ref() const;
     WEBCORE_EXPORT void deref() const;
 
     WEBCORE_EXPORT void connectFrontend(Inspector::FrontendChannel&, bool isAutomaticInspection = false, bool immediatelyPause = false);
     WEBCORE_EXPORT void disconnectFrontend(Inspector::FrontendChannel&);
     WEBCORE_EXPORT void dispatchMessageFromFrontend(const String& message);
 
+    WEBCORE_EXPORT void siteIsolationFirstEnabled();
     void inspectedFrameDestroyed();
 
     InstrumentingAgents& instrumentingAgents() const { return m_instrumentingAgents.get(); }
+    WebInjectedScriptManager& injectedScriptManager() const { return m_injectedScriptManager.get(); }
+
+    // Unlike debugger(), this is null while the frame's debugger exists but nothing is debugging
+    // the frame yet. Callers that hand the debugger to a global object need this narrower answer.
+    JSC::Debugger* attachedDebugger() const;
 
     // InspectorEnvironment
     bool developerExtrasEnabled() const override;
@@ -97,6 +109,7 @@ private:
     friend class InspectorInstrumentation;
 
     FrameAgentContext frameAgentContext();
+    void createConsoleAgent();
     void createLazyAgents();
 
     WeakRef<LocalFrame> m_frame;
@@ -105,8 +118,10 @@ private:
     const Ref<Inspector::FrontendRouter> m_frontendRouter;
     const Ref<Inspector::BackendDispatcher> m_backendDispatcher;
     const Ref<WTF::Stopwatch> m_executionStopwatch;
+    const std::unique_ptr<FrameDebugger> m_debugger;
     Inspector::AgentRegistry m_agents;
 
+    bool m_didCreateConsoleAgent { false };
     bool m_didCreateLazyAgents { false };
     WeakPtr<InspectorFrontendClient> m_inspectorFrontendClient;
 };

@@ -47,15 +47,16 @@ public:
 
     ExceptionOr<RefPtr<Uint8Array>> decode(const BufferSource&&);
     ExceptionOr<RefPtr<Uint8Array>> flush();
+    bool didDetectExtraBytes() const { return m_didDetectExtraBytes; }
 
 private:
-    bool didInflateFinish(int) const;
-    bool didInflateContainExtraBytes(int) const;
+    bool NODELETE didInflateFinish(int) const;
+    bool NODELETE didInflateContainExtraBytes(int) const;
 
     ExceptionOr<Ref<JSC::ArrayBuffer>> decompress(std::span<const uint8_t>);
     ExceptionOr<Ref<JSC::ArrayBuffer>> decompressZlib(std::span<const uint8_t>);
 #if PLATFORM(COCOA)
-    bool didInflateFinishAppleCompressionFramework(int);
+    bool NODELETE didInflateFinishAppleCompressionFramework(int);
     ExceptionOr<Ref<JSC::ArrayBuffer>> decompressAppleCompressionFramework(std::span<const uint8_t>);
 #endif
 
@@ -73,6 +74,7 @@ private:
     const size_t maxAllocationSize = 1073741824; // 1GB
 
     bool m_didFinish { false };
+    bool m_didDetectExtraBytes { false };
     const Formats::CompressionFormat m_format;
 
     // TODO: convert to using variant

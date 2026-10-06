@@ -39,10 +39,8 @@ namespace WebCore::WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TextureImpl);
 
-TextureImpl::TextureImpl(WebGPUPtr<WGPUTexture>&& texture, TextureFormat format, TextureDimension dimension, ConvertToBackingContext& convertToBackingContext)
-    : m_format(format)
-    , m_dimension(dimension)
-    , m_backing(WTF::move(texture))
+TextureImpl::TextureImpl(WebGPUPtr<WGPUTexture>&& texture, TextureFormat, TextureDimension, ConvertToBackingContext& convertToBackingContext)
+    : m_backing(WTF::move(texture))
     , m_convertToBackingContext(convertToBackingContext)
 {
 }
@@ -51,12 +49,12 @@ TextureImpl::~TextureImpl() = default;
 
 RefPtr<TextureView> TextureImpl::createView(const std::optional<TextureViewDescriptor>& descriptor)
 {
-    CString label = descriptor ? descriptor->label.utf8() : CString(""_s);
+    auto label = toBackingStringView(descriptor ? descriptor->label : emptyString());
 
     Ref convertToBackingContext = m_convertToBackingContext;
 
     WGPUTextureViewDescriptor backingDescriptor {
-        .label = label.data(),
+        .label = label,
         .format = descriptor && descriptor->format ? convertToBackingContext->convertToBacking(*descriptor->format) : WGPUTextureFormat_Undefined,
         .dimension = descriptor && descriptor->dimension ? convertToBackingContext->convertToBacking(*descriptor->dimension) : WGPUTextureViewDimension_Undefined,
         .baseMipLevel = descriptor ? descriptor->baseMipLevel : 0,
@@ -82,7 +80,7 @@ void TextureImpl::undestroy()
 
 void TextureImpl::setLabelInternal(const String& label)
 {
-    wgpuTextureSetLabel(m_backing.get(), label.utf8().data());
+    wgpuTextureSetLabel(m_backing.get(), toBackingStringView(label));
 }
 
 } // namespace WebCore::WebGPU

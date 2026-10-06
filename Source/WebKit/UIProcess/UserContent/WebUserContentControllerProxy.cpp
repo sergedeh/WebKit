@@ -28,7 +28,6 @@
 
 #include "APIArray.h"
 #include "APIContentWorld.h"
-#include "APIJSBuffer.h"
 #include "APIUserScript.h"
 #include "APIUserStyleSheet.h"
 #include "InjectUserScriptImmediately.h"
@@ -39,7 +38,6 @@
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include "WebScriptMessageHandler.h"
-#include "WebUserContentControllerDataTypes.h"
 #include "WebUserContentControllerMessages.h"
 #include <WebCore/SerializedScriptValue.h>
 #include <WebCore/SharedMemory.h>
@@ -54,11 +52,15 @@
 #include "WebExtensionMatchPattern.h"
 #endif
 
+#if PLATFORM(COCOA)
+#include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#endif
+
 namespace WebKit {
 
 using namespace WebCore;
 
-static HashMap<UserContentControllerIdentifier, WeakRef<WebUserContentControllerProxy>>& webUserContentControllerProxies()
+static HashMap<UserContentControllerIdentifier, WeakRef<WebUserContentControllerProxy>>& NODELETE webUserContentControllerProxies()
 {
     static NeverDestroyed<HashMap<UserContentControllerIdentifier, WeakRef<WebUserContentControllerProxy>>> proxies;
     return proxies;
@@ -97,22 +99,71 @@ void WebUserContentControllerProxy::removeNetworkProcess(NetworkProcessProxy& pr
 }
 #endif
 
+IPC::TransferString WebUserContentControllerProxy::cachedTransferString(const String& string) const
+{
+#if PLATFORM(COCOA)
+    if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::EnableUserScriptAndUserStyleInterning)) {
+        auto result = IPC::TransferString::create(string);
+        RELEASE_ASSERT(result);
+        return *result;
+    }
+#endif
+
+    if (auto maybeTransferString = m_transferStringCache.getOptional(string))
+        return *maybeTransferString;
+
+    auto result = IPC::TransferString::create(string);
+    RELEASE_ASSERT(result);
+
+    if (result->shouldCache())
+        m_transferStringCache.set(string, *result);
+
+    return *result;
+}
+
+void WebUserContentControllerProxy::resetTransferStringCache()
+{
+    // We could be more granular about clearing the cache when user scripts or user style sheets are
+    // removed. But since that is a rare operation, and this is just a cache, just clearing the
+    // entire cache on any removal seems fine.
+    m_transferStringCache.clear();
+}
+
+WebCoreUserScriptData WebUserContentControllerProxy::dataFromUserScript(const WebCore::UserScript& script) const
+{
+    return { cachedTransferString(script.source()), script.url(), script.allowlist(), script.blocklist(), script.injectionTime(), script.injectedFrames(), script.matchParentFrame() };
+}
+
+WebCoreUserStyleSheetData WebUserContentControllerProxy::dataFromUserStyleSheet(const API::UserStyleSheet& userStyleSheet, WebProcessProxy& process) const
+{
+    auto& sheet = userStyleSheet.userStyleSheet();
+
+    std::optional<WebCore::PageIdentifier> pageID;
+    if (RefPtr page = userStyleSheet.page())
+        pageID = page->webPageIDInProcess(process);
+
+    return { cachedTransferString(sheet.source()), sheet.url(), sheet.allowlist(), sheet.blocklist(), sheet.injectedFrames(), sheet.matchParentFrame(), sheet.level(), pageID };
+}
+
 UserContentControllerParameters WebUserContentControllerProxy::parametersForProcess(WebProcessProxy& process) const
 {
     m_processes.add(process);
 
     Vector<WebUserScriptData> userScripts;
     for (RefPtr userScript : m_userScripts->elementsOfType<API::UserScript>())
-        userScripts.append({ userScript->identifier(), Ref { userScript->contentWorld() }->worldDataForProcess(process), userScript->userScript() });
+        userScripts.append({ userScript->identifier(), Ref { userScript->contentWorld() }->worldDataForProcess(process), dataFromUserScript(userScript->userScript()) });
 
     Vector<WebUserStyleSheetData> userStyleSheets;
-    for (RefPtr userStyleSheet : m_userStyleSheets->elementsOfType<API::UserStyleSheet>())
-        userStyleSheets.append({ userStyleSheet->identifier(), Ref { userStyleSheet->contentWorld() }->worldDataForProcess(process), userStyleSheet->userStyleSheet() });
+    for (RefPtr userStyleSheet : m_userStyleSheets->elementsOfType<API::UserStyleSheet>()) {
+        if (userStyleSheet->isOrphaned())
+            continue;
+        userStyleSheets.append({ userStyleSheet->identifier(), Ref { userStyleSheet->contentWorld() }->worldDataForProcess(process), dataFromUserStyleSheet(*userStyleSheet, process) });
+    }
 
     Vector<WebJSBufferData> buffers;
     for (auto& [pair, buffer] : m_buffers) {
         if (RefPtr world = API::ContentWorld::worldForIdentifier(pair.first))
-            buffers.append(WebJSBufferData { Ref { buffer }->sharedMemory(), world->worldDataForProcess(process), pair.second });
+            buffers.append(WebJSBufferData { buffer, world->worldDataForProcess(process), pair.second });
     }
 
     auto messageHandlers = WTF::map(m_scriptMessageHandlers, [&](auto entry) {
@@ -147,7 +198,7 @@ void WebUserContentControllerProxy::addUserScript(API::UserScript& userScript, I
     m_userScripts->elements().append(&userScript);
 
     for (Ref process : m_processes)
-        process->send(Messages::WebUserContentController::AddUserScripts({ { userScript.identifier(), world->worldDataForProcess(process), userScript.userScript() } }, immediately), identifier());
+        process->send(Messages::WebUserContentController::AddUserScripts({ { userScript.identifier(), world->worldDataForProcess(process), dataFromUserScript(userScript.userScript()) } }, immediately), identifier());
 }
 
 void WebUserContentControllerProxy::removeUserScript(API::UserScript& userScript)
@@ -158,6 +209,7 @@ void WebUserContentControllerProxy::removeUserScript(API::UserScript& userScript
         process->send(Messages::WebUserContentController::RemoveUserScript(world->identifier(), userScript.identifier()), identifier());
 
     m_userScripts->elements().removeAll(&userScript);
+    resetTransferStringCache();
 }
 
 void WebUserContentControllerProxy::removeAllUserScripts(API::ContentWorld& world)
@@ -168,6 +220,7 @@ void WebUserContentControllerProxy::removeAllUserScripts(API::ContentWorld& worl
     m_userScripts->removeAllOfTypeMatching<API::UserScript>([&](const auto& userScript) {
         return &userScript->contentWorld() == &world;
     });
+    resetTransferStringCache();
 }
 
 #if ENABLE(WK_WEB_EXTENSIONS)
@@ -192,6 +245,7 @@ void WebUserContentControllerProxy::removeAllUserScripts()
             process->send(Messages::WebUserContentController::RemoveAllUserScripts(worldIdentifiers), identifier());
 
         m_userScripts->elements().clear();
+        resetTransferStringCache();
 
         return;
     }
@@ -217,8 +271,11 @@ void WebUserContentControllerProxy::addUserStyleSheet(API::UserStyleSheet& userS
 
     m_userStyleSheets->elements().append(&userStyleSheet);
 
+    if (userStyleSheet.isOrphaned())
+        return;
+
     for (Ref process : m_processes)
-        process->send(Messages::WebUserContentController::AddUserStyleSheets({ { userStyleSheet.identifier(), world->worldDataForProcess(process), userStyleSheet.userStyleSheet() } }), identifier());
+        process->send(Messages::WebUserContentController::AddUserStyleSheets({ { userStyleSheet.identifier(), world->worldDataForProcess(process), dataFromUserStyleSheet(userStyleSheet, process) } }), identifier());
 }
 
 void WebUserContentControllerProxy::removeUserStyleSheet(API::UserStyleSheet& userStyleSheet)
@@ -229,6 +286,7 @@ void WebUserContentControllerProxy::removeUserStyleSheet(API::UserStyleSheet& us
         process->send(Messages::WebUserContentController::RemoveUserStyleSheet(world->identifier(), userStyleSheet.identifier()), identifier());
 
     m_userStyleSheets->elements().removeAll(&userStyleSheet);
+    resetTransferStringCache();
 }
 
 void WebUserContentControllerProxy::removeAllUserStyleSheets(API::ContentWorld& world)
@@ -239,6 +297,7 @@ void WebUserContentControllerProxy::removeAllUserStyleSheets(API::ContentWorld& 
     m_userStyleSheets->removeAllOfTypeMatching<API::UserStyleSheet>([&](const auto& userStyleSheet) {
         return &userStyleSheet->contentWorld() == &world;
     });
+    resetTransferStringCache();
 }
 
 #if ENABLE(WK_WEB_EXTENSIONS)
@@ -263,6 +322,7 @@ void WebUserContentControllerProxy::removeAllUserStyleSheets()
             process->send(Messages::WebUserContentController::RemoveAllUserStyleSheets(worldIdentifiers), identifier());
 
         m_userStyleSheets->elements().clear();
+        resetTransferStringCache();
 
         return;
     }
@@ -331,7 +391,7 @@ void WebUserContentControllerProxy::removeAllUserMessageHandlers()
     m_scriptMessageHandlers.clear();
 }
 
-void WebUserContentControllerProxy::didPostMessage(WebPageProxy& page, FrameInfoData&& frameInfoData, ScriptMessageHandlerIdentifier messageHandlerID, JavaScriptEvaluationResult&& message, CompletionHandler<void(Expected<WebKit::JavaScriptEvaluationResult, String>&&)>&& reply) const
+void WebUserContentControllerProxy::didPostMessage(WebPageProxy& page, FrameInfoData&& frameInfoData, ScriptMessageHandlerIdentifier messageHandlerID, JavaScriptEvaluationResult&& message, CompletionHandler<void(std::expected<WebKit::JavaScriptEvaluationResult, String>&&)>&& reply) const
 {
     RefPtr handler = m_scriptMessageHandlers.get(messageHandlerID);
     if (!handler)
@@ -403,11 +463,11 @@ void WebUserContentControllerProxy::removeAllContentRuleLists()
 }
 #endif
 
-void WebUserContentControllerProxy::addJSBuffer(API::JSBuffer& buffer, API::ContentWorld& world, const String& name)
+void WebUserContentControllerProxy::addJSBuffer(Ref<WebCore::SharedMemory>&& buffer, API::ContentWorld& world, const String& name)
 {
     m_buffers.set({ world.identifier(), name }, buffer);
     for (Ref process : m_processes)
-        process->send(Messages::WebUserContentController::AddJSBuffer(WebJSBufferData { buffer.sharedMemory(), world.worldDataForProcess(process), name }), identifier());
+        process->send(Messages::WebUserContentController::AddJSBuffer(WebJSBufferData { buffer, world.worldDataForProcess(process), name }), identifier());
 }
 
 void WebUserContentControllerProxy::removeJSBuffer(API::ContentWorld& world, const String& name)

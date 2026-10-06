@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Google Inc.
+ * Copyright 2020 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -11,16 +11,17 @@
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/ganesh/GrBackendSurface.h"
 #include "include/gpu/ganesh/GrTypes.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkIDChangeListener.h"
+#include "include/private/SkTo.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
+#include "src/gpu/MaskFormat.h"
 #include "src/gpu/ganesh/GrCaps.h"
+#include "src/gpu/ganesh/geometry/GrStyledShape.h"
 #include "src/gpu/ganesh/ops/SmallPathShapeData.h"
 
 #include <cstddef>
 
 #if !defined(SK_ENABLE_OPTIMIZE_SIZE)
-
-using MaskFormat = skgpu::MaskFormat;
 
 #ifdef DF_PATH_TRACKING
 static int g_NumCachedShapes = 0;
@@ -87,11 +88,19 @@ void SmallPathAtlasMgr::deleteCacheEntry(SmallPathShapeData* shapeData) {
     delete shapeData;
 }
 
-SmallPathShapeData* SmallPathAtlasMgr::findOrCreate(const SmallPathShapeDataKey& key) {
+SmallPathShapeData* SmallPathAtlasMgr::findOrCreate(const SmallPathShapeDataKey& key,
+                                                    const GrStyledShape& shape) {
     auto shapeData = fShapeCache.find(key);
+
+    if (shapeData && shapeData->fIDChangeListener->hasChanged()) {
+        this->deleteCacheEntry(shapeData);
+        shapeData = nullptr;
+    }
+
     if (!shapeData) {
         // TODO: move the key into the ctor
         shapeData = new SmallPathShapeData(key);
+        shape.addGenIDChangeListener(shapeData->fIDChangeListener);
         fShapeCache.add(shapeData);
         fShapeList.addToTail(shapeData);
 #ifdef DF_PATH_TRACKING
@@ -109,7 +118,7 @@ SmallPathShapeData* SmallPathAtlasMgr::findOrCreate(const GrStyledShape& shape,
     SmallPathShapeDataKey key(shape, desiredDimension);
 
     // TODO: move the key into 'findOrCreate'
-    return this->findOrCreate(key);
+    return this->findOrCreate(key, shape);
 }
 
 SmallPathShapeData* SmallPathAtlasMgr::findOrCreate(const GrStyledShape& shape,
@@ -117,13 +126,14 @@ SmallPathShapeData* SmallPathAtlasMgr::findOrCreate(const GrStyledShape& shape,
     SmallPathShapeDataKey key(shape, ctm);
 
     // TODO: move the key into 'findOrCreate'
-    return this->findOrCreate(key);
+    return this->findOrCreate(key, shape);
 }
 
 GrDrawOpAtlas::ErrorCode SmallPathAtlasMgr::addToAtlas(GrResourceProvider* resourceProvider,
                                                        GrDeferredUploadTarget* target,
-                                                       int width, int height, const void* image,
-                                                       skgpu::AtlasLocator* locator) {
+                                                       int width, int height,
+                                                       const void* image,
+                                                       GrAtlasLocator* locator) {
     return fAtlas->addToAtlas(resourceProvider, target, width, height, image, locator);
 }
 
@@ -133,7 +143,7 @@ void SmallPathAtlasMgr::setUseToken(SmallPathShapeData* shapeData,
 }
 
 // Callback to clear out internal path cache when eviction occurs
-void SmallPathAtlasMgr::evict(skgpu::PlotLocator plotLocator) {
+void SmallPathAtlasMgr::evict(GrPlotLocator plotLocator) {
     // remove any paths that use this plot
     ShapeDataList::Iter iter;
     iter.init(fShapeList, ShapeDataList::Iter::kHead_IterStart);

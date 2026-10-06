@@ -29,12 +29,15 @@
 
 #include "MessageReceiver.h"
 #include "PlatformXRCoordinator.h"
+#include "ProcessActivityGroup.h"
 #include "ProcessThrottler.h"
+#include "Untrusted.h"
 #include <WebCore/ExceptionData.h>
 #include <WebCore/PlatformXR.h>
 #include <WebCore/SecurityOriginData.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Variant.h>
 
 namespace WebCore {
 class SecurityOriginData;
@@ -76,7 +79,7 @@ public:
     };
     void invalidate(InvalidationReason invalidateReason = InvalidationReason::State);
 
-    bool hasActiveSession() const { return !!m_immersiveSessionActivity; }
+    bool hasActiveSession() const;
     void ensureImmersiveSessionActivity();
 
 private:
@@ -92,20 +95,23 @@ private:
 
     // Message handlers
     void enumerateImmersiveXRDevices(CompletionHandler<void(Vector<XRDeviceInfo>&&)>&&);
-    void requestPermissionOnSessionFeatures(IPC::Connection&, const WebCore::SecurityOriginData&, PlatformXR::SessionMode, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&&);
+    void requestPermissionOnSessionFeatures(IPC::Connection&, IPC::Untrusted<WebCore::SecurityOriginData>&&, PlatformXR::SessionMode, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&&);
     void initializeTrackingAndRendering(IPC::Connection&, std::optional<WebCore::WebGPU::TextureFormat>, std::optional<WebCore::WebGPU::TextureFormat>);
     void shutDownTrackingAndRendering(IPC::Connection&);
     void requestFrame(IPC::Connection&, std::optional<PlatformXR::RequestData>&&, CompletionHandler<void(PlatformXR::FrameData&&)>&&);
 #if USE(OPENXR)
-    void createLayerProjection(IPC::Connection&, uint32_t width, uint32_t height, bool alpha, CompletionHandler<void(std::optional<PlatformXR::LayerHandle>)>&&);
-    void submitFrame(IPC::Connection&, Vector<XRDeviceLayer>&&);
+    void createLayerProjection(IPC::Connection&, uint32_t width, uint32_t height, bool alpha, CompletionHandler<void(std::optional<PlatformXR::LayerInfo>)>&&);
+    void submitFrame(IPC::Connection&, Vector<PlatformXR::DeviceLayer>&&);
 #else
     void submitFrame(IPC::Connection&);
 #endif
+#if ENABLE(WEBXR_LAYERS)
+    void NODELETE createCompositionLayer(IPC::Connection&, PlatformXR::CompositionLayerType, WebCore::IntSize, PlatformXR::LayerLayout, CompletionHandler<void(std::optional<PlatformXR::LayerInfo>)>&&);
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
-    void requestHitTestSource(const PlatformXR::HitTestOptions&, CompletionHandler<void(Expected<PlatformXR::HitTestSource, WebCore::ExceptionData>)>&&);
+    void requestHitTestSource(const PlatformXR::HitTestOptions&, CompletionHandler<void(std::expected<PlatformXR::HitTestSource, WebCore::ExceptionData>)>&&);
     void deleteHitTestSource(PlatformXR::HitTestSource);
-    void requestTransientInputHitTestSource(const PlatformXR::TransientInputHitTestOptions&, CompletionHandler<void(Expected<PlatformXR::TransientInputHitTestSource, WebCore::ExceptionData>)>&&);
+    void requestTransientInputHitTestSource(const PlatformXR::TransientInputHitTestOptions&, CompletionHandler<void(std::expected<PlatformXR::TransientInputHitTestSource, WebCore::ExceptionData>)>&&);
     void deleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource);
 #endif
     void didCompleteShutdownTriggeredBySystem(IPC::Connection&);
@@ -113,6 +119,7 @@ private:
     // PlatformXRCoordinatorSessionEventClient
     void sessionDidEnd(XRDeviceIdentifier) final;
     void sessionDidUpdateVisibilityState(XRDeviceIdentifier, PlatformXR::VisibilityState) final;
+    void sessionDidInitializeRendering(XRDeviceIdentifier, uint32_t width, uint32_t height, uint32_t arrayLength) final;
 
     std::optional<PlatformXR::SessionMode> m_immersiveSessionMode;
     std::optional<WebCore::SecurityOriginData> m_immersiveSessionSecurityOriginData;
@@ -130,7 +137,7 @@ private:
     void invalidateImmersiveSessionState(ImmersiveSessionState nextSessionState = ImmersiveSessionState::Idle);
 
     WeakPtr<WebPageProxy> m_page;
-    RefPtr<ProcessThrottler::ForegroundActivity> m_immersiveSessionActivity;
+    Variant<std::monostate, Ref<ProcessThrottler::ForegroundActivity>, Ref<ProcessActivityGroup>> m_immersiveSessionActivity;
 };
 
 } // namespace WebKit

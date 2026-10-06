@@ -27,6 +27,9 @@
 
 @class _WKWebExtensionSidebar;
 
+/*! @abstract Indicates a script error occurred in the extension, such as an uncaught exception, unhandled promise rejection, or a call to console.error(). */
+static const WKWebExtensionContextError WKWebExtensionContextErrorScriptExecutionError = (WKWebExtensionContextError)7;
+
 WK_HEADER_AUDIT_BEGIN(nullability, sendability)
 
 @interface WKWebExtensionContext ()
@@ -63,12 +66,56 @@ WK_HEADER_AUDIT_BEGIN(nullability, sendability)
 - (void)_resetCommands;
 
 /*!
- @abstract Retrieves the extension sidebar for a given tab, or the default sidebar if `nil` is passed.
- @param tab The tab for which to retrieve the extension sidebar, or `nil` to get the default sidebar.
- @discussion The returned object represents the sidebar specific to the tab when provided; otherwise, it returns the default sidebar.
- The default sidebar should not be directly displayed. When possible, specify the tab to get the most context-relevant sidebar.
+ @abstract Terminates and reloads the extension's background content, simulating an idle timeout.
+ @discussion Allows tests to exercise background content termination and relaunch without waiting for the real idle timer.
  */
-- (nullable _WKWebExtensionSidebar *)sidebarForTab:(nullable id <WKWebExtensionTab>)tab NS_SWIFT_NAME(sidebar(for:));
+- (void)_reloadBackgroundContentForTesting;
+
+/*!
+ @abstract Terminates the extension's background content without reloading it, simulating an idle timeout.
+ @discussion Allows tests to exercise background content termination without waiting for the real idle timer, leaving
+ the background content unloaded until something (e.g. a message from another extension page) wakes it back up.
+ */
+- (void)_unloadBackgroundContentForTesting;
+
+/*!
+ @abstract Retrieves the extension sidebar which applies to a given tab.
+ @param tab The tab for which to retrieve the extension sidebar.
+ @result The sidebar for that tab, or `nil` if the extension has no sidebar to show there.
+ @discussion The same object is returned for every tab in a window which the extension has not set tab-specific
+ overrides for.  Successive results can be compared by identity when the user switches tabs to determine if the
+ sidebar must also be switched. The returned sidebar's `WKWebView` may likewise be shared with the sidebars of
+ other tabs in the window, even if the sidebar object itself may have tab-specific overrides.
+ */
+- (nullable _WKWebExtensionSidebar *)sidebarForTab:(id <WKWebExtensionTab>)tab NS_SWIFT_NAME(sidebar(for:));
+
+/*!
+ @abstract Should be called by the app when the user activates the body of a notification presented for the extension.
+ @param identifier The identifier of the ``_WKWebExtensionNotification`` that was activated.
+ @discussion This fires the `browser.notifications.onClicked` event. It has no effect if the extension has no notification with the identifier.
+ */
+- (void)_didClickNotificationWithIdentifier:(NSString *)identifier;
+
+/*!
+ @abstract Should be called by the app when the user activates an action button on a notification presented for the extension.
+ @param buttonIndex The index of the activated button within the notification's ``_WKWebExtensionNotification.buttons`` array.
+ @param identifier The identifier of the ``_WKWebExtensionNotification`` whose button was activated.
+ @discussion This fires the `browser.notifications.onButtonClicked` event. It has no effect if the extension has no notification with the identifier, or if the index is out of range.
+ */
+- (void)_didClickButtonAtIndex:(NSUInteger)buttonIndex forNotificationWithIdentifier:(NSString *)identifier;
+
+/*!
+ @abstract Should be called by the app when a notification presented for the extension is closed.
+ @param identifier The identifier of the ``_WKWebExtensionNotification`` that was closed.
+ @param byUser Whether the user dismissed the notification, as opposed to it being closed by the system.
+ @discussion This fires the `browser.notifications.onClosed` event and forgets the notification. It has no effect if the extension has no notification with the identifier.
+ The app should not call this in response to ``WKWebExtensionControllerDelegatePrivate`` asking it to clear a notification.
+ */
+- (void)_didCloseNotificationWithIdentifier:(NSString *)identifier byUser:(BOOL)byUser;
+
+/*! @abstract Whether the extension context has access to file:// URLs.
+ @discussion When YES, the extension can inject content into and interact with file:// pages. Defaults to NO. */
+@property (nonatomic, setter=_setHasAccessToFileURLs:) BOOL _hasAccessToFileURLs;
 
 @end
 

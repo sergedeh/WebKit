@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,7 +46,7 @@ XMLHttpRequestUpload::XMLHttpRequestUpload(XMLHttpRequest& request)
 
 void XMLHttpRequestUpload::eventListenersDidChange()
 {
-    Ref { m_request.get() }->updateHasRelevantEventListener();
+    protect(m_request)->updateHasRelevantEventListener();
 }
 
 bool XMLHttpRequestUpload::hasRelevantEventListener() const
@@ -70,9 +70,7 @@ void XMLHttpRequestUpload::dispatchProgressEvent(const AtomString& type, unsigne
 
 ScriptExecutionContext* XMLHttpRequestUpload::scriptExecutionContext() const
 {
-    if (RefPtr request = m_request.ptr())
-        return request->scriptExecutionContext();
-    return nullptr;
+    return protect(m_request)->scriptExecutionContext();
 }
 
 WebCoreOpaqueRoot root(XMLHttpRequestUpload* upload)

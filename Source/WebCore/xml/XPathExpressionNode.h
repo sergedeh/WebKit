@@ -38,15 +38,13 @@ struct EvaluationContext {
     unsigned position;
     HashMap<String, String> variableBindings;
     bool hadTypeConversionError;
-
-    RefPtr<Node> protectedNode() const { return node; }
 };
 
 class Expression {
     WTF_MAKE_TZONE_ALLOCATED(Expression);
     WTF_MAKE_NONCOPYABLE(Expression);
 public:
-    static EvaluationContext& evaluationContext();
+    static EvaluationContext& NODELETE evaluationContext();
 
     virtual ~Expression() = default;
 

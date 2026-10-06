@@ -4,10 +4,7 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 
 #include <vector>
@@ -132,7 +129,7 @@ void main()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
 
-    GLubyte getExpectedValue(GLenum swizzle, GLubyte unswizzled[4])
+    GLubyte getExpectedValue(GLenum swizzle, const std::array<GLubyte, 4> &unswizzled)
     {
         switch (swizzle)
         {
@@ -167,8 +164,8 @@ void main()
         glClear(GL_COLOR_BUFFER_BIT);
         drawQuad(mProgram, "position", 0.5f);
 
-        GLubyte unswizzled[4];
-        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &unswizzled);
+        std::array<GLubyte, 4> unswizzled;
+        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, unswizzled.data());
 
         ASSERT_GL_NO_ERROR();
 

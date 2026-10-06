@@ -23,23 +23,25 @@ import errno
 import json
 import sys
 import re
+import time
 from signal import SIGKILL, SIGSEGV
 from glib_test_runner import GLibTestRunner
 
 top_level_directory = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(top_level_directory, "Tools", "glib"))
-import common
+
+
+import common  # noqa: E402
+import jhbuildutils  # noqa: E402
+import subprocess  # noqa: E402
 from webkitpy.common.host import Host
 from webkitpy.common.test_expectations import TestExpectations
 from webkitpy.port.monadodriver import MonadoDriver  # noqa: E402
 from webkitpy.port.westondriver import WestonDriver
+from webkitpy.results.upload import Upload  # noqa: E402
 from webkitcorepy import Timeout
 
-import subprocess
-
-
 UNKNOWN_CRASH_STR = "CRASH_OR_PROBLEM_IN_TEST_EXECUTABLE"
-
 
 def port_options(options):
     port_options = optparse.Values()
@@ -47,6 +49,9 @@ def port_options(options):
         setattr(port_options, 'configuration', 'Debug')
     elif options.release:
         setattr(port_options, 'configuration', 'Release')
+    # Forward result_report_flavor so uploaded results are tagged with it
+    # (Port.configuration_for_upload reads it via get_option).
+    setattr(port_options, 'result_report_flavor', getattr(options, 'result_report_flavor', None))
     return port_options
 
 class TestRunner(object):
@@ -62,9 +67,20 @@ class TestRunner(object):
         self._build_type = self._port.get_option('configuration')
         common.set_build_types((self._build_type,))
 
+        # When no explicit timeout is given, use a default of 5s, doubled for
+        # Debug since those builds are slower (no compiler optimizations are
+        # used). An explicit --timeout is used verbatim. This matches the
+        # layout test harness (see GLibPort.default_timeout_ms() and
+        # run_webkit_tests, which only applies the multiplier to the default).
+        if self._options.timeout is not None:
+            self._timeout = self._options.timeout
+        else:
+            self._timeout = 10 if self._build_type == 'Debug' else 5
+
         self._programs_path = common.binary_build_path(self._port)
         expectations_file = os.path.join(common.top_level_path(), "Tools", "TestWebKitAPI", "glib", "TestExpectations.json")
-        self._expectations = TestExpectations(self._port.name(), expectations_file, self._build_type)
+        self._expectations = TestExpectations(self._port.name(), expectations_file, self._build_type, self._port.architecture())
+        print("Test expectations: port=%s, build_type=%s, architecture=%s" % (self._port.name(), self._build_type, self._port.architecture()))
         self._initial_test_list = tests
         self._tests = self._get_tests(tests)
         self._disabled_tests = []
@@ -97,12 +113,25 @@ class TestRunner(object):
         test_dir_prefix_len = len(self._test_programs_base_dir()) + 1
         return (path[test_dir_prefix_len:] for path in test_paths)
 
+    def _resolve_test_program(self, test):
+        # Test binaries to run can be specified by the bare name or by using a path to the binary (relative or full)
+        if os.path.exists(test):
+            return test
+        base_dir = self._test_programs_base_dir()
+        candidate = os.path.join(base_dir, test)
+        if os.path.exists(candidate):
+            return candidate
+        if os.sep not in test and os.path.isdir(base_dir):
+            for entry in sorted(os.listdir(base_dir)):
+                nested = os.path.join(base_dir, entry, test)
+                if os.path.isfile(nested) and os.access(nested, os.X_OK):
+                    return nested
+        return candidate
+
     def _get_tests(self, requested_test_list):
         tests = []
         for test in requested_test_list:
-            test = test.split(':', 1)[0]
-            if not os.path.exists(test):
-                test = os.path.join(self._test_programs_base_dir(), test)
+            test = self._resolve_test_program(self._binary_and_subtest(test)[0])
             if os.path.isdir(test):
                 tests.extend(self._get_tests_from_dir(test))
             elif os.path.isfile(test) and os.access(test, os.X_OK):
@@ -128,9 +157,9 @@ class TestRunner(object):
 
     def _setup_testing_environment_for_driver(self, driver):
         test_env = driver._setup_environ_for_test() | self._port.environment_for_api_tests()
-        # The python display-server driver may set WPE_DISPLAY, but we unset it here because it causes issues with
+        # The python display-server driver may set WPE_PLATFORM, but we unset it here because it causes issues with
         # some WPE API tests like WPEPlatform/TestDisplayDefault that check the default behaviour of the APIs.
-        test_env.pop("WPE_DISPLAY", None)
+        test_env.pop("WPE_PLATFORM", None)
         return test_env
 
     def _tear_down_testing_environment(self):
@@ -190,7 +219,7 @@ class TestRunner(object):
         return hasattr(self._options, 'wpe_legacy_api') and self._options.wpe_legacy_api
 
     def _run_test_glib(self, test_program, subtests, skipped_test_cases):
-        timeout = self._options.timeout
+        timeout = self._timeout
         wpe_legacy_api = self._use_wpe_legacy_api()
         if self.is_webxr_test(test_program):
             env = self._monado_env | self._test_env
@@ -199,7 +228,7 @@ class TestRunner(object):
             if self.is_wpe_platform_test(test_program):
                 # WPE Platform tests can run without swrast since nothing is rendered.
                 env = dict(env)
-                env.pop('LIBGL_ALWAYS_SOFTWARE')
+                env.pop('LIBGL_ALWAYS_SOFTWARE', None)
 
         def is_slow_test(test, subtest):
             return self._expectations.is_slow(test, subtest)
@@ -219,7 +248,7 @@ class TestRunner(object):
 
         try:
             output = subprocess.check_output([test_program, ], stderr=subprocess.STDOUT,
-                                             env=env, timeout=self._options.timeout)
+                                             env=env, timeout=self._timeout)
         except subprocess.CalledProcessError as exc:
             print(exc.output)
             if exc.returncode > 0:
@@ -260,7 +289,7 @@ class TestRunner(object):
         if self._use_wpe_legacy_api() and os.path.basename(test_program) == 'TestWebKit':
             command.append('--wpe-legacy-api')
 
-        timeout = self._options.timeout
+        timeout = self._timeout
         if self._expectations.is_slow(os.path.basename(test_program), subtest):
             timeout *= 10
 
@@ -336,18 +365,57 @@ class TestRunner(object):
     def _get_test_short_name(self, test_path):
         return test_path.replace(self._test_programs_base_dir(), '', 1).lstrip('/').split(':', 1)[0]
 
+    def _get_test_name_for_upload(self, test_path, test_case):
+        # Test binaries are built into a port-specific subdirectory
+        # (TestWebKitAPI/WebKitGTK for GTK, TestWebKitAPI/WPE for WPE), so the
+        # short name carries that prefix. Strip it so the same test is reported
+        # to results.webkit.org under a single name regardless of the port that
+        # ran it.
+        short_name = self._get_test_short_name(test_path)
+        for prefix in ('WebKitGTK/', 'WPE/'):
+            if short_name.startswith(prefix):
+                short_name = short_name[len(prefix):]
+                break
+        # Google Test cases use a dot to match other ports; GLib tests keep the colon.
+        separator = '.' if self.is_google_test(test_path) else ':'
+        return f'{short_name}{separator}{test_case}'
+
+    def _generate_test_list_for_json_output(self, tests):
+        test_list = []
+        for test in tests:
+            for test_case in tests[test]:
+                # Report the same name used for results.webkit.org, so that consumers of this
+                # file (the EWS) can look the test up there and pass it back on the command line.
+                # FIXME: get output from failed tests
+                test_list.append({"name": self._get_test_name_for_upload(test, test_case), "output": None})
+        return test_list
+
+    def _binary_and_subtest(self, test_name):
+        # Accept both the "<binary>:<subtest>" (GLib) and "<binary>.<case>"
+        # (Google Test) forms. Split the dotted form only when the bare name is
+        # not itself a program, since binary names have no dots.
+        if ':' in test_name:
+            return tuple(test_name.split(':', 1))
+        if '.' in test_name and not os.path.exists(test_name) \
+                and not os.path.exists(os.path.join(self._test_programs_base_dir(), test_name)):
+            return tuple(test_name.split('.', 1))
+        return test_name, None
+
+    def _canonical_binary_name(self, test_name):
+        # Drop the base directory and any port-specific subdirectory so that the prefixed
+        # ("WPE/TestDownloads") and bare ("TestDownloads") spellings compare equal.
+        return os.path.basename(self._get_test_short_name(test_name))
+
     def _getsubtests_to_run_for_test(self, requested_test_name):
         subtests_to_run = []
-        requested_test_name = self._get_test_short_name(requested_test_name)
+        requested_test_name = self._canonical_binary_name(requested_test_name)
         for test_name in self._initial_test_list:
-            subtest_name = None
-            if ':' in test_name:
-                test_name, subtest_name = test_name.split(':', 1)
-            if requested_test_name == self._get_test_short_name(test_name):
+            test_name, subtest_name = self._binary_and_subtest(test_name)
+            if requested_test_name == self._canonical_binary_name(test_name):
                 if subtest_name:
                     subtests_to_run.append(subtest_name)
                 else:
-                    return []  # If there is any entry matching without ":subtest", return [] which means run all subtests.
+                    return []  # If there is any entry matching without a subtest, return [] which means run all subtests.
         return sorted(set(subtests_to_run))  # Remove duplicates and sort
 
     def list_tests(self):
@@ -361,7 +429,11 @@ class TestRunner(object):
             self.list_tests()
             return 0
 
+        start_time = time.time()
+
         self._test_env = self._setup_testing_environment_for_driver(self._driver)
+
+        configuration_for_upload = self._port.configuration_for_upload(self._port.target_host(0))
 
         number_of_total_tests = len(self._tests)
         # Remove skipped tests now instead of when we find them, because
@@ -408,12 +480,23 @@ class TestRunner(object):
         failed_tests = {}
         timed_out_tests = {}
         passed_tests = {}
+        tests_to_upload = {}
+        number_of_skipped_tests = 0
+
+        status_to_test_result = {
+            "PASS": None,
+            "FAIL": Upload.Expectations.FAIL,
+            "CRASH": Upload.Expectations.CRASH,
+            "TIMEOUT": Upload.Expectations.TIMEOUT,
+        }
+
         try:
             for test in self._tests:
                 subtests = self._getsubtests_to_run_for_test(test)
                 if UNKNOWN_CRASH_STR in subtests:
                     subtests = []  # The binary runner can't run a subtest named UNKNOWN_CRASH_STR, so run all subtests if this is requested.
                 skipped_subtests = self._test_cases_to_skip(test)
+                number_of_skipped_tests += len(skipped_subtests)
                 number_of_total_tests += len(skipped_subtests if not subtests else set(skipped_subtests).intersection(subtests))
                 results = self._run_test(test, subtests, skipped_subtests)
                 number_of_executed_subtests_for_test = len(results)
@@ -422,6 +505,10 @@ class TestRunner(object):
                     number_of_executed_tests += number_of_executed_subtests_for_test - 1
                     number_of_total_tests += number_of_executed_subtests_for_test - 1
                     for test_case, result in results.items():
+                        # Prepare the results that will be uploaded to the results database.
+                        if result in status_to_test_result:
+                            tests_to_upload.setdefault(test, []).append((test_case, status_to_test_result[result], self._expectations.get_expectation(os.path.basename(test), test_case)))
+
                         if result in self._expectations.get_expectation(os.path.basename(test), test_case):
                             continue
                         if result == "FAIL":
@@ -438,6 +525,8 @@ class TestRunner(object):
                     crashed_tests[test] = [UNKNOWN_CRASH_STR]
         finally:
             self._tear_down_testing_environment()
+
+        end_time = time.time()
 
         def number_of_tests(tests):
             return sum(len(value) for value in tests.values())
@@ -457,22 +546,42 @@ class TestRunner(object):
         report(timed_out_tests, "timeouts", self._test_programs_base_dir())
         report(passed_tests, "passes", self._test_programs_base_dir())
 
-        def generate_test_list_for_json_output(tests):
-            test_list = []
-            for test in tests:
-                base_name = self._get_test_short_name(test)
-                for test_case in tests[test]:
-                    test_name = "%s:%s" % (base_name, test_case)
-                    # FIXME: get output from failed tests
-                    test_list.append({"name": test_name, "output": None})
-            return test_list
-
         if self._options.json_output:
             result_dictionary = {}
-            result_dictionary['Failed'] = generate_test_list_for_json_output(failed_tests)
-            result_dictionary['Crashed'] = generate_test_list_for_json_output(crashed_tests)
-            result_dictionary['Timedout'] = generate_test_list_for_json_output(timed_out_tests)
+            result_dictionary['Failed'] = self._generate_test_list_for_json_output(failed_tests)
+            result_dictionary['Crashed'] = self._generate_test_list_for_json_output(crashed_tests)
+            result_dictionary['Timedout'] = self._generate_test_list_for_json_output(timed_out_tests)
             self._port.host.filesystem.write_text_file(self._options.json_output, json.dumps(result_dictionary, indent=4))
+
+        if self._options.report_urls:
+            sys.stderr.write("\n")
+            sys.stderr.write("Preparing upload data ...\n")
+
+            results = {}
+            for test, test_cases in tests_to_upload.items():
+                for test_case in test_cases:
+                    name = self._get_test_name_for_upload(test, test_case[0])
+                    results[name] = Upload.create_test_result(actual=test_case[1], expected=' '.join(test_case[2]) if test_case[2] else None)
+
+            upload = Upload(
+                suite=self._options.suite or 'api-tests',
+                configuration=configuration_for_upload,
+                details=Upload.create_details(options=self._options),
+                commits=self._port.commits_for_upload(),
+                run_stats=Upload.create_run_stats(
+                    start_time=start_time,
+                    end_time=end_time,
+                    tests_skipped=number_of_skipped_tests,
+                ), results=results
+            )
+
+            for url in self._options.report_urls:
+                sys.stderr.write(f'Uploading to {url} ...\n')
+                if not upload.upload(url, log_line_func=lambda val: sys.stderr.write(val + '\n')):
+                    sys.stderr.write(f'Failed upload to {url}.\n')
+
+            sys.stderr.write('Uploads completed!\n')
+
 
         number_of_failed_tests = number_of_tests(failed_tests) + number_of_tests(timed_out_tests) + number_of_tests(crashed_tests)
         number_of_successful_tests = number_of_executed_tests - number_of_failed_tests
@@ -481,6 +590,33 @@ class TestRunner(object):
         sys.stdout.flush()
 
         return number_of_failed_tests
+
+    def run_glib_companion_e2e_tests(self):
+        # Non-gtest companion tests for the GLib ports. Each script must exit 0
+        # on success; run them after the gtest suite so a failure surfaces in
+        # the same CI step. Returns the first non-zero exit code, or 0.
+        if self._options.list_tests:
+            return 0
+        testwtf = os.path.join(self._test_programs_base_dir(), "TestWTF")
+        scripts = [
+            os.path.join(common.top_level_path(), "Tools", "Scripts", "run-timezone-glib-e2e-test"),
+        ]
+        result = 0
+        for script in scripts:
+            rc = subprocess.call([sys.executable, script, "--testwtf", testwtf])
+            if rc and not result:
+                result = rc
+        return result
+
+
+def check_environment(port):
+    if jhbuildutils.should_use_jhbuild():
+        # This not only checks, but also enters into the jhbuild environment if present
+        if not jhbuildutils.enter_jhbuild_environment_if_available(port):
+            print('***')
+            print('*** Warning: jhbuild environment not present.')
+            print('*** Run update-webkitgtk-libs before build-webkit to ensure proper testing.')
+            print('***')
 
 
 def create_option_parser():
@@ -499,8 +635,8 @@ def create_option_parser():
                              metavar='skip|ignore|only',
                              help='Specifies how to treat the skipped tests')
     option_parser.add_option('-t', '--timeout',
-                             action='store', type='int', dest='timeout', default=5,
-                             help='Time in seconds until a test times out')
+                             action='store', type='int', dest='timeout', default=None,
+                             help='Time in seconds until a test times out (default: 5, doubled for Debug)')
     option_parser.add_option('-l', '--list-tests',
                              action='store_true', dest='list_tests',
                              help='List the tests (main tests) available to run.')

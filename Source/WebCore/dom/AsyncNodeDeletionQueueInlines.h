@@ -28,12 +28,12 @@
 
 #pragma once
 
-#include <WebCore/AsyncNodeDeletionQueue.h>
-#include <WebCore/ContainerNode.h>
-#include <WebCore/Element.h>
-#include <WebCore/HTMLElement.h>
-#include <WebCore/HTMLNames.h>
-#include <WebCore/NodeName.h>
+#include "AsyncNodeDeletionQueue.h"
+#include "ContainerNode.h"
+#include "Element.h"
+#include "HTMLElement.h"
+#include "HTMLNames.h"
+#include "NodeName.h"
 
 namespace WebCore {
 
@@ -56,7 +56,7 @@ ALWAYS_INLINE void AsyncNodeDeletionQueue::deleteNodesNow()
 
 ALWAYS_INLINE ContainerNode::CanDelayNodeDeletion AsyncNodeDeletionQueue::canNodeBeDeletedAsync(const Node& node)
 {
-    if (!dynamicDowncast<HTMLElement>(node))
+    if (!is<HTMLElement>(node))
         return ContainerNode::CanDelayNodeDeletion::Yes;
     if (isNodeLikelyLarge(node))
         return ContainerNode::CanDelayNodeDeletion::No;

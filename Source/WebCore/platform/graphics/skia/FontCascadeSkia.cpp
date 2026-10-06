@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "FontCascade.h"
+#include "FontCascadeInlines.h"
 
 #if USE(SKIA)
 #include "FontCache.h"
@@ -34,7 +34,7 @@
 
 namespace WebCore {
 
-void FontCascade::drawGlyphs(GraphicsContext& graphicsContext, const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& position, FontSmoothingMode smoothingMode)
+void FontCascade::drawGlyphs(GraphicsContext& graphicsContext, const FontBase& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& position, FontSmoothingMode smoothingMode)
 {
     auto blob = font.buildTextBlob(glyphs, advances, smoothingMode);
     if (!blob)
@@ -44,7 +44,7 @@ void FontCascade::drawGlyphs(GraphicsContext& graphicsContext, const Font& font,
         font.enableAntialiasing(smoothingMode), font.platformData().orientation() == FontOrientation::Vertical);
 }
 
-bool FontCascade::canUseGlyphDisplayList(const RenderStyle&)
+bool FontCascade::canUseGlyphDisplayList(const Style::ComputedStyle&)
 {
     return true;
 }
@@ -100,7 +100,7 @@ RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView str
         // the base character with the cat emoji to try to force an emoji font.
         baseCharacterForBaseFont = emojiCat;
     }
-    GlyphData baseCharacterGlyphData = glyphDataForCharacter(baseCharacterForBaseFont, false, NormalVariant, emojiPolicy);
+    GlyphData baseCharacterGlyphData = glyphDataForCharacter(baseCharacterForBaseFont, false, FontVariant::Normal, emojiPolicy);
     if (!baseCharacterGlyphData.glyph)
         return nullptr;
 
@@ -161,13 +161,13 @@ RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView str
     // Try a system fallback for the whole cluster if needed.
     if (clusterContainsOtherNonDefaultIgnorableCodePoints) {
         auto preferColoredFont = emojiPolicy == ResolvedEmojiPolicy::RequireEmoji ? FontCache::PreferColoredFont::Yes : FontCache::PreferColoredFont::No;
-        if (auto systemFallback = FontCache::forCurrentThread()->systemFallbackForCharacterCluster(m_fontDescription, fallbackRangesAt(0).fontForFirstRange(), IsForPlatformFont::No, preferColoredFont, stringView)) {
+        if (auto systemFallback = FontCache::forCurrentThread().systemFallbackForCharacterCluster(m_fontDescription, fallbackRangesAt(0).fontForFirstRange(), IsForPlatformFont::No, preferColoredFont, stringView)) {
             if (systemFallback->canRenderCombiningCharacterSequence(stringView))
                 return systemFallback.get();
         }
     }
 
-    return nullptr;
+    return baseCharacterGlyphData.font.get();
 }
 
 } // namespace WebCore

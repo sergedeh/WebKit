@@ -49,9 +49,8 @@
 #import <wtf/MainThread.h>
 #import <wtf/RunLoop.h>
 
-using namespace WebCore;
 
-static RetainPtr<CFMutableDictionaryRef>& lookupTable()
+static RetainPtr<CFMutableDictionaryRef>& NODELETE lookupTable()
 {
     static NeverDestroyed<RetainPtr<CFMutableDictionaryRef>> lookupTable;
     return lookupTable;
@@ -103,13 +102,13 @@ static void cacheValueForKey(const void *key, const void *value, void *self)
     addLookupKey(WebElementIsInScrollBarKey, @selector(_isInScrollBar));
 }
 
-- (id)initWithHitTestResult:(const HitTestResult&)result
+- (id)initWithHitTestResult:(const WebCore::HitTestResult&)result
 {
     [[self class] initializeLookupTable];
     self = [super init];
     if (!self)
         return nil;
-    _result = new HitTestResult(result);
+    _result = new WebCore::HitTestResult(result);
     return self;
 }
 
@@ -119,8 +118,6 @@ static void cacheValueForKey(const void *key, const void *value, void *self)
         return;
 
     delete _result;
-    [_cache release];
-    [_nilValues release];
     [super dealloc];
 }
 
@@ -134,21 +131,21 @@ static void cacheValueForKey(const void *key, const void *value, void *self)
 {
     if (!_cacheComplete)
         [self _fillCache];
-    return [_cache count];
+    return [protect(_cache) count];
 }
 
 - (NSEnumerator *)keyEnumerator
 {
     if (!_cacheComplete)
         [self _fillCache];
-    return [_cache keyEnumerator];
+    return [protect(_cache) keyEnumerator];
 }
 
 - (id)objectForKey:(id)key
 {
-    id value = [_cache objectForKey:key];
-    if (value || _cacheComplete || [_nilValues containsObject:key])
-        return value;
+    RetainPtr<id> value = [protect(_cache) objectForKey:key];
+    if (value || _cacheComplete || [protect(_nilValues) containsObject:key])
+        return value.autorelease();
 
     SEL selector = static_cast<SEL>(const_cast<void*>(CFDictionaryGetValue(lookupTable().get(), (__bridge CFTypeRef)key)));
     if (!selector)
@@ -158,17 +155,17 @@ static void cacheValueForKey(const void *key, const void *value, void *self)
     NSUInteger lookupTableCount = CFDictionaryGetCount(lookupTable().get());
     if (value) {
         if (!_cache)
-            _cache = [[NSMutableDictionary alloc] initWithCapacity:lookupTableCount];
-        [_cache setObject:value forKey:key];
+            _cache = adoptNS([[NSMutableDictionary alloc] initWithCapacity:lookupTableCount]);
+        [protect(_cache) setObject:value forKey:key];
     } else {
         if (!_nilValues)
-            _nilValues = [[NSMutableSet alloc] initWithCapacity:lookupTableCount];
-        [_nilValues addObject:key];
+            _nilValues = adoptNS([[NSMutableSet alloc] initWithCapacity:lookupTableCount]);
+        [protect(_nilValues) addObject:key];
     }
 
-    _cacheComplete = ([_cache count] + [_nilValues count]) == lookupTableCount;
+    _cacheComplete = ([protect(_cache) count] + [protect(_nilValues) count]) == lookupTableCount;
 
-    return value;
+    return value.autorelease();
 }
 
 - (DOMNode *)_domNode
@@ -197,7 +194,7 @@ static NSString* NSStringOrNil(String coreString)
 
 - (NSString *)_spellingToolTip
 {
-    TextDirection dir;
+    WebCore::TextDirection dir;
     return NSStringOrNil(_result->spellingToolTip(dir));
 }
 
@@ -205,13 +202,13 @@ static NSString* NSStringOrNil(String coreString)
 
 - (NSImage *)_image
 {
-    Image* image = _result->image();
+    RefPtr image = _result->image();
     return image ? image->adapter().nsImage() : nil;
 }
 
 - (NSValue *)_imageRect
 {
-    IntRect rect = _result->imageRect();
+    WebCore::IntRect rect = _result->imageRect();
     return rect.isEmpty() ? nil : [NSValue valueWithRect:rect];
 }
 
@@ -234,7 +231,7 @@ static NSString* NSStringOrNil(String coreString)
 
 - (NSString *)_title
 {
-    TextDirection dir;
+    WebCore::TextDirection dir;
     return NSStringOrNil(_result->title(dir));
 }
 
@@ -245,7 +242,7 @@ static NSString* NSStringOrNil(String coreString)
 
 - (WebFrame *)_targetWebFrame
 {
-    return kit(dynamicDowncast<LocalFrame>(_result->targetFrame().get()));
+    return kit(dynamicDowncast<WebCore::LocalFrame>(_result->targetFrame().get()));
 }
 
 - (NSString *)_titleDisplayString
@@ -260,7 +257,7 @@ static NSString* NSStringOrNil(String coreString)
 
 - (NSNumber *)_isLiveLink
 {
-    Element* urlElement = _result->URLElement();
+    RefPtr urlElement = _result->URLElement();
     return [NSNumber numberWithBool:(urlElement && isDraggableLink(*urlElement))];
 }
 

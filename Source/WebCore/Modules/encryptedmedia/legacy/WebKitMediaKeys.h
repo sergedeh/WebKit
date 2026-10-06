@@ -52,8 +52,8 @@ public:
     void incrementCheckedPtrCount() const { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
 
     ExceptionOr<Ref<WebKitMediaKeySession>> createSession(Document&, const String& mimeType, Ref<Uint8Array>&& initData);
-    static bool isTypeSupported(const String& keySystem, const String& mimeType);
-    const String& keySystem() const { return m_keySystem; }
+    static bool isTypeSupported(const Document&, const String& keySystem, const String& mimeType);
+    const String& keySystem() const LIFETIME_BOUND { return m_keySystem; }
 
     LegacyCDM& cdm() { return m_cdm; }
 

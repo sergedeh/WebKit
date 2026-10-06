@@ -33,6 +33,7 @@
 // Deque doesn't actually use Vector.
 
 #include <algorithm>
+#include <bit>
 #include <iterator>
 #include <wtf/Vector.h>
 
@@ -63,7 +64,7 @@ public:
 
     void swap(Deque&);
 
-    size_t size() const { return m_start <= m_end ? m_end - m_start : m_end + m_buffer.capacity() - m_start; }
+    size_t size() const { return (m_end - m_start) & m_capacityMask; }
     bool isEmpty() const { return m_start == m_end; }
 
     iterator begin() LIFETIME_BOUND { return iterator(this, m_start); }
@@ -81,42 +82,43 @@ public:
     const T& first() const LIFETIME_BOUND { return m_buffer.capacitySpan()[m_start]; }
     T takeFirst();
 
-    T& last() LIFETIME_BOUND { return m_end ? m_buffer.capacitySpan()[m_end - 1] : m_buffer.capacitySpan().back(); }
-    const T& last() const LIFETIME_BOUND { return m_end ? m_buffer.capacitySpan()[m_end - 1] : m_buffer.capacitySpan().back(); }
+    T& last() LIFETIME_BOUND { return m_buffer.capacitySpan()[(m_end - 1) & m_capacityMask]; }
+    const T& last() const LIFETIME_BOUND { return m_buffer.capacitySpan()[(m_end - 1) & m_capacityMask]; }
     T takeLast();
 
     void append(T&& value) { append<T>(std::forward<T>(value)); }
     template<typename U> void append(U&&);
+    template<typename... Args> void constructAndAppend(Args&&...);
     template<typename U> void prepend(U&&);
     void removeFirst();
     void removeLast();
     void remove(iterator&);
     void remove(const_iterator&);
     
-    template<typename Func> size_t removeAllMatching(const Func&);
-    template<typename Func> bool removeFirstMatching(const Func&);
+    template<std::predicate<T&> Predicate> size_t removeAllMatching(NOESCAPE const Predicate&);
+    template<std::predicate<T&> Predicate> bool removeFirstMatching(NOESCAPE const Predicate&);
 
     // This is a priority enqueue. The callback is given a value, and if it returns true, then this
     // will put the appended value before that value. It will keep bubbling until the callback returns
     // false or the value ends up at the head of the queue.
-    template<typename U, typename Func>
-    void appendAndBubble(U&&, const Func&);
+    template<typename U, std::predicate<T&> Predicate>
+    void appendAndBubble(U&&, NOESCAPE const Predicate&);
     
     // Remove and return the first element for which the callback returns true. Returns a null version of
     // T if it the callback always returns false.
-    template<typename Func>
-    T takeFirst(NOESCAPE const Func&);
+    template<std::predicate<T&> Predicate>
+    T takeFirst(NOESCAPE const Predicate&);
 
     // Remove and return the last element for which the callback returns true. Returns a null version of
     // T if it the callback always returns false.
-    template<typename Func>
-    T takeLast(NOESCAPE const Func&);
+    template<std::predicate<T&> Predicate>
+    T takeLast(NOESCAPE const Predicate&);
 
     void clear();
 
-    template<typename Predicate> iterator findIf(NOESCAPE const Predicate&) LIFETIME_BOUND;
-    template<typename Predicate> const_iterator findIf(NOESCAPE const Predicate&) const LIFETIME_BOUND;
-    template<typename Predicate> bool containsIf(NOESCAPE const Predicate& predicate) const LIFETIME_BOUND
+    template<std::predicate<T&> Predicate> iterator findIf(NOESCAPE const Predicate&) LIFETIME_BOUND;
+    template<std::predicate<const T&> Predicate> const_iterator findIf(NOESCAPE const Predicate&) const LIFETIME_BOUND;
+    template<std::predicate<const T&> Predicate> bool containsIf(NOESCAPE const Predicate& predicate) const LIFETIME_BOUND
     {
         return findIf(predicate) != end();
     }
@@ -124,7 +126,8 @@ public:
 private:
     friend class DequeIteratorBase<T, inlineCapacity>;
 
-    typedef VectorBuffer<T, inlineCapacity> Buffer;
+    static constexpr size_t roundedInlineCapacity = inlineCapacity ? std::bit_ceil(inlineCapacity) : 0;
+    typedef VectorBuffer<T, roundedInlineCapacity> Buffer;
     typedef VectorTypeOperations<T> TypeOperations;
     typedef DequeIteratorBase<T, inlineCapacity> IteratorBase;
 
@@ -138,6 +141,7 @@ private:
 
     size_t m_start;
     size_t m_end;
+    size_t m_capacityMask;
     Buffer m_buffer;
 #ifndef NDEBUG
     mutable IteratorBase* m_iterators;
@@ -195,6 +199,9 @@ public:
     typedef T& reference;
     typedef std::bidirectional_iterator_tag iterator_category;
 
+    // MSVC's reverse_iterator value- initializes its stored iterator member.
+    DequeIterator() = default;
+
     DequeIterator(Deque<T, inlineCapacity>* deque, size_t index)
         : Base(deque, index) { }
 
@@ -211,7 +218,7 @@ public:
     Iterator& operator--() { Base::decrement(); return *this; }
     // postfix -- intentionally omitted
 
-    // Only forwarding + unsigned is supported.
+    // Only forwarding + size_t is supported.
     Iterator& operator+=(size_t count) { Base::increment(count); return *this; }
     Iterator operator+(size_t count) const { Iterator result(*this); result += count; return result; }
 };
@@ -231,6 +238,9 @@ public:
     typedef const T& reference;
     typedef std::bidirectional_iterator_tag iterator_category;
 
+    // MSVC's reverse_iterator value- initializes its stored iterator member.
+    DequeConstIterator() = default;
+
     DequeConstIterator(const Deque<T, inlineCapacity>* deque, size_t index)
         : Base(deque, index) { }
 
@@ -249,7 +259,7 @@ public:
     Iterator& operator--() { Base::decrement(); return *this; }
     // postfix -- intentionally omitted
 
-    // Only forwarding + unsigned is supported.
+    // Only forwarding + size_t is supported.
     Iterator& operator+=(size_t count) { Base::increment(count); return *this; }
     Iterator operator+(size_t count) const { Iterator result(*this); result += count; return result; }
 };
@@ -262,16 +272,15 @@ template<typename T, size_t inlineCapacity> inline void Deque<T, inlineCapacity>
 template<typename T, size_t inlineCapacity>
 void Deque<T, inlineCapacity>::checkValidity() const
 {
-    // In this implementation a capacity of 1 would confuse append() and
-    // other places that assume the index after capacity - 1 is 0.
-    ASSERT(m_buffer.capacity() != 1);
-
     if (!m_buffer.capacity()) {
         ASSERT(!m_start);
         ASSERT(!m_end);
+        ASSERT(!m_capacityMask);
     } else {
-        ASSERT(m_start < m_buffer.capacity());
-        ASSERT(m_end < m_buffer.capacity());
+        ASSERT(std::has_single_bit(m_buffer.capacity()));
+        ASSERT(m_capacityMask == m_buffer.capacity() - 1);
+        ASSERT(m_start <= m_capacityMask);
+        ASSERT(m_end <= m_capacityMask);
     }
 }
 
@@ -305,6 +314,7 @@ template<typename T, size_t inlineCapacity>
 inline Deque<T, inlineCapacity>::Deque()
     : m_start(0)
     , m_end(0)
+    , m_capacityMask(roundedInlineCapacity ? roundedInlineCapacity - 1 : 0)
 #ifndef NDEBUG
     , m_iterators(0)
 #endif
@@ -324,6 +334,7 @@ template<typename T, size_t inlineCapacity>
 inline Deque<T, inlineCapacity>::Deque(const Deque& other)
     : m_start(other.m_start)
     , m_end(other.m_end)
+    , m_capacityMask(other.m_capacityMask)
     , m_buffer(other.m_buffer.capacity())
 #ifndef NDEBUG
     , m_iterators(0)
@@ -391,8 +402,10 @@ inline void Deque<T, inlineCapacity>::swap(Deque<T, inlineCapacity>& other)
     checkValidity();
     other.checkValidity();
     invalidateIterators();
+    other.invalidateIterators();
     std::swap(m_start, other.m_start);
     std::swap(m_end, other.m_end);
+    std::swap(m_capacityMask, other.m_capacityMask);
     m_buffer.swap(other.m_buffer, 0, 0);
     checkValidity();
     other.checkValidity();
@@ -406,19 +419,21 @@ inline void Deque<T, inlineCapacity>::clear()
     destroyAll();
     m_start = 0;
     m_end = 0;
+    m_capacityMask = roundedInlineCapacity ? roundedInlineCapacity - 1 : 0;
     m_buffer.deallocateBuffer(m_buffer.buffer());
+    m_buffer.restoreInlineBufferIfNeeded();
     checkValidity();
 }
 
 template<typename T, size_t inlineCapacity>
-template<typename Predicate>
+template<std::predicate<T&> Predicate>
 inline auto Deque<T, inlineCapacity>::findIf(NOESCAPE const Predicate& predicate) LIFETIME_BOUND -> iterator
 {
     return std::find_if(begin(), end(), predicate);
 }
 
 template<typename T, size_t inlineCapacity>
-template<typename Predicate>
+template<std::predicate<const T&> Predicate>
 inline auto Deque<T, inlineCapacity>::findIf(NOESCAPE const Predicate& predicate) const LIFETIME_BOUND -> const_iterator
 {
     return std::find_if(begin(), end(), predicate);
@@ -427,13 +442,7 @@ inline auto Deque<T, inlineCapacity>::findIf(NOESCAPE const Predicate& predicate
 template<typename T, size_t inlineCapacity>
 inline void Deque<T, inlineCapacity>::expandCapacityIfNeeded()
 {
-    if (m_start) {
-        if (m_end + 1 != m_start)
-            return;
-    } else if (m_end) {
-        if (m_end != m_buffer.capacity() - 1)
-            return;
-    } else if (m_buffer.capacity())
+    if (((m_end + 1) & m_capacityMask) != m_start)
         return;
 
     expandCapacity();
@@ -445,7 +454,8 @@ void Deque<T, inlineCapacity>::expandCapacity()
     checkValidity();
     size_t oldCapacity = m_buffer.capacity();
     auto oldBuffer = m_buffer.capacitySpan();
-    m_buffer.allocateBuffer(std::max(static_cast<size_t>(16), oldCapacity + oldCapacity / 4 + 1));
+    size_t newCapacity = std::max(static_cast<size_t>(16), oldCapacity * 2);
+    m_buffer.allocateBuffer(newCapacity);
     if (m_start <= m_end)
         TypeOperations::move(oldBuffer.subspan(m_start, m_end - m_start), m_buffer.capacitySpan().subspan(m_start));
     else {
@@ -455,6 +465,7 @@ void Deque<T, inlineCapacity>::expandCapacity()
         m_start = newStart;
     }
     m_buffer.deallocateBuffer(oldBuffer.data());
+    m_capacityMask = m_buffer.capacity() - 1;
     checkValidity();
 }
 
@@ -485,13 +496,16 @@ inline auto Deque<T, inlineCapacity>::takeLast() -> T
 template<typename T, size_t inlineCapacity> template<typename U>
 inline void Deque<T, inlineCapacity>::append(U&& value)
 {
+    constructAndAppend(std::forward<U>(value));
+}
+
+template<typename T, size_t inlineCapacity> template<typename... Args>
+inline void Deque<T, inlineCapacity>::constructAndAppend(Args&&... args)
+{
     checkValidity();
     expandCapacityIfNeeded();
-    new (NotNull, std::addressof(m_buffer.capacitySpan()[m_end])) T(std::forward<U>(value));
-    if (m_end == m_buffer.capacity() - 1)
-        m_end = 0;
-    else
-        ++m_end;
+    new (NotNull, std::addressof(m_buffer.capacitySpan()[m_end])) T(std::forward<Args>(args)...);
+    m_end = (m_end + 1) & m_capacityMask;
     checkValidity();
 }
 
@@ -500,10 +514,7 @@ inline void Deque<T, inlineCapacity>::prepend(U&& value)
 {
     checkValidity();
     expandCapacityIfNeeded();
-    if (!m_start)
-        m_start = m_buffer.capacity() - 1;
-    else
-        --m_start;
+    m_start = (m_start - 1) & m_capacityMask;
     new (NotNull, std::addressof(m_buffer.capacitySpan()[m_start])) T(std::forward<U>(value));
     checkValidity();
 }
@@ -515,10 +526,7 @@ inline void Deque<T, inlineCapacity>::removeFirst()
     invalidateIterators();
     RELEASE_ASSERT(!isEmpty());
     TypeOperations::destruct(m_buffer.capacitySpan().subspan(m_start, 1));
-    if (m_start == m_buffer.capacity() - 1)
-        m_start = 0;
-    else
-        ++m_start;
+    m_start = (m_start + 1) & m_capacityMask;
     checkValidity();
 }
 
@@ -528,10 +536,7 @@ inline void Deque<T, inlineCapacity>::removeLast()
     checkValidity();
     invalidateIterators();
     RELEASE_ASSERT(!isEmpty());
-    if (!m_end)
-        m_end = m_buffer.capacity() - 1;
-    else
-        --m_end;
+    m_end = (m_end - 1) & m_capacityMask;
     TypeOperations::destruct(m_buffer.capacitySpan().subspan(m_end, 1));
     checkValidity();
 }
@@ -565,33 +570,33 @@ inline void Deque<T, inlineCapacity>::remove(size_t position)
     // Find which segment of the circular buffer contained the remove element, and only move elements in that part.
     if (position >= m_start) {
         TypeOperations::moveOverlapping(buffer.subspan(m_start, position - m_start), buffer.subspan(m_start + 1));
-        m_start = (m_start + 1) % m_buffer.capacity();
+        m_start = (m_start + 1) & m_capacityMask;
     } else {
         TypeOperations::moveOverlapping(buffer.subspan(position + 1, m_end - (position + 1)), buffer.subspan(position));
-        m_end = (m_end - 1 + m_buffer.capacity()) % m_buffer.capacity();
+        m_end = (m_end - 1) & m_capacityMask;
     }
     checkValidity();
 }
 
 template<typename T, size_t inlineCapacity>
-template<typename Func>
-inline size_t Deque<T, inlineCapacity>::removeAllMatching(const Func& func)
+template<std::predicate<T&> Predicate>
+inline size_t Deque<T, inlineCapacity>::removeAllMatching(NOESCAPE const Predicate& predicate)
 {
     auto oldSize = size();
     for (size_t i = 0; i < oldSize; ++i) {
         auto value = takeFirst();
-        if (!func(value))
+        if (!predicate(value))
             append(WTF::move(value));
     }
-    return size() - oldSize;
+    return oldSize - size();
 }
 
 template<typename T, size_t inlineCapacity>
-template<typename Func>
-inline bool Deque<T, inlineCapacity>::removeFirstMatching(const Func& func)
+template<std::predicate<T&> Predicate>
+inline bool Deque<T, inlineCapacity>::removeFirstMatching(NOESCAPE const Predicate& predicate)
 {
     for (auto iter = begin(); iter != end(); ++iter) {
-        if (func(*iter)) {
+        if (predicate(*iter)) {
             remove(iter);
             return true;
         }
@@ -600,8 +605,8 @@ inline bool Deque<T, inlineCapacity>::removeFirstMatching(const Func& func)
 }
 
 template<typename T, size_t inlineCapacity>
-template<typename U, typename Func>
-inline void Deque<T, inlineCapacity>::appendAndBubble(U&& value, const Func& func)
+template<typename U, std::predicate<T&> Predicate>
+inline void Deque<T, inlineCapacity>::appendAndBubble(U&& value, NOESCAPE const Predicate& predicate)
 {
     append(std::forward<U>(value));
     iterator begin = this->begin();
@@ -610,7 +615,7 @@ inline void Deque<T, inlineCapacity>::appendAndBubble(U&& value, const Func& fun
     while (iter != begin) {
         iterator prev = iter;
         --prev;
-        if (!func(*prev))
+        if (!predicate(*prev))
             return;
         std::swap(*prev, *iter);
         iter = prev;
@@ -618,41 +623,29 @@ inline void Deque<T, inlineCapacity>::appendAndBubble(U&& value, const Func& fun
 }
 
 template<typename T, size_t inlineCapacity>
-template<typename Func>
-inline T Deque<T, inlineCapacity>::takeFirst(NOESCAPE const Func& func)
+template<std::predicate<T&> Predicate>
+inline T Deque<T, inlineCapacity>::takeFirst(NOESCAPE const Predicate& predicate)
 {
-    unsigned count = 0;
-    unsigned size = this->size();
-    while (count < size) {
-        T candidate = takeFirst();
-        if (func(candidate)) {
-            while (count--)
-                prepend(takeLast());
-            return candidate;
-        }
-        count++;
-        append(WTF::move(candidate));
-    }
-    return T();
+    auto it = findIf(predicate);
+    if (it == end())
+        return T();
+    T result = WTF::move(*it);
+    remove(it);
+    return result;
 }
 
 template<typename T, size_t inlineCapacity>
-template<typename Func>
-inline T Deque<T, inlineCapacity>::takeLast(NOESCAPE const Func& func)
+template<std::predicate<T&> Predicate>
+inline T Deque<T, inlineCapacity>::takeLast(NOESCAPE const Predicate& predicate)
 {
-    unsigned count = 0;
-    unsigned size = this->size();
-    while (count < size) {
-        T candidate = takeLast();
-        if (func(candidate)) {
-            while (count--)
-                append(takeFirst());
-            return candidate;
-        }
-        count++;
-        prepend(WTF::move(candidate));
-    }
-    return T();
+    auto reverseIt = std::find_if(rbegin(), rend(), predicate);
+    if (reverseIt == rend())
+        return T();
+    T result = WTF::move(*reverseIt);
+    // Convert reverse iterator to forward iterator pointing to the same element.
+    auto it = std::prev(reverseIt.base());
+    remove(it);
+    return result;
 }
 
 #ifdef NDEBUG
@@ -775,14 +768,8 @@ inline void DequeIteratorBase<T, inlineCapacity>::increment(std::ptrdiff_t count
     if (!count)
         return;
     ASSERT(m_index != m_deque->m_end);
-    size_t capacity = m_deque->m_buffer.capacity();
-    ASSERT(capacity);
-    m_index += count;
-    do {
-        if (m_index < capacity)
-            break;
-        m_index -= capacity;
-    } while (true);
+    ASSERT(m_deque->m_capacityMask);
+    m_index = (m_index + count) & m_deque->m_capacityMask;
     checkValidity();
 }
 
@@ -791,11 +778,8 @@ inline void DequeIteratorBase<T, inlineCapacity>::decrement()
 {
     checkValidity();
     ASSERT(m_index != m_deque->m_start);
-    ASSERT(m_deque->m_buffer.capacity());
-    if (!m_index)
-        m_index = m_deque->m_buffer.capacity() - 1;
-    else
-        --m_index;
+    ASSERT(m_deque->m_capacityMask);
+    m_index = (m_index - 1) & m_deque->m_capacityMask;
     checkValidity();
 }
 
@@ -812,9 +796,7 @@ inline T* DequeIteratorBase<T, inlineCapacity>::before() const
 {
     checkValidity();
     ASSERT(m_index != m_deque->m_start);
-    if (!m_index)
-        return std::addressof(m_deque->m_buffer.capacitySpan()[m_deque->m_buffer.capacity() - 1]);
-    return std::addressof(m_deque->m_buffer.capacitySpan()[m_index - 1]);
+    return std::addressof(m_deque->m_buffer.capacitySpan()[(m_index - 1) & m_deque->m_capacityMask]);
 }
 
 } // namespace WTF

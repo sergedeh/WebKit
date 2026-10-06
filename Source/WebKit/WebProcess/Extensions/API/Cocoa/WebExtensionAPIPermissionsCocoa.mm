@@ -29,6 +29,7 @@
 
 #import "config.h"
 #import "WebExtensionAPIPermissions.h"
+#import "WebExtensionAPIKeys.h"
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
@@ -44,8 +45,6 @@
 
 namespace WebKit {
 
-static NSString * const permissionsKey = @"permissions";
-static NSString * const originsKey = @"origins";
 
 void WebExtensionAPIPermissions::getAll(Ref<WebExtensionCallbackHandler>&& callback)
 {
@@ -58,8 +57,8 @@ void WebExtensionAPIPermissions::getAll(Ref<WebExtensionCallbackHandler>&& callb
         auto originsValue = fromArray(globalContext, WTF::move(origins));
 
         callback->call(fromObject(globalContext, {
-            { permissionsKey, permissionsValue },
-            { originsKey, originsValue }
+            { permissionsKey, Protected(globalContext, permissionsValue) },
+            { originsKey, Protected(globalContext, originsValue) }
         }));
     }, extensionContext().identifier());
 }
@@ -170,7 +169,12 @@ bool WebExtensionAPIPermissions::parseDetailsDictionary(NSDictionary *details, H
 
 bool WebExtensionAPIPermissions::verifyRequestedPermissions(HashSet<String>& permissions, HashSet<Ref<WebExtensionMatchPattern>>& matchPatterns, NSString *callingAPIName, NSString **outExceptionString)
 {
-    auto extension = WebExtension::create(extensionContext().manifest());
+    Ref extensionContext = this->extensionContext();
+    RefPtr manifest = extensionContext->manifest();
+    if (!manifest)
+        return false;
+
+    Ref extension = WebExtension::create(*manifest);
     HashSet<String> allowedPermissions = extension->requestedPermissions();
     WebExtension::MatchPatternSet allowedHostPermissions = extension->allRequestedMatchPatterns();
 
@@ -227,7 +231,7 @@ bool WebExtensionAPIPermissions::validatePermissionsDetails(HashSet<String>& per
 {
     for (auto& permission : permissions) {
         if (!WebExtension::supportedPermissions().contains(permission)) {
-            *outExceptionString = toErrorString(nullString(), permissionsKey, @"'%@' is not a valid permission", permission.createNSString().get()).createNSString().autorelease();
+            *outExceptionString = toErrorString(nullString(), permissionsKey, makeString("'"_s, permission, "' is not a valid permission"_s)).createNSString().autorelease();
             return false;
         }
     }
@@ -235,7 +239,7 @@ bool WebExtensionAPIPermissions::validatePermissionsDetails(HashSet<String>& per
     for (auto& origin : origins) {
         auto pattern = WebExtensionMatchPattern::getOrCreate(origin);
         if (!pattern || !pattern->isSupported()) {
-            *outExceptionString = toErrorString(nullString(), originsKey, @"'%@' is not a valid pattern", origin.createNSString().get()).createNSString().autorelease();
+            *outExceptionString = toErrorString(nullString(), originsKey, makeString("'"_s, origin, "' is not a valid pattern"_s)).createNSString().autorelease();
             return false;
         }
 
@@ -250,7 +254,7 @@ WebExtensionAPIEvent& WebExtensionAPIPermissions::onAdded()
     // Documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/permissions/onAdded
 
     if (!m_onAdded)
-        m_onAdded = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::PermissionsOnAdded);
+        lazyInitialize(m_onAdded, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::PermissionsOnAdded));
 
     return *m_onAdded;
 }
@@ -260,7 +264,7 @@ WebExtensionAPIEvent& WebExtensionAPIPermissions::onRemoved()
     // Documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/permissions/onRemoved
 
     if (!m_onRemoved)
-        m_onRemoved = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::PermissionsOnRemoved);
+        lazyInitialize(m_onRemoved, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::PermissionsOnRemoved));
 
     return *m_onRemoved;
 }

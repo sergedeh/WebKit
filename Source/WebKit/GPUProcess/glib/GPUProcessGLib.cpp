@@ -28,14 +28,22 @@
 
 #if ENABLE(GPU_PROCESS) && (PLATFORM(GTK) || PLATFORM(WPE))
 
+#include "GPUConnectionToWebProcess.h"
 #include "GPUProcessCreationParameters.h"
-
+#include <glib.h>
+#if ENABLE(WEBGL)
+#include "RemoteGraphicsContextGL.h"
+#include "StreamConnectionWorkQueue.h"
+#include <WebCore/GraphicsContextGLANGLE.h>
+#endif
 #if USE(GBM)
 #include <WebCore/DRMDevice.h>
 #include <WebCore/DRMDeviceManager.h>
 #include <WebCore/GBMDevice.h>
 #include <WebCore/PlatformDisplayGBM.h>
 #endif
+#include <WebCore/PlatformDisplaySurfaceless.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WebKit {
 
@@ -51,9 +59,29 @@ void GPUProcess::platformInitializeGPUProcess(GPUProcessCreationParameters& para
 #else
     UNUSED_PARAM(parameters);
 #endif
+    if (auto display = WebCore::PlatformDisplaySurfaceless::create()) {
+        WebCore::PlatformDisplay::setSharedDisplay(WTF::move(display));
+        return;
+    }
 
     WTFLogAlways("Could not create EGL display for GPU process: no supported platform available. Aborting...");
     CRASH();
+}
+
+void GPUProcess::stopRunLoop()
+{
+    // Connections to web processes outlive the UI process connection. Close them so that their WebGL contexts
+    // are released on the WebGL work queue, then stop the queue before the display is destroyed.
+    for (Ref connection : copyToVector(m_webProcessConnections.values()))
+        connection->close();
+#if ENABLE(WEBGL)
+    remoteGraphicsContextGLStreamWorkQueueSingleton().stopAndWaitForCompletion([] {
+        WebCore::GraphicsContextGLANGLE::releaseThreadResources(WebCore::GraphicsContextGLANGLE::ReleaseThreadResourceBehavior::TerminateAndReleaseThreadResources);
+    });
+#endif
+
+    WebCore::PlatformDisplay::destroySharedDisplay();
+    AuxiliaryProcess::stopRunLoop();
 }
 
 void GPUProcess::initializeProcess(const AuxiliaryProcessInitializationParameters&)

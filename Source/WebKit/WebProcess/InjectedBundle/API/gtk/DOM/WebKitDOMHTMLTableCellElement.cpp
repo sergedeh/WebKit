@@ -94,7 +94,9 @@ static void webkit_dom_html_table_cell_element_dom_event_target_init(WebKitDOMEv
     iface->remove_event_listener = webkit_dom_html_table_cell_element_remove_event_listener;
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK port
 G_DEFINE_TYPE_WITH_CODE(WebKitDOMHTMLTableCellElement, webkit_dom_html_table_cell_element, WEBKIT_DOM_TYPE_HTML_ELEMENT, G_IMPLEMENT_INTERFACE(WEBKIT_DOM_TYPE_EVENT_TARGET, webkit_dom_html_table_cell_element_dom_event_target_init))
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 enum {
     DOM_HTML_TABLE_CELL_ELEMENT_PROP_0,
@@ -508,7 +510,7 @@ glong webkit_dom_html_table_cell_element_get_row_span(WebKitDOMHTMLTableCellElem
     WebCore::JSMainThreadNullState state;
     g_return_val_if_fail(WEBKIT_DOM_IS_HTML_TABLE_CELL_ELEMENT(self), 0);
     WebCore::HTMLTableCellElement* item = WebKit::core(self);
-    glong result = item->rowSpanForBindings();
+    glong result = item->rowSpan();
     return result;
 }
 
@@ -517,7 +519,7 @@ void webkit_dom_html_table_cell_element_set_row_span(WebKitDOMHTMLTableCellEleme
     WebCore::JSMainThreadNullState state;
     g_return_if_fail(WEBKIT_DOM_IS_HTML_TABLE_CELL_ELEMENT(self));
     WebCore::HTMLTableCellElement* item = WebKit::core(self);
-    item->setRowSpanForBindings(value);
+    item->setRowSpan(value);
 }
 
 gchar* webkit_dom_html_table_cell_element_get_headers(WebKitDOMHTMLTableCellElement* self)

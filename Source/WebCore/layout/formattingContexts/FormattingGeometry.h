@@ -77,11 +77,8 @@ public:
     ComputedHorizontalMargin computedHorizontalMargin(const Box&, const HorizontalConstraints&) const;
     ComputedVerticalMargin computedVerticalMargin(const Box&, const HorizontalConstraints&) const;
 
-    std::optional<LayoutUnit> computedValue(const auto&, LayoutUnit containingBlockWidth) const;
     std::optional<LayoutUnit> computedValue(const auto&, LayoutUnit containingBlockWidth, const Style::ZoomFactor&) const;
-
     std::optional<LayoutUnit> fixedValue(const auto&, const Style::ZoomFactor&) const;
-    std::optional<LayoutUnit> fixedValue(const auto&) const;
 
     std::optional<LayoutUnit> computedMinHeight(const Box&, std::optional<LayoutUnit> containingBlockHeight = std::nullopt) const;
     std::optional<LayoutUnit> computedMaxHeight(const Box&, std::optional<LayoutUnit> containingBlockHeight = std::nullopt) const;
@@ -103,8 +100,8 @@ public:
     bool isTableFormattingGeometry() const { return formattingContext().isTableFormattingContext(); }
 
 protected:
-    const LayoutState& layoutState() const { return m_formattingContext.layoutState(); }
-    const FormattingContext& formattingContext() const { return m_formattingContext; }
+    const LayoutState& layoutState() const LIFETIME_BOUND { return m_formattingContext.layoutState(); }
+    const FormattingContext& formattingContext() const LIFETIME_BOUND { return m_formattingContext; }
 
 private:
     VerticalGeometry outOfFlowReplacedVerticalGeometry(const ElementBox&, const HorizontalConstraints&, const VerticalConstraints&, const OverriddenVerticalValues&) const;
@@ -130,38 +127,23 @@ private:
     const FormattingContext& m_formattingContext;
 };
 
-std::optional<LayoutUnit> FormattingGeometry::computedValue(const auto& geometryProperty, LayoutUnit containingBlockWidth) const
+std::optional<LayoutUnit> FormattingGeometry::computedValue(const auto& geometryProperty, LayoutUnit containingBlockWidth, const Style::ZoomFactor& zoom) const
 {
     // In general, the computed value resolves the specified value as far as possible without laying out the content.
     if (geometryProperty.isSpecified())
-        return Style::evaluate<LayoutUnit>(geometryProperty, containingBlockWidth, Style::ZoomNeeded { });
+        return Style::evaluate<LayoutUnit>(geometryProperty, containingBlockWidth, zoom);
     return { };
 }
 
-std::optional<LayoutUnit> FormattingGeometry::computedValue(const auto& geometryProperty, LayoutUnit containingBlockWidth, const Style::ZoomFactor& zoomFactor) const
-{
-    // In general, the computed value resolves the specified value as far as possible without laying out the content.
-    if (geometryProperty.isSpecified())
-        return Style::evaluate<LayoutUnit>(geometryProperty, containingBlockWidth, zoomFactor);
-    return { };
-}
-
-std::optional<LayoutUnit> FormattingGeometry::fixedValue(const auto& geometryProperty) const
+std::optional<LayoutUnit> FormattingGeometry::fixedValue(const auto& geometryProperty, const Style::ZoomFactor& zoom) const
 {
     if (auto fixed = geometryProperty.tryFixed())
-        return LayoutUnit(fixed->resolveZoom(Style::ZoomNeeded { }));
+        return Style::evaluate<LayoutUnit>(*fixed, zoom);
     return { };
 }
 
-std::optional<LayoutUnit> FormattingGeometry::fixedValue(const auto& geometryProperty, const Style::ZoomFactor& zoomFactor) const
-{
-    if (auto fixed = geometryProperty.tryFixed())
-        return LayoutUnit(fixed->resolveZoom(zoomFactor));
-    return { };
-}
-
-}
-}
+} // namespace Layout
+} // namespace WebCore
 
 #define SPECIALIZE_TYPE_TRAITS_LAYOUT_FORMATTING_GEOMETRY(ToValueTypeName, predicate) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::Layout::ToValueTypeName) \

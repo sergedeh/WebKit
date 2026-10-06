@@ -69,9 +69,9 @@ public:
 
     VM& vm() { return graph.m_vm; }
 
-    void dumpDisassembly(PrintStream&, LinkBuffer&, const ScopedLambda<void(DFG::Node*)>& perDFGNodeCallback = scopedLambda<void(DFG::Node*)>([] (DFG::Node*) { }));
+    void dumpDisassembly(PrintStream&, LinkBuffer&, NOESCAPE const ScopedLambda<void(DFG::Node*)>& perDFGNodeCallback = [] (DFG::Node*) { });
 
-    StructureStubInfo* addStructureStubInfo();
+    PropertyInlineCache* addPropertyInlineCache();
     OptimizingCallLinkInfo* addCallLinkInfo(CodeOrigin);
 
     // None of these things is owned by State. It is the responsibility of
@@ -88,6 +88,8 @@ public:
     Box<CCallHelpers::Label> exceptionHandler { Box<CCallHelpers::Label>::create() };
     B3::Air::StackSlot* capturedValue { nullptr };
     Vector<DFG::JumpReplacement> jumpReplacements;
+    Vector<OSRExit> osrExits;
+    Vector<uint8_t> osrExitValueReps;
 };
 
 } } // namespace JSC::FTL

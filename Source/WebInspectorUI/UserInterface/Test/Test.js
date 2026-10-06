@@ -54,6 +54,7 @@ WI.loaded = function()
         WI.targetManager = new WI.TargetManager,
         WI.networkManager = new WI.NetworkManager,
         WI.domStorageManager = new WI.DOMStorageManager,
+        WI.storageManager = new WI.StorageManager,
         WI.indexedDBManager = new WI.IndexedDBManager,
         WI.domManager = new WI.DOMManager,
         WI.cssManager = new WI.CSSManager,
@@ -71,9 +72,12 @@ WI.loaded = function()
         WI.animationManager = new WI.AnimationManager,
     ];
 
+    WI.domUndoCoordinator = new WI.DOMUndoCoordinator;
+
     // Register for events.
     document.addEventListener("DOMContentLoaded", WI.contentLoaded);
     WI.browserManager.enable();
+    WI.storageManager.enable();
 
     // Targets.
     WI.backendTarget = null;
@@ -174,13 +178,7 @@ WI.updateDockingAvailability = () => {};
 WI.updateVisibilityState = () => {};
 WI.updateFindString = () => {};
 
-// Assists in the transition of moving agent implementations from page to frame.
-Object.defineProperty(WI, "mainFrameTarget",
-{
-    get() {
-        return WI.targets.find((x) => x.type === WI.TargetType.Frame && x.parentTarget === WI.backendTarget);
-    }
-});
+WI.isSiteIsolationEnabled = () => WI.targets.some((x) => x instanceof WI.FrameTarget);
 
 // FIXME: <https://webkit.org/b/201149> Web Inspector: replace all uses of `window.*Agent` with a target-specific call
 (function() {
@@ -195,6 +193,7 @@ Object.defineProperty(WI, "mainFrameTarget",
     makeAgentGetter("CPUProfiler");
     makeAgentGetter("CSS");
     makeAgentGetter("Canvas");
+    makeAgentGetter("Console");
     makeAgentGetter("DOM");
     makeAgentGetter("DOMDebugger");
     makeAgentGetter("DOMStorage");
@@ -216,6 +215,14 @@ Object.defineProperty(WI, "mainFrameTarget",
 })();
 
 window.InspectorTest = new FrontendTestHarness();
+
+Object.defineProperty(InspectorTest, "mainFrameTarget",
+{
+    get() {
+        let mainFrame = WI.networkManager.mainFrame;
+        return mainFrame && WI.targets.find((target) => target instanceof WI.FrameTarget && target.executionContext?.frame === mainFrame) || WI.mainTarget;
+    }
+});
 
 InspectorTest.redirectConsoleToTestOutput();
 

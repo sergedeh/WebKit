@@ -4,14 +4,14 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/wgpu/wgpu_pipeline_state.h"
+#include "common/unsafe_buffers.h"
+
+#include <limits>
 
 #include "common/aligned_memory.h"
 #include "common/hash_utils.h"
+#include "common/span.h"
 #include "libANGLE/Error.h"
 #include "libANGLE/renderer/wgpu/ContextWgpu.h"
 
@@ -51,14 +51,19 @@ constexpr WGPUFrontFace UnpackFrontFace(uint32_t packedFrontFace)
 
 PackedVertexAttribute::PackedVertexAttribute()
 {
-    memset(this, 0, sizeof(PackedVertexAttribute));
+    ANGLE_UNSAFE_TODO(memset(this, 0, sizeof(PackedVertexAttribute)));
 }
 
 // GraphicsPipelineDesc implementation.
 RenderPipelineDesc::RenderPipelineDesc()
 {
     (void)mPad0;
-    memset(this, 0, sizeof(RenderPipelineDesc));
+    ANGLE_UNSAFE_TODO(memset(this, 0, sizeof(RenderPipelineDesc)));
+
+    mDepthStencilState.stencilReadMask =
+        std::numeric_limits<decltype(mDepthStencilState.stencilReadMask)>::max();
+    mDepthStencilState.stencilWriteMask =
+        std::numeric_limits<decltype(mDepthStencilState.stencilWriteMask)>::max();
 }
 
 RenderPipelineDesc::~RenderPipelineDesc() = default;
@@ -70,7 +75,7 @@ RenderPipelineDesc::RenderPipelineDesc(const RenderPipelineDesc &other)
 
 RenderPipelineDesc &RenderPipelineDesc::operator=(const RenderPipelineDesc &other)
 {
-    memcpy(this, &other, sizeof(*this));
+    ANGLE_UNSAFE_TODO(memcpy(this, &other, sizeof(*this)));
     return *this;
 }
 
@@ -179,21 +184,28 @@ void RenderPipelineDesc::setCullMode(gl::CullFaceMode cullMode, bool cullFaceEna
     SetBitField(mPrimitiveState.cullMode, gl_wgpu::GetCullMode(cullMode, cullFaceEnabled));
 }
 
-void RenderPipelineDesc::setColorWriteMask(size_t colorIndex, bool r, bool g, bool b, bool a)
+bool RenderPipelineDesc::setColorWriteMask(size_t colorIndex, bool r, bool g, bool b, bool a)
 {
     PackedColorTargetState &colorTarget = mColorTargetStates[colorIndex];
-    SetBitField(colorTarget.writeMask, gl_wgpu::GetColorWriteMask(r, g, b, a));
+    uint32_t newWriteMask = static_cast<uint32_t>(gl_wgpu::GetColorWriteMask(r, g, b, a));
+    if (colorTarget.writeMask == newWriteMask)
+    {
+        return false;
+    }
+
+    SetBitField(colorTarget.writeMask, newWriteMask);
+    return true;
 }
 
 bool RenderPipelineDesc::setVertexAttribute(size_t attribIndex, PackedVertexAttribute &newAttrib)
 {
     PackedVertexAttribute &currentAttrib = mVertexAttributes[attribIndex];
-    if (memcmp(&currentAttrib, &newAttrib, sizeof(PackedVertexAttribute)) == 0)
+    if (ANGLE_UNSAFE_TODO(memcmp(&currentAttrib, &newAttrib, sizeof(PackedVertexAttribute))) == 0)
     {
         return false;
     }
 
-    memcpy(&currentAttrib, &newAttrib, sizeof(PackedVertexAttribute));
+    ANGLE_UNSAFE_TODO(memcpy(&currentAttrib, &newAttrib, sizeof(PackedVertexAttribute)));
     return true;
 }
 
@@ -283,7 +295,6 @@ bool RenderPipelineDesc::setStencilBackOps(WGPUStencilOperation failOp,
 
 bool RenderPipelineDesc::setStencilReadMask(uint8_t readMask)
 {
-
     if (mDepthStencilState.stencilReadMask == readMask)
     {
         return false;
@@ -304,7 +315,7 @@ bool RenderPipelineDesc::setStencilWriteMask(uint8_t writeMask)
 
 size_t RenderPipelineDesc::hash() const
 {
-    return angle::ComputeGenericHash(this, sizeof(*this));
+    return angle::ComputeGenericHash(angle::byte_span_from_ref(*this));
 }
 
 angle::Result RenderPipelineDesc::createPipeline(ContextWgpu *context,
@@ -472,7 +483,7 @@ angle::Result RenderPipelineDesc::createPipeline(ContextWgpu *context,
 
 bool operator==(const RenderPipelineDesc &lhs, const RenderPipelineDesc &rhs)
 {
-    return memcmp(&lhs, &rhs, sizeof(RenderPipelineDesc)) == 0;
+    return ANGLE_UNSAFE_TODO(memcmp(&lhs, &rhs, sizeof(RenderPipelineDesc))) == 0;
 }
 
 // PipelineCache implementation.

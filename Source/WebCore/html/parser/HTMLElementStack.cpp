@@ -27,12 +27,16 @@
 #include "config.h"
 #include "HTMLElementStack.h"
 
+#include "Document.h"
 #include "DocumentFragment.h"
+#include "ElementInlines.h"
 #include "HTMLOptGroupElement.h"
 #include "HTMLOptionElement.h"
 #include "HTMLTableElement.h"
 #include "HTMLTemplateElement.h"
 #include "MathMLNames.h"
+#include "NodeDocument.h"
+#include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -44,12 +48,12 @@ using namespace ElementNames;
 
 namespace {
 
-inline bool isRootNode(HTMLStackItem& item)
+inline bool NODELETE isRootNode(HTMLStackItem& item)
 {
     return item.isDocumentFragment() || item.elementName() == HTML::html;
 }
 
-inline bool isScopeMarker(HTMLStackItem& item)
+inline bool NODELETE isScopeMarker(HTMLStackItem& item)
 {
     switch (item.elementName()) {
     case HTML::applet:
@@ -78,21 +82,21 @@ inline bool isScopeMarker(HTMLStackItem& item)
     return isRootNode(item);
 }
 
-inline bool isListItemScopeMarker(HTMLStackItem& item)
+inline bool NODELETE isListItemScopeMarker(HTMLStackItem& item)
 {
     return isScopeMarker(item)
         || item.elementName() == HTML::ol
         || item.elementName() == HTML::ul;
 }
 
-inline bool isTableScopeMarker(HTMLStackItem& item)
+inline bool NODELETE isTableScopeMarker(HTMLStackItem& item)
 {
     return item.elementName() == HTML::table
         || item.elementName() == HTML::template_
         || isRootNode(item);
 }
 
-inline bool isTableBodyScopeMarker(HTMLStackItem& item)
+inline bool NODELETE isTableBodyScopeMarker(HTMLStackItem& item)
 {
     return item.elementName() == HTML::tbody
         || item.elementName() == HTML::tfoot
@@ -101,7 +105,7 @@ inline bool isTableBodyScopeMarker(HTMLStackItem& item)
         || isRootNode(item);
 }
 
-inline bool isTableRowScopeMarker(HTMLStackItem& item)
+inline bool NODELETE isTableRowScopeMarker(HTMLStackItem& item)
 {
     return item.elementName() == HTML::tr
         || item.elementName() == HTML::template_
@@ -115,13 +119,13 @@ inline bool isForeignContentScopeMarker(HTMLStackItem& item)
         || isInHTMLNamespace(item);
 }
 
-inline bool isButtonScopeMarker(HTMLStackItem& item)
+inline bool NODELETE isButtonScopeMarker(HTMLStackItem& item)
 {
     return isScopeMarker(item)
         || item.elementName() == HTML::button;
 }
 
-inline bool isSelectScopeMarker(HTMLStackItem& item)
+inline bool NODELETE isSelectScopeMarker(HTMLStackItem& item)
 {
     return item.elementName() != HTML::optgroup
         && item.elementName() != HTML::option;
@@ -275,13 +279,13 @@ bool HTMLElementStack::isMathMLTextIntegrationPoint(HTMLStackItem& item)
 bool HTMLElementStack::isHTMLIntegrationPoint(HTMLStackItem& item)
 {
     if (item.elementName() == MathML::annotation_xml) {
-        const Attribute* encodingAttr = item.findAttribute(MathMLNames::encodingAttr);
-        if (encodingAttr) {
-            const String& encoding = encodingAttr->value();
-            return equalLettersIgnoringASCIICase(encoding, "text/html"_s)
-                || equalLettersIgnoringASCIICase(encoding, "application/xhtml+xml"_s);
-        }
-        return false;
+        // Read encoding off the element directly: m_attributes is unset for fragment-context items.
+        RefPtr element = item.elementOrNull();
+        if (!element)
+            return false;
+        auto& encoding = element->attributeWithoutSynchronization(MathMLNames::encodingAttr);
+        return equalLettersIgnoringASCIICase(encoding, "text/html"_s)
+            || equalLettersIgnoringASCIICase(encoding, "application/xhtml+xml"_s);
     }
     return item.elementName() == SVG::foreignObject
         || item.elementName() == SVG::desc
@@ -424,7 +428,7 @@ bool HTMLElementStack::contains(Element& element) const
     return !!find(element);
 }
 
-template <bool isMarker(HTMLStackItem&)> bool inScopeCommon(HTMLElementStack::ElementRecord* top, ElementName targetElement)
+template <bool isMarker(HTMLStackItem&)> bool NODELETE inScopeCommon(HTMLElementStack::ElementRecord* top, ElementName targetElement)
 {
     ASSERT(targetElement != ElementName::Unknown);
     for (auto* record = top; record; record = record->next()) {
@@ -508,7 +512,8 @@ bool HTMLElementStack::inSelectScope(ElementName targetElement) const
 
 bool HTMLElementStack::hasTemplateInHTMLScope() const
 {
-    return inScopeCommon<isRootNode>(m_top.get(), HTML::template_);
+    // The root is pushed first and never popped, and <template> can only be pushed above it, so the counter alone suffices.
+    return m_templateElementCount;
 }
 
 Element& HTMLElementStack::htmlElement() const

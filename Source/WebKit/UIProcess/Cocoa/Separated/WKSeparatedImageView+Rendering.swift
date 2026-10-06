@@ -21,15 +21,12 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if HAVE_CORE_ANIMATION_SEPARATED_LAYERS && compiler(>=6.0)
+#if HAVE_CORE_ANIMATION_SEPARATED_LAYERS
 
-#if canImport(CoreRE)
-@_weakLinked internal import CoreRE
-#endif
 import os
-@_weakLinked @_spi(Private) @_spi(RealityKit) internal import RealityKit
-@_weakLinked @_spi(Private) @_spi(ForUIKitOnly) internal import SwiftUI
-internal import WebKit_Internal
+@_weakLinked @_spi(Private) @_spi(RealityKit) import RealityKit
+@_weakLinked @_spi(Private) @_spi(ForUIKitOnly) import SwiftUI
+import WebKit_Internal
 
 extension WKSeparatedImageView {
     func layoutCustomSubtree() {
@@ -74,7 +71,7 @@ extension WKSeparatedImageView {
 
         var duration = SeparatedImageViewConstants.longFadeAnimationDuration
         #if canImport(RealityFoundation, _version: 387)
-        if let imageHash, ImagePresentationCache.shared.get(for: imageHash) != nil {
+        if let imageHash, ImagePresentationCache.shared[imageHash] != nil {
             duration = SeparatedImageViewConstants.shortFadeAnimationDuration
         }
         #endif
@@ -106,12 +103,9 @@ extension WKSeparatedImageView {
         let scaleFactor = Float(bounds.size.height / layer.effectivePointsPerMeter)
         portalEntity.scale = SIMD3(scaleFactor, scaleFactor, 1.0)
 
-        #if canImport(CoreRE)
-        if let component = unsafe RECALayerGetCALayerClientComponent(layer) {
-            let rootEntity = unsafe Entity.fromCore(REComponentGetEntity(component))
+        if let rootEntity = layer.rootEntity {
             portalEntity.setParent(rootEntity)
         }
-        #endif
 
         Task { @MainActor [weak self] in
             await self?.nextDisplayLink()
@@ -149,6 +143,9 @@ extension WKSeparatedImageView {
 
         let portalEntity = ModelEntity()
         var ipc = ImagePresentationComponent(spatial3DImage: spatial3DImage)
+        #if canImport(RealityKit, _version: 420)
+        ipc.enableSpatial3DDepthPatching = true
+        #endif
         ipc.desiredViewingMode = desiredViewingModeSpatial ? .spatial3D : .mono
         #if USE_APPLE_INTERNAL_SDK
         ipc.cornerRadiusInPoints = Float(layer.cornerRadius)
@@ -163,8 +160,7 @@ extension WKSeparatedImageView {
 
     func updateUI() {
         #if canImport(RealityFoundation, _version: 387)
-        if isSeparated, viewMode == .portal, spatial3DImage == nil, let imageHash, ImagePresentationCache.shared.get(for: imageHash) == nil
-        {
+        if isSeparated, viewMode == .portal, spatial3DImage == nil, let imageHash, ImagePresentationCache.shared[imageHash] == nil {
             if spinner == nil {
                 spinner = WKSeparatedImageView.generationQueueSpinnerView()
                 spinner?.alpha = 0

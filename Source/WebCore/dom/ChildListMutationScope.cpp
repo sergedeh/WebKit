@@ -33,7 +33,6 @@
 
 #include "MutationObserverInterestGroup.h"
 #include "MutationRecord.h"
-#include "NodeInlines.h"
 #include "StaticNodeList.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -41,7 +40,7 @@
 namespace WebCore {
 
 using AccumulatorMap = HashMap<WeakRef<ContainerNode, WeakPtrImplWithEventTargetData>, SingleThreadWeakRef<ChildListMutationAccumulator>>;
-static AccumulatorMap& accumulatorMap()
+static AccumulatorMap& NODELETE accumulatorMap()
 {
     static NeverDestroyed<AccumulatorMap> map;
     return map;

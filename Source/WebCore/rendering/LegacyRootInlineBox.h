@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003, 2006, 2007, 2008, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -42,7 +42,7 @@ public:
     explicit LegacyRootInlineBox(RenderBlockFlow&);
     virtual ~LegacyRootInlineBox();
 
-    RenderBlockFlow& blockFlow() const;
+    RenderBlockFlow& NODELETE blockFlow() const;
 
     LegacyRootInlineBox* nextRootBox() const;
     LegacyRootInlineBox* prevRootBox() const;
@@ -57,8 +57,8 @@ public:
     LayoutUnit lineBoxBottom() const { return m_lineBoxBottom; }
     LayoutUnit lineBoxHeight() const { return lineBoxBottom() - lineBoxTop(); }
 
-    LayoutUnit selectionTop() const;
-    LayoutUnit selectionBottom() const;
+    LayoutUnit NODELETE selectionTop() const;
+    LayoutUnit NODELETE selectionBottom() const;
     LayoutUnit selectionHeight() const { return std::max<LayoutUnit>(0, selectionBottom() - selectionTop()); }
 
     LayoutUnit selectionTopAdjustedForPrecedingBlock() const;
@@ -73,12 +73,12 @@ public:
     }
 
     RenderObject::HighlightState selectionState() const final;
-    const LegacyInlineBox* firstSelectedBox() const;
-    const LegacyInlineBox* lastSelectedBox() const;
+    const LegacyInlineBox* firstSelectedBox() const LIFETIME_BOUND;
+    const LegacyInlineBox* lastSelectedBox() const LIFETIME_BOUND;
 
-    void removeLineBoxFromRenderObject() final;
+    void NODELETE removeLineBoxFromRenderObject() final;
 
-    FontBaseline baselineType() const { return static_cast<FontBaseline>(m_baselineType); }
+    FontBaseline baselineType() const { return FontBaseline::Alphabetic; }
     
     LayoutUnit logicalTopVisualOverflow() const
     {

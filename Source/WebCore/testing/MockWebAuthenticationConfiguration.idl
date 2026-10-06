@@ -46,7 +46,8 @@
     "wrong-channel-id",
     "malicious-payload",
     "unsupported-options",
-    "wrong-nonce"
+    "wrong-nonce",
+    "short-init-response"
 };
 
 [
@@ -56,7 +57,8 @@
     "no-tags",
     "wrong-tag-type",
     "no-connections",
-    "malicious-payload"
+    "malicious-payload",
+    "hardware-busy"
 };
 
 [
@@ -70,7 +72,6 @@
 
 [
     Conditional=WEB_AUTHN,
-    LegacyNativeDictionaryRequiredInterfaceNullability,
 ] dictionary MockWebAuthenticationConfiguration {
     boolean silentFailure = false;
     MockLocalConfiguration local;
@@ -81,7 +82,6 @@
 
 [
     Conditional=WEB_AUTHN,
-    LegacyNativeDictionaryRequiredInterfaceNullability,
 ] dictionary MockLocalConfiguration {
     UserVerification userVerification = "no";
     boolean acceptAttestation = false;
@@ -93,11 +93,10 @@
 
 [
     Conditional=WEB_AUTHN,
-    LegacyNativeDictionaryRequiredInterfaceNullability,
 ] dictionary MockHidConfiguration {
-    sequence<DOMString> payloadBase64;
-    sequence<DOMString> expectedCommandsBase64;
-    boolean validateExpectedCommands;
+    sequence<DOMString> payloadBase64 = [];
+    sequence<DOMString> expectedCommandsBase64 = [];
+    boolean validateExpectedCommands = false;
     MockHidStage stage = "info";
     MockHidSubStage subStage = "init";
     MockHidError error = "success";
@@ -109,24 +108,24 @@
     boolean expectCancel = false;
     boolean supportClientPin = false;
     boolean supportInternalUV = false;
-    sequence<octet> pinProtocols;
+    sequence<octet> pinProtocols = [];
     long maxCredentialCountInList = 1;
     long maxCredentialIdLength = 64;
 };
 
 [
     Conditional=WEB_AUTHN,
-    LegacyNativeDictionaryRequiredInterfaceNullability,
 ] dictionary MockNfcConfiguration {
     MockNfcError error = "success";
-    sequence<DOMString> payloadBase64;
+    sequence<DOMString> payloadBase64 = [];
     boolean multipleTags = false;
     boolean multiplePhysicalTags = false;
 };
 
 [
     Conditional=WEB_AUTHN,
-    LegacyNativeDictionaryRequiredInterfaceNullability,
 ] dictionary MockCcidConfiguration {
-    sequence<DOMString> payloadBase64;
+    sequence<DOMString> payloadBase64 = [];
+    DOMString appletSelectionResponseBase64 = "";
+    DOMString u2fVersionResponseBase64 = "";
 };

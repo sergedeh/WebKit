@@ -84,6 +84,10 @@ private:
     void didWriteSelectionToPasteboard() final;
     void getClientPasteboardData(const std::optional<WebCore::SimpleRange>&, Vector<std::pair<String, RefPtr<WebCore::SharedBuffer>>>& pasteboardTypesAndData) final;
 
+#if PLATFORM(COCOA)
+    HashMap<WebCore::FrameIdentifier, WebCore::AttributedString> collectAttributedStringsForRemoteFrames(WebCore::FrameIdentifier, const Vector<WebCore::FrameIdentifier>&) final { return { }; }
+#endif
+
     void setInsertionPasteboard(const String&) final;
     WebCore::DOMPasteAccessResponse requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::FrameIdentifier, const String&) final { return WebCore::DOMPasteAccessResponse::DeniedForGesture; }
 
@@ -91,6 +95,11 @@ private:
     void uppercaseWord() final;
     void lowercaseWord() final;
     void capitalizeWord() final;
+    bool canApplyCaseTransformations(const String&) final;
+    bool canConvertToTraditionalChinese(const String&) final;
+    bool canConvertToSimplifiedChinese(const String&) final;
+    void convertToTraditionalChinese() final;
+    void convertToSimplifiedChinese() final;
 #endif
 
 #if USE(AUTOMATIC_TEXT_REPLACEMENT)
@@ -178,17 +187,17 @@ private:
 #if PLATFORM(MAC)
     void requestCandidatesForSelection(const WebCore::VisibleSelection&) final;
     void handleRequestedCandidates(NSInteger, NSArray<NSTextCheckingResult *> *);
-    void handleAcceptedCandidateWithSoftSpaces(WebCore::TextCheckingResult) final;
+    void handleAcceptedCandidateWithSoftSpaces(const WebCore::TextCheckingResult&) final;
 #endif
 
     void registerUndoOrRedoStep(WebCore::UndoStep&, bool isRedo);
 
 #if PLATFORM(IOS_FAMILY)
-    bool shouldAllowSingleClickToChangeSelection(WebCore::Node& targetNode, const WebCore::VisibleSelection& newSelection) const;
+    bool shouldAllowSingleClickToChangeSelection(WebCore::Node& targetNode, const WebCore::VisibleSelection& newSelection, WebCore::MouseEventInputSource) const;
 #endif
 
-    WebView *m_webView;
-    RetainPtr<WebEditorUndoTarget> m_undoTarget;
+    __weak WebView *m_webView;
+    const RetainPtr<WebEditorUndoTarget> m_undoTarget;
     bool m_haveUndoRedoOperations { false };
     
     HashMap<WebCore::TextCheckingRequestIdentifier, Ref<WebCore::TextCheckingRequest>> m_requestsInFlight;
@@ -214,7 +223,7 @@ private:
     EditorStateIsContentEditable m_lastEditorStateWasContentEditable { EditorStateIsContentEditable::Unset };
 };
 
-inline NSSelectionAffinity kit(WebCore::Affinity affinity)
+inline NSSelectionAffinity NODELETE kit(WebCore::Affinity affinity)
 {
     switch (affinity) {
     case WebCore::Affinity::Upstream:

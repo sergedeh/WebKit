@@ -26,6 +26,8 @@
 #include "config.h"
 #include "APIContentWorldConfiguration.h"
 
+#include "ContentWorldShared.h"
+
 namespace API {
 
 Ref<ContentWorldConfiguration> ContentWorldConfiguration::create()
@@ -38,6 +40,28 @@ ContentWorldConfiguration::Data::Data() = default;
 ContentWorldConfiguration::ContentWorldConfiguration() = default;
 
 ContentWorldConfiguration::~ContentWorldConfiguration() = default;
+
+OptionSet<WebKit::ContentWorldOption> ContentWorldConfiguration::optionSet() const
+{
+    OptionSet<WebKit::ContentWorldOption> result;
+
+    if (allowAccessToClosedShadowRoots())
+        result.add(WebKit::ContentWorldOption::AllowAccessToClosedShadowRoots);
+    if (allowAutofill())
+        result.add(WebKit::ContentWorldOption::AllowAutofill);
+    if (allowElementUserInfo())
+        result.add(WebKit::ContentWorldOption::AllowElementUserInfo);
+    if (disableLegacyBuiltinOverrides())
+        result.add(WebKit::ContentWorldOption::DisableLegacyBuiltinOverrides);
+    if (allowJSHandleCreation())
+        result.add(WebKit::ContentWorldOption::AllowJSHandleCreation);
+    if (allowNodeSnapshotCreation())
+        result.add(WebKit::ContentWorldOption::AllowNodeSnapshotCreation);
+    if (isInspectable())
+        result.add(WebKit::ContentWorldOption::Inspectable);
+
+    return result;
+}
 
 Ref<ContentWorldConfiguration> ContentWorldConfiguration::copy() const
 {
@@ -106,14 +130,14 @@ void ContentWorldConfiguration::setAllowJSHandleCreation(bool allow)
     m_data.allowJSHandleCreation = allow;
 }
 
-bool ContentWorldConfiguration::allowNodeSerialization() const
+bool ContentWorldConfiguration::allowNodeSnapshotCreation() const
 {
-    return m_data.allowNodeSerialization;
+    return m_data.allowNodeSnapshotCreation;
 }
 
-void ContentWorldConfiguration::setAllowNodeSerialization(bool allow)
+void ContentWorldConfiguration::setAllowNodeSnapshotCreation(bool allow)
 {
-    m_data.allowNodeSerialization = allow;
+    m_data.allowNodeSnapshotCreation = allow;
 }
 
 bool ContentWorldConfiguration::isInspectable() const

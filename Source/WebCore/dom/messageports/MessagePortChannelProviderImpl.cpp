@@ -44,7 +44,7 @@ MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
     ASSERT_NOT_REACHED();
 }
 
-void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, bool)
+void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
     ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
         if (CheckedPtr registry = weakRegistry.get())
@@ -72,7 +72,7 @@ void MessagePortChannelProviderImpl::messagePortClosed(const MessagePortIdentifi
 {
     ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local] {
         if (CheckedPtr registry = weakRegistry.get())
-            registry->didCloseMessagePort(local);
+            registry->didCloseMessagePort(local, MessagePortStatus::Closed);
     });
 }
 

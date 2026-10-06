@@ -67,6 +67,29 @@ function assertSharedGrowableBufferOfPageSize(pageCount, buffer, maxPageCount) {
     assertTrue(memory.buffer !== buffer);
 }
 
+// A resize whose page-aligned growth delta exceeds what a memory32 may declare
+// must throw a catchable RangeError, not hit a release assertion.
+// https://bugs.webkit.org/show_bug.cgi?id=318524
+{
+    let memory = new WebAssembly.Memory({ initial: 1, maximum: 65536 });
+    let buffer = memory.toResizableBuffer();
+    assertIsolatedResizableBufferOfPageSize(1, buffer, 65536);
+
+    // 65538 pages is not a page count a memory32 may reach at all.
+    assertThrows(() => buffer.resize(65538 * pageSize), RangeError, "");
+    // The buffer is unchanged and remains usable after the failed resize.
+    assertIsolatedResizableBufferOfPageSize(1, buffer, 65536);
+
+    // A page count a memory32 may reach, but which still exceeds the declared
+    // maximum, must also throw catchably.
+    assertThrows(() => buffer.resize(65537 * pageSize), RangeError, "");
+    assertIsolatedResizableBufferOfPageSize(1, buffer, 65536);
+
+    // A legal resize still works after the failed attempts.
+    buffer.resize(2 * pageSize);
+    assertIsolatedResizableBufferOfPageSize(2, buffer, 65536);
+}
+
 // Now a similar sequence for a shared memory
 
 {

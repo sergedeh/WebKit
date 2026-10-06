@@ -46,9 +46,7 @@ String CacheStorageCache::computeKeyURL(const URL& url)
 {
     RELEASE_ASSERT(url.isValid());
     RELEASE_ASSERT(!url.isEmpty());
-    URL keyURL { url };
-    keyURL.removeQueryAndFragmentIdentifier();
-    auto keyURLString = keyURL.string();
+    auto keyURLString = url.string().left(url.pathEnd());
     RELEASE_ASSERT(RecordsMap::isValidKey(keyURLString));
     return keyURLString;
 }
@@ -95,6 +93,13 @@ CacheStorageCache::~CacheStorageCache()
 CacheStorageManager* CacheStorageCache::manager()
 {
     return m_manager.get();
+}
+
+std::optional<WebCore::ClientOrigin> CacheStorageCache::origin() const
+{
+    if (RefPtr manager = m_manager.get())
+        return manager->origin();
+    return std::nullopt;
 }
 
 void CacheStorageCache::getSize(CompletionHandler<void(uint64_t)>&& callback)
@@ -221,7 +226,7 @@ void CacheStorageCache::retrieveRecords(const Vector<CacheStorageRecordInformati
             }
 
             if (record.response.type == WebCore::ResourceResponse::Type::Opaque) {
-                if (WebCore::validateCrossOriginResourcePolicy(options.crossOriginEmbedderPolicy.value, options.sourceOrigin, record.request.url(), false, record.response.url, record.response.httpHeaderFields.get(WebCore::HTTPHeaderName::CrossOriginResourcePolicy), WebCore::ForNavigation::No, WebCore::EmptyOriginAccessPatterns::singleton()))
+                if (WebCore::validateCrossOriginResourcePolicy(options.crossOriginEmbedderPolicy.value, options.documentIsolationPolicy, options.sourceOrigin, record.request.url(), false, record.response.url, record.response.httpHeaderFields.get(WebCore::HTTPHeaderName::CrossOriginResourcePolicy), WebCore::ForNavigation::No, WebCore::EmptyOriginAccessPatterns::singleton()))
                     return callback(makeUnexpected(Error::CORP));
             }
 

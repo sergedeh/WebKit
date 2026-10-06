@@ -7,10 +7,9 @@
 //   Tests for sRGB DXT textures (GL_EXT_texture_compression_s3tc_srgb)
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -68,17 +67,17 @@ class DXTSRGBCompressedTextureTest : public ANGLETest<>
 
     void runTestChecks(const TestCase &test)
     {
-        GLColor actual[kWindowSize * kWindowSize] = {0};
+        std::array<GLColor, kWindowSize * kWindowSize> actual = {0};
         drawQuad(mTextureProgram, "position", 0.5f);
         ASSERT_GL_NO_ERROR();
-        glReadPixels(0, 0, kWindowSize, kWindowSize, GL_RGBA, GL_UNSIGNED_BYTE,
-                     reinterpret_cast<void *>(actual));
+        glReadPixels(0, 0, kWindowSize, kWindowSize, GL_RGBA, GL_UNSIGNED_BYTE, actual.data());
         ASSERT_GL_NO_ERROR();
         for (GLsizei y = 0; y < test.height; ++y)
         {
             for (GLsizei x = 0; x < test.width; ++x)
             {
-                GLColor exp = reinterpret_cast<const GLColor *>(test.expected)[y * test.width + x];
+                GLColor exp = ANGLE_UNSAFE_TODO(
+                    reinterpret_cast<const GLColor *>(test.expected)[y * test.width + x]);
                 size_t x_actual = (x * kWindowSize + kWindowSize / 2) / test.width;
                 size_t y_actual =
                     ((test.height - y - 1) * kWindowSize + kWindowSize / 2) / test.height;

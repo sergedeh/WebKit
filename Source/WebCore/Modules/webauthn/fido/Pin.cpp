@@ -61,7 +61,7 @@ using namespace cbor;
 // hasAtLeastFourCodepoints returns true if |pin| contains
 // four or more code points. This reflects the "4 Unicode characters"
 // requirement in CTAP2.
-static bool hasAtLeastFourCodepoints(const String& pin)
+static bool NODELETE hasAtLeastFourCodepoints(const String& pin)
 {
     return pin.length() >= 4;
 }
@@ -74,11 +74,10 @@ static Vector<uint8_t> decryptForProtocol(PINUVAuthProtocol protocol, const Cryp
         if (ciphertext.size() < 16)
             return { };
 
-        Vector<uint8_t> iv(ciphertext.subspan(0, 16));
-        Vector<uint8_t> ct(ciphertext.subspan(16));
-
         CryptoAlgorithmAesCbcCfbParams params;
-        params.iv = BufferSource(iv);
+        params.iv = toBufferSource(ciphertext.subspan(0, 16));
+
+        Vector<uint8_t> ct(ciphertext.subspan(16));
 
         auto result = CryptoAlgorithmAESCBC::platformDecrypt(params, key, ct, CryptoAlgorithmAESCBC::Padding::No);
         if (result.hasException())
@@ -106,7 +105,7 @@ static Vector<uint8_t> authenticateForProtocol(PINUVAuthProtocol protocol, const
     return signature;
 }
 
-std::optional<CString> validateAndConvertToUTF8(const String& pin)
+std::optional<UTF8CString> validateAndConvertToUTF8(const String& pin)
 {
     if (!hasAtLeastFourCodepoints(pin))
         return std::nullopt;
@@ -277,28 +276,35 @@ static Vector<uint8_t> deriveProtocolSharedSecret(PINUVAuthProtocol protocol, Ve
     // CTAP spec 6.5.6 (Protocol 1) and 6.5.7 (Protocol 2).
     Vector<uint8_t> sharedSecret;
     if (protocol == PINUVAuthProtocol::kPinProtocol1) {
-        auto crypto = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_256);
+        auto crypto = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
         crypto->addBytes(ecdhResult.span());
         sharedSecret = crypto->computeHash();
     } else if (protocol == PINUVAuthProtocol::kPinProtocol2) {
         sharedSecret.reserveInitialCapacity(64);
         auto hkdfKey = CryptoKeyRaw::create(CryptoAlgorithmIdentifier::HKDF, WTF::move(ecdhResult), CryptoKeyUsageDeriveBits);
 
-        CryptoAlgorithmHkdfParams hmacHkdfParams;
-        hmacHkdfParams.hashIdentifier = CryptoAlgorithmIdentifier::SHA_256;
-        Vector<uint8_t> hkdfSalt(32, 0);
-        hmacHkdfParams.salt = toBufferSource(hkdfSalt.span());
-        hmacHkdfParams.info = toBufferSource(std::span { kHKDFInfoHMACKey });
+        std::array<uint8_t, 32> hkdfSalt { };
+
+        auto hmacHkdfParamsInit = CryptoAlgorithmHkdfParamsInit {
+            CryptoAlgorithmParametersInit { "HKDF"_s },
+            String(),
+            toBufferSource(std::span { hkdfSalt }),
+            toBufferSource(std::span { kHKDFInfoHMACKey }),
+        };
+        auto hmacHkdfParams = CryptoAlgorithmHkdfParams(CryptoAlgorithmIdentifier::HKDF, WTF::move(hmacHkdfParamsInit), CryptoAlgorithmIdentifier::SHA_256);
 
         auto hmacKeyMaterial = CryptoAlgorithmHKDF::deriveBits(hmacHkdfParams, hkdfKey.get(), 32 * 8);
         if (hmacKeyMaterial.hasException())
             return { };
         sharedSecret.appendVector(hmacKeyMaterial.releaseReturnValue());
 
-        CryptoAlgorithmHkdfParams aesHkdfParams;
-        aesHkdfParams.hashIdentifier = CryptoAlgorithmIdentifier::SHA_256;
-        aesHkdfParams.salt = toBufferSource(hkdfSalt.span());
-        aesHkdfParams.info = toBufferSource(std::span { kHKDFInfoAESKey });
+        auto aesHkdfParamsInit = CryptoAlgorithmHkdfParamsInit {
+            CryptoAlgorithmParametersInit { "HKDF"_s },
+            String(),
+            toBufferSource(std::span { hkdfSalt }),
+            toBufferSource(std::span { kHKDFInfoAESKey }),
+        };
+        auto aesHkdfParams = CryptoAlgorithmHkdfParams(CryptoAlgorithmIdentifier::HKDF, WTF::move(aesHkdfParamsInit), CryptoAlgorithmIdentifier::SHA_256);
 
         auto aesKeyMaterial = CryptoAlgorithmHKDF::deriveBits(aesHkdfParams, hkdfKey.get(), 32 * 8);
         if (aesKeyMaterial.hasException())
@@ -314,18 +320,18 @@ static Vector<uint8_t> deriveProtocolSharedSecret(PINUVAuthProtocol protocol, Ve
 static Vector<uint8_t> encryptForProtocol(PINUVAuthProtocol protocol, const CryptoKeyAES& key, const Vector<uint8_t>& plaintext)
 {
     if (protocol == PINUVAuthProtocol::kPinProtocol2) {
-        Vector<uint8_t> iv(16);
-        cryptographicallyRandomValues(iv.mutableSpan());
+        std::array<uint8_t, 16> iv { };
+        cryptographicallyRandomValues(iv);
 
         CryptoAlgorithmAesCbcCfbParams params;
-        params.iv = BufferSource(iv);
+        params.iv = toBufferSource(iv);
 
         auto result = CryptoAlgorithmAESCBC::platformEncrypt(params, key, plaintext, CryptoAlgorithmAESCBC::Padding::No);
         ASSERT(!result.hasException());
 
         Vector<uint8_t> output;
         output.reserveInitialCapacity(iv.size() + result.returnValue().size());
-        output.appendVector(iv);
+        output.append(std::span { iv });
         output.appendVector(result.releaseReturnValue());
         return output;
     }
@@ -335,7 +341,7 @@ static Vector<uint8_t> encryptForProtocol(PINUVAuthProtocol protocol, const Cryp
     return result.releaseReturnValue();
 }
 
-std::optional<TokenRequest> TokenRequest::tryCreate(PINUVAuthProtocol protocol, const CString& pin, const CryptoKeyEC& peerKey)
+std::optional<TokenRequest> TokenRequest::tryCreate(PINUVAuthProtocol protocol, const UTF8CString& pin, const CryptoKeyEC& peerKey)
 {
     // The following implements Section 5.5.4 Getting sharedSecret from Authenticator.
     // https://fidoalliance.org/specs/fido-v2.0-ps-20190130/fido-client-to-authenticator-protocol-v2.0-ps-20190130.html#gettingSharedSecret
@@ -369,8 +375,8 @@ std::optional<TokenRequest> TokenRequest::tryCreate(PINUVAuthProtocol protocol, 
     auto coseKey = encodeCOSEPublicKey(rawPublicKeyResult.returnValue());
 
     // The following calculates a SHA-256 digest of the PIN, and shrink to the left 16 bytes.
-    auto crypto = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_256);
-    crypto->addBytes(byteCast<uint8_t>(pin.span()));
+    auto crypto = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
+    crypto->addBytes(std::as_bytes(pin.span()));
     auto pinHash = crypto->computeHash();
     pinHash.shrink(16);
 
@@ -401,7 +407,7 @@ const Vector<uint8_t>& SetPinRequest::pinAuth() const
 
 std::optional<SetPinRequest> SetPinRequest::tryCreate(PINUVAuthProtocol protocol, const String& inputPin, const WebCore::CryptoKeyEC& peerKey)
 {
-    std::optional<CString> newPin = validateAndConvertToUTF8(inputPin);
+    std::optional<UTF8CString> newPin = validateAndConvertToUTF8(inputPin);
     if (!newPin)
         return std::nullopt;
 

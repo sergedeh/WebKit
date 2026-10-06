@@ -84,7 +84,7 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
     if (!loadQuirksFromEnvironment)
         return;
 
-    auto quirksString = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_QUIRKS"));
+    auto quirksString = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_QUIRKS"));
     GST_DEBUG("Attempting to parse requested quirks: %s", GST_STR_NULL(quirksString.utf8()));
     if (quirksString) {
         if (WTF::equalLettersIgnoringASCIICase(quirksString.span(), "help"_s)) {
@@ -144,7 +144,7 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
 
     GST_DEBUG("%zu quirks enabled", m_quirks.size());
 
-    auto identifierString = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_HOLE_PUNCH_QUIRK"));
+    auto identifierString = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_HOLE_PUNCH_QUIRK"));
     GST_DEBUG("Attempting to parse requested hole-punch quirk: %s", GST_STR_NULL(identifierString.utf8()));
     if (!identifierString)
         return;
@@ -246,11 +246,12 @@ std::optional<bool> GStreamerQuirksManager::isHardwareAccelerated(GstElementFact
         if (!result)
             continue;
 
-        GST_DEBUG("Setting %" GST_PTR_FORMAT " as %s accelerated from quirk %s", factory, quirk->identifier().characters(), *result ? "hardware" : "software");
+        GST_DEBUG("Setting %" GST_PTR_FORMAT " as %s accelerated from quirk %s", factory, *result ? "hardware" : "software",  quirk->identifier().characters());
         return *result;
     }
 
-    return std::nullopt;
+    auto klassStr = UTF8CStringView::unsafeFromUTF8(gst_element_factory_get_klass(factory));
+    return contains(klassStr.span(), "Hardware"_s);
 }
 
 bool GStreamerQuirksManager::supportsVideoHolePunchRendering() const
@@ -323,6 +324,24 @@ GRefPtr<GstCaps> GStreamerQuirksManager::videoSinkGLCapsFormat() const
             return caps;
     }
     return nullptr;
+}
+
+bool GStreamerQuirksManager::isVideoCapsGLCompatible(const GRefPtr<GstCaps>& caps) const
+{
+    for (auto& quirk : m_quirks) {
+        if (!quirk->isVideoCapsGLCompatible(caps))
+            return false;
+    }
+    return true;
+}
+
+GstState GStreamerQuirksManager::eosMediaPlayerState() const
+{
+    for (auto& quirk : m_quirks) {
+        if (auto state = quirk->eosMediaPlayerState())
+            return *state;
+    }
+    return GST_STATE_READY;
 }
 
 bool GStreamerQuirksManager::needsBufferingPercentageCorrection() const

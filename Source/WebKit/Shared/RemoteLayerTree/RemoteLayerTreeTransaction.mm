@@ -254,7 +254,7 @@ static void dumpChangedLayers(TextStream& ts, const LayerPropertiesMap& changedL
 
 void RemoteLayerTreeTransaction::dump() const
 {
-    WTFLogAlways("%s", description().utf8().data());
+    SAFE_WTFLOGALWAYS("%s", description().utf8());
 }
 
 String RemoteLayerTreeTransaction::description() const
@@ -270,6 +270,8 @@ String RemoteLayerTreeTransaction::description() const
         ts.dumpProperty("scrollOrigin"_s, m_scrollOrigin);
 
     ts.dumpProperty("root-layer"_s, m_rootLayerID);
+    if (remoteContextHostedIdentifier())
+        ts.dumpProperty("hosted-identifier"_s, *remoteContextHostedIdentifier());
 
     if (!m_createdLayers.isEmpty()) {
         TextStream::GroupScope group(ts);
@@ -277,6 +279,8 @@ String RemoteLayerTreeTransaction::description() const
         for (const auto& createdLayer : m_createdLayers) {
             TextStream::GroupScope group(ts);
             ts << createdLayer.type <<" " << createdLayer.layerID;
+            if (createdLayer.hostIdentifier())
+                ts << "(host " << *createdLayer.hostIdentifier() << ')';
             switch (createdLayer.type) {
             case WebCore::PlatformCALayer::LayerType::LayerTypeAVPlayerLayer:
                 ts << " (context-id "_s << createdLayer.hostingContextID() << ')';
@@ -376,7 +380,7 @@ uint32_t RemoteLayerTreeTransaction::LayerCreationProperties::hostingContextID()
 {
 #if ENABLE(MODEL_PROCESS)
     if (auto* modelContext = std::get_if<Ref<WebCore::ModelContext>>(&additionalData))
-        return (*modelContext)->modelContentsLayerHostingContextIdentifier().toRawValue();
+        return (*modelContext)->modelContentsLayerHostingContextIdentifier().toUInt64();
 #endif
 
     if (auto* customData = std::get_if<CustomData>(&additionalData))

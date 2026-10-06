@@ -11,12 +11,17 @@ function test()
         name: "XFrameOptionsDeny",
         description: "Ensure that a console message is logged when enforcing an X-Frame-Options policy. In this case, setting X-Frame-Options: 'deny' means the iframe does not want to be embedded in the test page.",
         test(resolve) {
-            WI.consoleManager.addEventListener(WI.ConsoleManager.Event.MessageAdded, (event) => {
-                let { target, messageText, source, level } = event.data.message;
-                InspectorTest.log({ targetType: target.type, messageText, source, level });
+            WI.consoleManager.singleFireEventListener(WI.ConsoleManager.Event.MessageAdded, function (event) {
+                let { source, level, target } = event.data.message;
+                InspectorTest.expectEqual(source, "security", "The message should be due to a security violation.");
+                InspectorTest.expectEqual(level, "error", "The message should be an error.");
+
+                let mainTargetType = WI.isSiteIsolationEnabled() ? WI.TargetType.Frame : WI.TargetType.Page;
+                InspectorTest.expectEqual(target.type, mainTargetType, "The message should come from the main target.");
+
                 resolve();
             });
-            InspectorTest.evaluateInPage(`triggerXFrameOptionDeny()`);
+            InspectorTest.evaluateInPage(`triggerXFrameOptionDeny();`);
         }
     });
 

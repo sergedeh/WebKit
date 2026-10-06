@@ -62,7 +62,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
 static Lock allWorkersLock;
-static HashSet<ScriptExecutionContextIdentifier>& allWorkerContexts() WTF_REQUIRES_LOCK(allWorkersLock)
+static HashSet<ScriptExecutionContextIdentifier>& NODELETE allWorkerContexts() WTF_REQUIRES_LOCK(allWorkersLock)
 {
     static NeverDestroyed<HashSet<ScriptExecutionContextIdentifier>> map;
     return map;
@@ -88,18 +88,19 @@ Worker::Worker(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, 
     , m_runtimeFlags(runtimeFlags)
     , m_clientIdentifier(ScriptExecutionContextIdentifier::generate())
 {
-    static bool addedListener;
-    if (!addedListener) {
-        platformStrategies()->loaderStrategy()->addOnlineStateChangeListener(&networkStateChanged);
-        addedListener = true;
-    }
+    static std::once_flag addListenerFlag;
+    std::call_once(addListenerFlag, [] {
+        ensureOnMainThread([] {
+            platformStrategies()->loaderStrategy()->addOnlineStateChangeListener(&networkStateChanged);
+        });
+    });
 
     Locker locker { allWorkersLock };
     auto addResult = allWorkerContexts().add(m_clientIdentifier);
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
 
-ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, Variant<RefPtr<TrustedScriptURL>, String>&& url, WorkerOptions&& options)
+ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, Variant<Ref<TrustedScriptURL>, String>&& url, WorkerOptions&& options)
 {
     auto compliantScriptURLString = trustedTypeCompliantString(context, WTF::move(url), "Worker constructor"_s);
     if (compliantScriptURLString.hasException())
@@ -114,9 +115,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::Ru
         return scriptURLOrException.releaseException();
 
     auto scriptURL = scriptURLOrException.releaseReturnValue();
-    if (auto exception = validateURL(context, scriptURL)) {
-        if (!context.settingsValues().workerAsynchronousURLErrorHandlingEnabled)
-            return Exception { ExceptionCode::SecurityError };
+    if (!validateURL(context, scriptURL)) {
         worker->queueTaskToDispatchEvent(worker.get(), TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::Yes));
         return worker;
     }
@@ -150,10 +149,10 @@ Worker::~Worker()
     m_contextProxy.workerObjectDestroyed();
 }
 
-ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
+ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
     Vector<Ref<MessagePort>> ports;
-    auto message = SerializedScriptValue::create(state, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    auto message = SerializedScriptValue::create(globalObject, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No);
     if (message.hasException())
         return message.releaseException();
 
@@ -164,6 +163,11 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
     m_contextProxy.postMessageToWorkerGlobalScope({ message.releaseReturnValue(), channels.releaseReturnValue() });
     return { };
+}
+
+ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer)
+{
+    return postMessage(globalObject, messageValue, StructuredSerializeOptions { WTF::move(transfer) });
 }
 
 void Worker::terminate()
@@ -231,7 +235,7 @@ void Worker::notifyFinished(std::optional<ScriptExecutionContextIdentifier> main
         return;
     }
 
-    const ContentSecurityPolicyResponseHeaders& contentSecurityPolicyResponseHeaders = m_contentSecurityPolicyResponseHeaders ? m_contentSecurityPolicyResponseHeaders.value() : context->checkedContentSecurityPolicy()->responseHeaders();
+    const ContentSecurityPolicyResponseHeaders& contentSecurityPolicyResponseHeaders = m_contentSecurityPolicyResponseHeaders ? m_contentSecurityPolicyResponseHeaders.value() : protect(context->contentSecurityPolicy())->responseHeaders();
     ReferrerPolicy referrerPolicy = ReferrerPolicy::EmptyString;
     if (auto policy = parseReferrerPolicy(scriptLoader->referrerPolicy(), ReferrerPolicySource::HTTPHeader))
         referrerPolicy = *policy;
@@ -241,7 +245,8 @@ void Worker::notifyFinished(std::optional<ScriptExecutionContextIdentifier> main
         scriptLoader->takeServiceWorkerData(),
         m_clientIdentifier,
         scriptLoader->advancedPrivacyProtections(),
-        context->userAgent(scriptLoader->responseURL())
+        context->userAgent(scriptLoader->responseURL()),
+        scriptLoader->globalPrivacyControlEnabled()
     };
     m_contextProxy.startWorkerGlobalScope(scriptLoader->responseURL(), *sessionID, m_options.name, WTF::move(initializationData), scriptLoader->script(), contentSecurityPolicyResponseHeaders, m_shouldBypassMainWorldContentSecurityPolicy, scriptLoader->crossOriginEmbedderPolicy(), m_workerCreationTime, referrerPolicy, m_options.type, m_options.credentials, m_runtimeFlags);
 
@@ -264,7 +269,7 @@ void Worker::dispatchEvent(Event& event)
 
     AbstractWorker::dispatchEvent(event);
     if (auto* errorEvent = dynamicDowncast<ErrorEvent>(event); errorEvent && !event.defaultPrevented() && event.isTrusted() && scriptExecutionContext())
-        protectedScriptExecutionContext()->reportException(errorEvent->message(), errorEvent->lineno(), errorEvent->colno(), errorEvent->filename(), nullptr, nullptr);
+        protect(scriptExecutionContext())->reportException(errorEvent->message(), errorEvent->lineno(), errorEvent->colno(), errorEvent->filename(), nullptr, nullptr);
 }
 
 void Worker::reportError(const String& errorMessage)

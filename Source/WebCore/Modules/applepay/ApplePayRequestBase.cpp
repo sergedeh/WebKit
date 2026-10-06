@@ -36,7 +36,7 @@
 
 namespace WebCore {
 
-static bool requiresSupportedNetworks(unsigned version, const ApplePayRequestBase& request)
+static bool NODELETE requiresSupportedNetworks(unsigned version, const ApplePayRequestBase& request)
 {
 #if ENABLE(APPLE_PAY_INSTALLMENTS)
     return version < 8 || !request.installmentConfiguration;
@@ -49,7 +49,7 @@ static bool requiresSupportedNetworks(unsigned version, const ApplePayRequestBas
 
 static Vector<String> convertAndValidate(Document& document, unsigned version, const Vector<String>& supportedNetworks, const PaymentCoordinator& paymentCoordinator)
 {
-    return WTF::compactMap(supportedNetworks, [document = Ref { document }, paymentCoordinator = Ref { paymentCoordinator }, version](const auto& supportedNetwork) {
+    return WTF::compactMap(supportedNetworks, [document = protect(document), paymentCoordinator = protect(paymentCoordinator), version](const auto& supportedNetwork) {
         auto validatedNetwork = paymentCoordinator->validatedPaymentNetwork(document, version, supportedNetwork);
         if (!validatedNetwork)
             document->addConsoleMessage(MessageSource::PaymentRequest, MessageLevel::Warning, makeString("'"_s, supportedNetwork, "' is not a valid payment network."_s));

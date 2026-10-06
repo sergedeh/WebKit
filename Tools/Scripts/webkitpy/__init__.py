@@ -34,12 +34,42 @@ if sys.version_info < (3, 9):  # noqa: UP036
 
 import os
 import platform
+import subprocess
 
 # We always want the real system version
 os.environ['SYSTEM_VERSION_COMPAT'] = '0'
 
 
+def _get_main_repo_autoinstall_path():
+    """If running in a git worktree, return the main repo's autoinstalled path.
+
+    This allows worktrees to share autoinstalled third-party packages with
+    the main repo, avoiding redundant downloads. Development libraries
+    (webkitcorepy, webkitscmpy, etc.) still come from the worktree itself.
+    """
+    try:
+        # Get the common git directory (same for main repo and all worktrees)
+        git_common_dir = subprocess.check_output(
+            ['git', 'rev-parse', '--git-common-dir'],
+            stderr=subprocess.DEVNULL,
+            cwd=os.path.dirname(__file__)
+        ).decode().strip()
+
+        # If we're in a worktree, git_common_dir points to main_repo/.git
+        # The main repo root is the parent of .git
+        if git_common_dir and os.path.isdir(git_common_dir):
+            main_repo_root = os.path.dirname(os.path.abspath(git_common_dir))
+            main_autoinstall = os.path.join(main_repo_root, 'Tools', 'Scripts', 'libraries', 'autoinstalled')
+            # Only use if it exists and is writable
+            if os.path.isdir(main_autoinstall) and os.access(main_autoinstall, os.W_OK):
+                return main_autoinstall
+    except (subprocess.CalledProcessError, OSError, UnicodeDecodeError):
+        pass
+    return None
+
+
 libraries = os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), 'libraries')
+
 webkitcorepy_path = os.path.join(libraries, 'webkitcorepy')
 if webkitcorepy_path not in sys.path:
     sys.path.insert(0, webkitcorepy_path)
@@ -53,31 +83,36 @@ if sys.platform == 'darwin':
         libraries = os.path.expanduser('~/Library/webkitpy')
 
 from webkitcorepy import AutoInstall, Package, Version
-AutoInstall.set_directory(os.path.join(libraries, 'autoinstalled', 'python-{}-{}'.format(sys.version_info[0], platform.machine())))
+
+# If in a git worktree, share autoinstalled packages with main repo
+autoinstall_base = _get_main_repo_autoinstall_path() or os.path.join(libraries, 'autoinstalled')
+AutoInstall.set_directory(os.path.join(autoinstall_base, 'python-{}-{}'.format(sys.version_info[0], platform.machine())))
 
 AutoInstall.register(Package('pylint', Version(2, 13, 9)))
 AutoInstall.register(
-    Package("pytest", Version(7, 2, 0),
-            implicit_deps=["attr", "pluggy", "iniconfig"]
+    Package("pytest", Version(8, 4, 2),
+            implicit_deps=["pluggy", "iniconfig"]
             + (["exceptiongroup"] if sys.version_info < (3, 11) else []),
-            aliases=["_pytest"]  # Technically also a stub "py" module, but this conflicts with the py project.
+            aliases=["_pytest"],
+            wheel=True,
             )
 )
-AutoInstall.register(Package('pytest_asyncio', Version(0, 18, 3), pypi_name='pytest-asyncio', implicit_deps=['pytest'], wheel=True))
-AutoInstall.register(Package('pytest_timeout', Version(2, 1, 0), pypi_name='pytest-timeout', implicit_deps=['pytest'], wheel=True))
+AutoInstall.register(Package('pytest_asyncio', Version(0, 19, 0), pypi_name='pytest-asyncio', implicit_deps=['pytest'], wheel=True))
+AutoInstall.register(Package('pytest_timeout', Version(2, 4, 0), pypi_name='pytest-timeout', implicit_deps=['pytest'], wheel=True))
 AutoInstall.register(Package('websockets', Version(12, 0), wheel=True))
 
 if sys.version_info < (3, 11):
     AutoInstall.register(Package('exceptiongroup', Version(1, 1, 0), wheel=True))
+    AutoInstall.register(Package('backports.asyncio_runner', Version(1, 2, 0), pypi_name="backports-asyncio-runner", wheel=True))
 
 AutoInstall.register(Package('importlib_metadata', Version(4, 8, 1)))
-AutoInstall.register(Package('typing_extensions', Version(4, 12, 2), wheel=True))
+AutoInstall.register(Package('typing_extensions', Version(4, 13, 2), wheel=True))
 AutoInstall.register(Package('atomicwrites', Version(1, 1, 5)))
 AutoInstall.register(Package('attrs', Version(21, 3, 0), aliases=['attr']))
 AutoInstall.register(Package('bs4', Version(4, 12, 0), pypi_name='beautifulsoup4'))
 AutoInstall.register(Package('configparser', Version(4, 0, 2), implicit_deps=['pyparsing'], aliases=['backports.configparser']))
 AutoInstall.register(Package('contextlib2', Version(0, 6, 0)))
-AutoInstall.register(Package('coverage', Version(7, 6, 1), wheel=True))
+AutoInstall.register(Package('coverage', Version(7, 10, 7), wheel=True))
 AutoInstall.register(Package('dnslib', Version(0, 9, 26)))
 AutoInstall.register(Package('funcsigs', Version(1, 0, 2)))
 AutoInstall.register(Package('html5lib', Version(1, 1)))
@@ -87,16 +122,25 @@ AutoInstall.register(Package('more_itertools', Version(4, 2, 0), pypi_name='more
 AutoInstall.register(Package('mozprocess', Version(1, 3, 0)))
 AutoInstall.register(Package('mozlog', Version(7, 1, 0), wheel=True))
 AutoInstall.register(Package('mozterm', Version(1, 0, 0)))
-AutoInstall.register(Package('pluggy', Version(0, 13, 1)))
+AutoInstall.register(Package('pluggy', Version(1, 5, 0)))
 AutoInstall.register(Package('pycodestyle', Version(2, 14, 0)))
-AutoInstall.register(Package('pyfakefs', Version(5, 7, 3)))
+AutoInstall.register(Package('pyfakefs', Version(5, 10, 2)))
 AutoInstall.register(Package('soupsieve', Version(2, 2, 1)))
+
+# aioquic (WPT WebTransport-over-HTTP/3 server) and its deps, pinned to what pip resolves for aioquic==1.2.0.
+# service-identity stays <=24.2.0: newer needs cryptography>=47, but cryptography is capped <45 (see webkitcorepy).
+AutoInstall.register(Package('pylsqpack', Version(0, 3, 22), wheel=True))
+AutoInstall.register(Package('pyasn1', Version(0, 6, 4)))
+AutoInstall.register(Package('pyasn1_modules', Version(0, 4, 2), pypi_name='pyasn1-modules', implicit_deps=['pyasn1']))
+AutoInstall.register(Package('service_identity', Version(24, 2, 0), pypi_name='service-identity', implicit_deps=['attr', 'cryptography', 'OpenSSL', 'pyasn1', 'pyasn1_modules']))
+AutoInstall.register(Package('aioquic', Version(1, 2, 0), wheel=True, implicit_deps=['cryptography', 'certifi', 'pylsqpack', 'service_identity']))
 
 if sys.platform == 'linux':
     # Keep websocket toplevel for WebDriverTests' imported selenium
     AutoInstall.register(Package('websocket', Version(1, 8, 0), pypi_name='websocket-client'))
     AutoInstall.register(Package('selenium', Version(4, 24, 0), wheel=True, implicit_deps=['websocket']))
     AutoInstall.register(Package('filetype', Version(1, 2, 0), wheel=True))
+    AutoInstall.register(Package('inotify_simple', Version(2, 0, 1), wheel=True))
 else:
     AutoInstall.register(Package('selenium', Version(4, 12, 0), wheel=True))
 
@@ -104,10 +148,14 @@ AutoInstall.register(Package('toml', Version(0, 10, 1), implicit_deps=['pyparsin
 AutoInstall.register(Package('wcwidth', Version(0, 2, 5)))
 AutoInstall.register(Package('webencodings', Version(0, 5, 1)))
 AutoInstall.register(Package('zipp', Version(1, 2, 0)))
-AutoInstall.register(Package('zope.interface', Version(7, 0, 1), aliases=['zope'], pypi_name='zope-interface', wheel=True))
+if sys.version_info >= (3, 10):
+    AutoInstall.register(Package('zope.interface', Version(8, 1, 1), aliases=['zope'], pypi_name='zope-interface', wheel=True))
+else:
+    AutoInstall.register(Package('zope.interface', Version(7, 0, 1), aliases=['zope'], pypi_name='zope-interface', wheel=True))
 AutoInstall.register(Package('webkitscmpy', Version(4, 0, 0)), local=True)
 AutoInstall.register(Package('webkitbugspy', Version(0, 3, 1)), local=True)
-AutoInstall.register(Package('yaml', Version(6, 0, 2), pypi_name='PyYAML'))
+AutoInstall.register(Package('webkitexpectationspy', Version(1, 0, 0)), local=True)
+AutoInstall.register(Package('yaml', Version(6, 0, 3), pypi_name='PyYAML', wheel=(sys.version_info < (3, 15))))
 
 import webkitscmpy
 

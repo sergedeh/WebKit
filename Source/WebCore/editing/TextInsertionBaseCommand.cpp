@@ -50,7 +50,7 @@ void TextInsertionBaseCommand::applyTextInsertionCommand(LocalFrame* frame, Text
     command.apply();
     if (changeSelection) {
         command.setEndingSelection(endingSelection);
-        frame->selection().setSelection(endingSelection);
+        protect(frame->selection())->setSelection(endingSelection);
     }
 }
 
@@ -64,7 +64,7 @@ String dispatchBeforeTextInsertedEvent(const String& text, const VisibleSelectio
         if (startNode->rootEditableElement()) {
             // Send BeforeTextInsertedEvent. The event handler will update text if necessary.
             Ref event = BeforeTextInsertedEvent::create(text);
-            RefPtr { startNode->rootEditableElement() }->dispatchEvent(event);
+            protect(startNode->rootEditableElement())->dispatchEvent(event);
             newText = event->text();
         }
     }

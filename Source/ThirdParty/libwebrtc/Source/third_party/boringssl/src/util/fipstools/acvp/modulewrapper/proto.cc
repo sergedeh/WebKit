@@ -31,7 +31,8 @@
 #include "modulewrapper.h"
 
 
-namespace bssl::acvp {
+BSSL_NAMESPACE_BEGIN
+namespace acvp {
 
 #if defined(OPENSSL_TRUSTY)
 #include <trusty_log.h>
@@ -194,7 +195,7 @@ bool WriteReplyToFd(int fd, const std::vector<Span<const uint8_t>> &spans) {
   }
 
   uint32_t nums[1 + kMaxArgs];
-  iovec iovs[kMaxArgs + 1];
+  struct iovec iovs[kMaxArgs + 1];
   nums[0] = spans.size();
   iovs[0].iov_base = nums;
   iovs[0].iov_len = sizeof(uint32_t) * (1 + spans.size());
@@ -225,7 +226,7 @@ bool WriteReplyToFd(int fd, const std::vector<Span<const uint8_t>> &spans) {
 
     size_t written = r;
     for (size_t i = iov_done; i < num_iov && written > 0; i++) {
-      iovec &iov = iovs[i];
+      struct iovec &iov = iovs[i];
 
       size_t done = written;
       if (done > iov.iov_len) {
@@ -250,29 +251,28 @@ bool WriteReplyToFd(int fd, const std::vector<Span<const uint8_t>> &spans) {
 int RunModuleWrapper() {
   // modulewrapper buffers responses to the greatest degree allowed in order to
   // fully exercise the async handling in acvptool.
-  std::unique_ptr<bssl::acvp::RequestBuffer> buffer =
-      bssl::acvp::RequestBuffer::New();
-  const bssl::acvp::ReplyCallback write_reply = std::bind(
-      bssl::acvp::WriteReplyToFd, STDOUT_FILENO, std::placeholders::_1);
-  const bssl::acvp::ReplyCallback buffer_reply =
-      std::bind(bssl::acvp::WriteReplyToBuffer, std::placeholders::_1);
+  std::unique_ptr<acvp::RequestBuffer> buffer = acvp::RequestBuffer::New();
+  const acvp::ReplyCallback write_reply =
+      std::bind(acvp::WriteReplyToFd, STDOUT_FILENO, std::placeholders::_1);
+  const acvp::ReplyCallback buffer_reply =
+      std::bind(acvp::WriteReplyToBuffer, std::placeholders::_1);
 
   for (;;) {
-    const bssl::Span<const bssl::Span<const uint8_t>> args =
+    const Span<const Span<const uint8_t>> args =
         ParseArgsFromFd(STDIN_FILENO, buffer.get());
     if (args.empty()) {
       return 1;
     }
 
-    auto name = bssl::BytesAsStringView(args[0]);
+    auto name = BytesAsStringView(args[0]);
     if (name == "flush") {
-      if (!bssl::acvp::FlushBuffer(STDOUT_FILENO)) {
+      if (!acvp::FlushBuffer(STDOUT_FILENO)) {
         abort();
       }
       continue;
     }
 
-    const bssl::acvp::Handler handler = bssl::acvp::FindHandler(args);
+    const acvp::Handler handler = acvp::FindHandler(args);
     if (!handler) {
       return 2;
     }
@@ -285,4 +285,5 @@ int RunModuleWrapper() {
   }
 }
 
-}  // namespace bssl::acvp
+}  // namespace acvp
+BSSL_NAMESPACE_END

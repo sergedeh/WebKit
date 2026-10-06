@@ -52,7 +52,7 @@ public:
 
     const IPIntCallee& callee() const { return m_callee; }
     InliningNode* caller() const { return m_caller; }
-    const Vector<CallSite>& callSites() const { return m_callSites; }
+    const Vector<CallSite>& callSites() const LIFETIME_BOUND { return m_callSites; }
     bool isInlined() const { return m_isInlined; }
     bool isUnused() const { return m_isUnused; }
     uint8_t caseIndex() const { return m_caseIndex; }
@@ -60,9 +60,9 @@ public:
     unsigned callProfileIndex() const { return m_callProfileIndex; }
     double relativeCallCount() const { return m_relativeCallCount; }
     size_t wasmSize() const { return m_wasmSize; }
-    double score() const;
+    double NODELETE score() const;
 
-    InliningNode* callTarget(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex);
+    InliningNode* NODELETE callTarget(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex);
 
 private:
     SUPPRESS_UNCOUNTED_MEMBER const IPIntCallee& m_callee;
@@ -89,7 +89,7 @@ public:
 
     void expand();
 
-    InliningNode* root() { return &m_root; }
+    InliningNode* root() LIFETIME_BOUND { return &m_root; }
 
 private:
     bool canInline(InliningNode*, size_t initialWasmSize, size_t inlinedWasmSize);

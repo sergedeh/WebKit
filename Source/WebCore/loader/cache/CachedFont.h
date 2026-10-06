@@ -57,14 +57,14 @@ public:
 
     virtual bool ensureCustomFontData();
     static RefPtr<FontCustomPlatformData> createCustomFontData(SharedBuffer&, const String& itemInCollection, bool& wrapping, DownloadableBinaryFontTrustedTypes);
-    static FontPlatformData platformDataFromCustomData(FontCustomPlatformData&, const FontDescription&, bool bold, bool italic, const FontCreationContext&);
+    static FontPlatformData platformDataFromCustomData(FontCustomPlatformData&, const FontDescription&, const FontCreationContext&);
 
-    virtual RefPtr<Font> createFont(const FontDescription&, bool syntheticBold, bool syntheticItalic, const FontCreationContext&);
+    virtual RefPtr<Font> createFont(const FontDescription&, const FontCreationContext&);
 
     bool didRefuseToParseCustomFontWithSafeFontParser() const { return m_didRefuseToParseCustomFont; }
 
 protected:
-    FontPlatformData platformDataFromCustomData(const FontDescription&, bool bold, bool italic, const FontCreationContext&);
+    FontPlatformData platformDataFromCustomData(const FontDescription&, const FontCreationContext&);
 
     bool ensureCustomFontData(SharedBuffer* data);
 
@@ -76,7 +76,7 @@ private:
     String calculateItemInCollection() const;
 
     void checkNotify(const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess = LoadWillContinueInAnotherProcess::No) override;
-    bool mayTryReplaceEncodedData() const override;
+    bool NODELETE mayTryReplaceEncodedData() const override;
 
     void load(CachedResourceLoader&) override;
     NO_RETURN_DUE_TO_ASSERT void setBodyDataFrom(const CachedResource&) final { ASSERT_NOT_REACHED(); }

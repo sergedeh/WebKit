@@ -8,8 +8,14 @@
 #ifndef LIBANGLE_CLKERNEL_H_
 #define LIBANGLE_CLKERNEL_H_
 
+#include <angle_cl.h>
+
 #include "libANGLE/CLObject.h"
+#include "libANGLE/cl_types.h"
 #include "libANGLE/renderer/CLKernelImpl.h"
+
+#include <cstddef>
+#include <string>
 
 namespace cl
 {
@@ -31,6 +37,14 @@ class Kernel final : public _cl_kernel, public Object
                                    size_t valueSize,
                                    void *value,
                                    size_t *valueSizeRet) const;
+
+    angle::Result getSubWorkGroupInfo(cl_device_id in_device,
+                                      KernelSubGroupInfo param_namePacked,
+                                      size_t input_value_size,
+                                      const void *input_value,
+                                      size_t param_value_size,
+                                      void *param_value,
+                                      size_t *param_value_size_ret) const;
 
     angle::Result getArgInfo(cl_uint argIndex,
                              KernelArgInfo name,

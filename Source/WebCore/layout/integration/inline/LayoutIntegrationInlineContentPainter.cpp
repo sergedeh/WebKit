@@ -31,17 +31,18 @@
 #include "InlineDisplayBoxInlines.h"
 #include "OutlinePainter.h"
 #include "PaintInfo.h"
+#include "PaintInfoInlines.h"
 #include "RenderBox.h"
 #include "RenderInline.h"
 #include "RenderLineBreak.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "TextBoxPainter.h"
 #include <wtf/Assertions.h>
 
 namespace WebCore {
 namespace LayoutIntegration {
 
-InlineContentPainter::InlineContentPainter(PaintInfo& paintInfo, const LayoutPoint& paintOffset, const RenderInline* inlineBoxWithLayer, const InlineContent& inlineContent, const RenderBlockFlow& root)
+InlineContentPainter::InlineContentPainter(PaintInfo& paintInfo, const LayoutPoint& paintOffset, const RenderBoxModelObject* inlineBoxWithLayer, const InlineContent& inlineContent, const RenderBlockFlow& root)
     : m_paintInfo(paintInfo)
     , m_paintOffset(paintOffset)
     , m_inlineBoxWithLayer(inlineBoxWithLayer)
@@ -79,8 +80,8 @@ void InlineContentPainter::paintDisplayBox(const InlineDisplay::Box& box)
 
     if (box.isLineBreak()) {
         if (m_paintInfo.phase == PaintPhase::Accessibility) {
-            auto* renderLineBreak = dynamicDowncast<RenderLineBreak>(box.layoutBox().rendererForIntegration());
-            m_paintInfo.accessibilityRegionContext()->takeBounds(renderLineBreak, m_paintOffset);
+            CheckedPtr renderLineBreak = dynamicDowncast<RenderLineBreak>(box.layoutBox().rendererForIntegration());
+            m_paintInfo.accessibilityRegionContext()->takeBounds(renderLineBreak.get(), m_paintOffset);
         }
         return;
     }
@@ -124,7 +125,7 @@ void InlineContentPainter::paintDisplayBox(const InlineDisplay::Box& box)
         return;
     }
 
-    if (auto* renderer = dynamicDowncast<RenderBox>(box.layoutBox().rendererForIntegration()); renderer) {
+    if (CheckedPtr renderer = dynamicDowncast<RenderBox>(box.layoutBox().rendererForIntegration()); renderer) {
         if (m_paintInfo.shouldPaintWithinRoot(*renderer)) {
             // FIXME: Painting should not require a non-const renderer.
             CheckedRef paintRenderer = const_cast<RenderBox&>(*renderer);
@@ -193,7 +194,7 @@ void InlineContentPainter::paint()
     paintLineEndingEllipsisIfApplicable({ });
 
     OutlinePainter outlinePainter { m_paintInfo };
-    for (auto& renderInline : m_outlineObjects)
+    for (CheckedRef renderInline : m_outlineObjects)
         outlinePainter.paintOutline(renderInline, m_paintOffset);
 }
 
@@ -209,7 +210,7 @@ const RenderBlock& InlineContentPainter::root() const
     return m_root;
 }
 
-LayerPaintScope::LayerPaintScope(const RenderInline* inlineBoxWithLayer)
+LayerPaintScope::LayerPaintScope(const RenderBoxModelObject* inlineBoxWithLayer)
     : m_inlineBoxWithLayer(inlineBoxWithLayer ? inlineBoxWithLayer->layoutBox() : nullptr)
 {
 }
@@ -245,7 +246,7 @@ bool LayerPaintScope::testIsIncludesAndUpdate(const InlineDisplay::Box& box)
     if (box.isText() || box.isLineBreak())
         return true;
 
-    auto* renderer = dynamicDowncast<RenderLayerModelObject>(box.layoutBox().rendererForIntegration());
+    CheckedPtr renderer = dynamicDowncast<RenderLayerModelObject>(box.layoutBox().rendererForIntegration());
     bool hasSelfPaintingLayer = renderer && renderer->hasSelfPaintingLayer();
 
     if (hasSelfPaintingLayer && box.isNonRootInlineBox())

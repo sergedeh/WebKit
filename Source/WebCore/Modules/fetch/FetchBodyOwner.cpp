@@ -36,9 +36,12 @@
 #include "HTTPParsers.h"
 #include "HTTPStatusCodes.h"
 #include "JSBlob.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertStrings.h"
 #include "JSDOMFormData.h"
 #include "JSDOMPromise.h"
 #include "JSDOMPromiseDeferred.h"
+#include "Logging.h"
 #include "ResourceError.h"
 #include "ResourceResponse.h"
 #include "Settings.h"
@@ -165,12 +168,26 @@ void FetchBodyOwner::bytes(Ref<DeferredPromise>&& promise)
     m_body->bytes(*this, WTF::move(promise));
 }
 
-void FetchBodyOwner::cloneBody(JSDOMGlobalObject& globalObject, FetchBodyOwner& owner)
+std::optional<Exception> FetchBodyOwner::cloneBody(JSDOMGlobalObject& globalObject, FetchBodyOwner& owner)
 {
     m_loadingError = owner.m_loadingError;
     if (owner.isBodyNull())
-        return;
+        return { };
+
+    if (owner.m_body->isPendingStreamFormData()) {
+        // We cannot clone a PendingStream directly, we create a ReadableStream from it to ensure cloning works as expected.
+        auto streamOrException = owner.readableStream(globalObject);
+        if (streamOrException.hasException()) {
+            RELEASE_LOG_ERROR(ServiceWorker, "Unable to clone pending stream body");
+            return streamOrException.releaseException();
+        }
+        ASSERT(owner.m_body->readableStream());
+        if (owner.m_body->readableStream())
+            owner.m_body->setAsReadableStream();
+    }
+
     m_body = owner.m_body->clone(globalObject);
+    return { };
 }
 
 ExceptionOr<void> FetchBodyOwner::extractBody(FetchBody::Init&& value)
@@ -214,7 +231,7 @@ void FetchBodyOwner::formData(Ref<DeferredPromise>&& promise)
     if (isBodyNullOrOpaque()) {
         if (isBodyNull()) {
             // If the content-type is 'application/x-www-form-urlencoded', a body is not required and we should package an empty byte sequence as per the specification.
-            if (auto formData = FetchBodyConsumer::packageFormData(promise->protectedScriptExecutionContext().get(), contentType(), { })) {
+            if (auto formData = FetchBodyConsumer::packageFormData(protect(promise->scriptExecutionContext()).get(), contentType(), { })) {
                 promise->resolve<IDLInterface<DOMFormData>>(*formData);
                 return;
             }
@@ -282,7 +299,7 @@ void FetchBodyOwner::loadBlob(const Blob& blob, FetchBodyConsumer* consumer)
     Ref loader = FetchLoader::create(blobLoader.get(), consumer);
     blobLoader->loader = loader.copyRef();
 
-    loader->start(*protectedScriptExecutionContext(), blob);
+    loader->start(*protect(scriptExecutionContext()), blob);
     if (!loader->isStarted()) {
         m_body->loadingFailed(Exception { ExceptionCode::TypeError, "Blob loading failed"_s });
         m_blobLoader = nullptr;
@@ -341,7 +358,7 @@ FetchBodyOwner::BlobLoader::BlobLoader(FetchBodyOwner& owner)
 
 FetchBodyOwner::BlobLoader::~BlobLoader() = default;
 
-void FetchBodyOwner::BlobLoader::didReceiveResponse(const ResourceResponse& response)
+void FetchBodyOwner::BlobLoader::didReceiveResponse(std::optional<ResourceLoaderIdentifier>, const ResourceResponse& response)
 {
     if (response.httpStatusCode() != httpStatus200OK)
         didFail({ });
@@ -386,45 +403,32 @@ ExceptionOr<void> FetchBodyOwner::createReadableStream(JSC::JSGlobalObject& stat
 {
     ASSERT(!m_readableStreamSource);
 
-    auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&state);
+    auto& globalObject = downcast<JSDOMGlobalObject>(state);
     if (isDisturbed()) {
         auto streamOrException = ReadableStream::create(globalObject, { }, { });
         if (streamOrException.hasException()) [[unlikely]]
             return streamOrException.releaseException();
         m_body->setReadableStream(streamOrException.releaseReturnValue());
-        m_body->protectedReadableStream()->lock();
+        protect(m_body->readableStream())->lock();
         return { };
     }
 
     RefPtr context = scriptExecutionContext();
-    if (context && context->settingsValues().readableByteStreamFetchSourceEnabled) {
-        Ref readableStreamSource = FetchBodySource::createByteSource(*this);
-        Ref readableStream = ReadableStream::createReadableByteStream(globalObject, [readableStreamSource](auto& globalObject, auto& controller) {
-            return readableStreamSource->pull(globalObject, controller);
-        }, [readableStreamSource](auto& globalObject, auto& controller, auto&& value) {
-            return readableStreamSource->cancel(globalObject, controller, WTF::move(value));
-        }, {
-            .highwaterMark = 1,
-            .startSynchronously = ReadableStream::StartSynchronously::Yes,
-            .isSourceReachableFromOpaqueRoot = ReadableStream::IsSourceReachableFromOpaqueRoot::Yes
-        });
+    Ref readableStreamSource = FetchBodySource::create(*this);
+    Ref readableStream = ReadableStream::createReadableByteStream(globalObject, [readableStreamSource](auto& globalObject, auto& controller) {
+        return readableStreamSource->pull(globalObject, controller);
+    }, [readableStreamSource](auto& globalObject, auto& controller, auto&& value) {
+        return readableStreamSource->cancel(globalObject, controller, WTF::move(value));
+    }, {
+        .highwaterMark = 1,
+        .startSynchronously = ReadableStream::StartSynchronously::Yes,
+        .isSourceReachableFromOpaqueRoot = ReadableStream::IsSourceReachableFromOpaqueRoot::Yes
+    });
 
-        m_readableStreamSource = readableStreamSource.ptr();
-        readableStreamSource->setByteController(*readableStream->controller());
-        m_body->setReadableStream(WTF::move(readableStream));
+    m_readableStreamSource = readableStreamSource.ptr();
+    readableStreamSource->setByteController(*readableStream->controller());
+    m_body->setReadableStream(WTF::move(readableStream));
 
-        return { };
-    }
-
-    auto [fetchBodySource, readableStreamSource] = FetchBodySource::createNonByteSource(*this);
-    m_readableStreamSource = WTF::move(fetchBodySource);
-
-    auto streamOrException = ReadableStream::create(*JSC::jsCast<JSDOMGlobalObject*>(&state), readableStreamSource);
-    if (streamOrException.hasException()) [[unlikely]] {
-        m_readableStreamSource = nullptr;
-        return streamOrException.releaseException();
-    }
-    m_body->setReadableStream(streamOrException.releaseReturnValue());
     return { };
 }
 
@@ -495,6 +499,16 @@ void FetchBodyOwner::setLoadingError(ResourceError&& error)
         return;
 
     m_loadingError = WTF::move(error);
+}
+
+bool FetchBodyOwner::hasClonedReadableStream() const
+{
+    if (isBodyNull())
+        return false;
+
+    RefPtr readableStreamSource = m_readableStreamSource;
+    RefPtr readableStream = body().readableStream();
+    return readableStreamSource && readableStream && readableStream->controller() != readableStreamSource->controller();
 }
 
 } // namespace WebCore

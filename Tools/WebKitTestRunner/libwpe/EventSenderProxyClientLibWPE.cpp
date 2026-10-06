@@ -66,7 +66,7 @@ EventSenderProxyClientLibWPE::~EventSenderProxyClientLibWPE() = default;
 
 struct wpe_view_backend* viewBackend(TestController& controller)
 {
-    return static_cast<PlatformWebViewClientLibWPE*>(controller.mainWebView()->platformWindow())->backend()->backend();
+    return static_cast<PlatformWebViewClientLibWPE*>(controller.targetView()->platformWindow())->backend()->backend();
 }
 
 static uint32_t secToMsTimestamp(double currentEventTime)
@@ -161,6 +161,18 @@ void EventSenderProxyClientLibWPE::mouseScrollBy(int horizontal, int vertical, d
     }
     if (vertical) {
         struct wpe_input_axis_event event = { wpe_input_axis_event_type_motion, secToMsTimestamp(time), static_cast<int>(x), static_cast<int>(y), VerticalScroll, vertical, 0 };
+        wpe_view_backend_dispatch_axis_event(viewBackend(m_testController), &event);
+    }
+}
+
+void EventSenderProxyClientLibWPE::sendWheelEvent(double deltaX, double deltaY, double time, double x, double y, bool)
+{
+    if (deltaX) {
+        struct wpe_input_axis_event event = { wpe_input_axis_event_type_motion, secToMsTimestamp(time), static_cast<int>(x), static_cast<int>(y), HorizontalScroll, static_cast<int>(deltaX), 0 };
+        wpe_view_backend_dispatch_axis_event(viewBackend(m_testController), &event);
+    }
+    if (deltaY) {
+        struct wpe_input_axis_event event = { wpe_input_axis_event_type_motion, secToMsTimestamp(time), static_cast<int>(x), static_cast<int>(y), VerticalScroll, static_cast<int>(deltaY), 0 };
         wpe_view_backend_dispatch_axis_event(viewBackend(m_testController), &event);
     }
 }

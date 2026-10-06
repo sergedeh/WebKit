@@ -52,19 +52,19 @@ RemoteAdapter::RemoteAdapter(GPUConnectionToWebProcess& gpuConnectionToWebProces
     , m_gpu(gpu)
     , m_identifier(identifier)
 {
-    Ref { m_streamConnection }->startReceivingMessages(*this, Messages::RemoteAdapter::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteAdapter::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteAdapter::~RemoteAdapter() = default;
 
 void RemoteAdapter::destruct()
 {
-    protectedObjectHeap()->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
 void RemoteAdapter::stopListeningForIPC()
 {
-    Ref { m_streamConnection }->stopReceivingMessages(Messages::RemoteAdapter::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteAdapter::messageReceiverName(), m_identifier.toUInt64());
 }
 
 void RemoteAdapter::requestDevice(const WebGPU::DeviceDescriptor& descriptor, WebGPUIdentifier identifier, WebGPUIdentifier queueIdentifier, CompletionHandler<void(WebGPU::SupportedFeatures&&, WebGPU::SupportedLimits&&)>&& callback)
@@ -76,7 +76,7 @@ void RemoteAdapter::requestDevice(const WebGPU::DeviceDescriptor& descriptor, We
         return;
     }
 
-    Ref { m_backing }->requestDevice(*convertedDescriptor, [callback = WTF::move(callback), objectHeap = protectedObjectHeap(), streamConnection = m_streamConnection.copyRef(), identifier, queueIdentifier, gpuConnectionToWebProcess = m_gpuConnectionToWebProcess.get(), gpu = protectedGPU()] (RefPtr<WebCore::WebGPU::Device>&& devicePtr) mutable {
+    protect(m_backing)->requestDevice(*convertedDescriptor, [callback = WTF::move(callback), objectHeap = protect(m_objectHeap), streamConnection = protect(m_streamConnection), identifier, queueIdentifier, gpuConnectionToWebProcess = m_gpuConnectionToWebProcess.get(), gpu = protect(m_gpu)] (RefPtr<WebCore::WebGPU::Device>&& devicePtr) mutable {
         if (!devicePtr.get() || !gpuConnectionToWebProcess) {
             callback({ }, { });
             return;
@@ -111,7 +111,6 @@ void RemoteAdapter::requestDevice(const WebGPU::DeviceDescriptor& descriptor, We
             limits->maxBufferSize(),
             limits->maxVertexAttributes(),
             limits->maxVertexBufferArrayStride(),
-            limits->maxInterStageShaderComponents(),
             limits->maxInterStageShaderVariables(),
             limits->maxColorAttachments(),
             limits->maxColorAttachmentBytesPerSample(),

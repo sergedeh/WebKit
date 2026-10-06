@@ -41,10 +41,10 @@ class SelectorFilter {
 public:
     void pushParent(Element* parent);
     void pushParentInitializingIfNeeded(Element& parent);
-    void popParent();
-    void popParentsUntil(Element* parent);
+    void NODELETE popParent();
+    void NODELETE popParentsUntil(Element* parent);
     bool parentStackIsEmpty() const { return m_parentStack.isEmpty(); }
-    bool parentStackIsConsistent(const ContainerNode* parentNode) const;
+    bool NODELETE parentStackIsConsistent(const ContainerNode* parentNode) const;
     void parentStackReserveInitialCapacity(size_t initialCapacity) { m_parentStack.reserveInitialCapacity(initialCapacity); }
 
     using Hashes = std::array<unsigned, 4>;
@@ -76,7 +76,7 @@ private:
         Element* element;
         Vector<unsigned, 4> identifierHashes;
     };
-    Vector<ParentStackFrame> m_parentStack;
+    Vector<ParentStackFrame, 20> m_parentStack;
 
     // With 100 unique strings in the filter, 2^12 slot table has false positive rate of ~0.2%.
     static const unsigned bloomFilterKeyBits = 12;

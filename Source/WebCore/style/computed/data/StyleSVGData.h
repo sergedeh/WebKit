@@ -25,7 +25,6 @@
 #pragma once
 
 #include <WebCore/RenderStyleConstants.h>
-#include <WebCore/StyleSVGGlyphOrientationHorizontal.h>
 #include <WebCore/StyleSVGGlyphOrientationVertical.h>
 #include <WebCore/WindRule.h>
 #include <wtf/DataRef.h>
@@ -76,7 +75,6 @@ public:
         PREFERRED_TYPE(TextAnchor) unsigned textAnchor : 2;
         PREFERRED_TYPE(ColorInterpolation) unsigned colorInterpolation : 2;
         PREFERRED_TYPE(ColorInterpolation) unsigned colorInterpolationFilters : 2;
-        PREFERRED_TYPE(SVGGlyphOrientationHorizontal) unsigned glyphOrientationHorizontal : 2;
         PREFERRED_TYPE(SVGGlyphOrientationVertical) unsigned glyphOrientationVertical : 3;
     };
 
@@ -114,7 +112,7 @@ private:
     enum CreateDefaultType { CreateDefault };
     SVGData(CreateDefaultType); // Used to create the default style.
 
-    void setBitDefaults();
+    void NODELETE setBitDefaults();
 };
 
 } // namespace Style

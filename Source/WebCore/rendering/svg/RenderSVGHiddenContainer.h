@@ -32,7 +32,7 @@ class RenderSVGHiddenContainer : public RenderSVGContainer {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGHiddenContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGHiddenContainer);
 public:
-    RenderSVGHiddenContainer(Type, SVGElement&, RenderStyle&&, OptionSet<SVGModelObjectFlag> = { });
+    RenderSVGHiddenContainer(Type, SVGElement&, Style::ComputedStyle&&, OptionSet<SVGModelObjectFlag> = { });
     virtual ~RenderSVGHiddenContainer();
 
 protected:
@@ -43,8 +43,8 @@ private:
 
     void paint(PaintInfo&, const LayoutPoint&) final { }
 
-    LayoutRect clippedOverflowRect(const RenderLayerModelObject*, VisibleRectContext) const final;
-    std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject*, VisibleRectContext) const final;
+    LayoutRect NODELETE clippedOverflowRect(const RenderLayerModelObject*, const VisibleRectContext&) const final;
+    std::optional<RepaintRects> NODELETE computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject*, const VisibleRectContext&, VisibleRectState) const final;
 
     void boundingRects(Vector<LayoutRect>&, const LayoutPoint&) const final { }
     void absoluteQuads(Vector<FloatQuad>&, bool*) const final { }
@@ -52,7 +52,8 @@ private:
 
 protected:
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&, HitTestAction) final { return false; }
-    void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect&, OptionSet<Style::TransformResolverOption>) const override { }
+    void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect&, OptionSet<Style::TransformResolverOption>) const override { }
+    bool requiresLayer() const override { return false; }
     void updateFromStyle() override { }
     bool needsHasSVGTransformFlags() const override { return false; }
 };

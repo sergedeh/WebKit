@@ -36,6 +36,7 @@ namespace WebCore {
 class Frame;
 class HTMLImageElement;
 enum class BroadcastFocusedElement : bool;
+enum class ContentChange : uint8_t;
 enum class PointerLockRequestResult : uint8_t;
 struct FocusOptions;
 }
@@ -75,17 +76,7 @@ private:
     bool canRunModal() const final;
     void runModal() final;
 
-    void setToolbarsVisible(bool);
-    bool toolbarsVisible() const final;
-
-    void setStatusbarVisible(bool);
-    bool statusbarVisible() const final;
-
-    void setScrollbarsVisible(bool);
-    bool scrollbarsVisible() const final;
-
-    void setMenubarVisible(bool);
-    bool menubarVisible() const final;
+    bool isPopup() const final;
 
     void setResizable(bool) final;
 
@@ -233,7 +224,7 @@ private:
 #if ENABLE(WIRELESS_PLAYBACK_TARGET) && !PLATFORM(IOS_FAMILY)
     void addPlaybackTargetPickerClient(WebCore::PlaybackTargetClientContextIdentifier) final;
     void removePlaybackTargetPickerClient(WebCore::PlaybackTargetClientContextIdentifier) final;
-    void showPlaybackTargetPicker(WebCore::PlaybackTargetClientContextIdentifier, const WebCore::IntPoint&, bool /* hasVideo */) final;
+    void showPlaybackTargetPicker(WebCore::PlaybackTargetClientContextIdentifier, const WebCore::IntPoint& /* positionInMainFrameView */, bool /* hasVideo */) final;
     void playbackTargetPickerClientStateDidChange(WebCore::PlaybackTargetClientContextIdentifier, WebCore::MediaProducerMediaStateFlags) final;
     void setMockMediaPlaybackTargetPickerEnabled(bool) final;
     void setMockMediaPlaybackTargetPickerState(const String&, WebCore::MediaPlaybackTargetMockState) final;
@@ -253,7 +244,9 @@ private:
 
     void registerBlobPathForTesting(const String&, CompletionHandler<void()>&&) final;
 
-    void requestCookieConsent(CompletionHandler<void(WebCore::CookieConsentDecisionResult)>&&) final;
+#if ENABLE(CONTENT_CHANGE_OBSERVER)
+    void didFinishContentChangeObserving(WebCore::LocalFrame&, WebCore::ContentChange) final;
+#endif
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     bool m_mockVideoPresentationModeEnabled { false };
@@ -261,3 +254,7 @@ private:
 
     __weak WebView *m_webView;
 };
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebChromeClient)
+    static bool isType(const WebCore::ChromeClient& client) { return !client.isEmptyChromeClient(); }
+SPECIALIZE_TYPE_TRAITS_END()

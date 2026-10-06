@@ -28,6 +28,8 @@
 
 #include <JavaScriptCore/Debugger.h>
 #include <JavaScriptCore/JSRunLoopTimer.h>
+#include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/VM.h>
 #include <WebCore/FetchOptions.h>
 #include <WebCore/WorkerThreadType.h>
 #include <wtf/CheckedPtr.h>
@@ -89,8 +91,8 @@ public:
 
     // Called on Worker thread when JS exits with termination exception caused by forbidExecution() request,
     // or by Worker thread termination code to prevent future entry into JS.
-    WEBCORE_EXPORT void forbidExecution();
-    bool isExecutionForbidden() const;
+    WEBCORE_EXPORT void NODELETE forbidExecution();
+    bool NODELETE isExecutionForbidden() const;
 
     JSC::VM& vm() { return *m_vm; }
 
@@ -100,8 +102,10 @@ public:
     void disableWebAssembly(const String& errorMessage);
     void setTrustedTypesEnforcement(JSC::TrustedTypesEnforcement);
 
+    enum class ParseResult : bool { Failed, Succeeded };
+
     void evaluate(const ScriptSourceCode&, String* returnedExceptionMessage = nullptr);
-    void evaluate(const ScriptSourceCode&, NakedPtr<JSC::Exception>& returnedException, String* returnedExceptionMessage = nullptr);
+    ParseResult evaluate(const ScriptSourceCode&, NakedPtr<JSC::Exception>& returnedException, String* returnedExceptionMessage = nullptr);
 
     JSC::JSValue evaluateModule(const URL&, JSC::AbstractModuleRecord&, JSC::JSValue awaitedValue, JSC::JSValue resumeMode);
 
@@ -112,7 +116,6 @@ public:
 
 protected:
     WorkerOrWorkletGlobalScope* globalScope() const { return m_globalScope.get(); }
-    RefPtr<WorkerOrWorkletGlobalScope> protectedGlobalScope() const;
 
     void initScriptIfNeeded()
     {
@@ -128,7 +131,7 @@ private:
     RefPtr<JSC::VM> m_vm;
     WeakPtr<WorkerOrWorkletGlobalScope> m_globalScope;
     JSC::Strong<JSDOMGlobalObject> m_globalScopeWrapper;
-    std::unique_ptr<WorkerConsoleClient> m_consoleClient;
+    const std::unique_ptr<WorkerConsoleClient> m_consoleClient;
     mutable Lock m_scheduledTerminationLock;
     bool m_isTerminatingExecution WTF_GUARDED_BY_LOCK(m_scheduledTerminationLock) { false };
 };

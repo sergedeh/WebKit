@@ -13,6 +13,7 @@
 
 #include "libANGLE/Context.h"
 #include "libANGLE/renderer/ContextImpl.h"
+#include "libANGLE/renderer/metal/BufferMtl.h"
 #include "libANGLE/renderer/metal/DisplayMtl.h"
 #include "libANGLE/renderer/metal/mtl_buffer_pool.h"
 #include "libANGLE/renderer/metal/mtl_command_buffer.h"
@@ -27,23 +28,21 @@ class ProvokingVertexHelper : angle::NonCopyable
   public:
     ProvokingVertexHelper(ContextMtl *context);
     angle::Result preconditionIndexBuffer(ContextMtl *context,
-                                          mtl::BufferRef indexBuffer,
-                                          size_t indexCount,
-                                          size_t indexOffset,
+                                          GLsizei count,
+                                          gl::PrimitiveMode mode,
+                                          size_t firstIndex,
                                           bool primitiveRestartEnabled,
-                                          gl::PrimitiveMode primitiveMode,
-                                          gl::DrawElementsType elementsType,
-                                          size_t &outIndexCount,
-                                          size_t &outIndexOffset,
-                                          gl::PrimitiveMode &outPrimitiveMode,
-                                          mtl::BufferRef &outNewBuffer);
+                                          const std::vector<DrawIndexRange> &drawIndexRanges,
+                                          mtl::BufferSlice indexBuffer,
+                                          gl::DrawElementsType indexBufferType,
+                                          mtl::BufferSlice *outNewIndexBuffer);
 
     angle::Result generateIndexBuffer(ContextMtl *context,
                                       size_t first,
-                                      size_t indexCount,
+                                      GLsizei indexCount,
                                       gl::PrimitiveMode primitiveMode,
                                       gl::DrawElementsType elementsType,
-                                      size_t &outIndexCount,
+                                      uint32_t &outIndexCount,
                                       size_t &outIndexOffset,
                                       gl::PrimitiveMode &outPrimitiveMode,
                                       mtl::BufferRef &outNewBuffer);
@@ -54,19 +53,14 @@ class ProvokingVertexHelper : angle::NonCopyable
     mtl::ComputeCommandEncoder *getComputeCommandEncoder();
 
   private:
-    angle::Result getComputePipleineState(
-        ContextMtl *context,
-        const mtl::ProvokingVertexComputePipelineDesc &desc,
-        angle::ObjCPtr<id<MTLComputePipelineState>> *outComputePipeline);
-
-    angle::Result prepareCommandEncoderForDescriptor(ContextMtl *context,
-                                                     mtl::ComputeCommandEncoder *encoder,
-                                                     mtl::ProvokingVertexComputePipelineDesc desc);
+    angle::Result prepareCommandEncoderForFunction(ContextMtl *context,
+                                                   mtl::ComputeCommandEncoder *encoder,
+                                                   uint32_t indexBufferKey,
+                                                   bool isForGenerateIndices);
 
     mtl::BufferPool mIndexBuffers;
-
-    std::unordered_map<mtl::ProvokingVertexComputePipelineDesc, angle::ObjCPtr<id<MTLFunction>>>
-        mComputeFunctions;
+    std::unordered_map<uint32_t, angle::ObjCPtr<id<MTLFunction>>> mFixIndexBufferFunctions;
+    std::unordered_map<uint32_t, angle::ObjCPtr<id<MTLFunction>>> mGenIndexBufferFunctions;
 };
 }  // namespace rx
 #endif /* LIBANGLE_RENDERER_METAL_PROVOKINGVERTEXHELPER_H */

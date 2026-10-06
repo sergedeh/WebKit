@@ -25,6 +25,7 @@
 
 #import "WebFrameNetworkingContext.h"
 
+#import <WebCore/CookieStorageSession.h>
 #import "NetworkStorageSessionMap.h"
 #import "WebFrameInternal.h"
 #import "WebResourceLoadScheduler.h"
@@ -33,7 +34,6 @@
 #import <WebCore/FrameInlines.h>
 #import <WebCore/FrameLoader.h>
 #import <WebCore/LocalFrameLoaderClient.h>
-#import <WebCore/NetworkStorageSession.h>
 #import <WebCore/Page.h>
 #import <WebCore/ResourceError.h>
 #import <WebCore/Settings.h>
@@ -45,9 +45,8 @@
 #import <WebKitLegacy/WebFrameLoadDelegate.h>
 #endif
 
-using namespace WebCore;
 
-NetworkStorageSession& WebFrameNetworkingContext::ensurePrivateBrowsingSession()
+WebCore::CookieStorageSession& WebFrameNetworkingContext::ensurePrivateBrowsingSession()
 {
     ASSERT(isMainThread());
     NetworkStorageSessionMap::ensureSession(PAL::SessionID::legacyPrivateSessionID(), [[NSBundle mainBundle] bundleIdentifier]);
@@ -77,7 +76,7 @@ RetainPtr<CFDataRef> WebFrameNetworkingContext::sourceApplicationAuditData() con
     if (!frame() || !frame()->page())
         return nullptr;
     
-    RetainPtr webview = kit(frame()->page());
+    RetainPtr webview = kit(protect(frame()->page()));
     if (!webview)
         return nullptr;
 
@@ -89,12 +88,12 @@ String WebFrameNetworkingContext::sourceApplicationIdentifier() const
     return emptyString();
 }
 
-ResourceError WebFrameNetworkingContext::blockedError(const ResourceRequest& request) const
+WebCore::ResourceError WebFrameNetworkingContext::blockedError(const WebCore::ResourceRequest& request) const
 {
     return WebResourceLoadScheduler::blockedErrorFromRequest(request);
 }
 
-NetworkStorageSession* WebFrameNetworkingContext::storageSession() const
+WebCore::CookieStorageSession* WebFrameNetworkingContext::storageSession() const
 {
     ASSERT(isMainThread());
     if (frame() && frame()->page() && frame()->page()->sessionID().isEphemeral()) {

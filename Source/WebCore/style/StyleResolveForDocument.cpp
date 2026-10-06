@@ -31,6 +31,7 @@
 
 #include "CSSFontSelector.h"
 #include "Document.h"
+#include "DocumentInlines.h"
 #include "FontCascade.h"
 #include "HTMLIFrameElement.h"
 #include "LocalFrame.h"
@@ -39,29 +40,31 @@
 #include "NodeRenderStyle.h"
 #include "Page.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+SettersInlines.h"
 #include "RenderView.h"
 #include "Settings.h"
 #include "StyleAdjuster.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleResolver.h"
 
 namespace WebCore {
-
 namespace Style {
 
-RenderStyle resolveForDocument(const Document& document)
+Style::ComputedStyle resolveForDocument(const Document& document)
 {
-    ASSERT(document.hasLivingRenderTree());
+    ASSERT(document.renderTreeState() == Document::RenderTreeState::Built);
 
-    RenderView& renderView = *document.renderView();
+    CheckedRef renderView = *document.renderView();
 
-    auto documentStyle = RenderStyle::create();
+    auto documentStyle = Style::ComputedStyle::create();
 
-    documentStyle.setDisplay(DisplayType::Block);
+    documentStyle.setDisplay(DisplayType::BlockFlow);
     documentStyle.setRTLOrdering(document.visuallyOrdered() ? WebCore::Order::Visual : WebCore::Order::Logical);
-    documentStyle.setZoom(!document.printing() ? renderView.frame().pageZoomFactor() : 1);
-    documentStyle.setPageScaleTransform(renderView.frame().frameScaleFactor());
+    documentStyle.setZoom(!document.printing() ? renderView->frame().pageZoomFactor() : 1);
+    if (auto frameScaleFactor = protect(renderView->frame())->frameScaleFactor(); frameScaleFactor != 1) {
+        documentStyle.setTransform(Style::Transform { Style::TransformFunction { Style::ScaleTransformFunction::create(frameScaleFactor, frameScaleFactor, Style::TransformFunctionType::Scale) } });
+        documentStyle.setTransformOrigin(Style::TransformOrigin { 0_css_px, 0_css_px, 0_css_px });
+    }
 
     // This overrides any -webkit-user-modify inherited from the parent iframe.
     documentStyle.setUserModify(document.inDesignMode() ? UserModify::ReadWrite : UserModify::ReadOnly);
@@ -72,30 +75,28 @@ RenderStyle resolveForDocument(const Document& document)
 
     Adjuster::adjustEventListenerRegionTypesForRootStyle(documentStyle, document);
     
-    auto& pagination = renderView.frameView().pagination();
+    auto& pagination = renderView->frameView().pagination();
     if (pagination.mode != Pagination::Mode::Unpaginated) {
-        documentStyle.setColumnStylesFromPaginationMode(pagination.mode);
+        Adjuster::adjustColumnStylesForPaginationMode(documentStyle, pagination.mode);
         documentStyle.setColumnGap(GapGutter::Fixed { static_cast<float>(pagination.gap) });
-        if (renderView.multiColumnFlow())
-            renderView.updateColumnProgressionFromStyle(documentStyle);
+        if (renderView->multiColumnFlow())
+            renderView->updateColumnProgressionFromStyle(documentStyle);
     }
 
     auto fontDescription = [&]() {
-        auto& settings = renderView.frame().settings();
+        auto& settings = renderView->frame().settings();
 
         FontCascadeDescription fontDescription;
-        fontDescription.setSpecifiedLocale(document.contentLanguage());
-        fontDescription.setOneFamily(standardFamily);
+        fontDescription.setComputedLocale(document.contentLanguage());
+        fontDescription.setOneFamily(WebCore::FontFamily { standardFamily, FontFamilyKind::Generic });
         fontDescription.setShouldAllowUserInstalledFonts(settings.shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No);
-        // FIXME: We need evaluationTimeZoomEnabled to be accessible from FontDescription, not only from RenderStyle. Would it be weird to move it to FontDescription (which is already accessible from RenderStyle)?
-        fontDescription.setEvaluationTimeZoomEnabled(document.settings().evaluationTimeZoomEnabled());
 
         fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
         int size = fontSizeForKeyword(CSSValueMedium, false, document);
-        fontDescription.setSpecifiedSize(size);
+        fontDescription.setComputedSize(size);
         bool useSVGZoomRules = document.isSVGDocument();
-        auto computedFontSize = computedFontSizeFromSpecifiedSize(size, fontDescription.isAbsoluteSize(), useSVGZoomRules, documentStyle.computedStyle(), document);
-        fontDescription.setComputedSize(computedFontSize.size, computedFontSize.usedZoomFactor);
+        auto usedFontSize = usedFontSizeFromComputedSize(size, fontDescription.isAbsoluteSize(), useSVGZoomRules, documentStyle, document);
+        fontDescription.setUsedSize(usedFontSize.size, usedFontSize.zoomFactor);
 
         auto [fontOrientation, glyphOrientation] = documentStyle.fontAndGlyphOrientation();
         fontDescription.setOrientation(fontOrientation);
@@ -106,16 +107,14 @@ RenderStyle resolveForDocument(const Document& document)
     auto fontCascade = FontCascade { WTF::move(fontDescription), documentStyle.fontCascade() };
 
     // We don't just call setFontDescription() because we need to provide the fontSelector to the FontCascade.
-    RefPtr fontSelector = document.protectedFontSelector();
+    RefPtr fontSelector = document.fontSelector();
     fontCascade.update(WTF::move(fontSelector));
     documentStyle.setFontCascade(WTF::move(fontCascade));
-
-    documentStyle.setEvaluationTimeZoomEnabled(document.settings().evaluationTimeZoomEnabled());
 
     documentStyle.setDeviceScaleFactor(document.deviceScaleFactor());
 
     return documentStyle;
 }
 
-}
-}
+} // namespace Style
+} // namespace WebCore

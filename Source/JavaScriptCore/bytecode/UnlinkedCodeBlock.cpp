@@ -49,8 +49,8 @@ UnlinkedCodeBlock::UnlinkedCodeBlock(VM& vm, Structure* structure, CodeType code
     , m_numCalleeLocals(0)
     , m_isConstructor(info.isConstructor())
     , m_numParameters(0)
-    , m_hasCapturedVariables(false)
     , m_isBuiltinFunction(info.isBuiltinFunction())
+    , m_isBuiltinDefaultClassConstructor(info.isBuiltinDefaultClassConstructor())
     , m_superBinding(static_cast<unsigned>(info.superBinding()))
     , m_scriptMode(static_cast<unsigned>(info.scriptMode()))
     , m_isArrowFunctionContext(info.isArrowFunctionContext())
@@ -95,7 +95,7 @@ void UnlinkedCodeBlock::initializeLoopHintExecutionCounter()
 template<typename Visitor>
 void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    UnlinkedCodeBlock* thisObject = jsCast<UnlinkedCodeBlock*>(cell);
+    UnlinkedCodeBlock* thisObject = uncheckedDowncast<UnlinkedCodeBlock>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     Locker locker { thisObject->cellLock() };
@@ -113,7 +113,6 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         extraMemory += thisObject->m_rareData->sizeInBytes(locker);
     if (thisObject->m_expressionInfo)
         extraMemory += thisObject->m_expressionInfo->byteSize();
-    extraMemory += thisObject->m_jumpTargets.byteSize();
     extraMemory += thisObject->m_identifiers.byteSize();
     extraMemory += thisObject->m_constantRegisters.byteSize();
     extraMemory += thisObject->m_constantsSourceCodeRepresentation.byteSize();
@@ -127,7 +126,7 @@ DEFINE_VISIT_CHILDREN(UnlinkedCodeBlock);
 
 size_t UnlinkedCodeBlock::estimatedSize(JSCell* cell, VM& vm)
 {
-    UnlinkedCodeBlock* thisObject = jsCast<UnlinkedCodeBlock*>(cell);
+    UnlinkedCodeBlock* thisObject = uncheckedDowncast<UnlinkedCodeBlock>(cell);
     size_t extraSize = thisObject->metadataSizeInBytes();
     if (thisObject->m_instructions)
         extraSize += thisObject->m_instructions->sizeInBytes();
@@ -150,21 +149,17 @@ size_t UnlinkedCodeBlock::RareData::sizeInBytes(const AbstractLocker&) const
     return size;
 }
 
-LineColumn UnlinkedCodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex)
-{
-    return m_expressionInfo->lineColumnForInstPC(bytecodeIndex.offset());
-}
-
 ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
-    return m_expressionInfo->entryForInstPC(bytecodeIndex.offset());
+    ConcurrentJSLocker locker(m_lock);
+    return m_expressionInfo->entryForInstPC(locker, bytecodeIndex.offset());
 }
 
 #ifndef NDEBUG
-static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& instructionStream, unsigned instructionOffset, LineColumn lineColumn, unsigned divot, unsigned startOffset, unsigned endOffset)
+static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& instructionStream, unsigned instructionOffset, unsigned divot, unsigned startOffset, unsigned endOffset)
 {
     const auto instruction = instructionStream.at(instructionOffset);
-    const char* event = "";
+    ASCIILiteral event = "";
     if (instruction->is<OpDebug>()) {
         switch (instruction->as<OpDebug>().m_debugHookType) {
         case WillExecuteProgram: event = " WillExecuteProgram"; break;
@@ -178,7 +173,7 @@ static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& i
         case DidAwait: event = " DidAwait"; break;
         }
     }
-    dataLogF("  [%zu] pc %u @ line %u col %u divot %u startOffset %u endOffset %u : %s%s\n", index, instructionOffset, lineColumn.line, lineColumn.column, divot, startOffset, endOffset, instruction->name(), event);
+    SAFE_DATALOGF("  [%zu] pc %u @ divot %u startOffset %u endOffset %u : %s%s\n", index, instructionOffset, divot, startOffset, endOffset, instruction->name(), event);
 }
 
 void UnlinkedCodeBlock::dumpExpressionInfo()
@@ -188,7 +183,7 @@ void UnlinkedCodeBlock::dumpExpressionInfo()
 
     ExpressionInfo::Decoder decoder(*m_expressionInfo);
     while (decoder.decode() != IterationStatus::Done) {
-        dumpExpressionInfoDetails(index, instructions(), decoder.instPC(), decoder.lineColumn(), decoder.divot(), decoder.startOffset(), decoder.endOffset());
+        dumpExpressionInfoDetails(index, instructions(), decoder.instPC(), decoder.divot(), decoder.startOffset(), decoder.endOffset());
         index++;
     }
     dataLog("}\n");

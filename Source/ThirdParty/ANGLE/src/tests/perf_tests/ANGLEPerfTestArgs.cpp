@@ -7,10 +7,6 @@
 //   Parse command line arguments for angle_perftests.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "ANGLEPerfTestArgs.h"
 #include <string.h>
 #include <sstream>
@@ -41,9 +37,11 @@ bool gVerboseLogging               = false;
 bool gWarmup                       = false;
 int gTrialTimeSeconds              = kDefaultTrialTimeSeconds;
 int gTestTrials                    = kDefaultTestTrials;
+int gSleepBetweenTrialMs           = 0;
 bool gNoFinish                     = false;
 bool gRetraceMode                  = false;
 bool gMinimizeGPUWork              = false;
+bool gSkipBlitInOffscreen          = false;
 bool gTraceTestValidation          = false;
 const char *gPerfCounters          = nullptr;
 const char *gUseANGLE              = nullptr;
@@ -51,6 +49,7 @@ const char *gUseGL                 = nullptr;
 bool gOffscreen                    = false;
 bool gVsync                        = false;
 int gFpsLimit                      = 0;
+bool gFpsLimitUsesBusyWait         = false;
 bool gRunToKeyFrame                = false;
 int gFixedTestTime                 = 0;
 int gFixedTestTimeWithWarmup       = 0;
@@ -60,6 +59,10 @@ const char *gRequestedExtensions   = nullptr;
 bool gIncludeInactiveResources     = false;
 bool gTrackGPUTime                 = false;
 bool gAddSwapIntoGPUTime           = false;
+bool gTrackFrameWallTime           = false;
+bool gAddSwapIntoFrameWallTime     = false;
+int gTrackVulkanApiWallTime        = 0;
+bool gCapturedFrameCountOnly       = false;
 
 namespace
 {
@@ -81,7 +84,8 @@ bool PerfTestArg(int *argc, char **argv, int argIndex)
                        &gFixedTestTimeWithWarmup) ||
            ParseIntArg("--trial-time", argc, argv, argIndex, &gTrialTimeSeconds) ||
            ParseIntArg("--max-trial-time", argc, argv, argIndex, &gTrialTimeSeconds) ||
-           ParseIntArg("--trials", argc, argv, argIndex, &gTestTrials);
+           ParseIntArg("--trials", argc, argv, argIndex, &gTestTrials) ||
+           ParseIntArg("--sleep-between-trials", argc, argv, argIndex, &gSleepBetweenTrialMs);
 }
 
 bool TraceTestArg(int *argc, char **argv, int argIndex)
@@ -92,9 +96,11 @@ bool TraceTestArg(int *argc, char **argv, int argIndex)
            ParseFlag("--offscreen", argc, argv, argIndex, &gOffscreen) ||
            ParseFlag("--vsync", argc, argv, argIndex, &gVsync) ||
            ParseFlag("--minimize-gpu-work", argc, argv, argIndex, &gMinimizeGPUWork) ||
+           ParseFlag("--skip-blit-in-offscreen", argc, argv, argIndex, &gSkipBlitInOffscreen) ||
            ParseCStringArg("--trace-interpreter", argc, argv, argIndex, &gTraceInterpreter) ||
            ParseIntArg("--screenshot-frame", argc, argv, argIndex, &gScreenshotFrame) ||
            ParseIntArg("--fps-limit", argc, argv, argIndex, &gFpsLimit) ||
+           ParseFlag("--fps-limit-uses-busy-wait", argc, argv, argIndex, &gFpsLimitUsesBusyWait) ||
            ParseCStringArgWithHandling("--render-test-output-dir", argc, argv, argIndex,
                                        &gRenderTestOutputDir, ArgHandling::Preserve) ||
            ParseCStringArg("--screenshot-dir", argc, argv, argIndex, &gScreenshotDir) ||
@@ -106,7 +112,13 @@ bool TraceTestArg(int *argc, char **argv, int argIndex)
            ParseFlag("--include-inactive-resources", argc, argv, argIndex,
                      &gIncludeInactiveResources) ||
            ParseFlag("--track-gpu-time", argc, argv, argIndex, &gTrackGPUTime) ||
-           ParseFlag("--add-swap-into-gpu-time", argc, argv, argIndex, &gAddSwapIntoGPUTime);
+           ParseFlag("--add-swap-into-gpu-time", argc, argv, argIndex, &gAddSwapIntoGPUTime) ||
+           ParseFlag("--track-frame-wall-time", argc, argv, argIndex, &gTrackFrameWallTime) ||
+           ParseFlag("--add-swap-into-frame-wall-time", argc, argv, argIndex,
+                     &gAddSwapIntoFrameWallTime) ||
+           ParseIntArg("--track-vulkan-api-wall-time", argc, argv, argIndex,
+                       &gTrackVulkanApiWallTime) ||
+           ParseFlag("--captured-framecount-only", argc, argv, argIndex, &gCapturedFrameCountOnly);
 }
 }  // namespace
 }  // namespace angle
@@ -174,6 +186,11 @@ void ANGLEProcessTraceTestArgs(int *argc, char **argv)
         {
             argIndex++;
         }
+    }
+
+    if (gAddSwapIntoFrameWallTime || gTrackVulkanApiWallTime > 0)
+    {
+        ASSERT(gTrackFrameWallTime);
     }
 
     if (gScreenshotDir)

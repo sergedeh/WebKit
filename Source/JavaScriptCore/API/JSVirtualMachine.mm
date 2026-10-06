@@ -30,6 +30,7 @@
 #if JSC_OBJC_API_ENABLED
 
 #import "APICast.h"
+#import "HeapInlines.h"
 #import "IntegrityInlines.h"
 #import "JITWorklist.h"
 #import "JSManagedValueInternal.h"
@@ -40,6 +41,7 @@
 #import <mutex>
 #import <wtf/Lock.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 static NSMapTable *globalWrapperCache = 0;
 

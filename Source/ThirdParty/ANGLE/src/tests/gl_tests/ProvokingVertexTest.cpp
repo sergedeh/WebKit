@@ -9,11 +9,10 @@
 //   in the ES 3 specs.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
 #include "GLES2/gl2.h"
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -168,8 +167,8 @@ TEST_P(ProvokingVertexTest, FlatTriWithTransformFeedback)
 
     glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, mBuffer);
 
-    GLint vertexData[] = {1, 2, 3, 1, 2, 3};
-    glVertexAttribIPointer(mIntAttribLocation, 1, GL_INT, 0, vertexData);
+    static constexpr std::array<GLint, 6> vertexData = {1, 2, 3, 1, 2, 3};
+    glVertexAttribIPointer(mIntAttribLocation, 1, GL_INT, 0, vertexData.data());
 
     glUseProgram(mProgram);
     glBeginTransformFeedback(GL_TRIANGLES);
@@ -190,7 +189,7 @@ TEST_P(ProvokingVertexTest, FlatTriWithTransformFeedback)
     int *mappedInts = static_cast<int *>(mapPointer);
     for (unsigned int cnt = 0; cnt < 6; ++cnt)
     {
-        EXPECT_EQ(vertexData[cnt], mappedInts[cnt]);
+        ANGLE_UNSAFE_TODO(EXPECT_EQ(vertexData[cnt], mappedInts[cnt]));
     }
 }
 
@@ -268,15 +267,15 @@ TEST_P(ProvokingVertexTest, FlatLineWithFirstIndex)
 // Test drawing a simple triangle strip with flat shading, and different valued vertices.
 TEST_P(ProvokingVertexTest, FlatTriStrip)
 {
-    GLint vertexData[]     = {1, 2, 3, 4, 5, 6};
-    GLfloat positionData[] = {-1.0f, -1.0f, -1.0f, 1.0f,  0.0f, -1.0f,
-                              0.0f,  1.0f,  1.0f,  -1.0f, 1.0f, 1.0f};
+    static constexpr std::array<GLint, 6> vertexData      = {1, 2, 3, 4, 5, 6};
+    static constexpr std::array<GLfloat, 12> positionData = {
+        -1.0f, -1.0f, -1.0f, 1.0f, 0.0f, -1.0f, 0.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f};
 
-    glVertexAttribIPointer(mIntAttribLocation, 1, GL_INT, 0, vertexData);
+    glVertexAttribIPointer(mIntAttribLocation, 1, GL_INT, 0, vertexData.data());
 
     GLint positionLocation = glGetAttribLocation(mProgram, "position");
     glEnableVertexAttribArray(positionLocation);
-    glVertexAttribPointer(positionLocation, 2, GL_FLOAT, GL_FALSE, 0, positionData);
+    glVertexAttribPointer(positionLocation, 2, GL_FLOAT, GL_FALSE, 0, positionData.data());
 
     glUseProgram(mProgram);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 6);
@@ -314,21 +313,21 @@ TEST_P(ProvokingVertexTest, FlatTriStripPrimitiveRestart)
     // TODO(jmadill): Implement on the D3D back-end.
     ANGLE_SKIP_TEST_IF(IsD3D11());
 
-    GLint indexData[]      = {0, 1, 2, -1, 1, 2, 3, 4, -1, 3, 4, 5};
-    GLint vertexData[]     = {1, 2, 3, 4, 5, 6};
-    GLfloat positionData[] = {-1.0f, -1.0f, -1.0f, 1.0f,  0.0f, -1.0f,
-                              0.0f,  1.0f,  1.0f,  -1.0f, 1.0f, 1.0f};
+    static constexpr std::array<GLint, 12> indexData      = {0, 1, 2, -1, 1, 2, 3, 4, -1, 3, 4, 5};
+    static constexpr std::array<GLint, 6> vertexData      = {1, 2, 3, 4, 5, 6};
+    static constexpr std::array<GLfloat, 12> positionData = {
+        -1.0f, -1.0f, -1.0f, 1.0f, 0.0f, -1.0f, 0.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f};
 
-    glVertexAttribIPointer(mIntAttribLocation, 1, GL_INT, 0, vertexData);
+    glVertexAttribIPointer(mIntAttribLocation, 1, GL_INT, 0, vertexData.data());
 
     GLint positionLocation = glGetAttribLocation(mProgram, "position");
     glEnableVertexAttribArray(positionLocation);
-    glVertexAttribPointer(positionLocation, 2, GL_FLOAT, GL_FALSE, 0, positionData);
+    glVertexAttribPointer(positionLocation, 2, GL_FLOAT, GL_FALSE, 0, positionData.data());
 
     glDisable(GL_CULL_FACE);
     glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
     glUseProgram(mProgram);
-    glDrawElements(GL_TRIANGLE_STRIP, 12, GL_UNSIGNED_INT, indexData);
+    glDrawElements(GL_TRIANGLE_STRIP, 12, GL_UNSIGNED_INT, indexData.data());
 
     std::vector<GLint> pixelBuffer(getWindowWidth() * getWindowHeight() * 4, 0);
     glReadPixels(0, 0, getWindowWidth(), getWindowHeight(), GL_RGBA_INTEGER, GL_INT,
@@ -337,7 +336,7 @@ TEST_P(ProvokingVertexTest, FlatTriStripPrimitiveRestart)
     ASSERT_GL_NO_ERROR();
 
     // Account for primitive restart when checking the tris.
-    GLint triOffsets[] = {0, 4, 5, 9};
+    static constexpr std::array<GLint, 4> triOffsets = {0, 4, 5, 9};
 
     for (unsigned int triIndex = 0; triIndex < 4; ++triIndex)
     {
@@ -364,18 +363,31 @@ TEST_P(ProvokingVertexTest, FlatTriStripPrimitiveRestart)
     }
 }
 
+TEST_P(ProvokingVertexTest, ANGLEProvokingVertexIsAvailable)
+{
+    const bool hasExt = IsGLExtensionEnabled("GL_ANGLE_provoking_vertex");
+    if (IsD3D11())
+    {
+        EXPECT_TRUE(hasExt);
+    }
+    else if (IsMetal())
+    {
+        EXPECT_TRUE(hasExt);
+    }
+}
+
 // Test with FRONT_CONVENTION if we have ANGLE_provoking_vertex.
 TEST_P(ProvokingVertexTest, ANGLEProvokingVertex)
 {
-    int32_t vertexData[] = {1, 2, 3};
-    float positionData[] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
+    static constexpr std::array<int32_t, 3> vertexData = {1, 2, 3};
+    static constexpr std::array<float, 6> positionData = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
 
     glEnableVertexAttribArray(mIntAttribLocation);
-    glVertexAttribIPointer(mIntAttribLocation, 1, GL_INT, 0, vertexData);
+    glVertexAttribIPointer(mIntAttribLocation, 1, GL_INT, 0, vertexData.data());
 
     GLint positionLocation = glGetAttribLocation(mProgram, "position");
     glEnableVertexAttribArray(positionLocation);
-    glVertexAttribPointer(positionLocation, 2, GL_FLOAT, GL_FALSE, 0, positionData);
+    glVertexAttribPointer(positionLocation, 2, GL_FLOAT, GL_FALSE, 0, positionData.data());
 
     glUseProgram(mProgram);
     ASSERT_GL_NO_ERROR();
@@ -395,10 +407,6 @@ TEST_P(ProvokingVertexTest, ANGLEProvokingVertex)
     fnExpectId(2);
 
     const bool hasExt = IsGLExtensionEnabled("GL_ANGLE_provoking_vertex");
-    if (IsD3D11())
-    {
-        EXPECT_TRUE(hasExt);
-    }
     if (hasExt)
     {
         GLint mode;
@@ -744,14 +752,74 @@ TEST_P(ProvokingVertexBufferUpdateTest, DrawFlatWithPartialBufferSubUpdatesBetwe
     checkFlatQuadColors(kWidth, kHeight, GLColor::red, GLColor::green);
 }
 
+// Only run these tests on Metal. Other backends tend to time out the test suite but not crash.
+class ProvokingVertexTestMetal : public ProvokingVertexTest
+{};
+
+// Test that a very large draw call with flat shading doesn't cause an integer overflow in the Metal
+// backend.
+TEST_P(ProvokingVertexTestMetal, LargeDrawTriangleFan)
+{
+    GLsizei count = 1431655768;
+    glUseProgram(mProgram);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, count);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+}
+
+// Test that a very large draw call with flat shading doesn't cause an integer overflow in the Metal
+// backend.
+TEST_P(ProvokingVertexTestMetal, LargeDrawTriangleStrip)
+{
+    GLsizei count = 1431655768;
+    glUseProgram(mProgram);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, count);
+}
+
+// Test that drawing TriangleStrip with primitive restart and flat shading doesn't read out of
+// bounds. Regression test for GPU memory disclosure vulnerability during index rewriting.
+TEST_P(ProvokingVertexTestMetal, PrimitiveRestartWithTriangleStrip)
+{
+    glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
+
+    GLfloat halfPixel = 1.0f / static_cast<GLfloat>(getWindowWidth());
+
+    // 3 vertices
+    GLint vertexData[]     = {1, 2, 3};
+    GLfloat positionData[] = {-1.0f + halfPixel, -1.0f, -1.0f + halfPixel, 1.0f,
+                              1.0f - halfPixel,  -1.0f};
+
+    glVertexAttribIPointer(mIntAttribLocation, 1, GL_INT, 0, vertexData);
+
+    GLint positionLocation = glGetAttribLocation(mProgram, "position");
+    glEnableVertexAttribArray(positionLocation);
+    glVertexAttribPointer(positionLocation, 2, GL_FLOAT, GL_FALSE, 0, positionData);
+
+    // [0, 1, 2, R, R, R, R] -> Triangle Strip with 10 indices
+    const GLuint R     = 0xFFFFFFFF;
+    GLuint indexData[] = {0, 1, 2, R, R, R, R, R, R, R};
+
+    GLBuffer indexBuffer;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexData), indexData, GL_STATIC_DRAW);
+
+    glUseProgram(mProgram);
+    glDrawElements(GL_TRIANGLE_STRIP, 10, GL_UNSIGNED_INT, 0);
+
+    ASSERT_GL_NO_ERROR();
+
+    // Verify it rendered the single triangle correctly
+    GLint pixelValue[4] = {0};
+    glReadPixels(0, 0, 1, 1, GL_RGBA_INTEGER, GL_INT, &pixelValue);
+    EXPECT_EQ(vertexData[2], pixelValue[0]);  // Flat shading with provoking vertex last (index 2)
+}
+
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ProvokingVertexTest);
-ANGLE_INSTANTIATE_TEST(ProvokingVertexTest, ES3_D3D11(), ES3_OPENGL(), ES3_OPENGLES(), ES3_METAL());
+ANGLE_INSTANTIATE_TEST_ES3(ProvokingVertexTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ProvokingVertexTestMetal);
+ANGLE_INSTANTIATE_TEST(ProvokingVertexTestMetal, ES3_METAL());
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ProvokingVertexBufferUpdateTest);
-ANGLE_INSTANTIATE_TEST(ProvokingVertexBufferUpdateTest,
-                       ES3_D3D11(),
-                       ES3_OPENGL(),
-                       ES3_OPENGLES(),
-                       ES3_METAL());
+ANGLE_INSTANTIATE_TEST_ES3(ProvokingVertexBufferUpdateTest);
 
 }  // anonymous namespace

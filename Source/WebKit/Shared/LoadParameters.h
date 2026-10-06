@@ -33,6 +33,7 @@
 #include "WebsitePoliciesData.h"
 #include <WebCore/AdvancedPrivacyProtections.h>
 #include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/NavigationHistoryBehavior.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/NavigationRequester.h>
 #include <WebCore/OwnerPermissionsPolicyData.h>
@@ -41,6 +42,7 @@
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ShouldTreatAsContinuingLoad.h>
 #include <WebCore/SubstituteData.h>
+#include <wtf/MonotonicTime.h>
 
 OBJC_CLASS NSDictionary;
 
@@ -77,25 +79,33 @@ struct LoadParameters {
     UserData userData;
     WebCore::LockHistory lockHistory { WebCore::LockHistory::No };
     WebCore::LockBackForwardList lockBackForwardList { WebCore::LockBackForwardList::No };
+    WebCore::NavigationHistoryBehavior navigationHistoryBehavior { WebCore::NavigationHistoryBehavior::Auto };
     WebCore::SubstituteData::SessionHistoryVisibility sessionHistoryVisibility { WebCore::SubstituteData::SessionHistoryVisibility::Visible };
     String clientRedirectSourceForHistory;
-    WebCore::SandboxFlags effectiveSandboxFlags;
+    std::optional<WebCore::SandboxFlags> effectiveSandboxFlags;
     WebCore::ReferrerPolicy effectiveReferrerPolicy { WebCore::ReferrerPolicy::EmptyString };
     std::optional<WebCore::OwnerPermissionsPolicyData> ownerPermissionsPolicy;
     std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain;
     std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume;
+    MonotonicTime originalNavigationStartTime;
     bool isServiceWorkerLoad { false };
 
 #if PLATFORM(COCOA)
     std::optional<double> dataDetectionReferenceDate;
 #endif
     bool isRequestFromClientOrUserInput { false };
+    bool hasCrossOriginRedirect { false };
+    bool hadUserGesture { false };
     WebCore::NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior { WebCore::NavigationUpgradeToHTTPSBehavior::BasedOnPolicy };
     bool isHandledByAboutSchemeHandler { false };
+    bool isHistoryItemNavigation { false };
+    bool shouldConsiderEnhancedSecurityForInsecureResponse { false };
 
     std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> advancedPrivacyProtections;
     uint64_t requiredCookiesVersion { 0 };
     std::optional<WebCore::NavigationRequester> requester;
+    std::optional<WebCore::ResourceRequest> originalRequest;
+    std::optional<WebCore::RegistrableDomain> unpartitionedStorageSite;
 };
 
 } // namespace WebKit

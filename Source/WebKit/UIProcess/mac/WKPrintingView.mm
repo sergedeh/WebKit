@@ -49,11 +49,6 @@ NSString * const WebKitOriginalBottomPrintingMarginKey = @"WebKitOriginalBottomM
 
 NSString * const NSPrintInfoDidChangeNotification = @"NSPrintInfoDidChange";
 
-static Ref<WebKit::WebFrameProxy> protectedWebFrame(WKPrintingView *view)
-{
-    return *view->_webFrame;
-}
-
 static BOOL isForcingPreviewUpdate;
 
 @implementation WKPrintingView
@@ -121,7 +116,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [self _setAutodisplay:YES];
 
     // Enabling autodisplay normally implicitly calls endPrinting() via -[WKView drawRect:], but not when content is in accelerated compositing mode.
-    if (RefPtr page = protectedWebFrame(self)->page())
+    if (RefPtr page = _webFrame->page())
         page->endPrinting();
 }
 
@@ -168,9 +163,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     
     CGFloat scale = [info scalingFactor];
     Ref webFrame = *_webFrame;
-    RefPtr page = webFrame->page();
-    [info setTopMargin:originalTopMargin + page->headerHeightForPrinting(webFrame) * scale];
-    [info setBottomMargin:originalBottomMargin + page->footerHeightForPrinting(webFrame) * scale];
+    if (RefPtr page = webFrame->page()) {
+        [info setTopMargin:originalTopMargin + page->headerHeightForPrinting(webFrame) * scale];
+        [info setBottomMargin:originalBottomMargin + page->footerHeightForPrinting(webFrame) * scale];
+    }
 }
 
 - (BOOL)_isPrintingPreview
@@ -414,7 +410,7 @@ static void prepareDataForPrintingOnSecondaryThread(WKPrintingView *view)
     if (!RunLoop::isMain())
         _isPrintingFromSecondaryThread = YES;
 
-    if (protectedWebFrame(self)->pageIsClosed()) {
+    if (_webFrame->pageIsClosed()) {
         *range = NSMakeRange(1, NSIntegerMax);
         return YES;
     }
@@ -570,7 +566,7 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
     WebCore::GraphicsContextCG context([[NSGraphicsContext currentContext] CGContext]);
     WebCore::GraphicsContextStateSaver stateSaver(context);
 
-    bitmap->paint(context, protect(protectedWebFrame(self)->page())->deviceScaleFactor(), WebCore::IntPoint(nsRect.origin), bitmap->bounds());
+    bitmap->paint(context, _webFrame->page()->deviceScaleFactor(), WebCore::IntPoint(nsRect.origin), bitmap->bounds());
 }
 
 - (void)drawRect:(NSRect)nsRect
@@ -701,7 +697,7 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
     ASSERT(_printOperation.get() == [NSPrintOperation currentOperation]);
     if (![self _hasPageRects]) {
         LOG(Printing, "-[WKPrintingView %p rectForPage:%d] - data is not yet available", self, (int)page);
-        if (!protectedWebFrame(self)->page()) {
+        if (!_webFrame->page()) {
             // We may have not told AppKit how many pages there are, so it will try to print until a null rect is returned.
             return NSZeroRect;
         }
@@ -713,7 +709,7 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
     // If Web process crashes while computing page rects, we never tell AppKit how many pages there are.
     // Returning a null rect prevents selecting non-existent pages in preview dialog.
     if (static_cast<unsigned>(page) > _printingPageRects.size()) {
-        ASSERT(!protectedWebFrame(self)->page());
+        ASSERT(!_webFrame->page());
         return NSZeroRect;
     }
 

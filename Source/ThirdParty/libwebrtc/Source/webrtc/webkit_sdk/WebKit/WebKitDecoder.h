@@ -44,6 +44,7 @@ namespace webrtc {
 
 struct SdpVideoFormat;
 class VideoDecoderFactory;
+class ColorSpace;
 
 struct WebKitVideoDecoder {
     using Value = void*;
@@ -52,12 +53,12 @@ struct WebKitVideoDecoder {
 };
 using VideoDecoderCreateCallback = WebKitVideoDecoder(*)(const SdpVideoFormat& format);
 using VideoDecoderReleaseCallback = int32_t(*)(WebKitVideoDecoder::Value);
-using VideoDecoderDecodeCallback = int32_t(*)(WebKitVideoDecoder::Value, uint32_t timeStamp, const uint8_t*, size_t length, uint16_t width, uint16_t height);
+using VideoDecoderDecodeCallback = int32_t(*)(WebKitVideoDecoder::Value, uint32_t timeStamp, const uint8_t*, size_t length, uint16_t width, uint16_t height, const ColorSpace* colorSpace);
 using VideoDecoderRegisterDecodeCompleteCallback = int32_t(*)(WebKitVideoDecoder::Value, void* decodedImageCallback);
 
 void setVideoDecoderCallbacks(VideoDecoderCreateCallback, VideoDecoderReleaseCallback, VideoDecoderDecodeCallback, VideoDecoderRegisterDecodeCompleteCallback);
 
-std::unique_ptr<webrtc::VideoDecoderFactory> createWebKitDecoderFactory(WebKitH265, WebKitVP9, WebKitVP9VTB, WebKitAv1);
+std::unique_ptr<webrtc::VideoDecoderFactory> createWebKitDecoderFactory(WebKitH265, WebKitVP9, WebKitAv1);
 void videoDecoderTaskComplete(void* callback, uint32_t timeStampRTP, CVPixelBufferRef);
 void videoDecoderTaskComplete(void* callback, uint32_t timeStampRTP, void*, GetBufferCallback, ReleaseBufferCallback, int width, int height);
 
@@ -65,7 +66,6 @@ using LocalDecoder = void*;
 using LocalDecoderCallback = void (^)(CVPixelBufferRef, int64_t timeStamp, int64_t timeStampNs, bool isReordered);
 void* createLocalH264Decoder(LocalDecoderCallback);
 void* createLocalH265Decoder(LocalDecoderCallback);
-void* createLocalVP9Decoder(LocalDecoderCallback);
 void releaseLocalDecoder(LocalDecoder);
 void flushLocalDecoder(LocalDecoder);
 int32_t setDecodingFormat(LocalDecoder, const uint8_t*, size_t, uint16_t width, uint16_t height);

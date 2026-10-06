@@ -29,6 +29,7 @@
 #include <glib.h>
 #include <wpe/WPEDisplay.h>
 #include <wtf/HashMap.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
@@ -77,7 +78,7 @@ G_DEFINE_QUARK(wpe-settings-error-quark, wpe_settings_error)
  * to watch a specific key, e.g. `changed::/wpe-platform/fonts/font-hinting`.
  */
 struct _WPESettingsPrivate {
-    HashMap<CString, SettingEntry> settings;
+    HashMap<UTF8CString, SettingEntry> settings;
 
     _WPESettingsPrivate()
     {
@@ -91,10 +92,11 @@ struct _WPESettingsPrivate {
         static const std::vector<Setting> defaultSettings = {
             { WPE_SETTING_FONT_NAME, G_VARIANT_TYPE_STRING, g_variant_ref_sink(g_variant_new_string("Sans 10")) },
             { WPE_SETTING_DARK_MODE, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(false)) },
-            { WPE_SETTING_DISABLE_ANIMATIONS, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(false)) },
+            { WPE_SETTING_REDUCED_MOTION, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(false)) },
+            { WPE_SETTING_INTERFACE_CONTRAST, G_VARIANT_TYPE_BYTE, g_variant_ref_sink(g_variant_new_byte(WPE_SETTINGS_INTERFACE_CONTRAST_NO_PREFERENCE)) },
             { WPE_SETTING_FONT_ANTIALIAS, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(true)) },
             { WPE_SETTING_FONT_HINTING_STYLE, G_VARIANT_TYPE_BYTE, g_variant_ref_sink(g_variant_new_byte(WPE_SETTINGS_HINTING_STYLE_SLIGHT)) },
-            { WPE_SETTING_FONT_SUBPIXEL_LAYOUT, G_VARIANT_TYPE_BYTE, g_variant_ref_sink(g_variant_new_byte(WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB)) },
+            { WPE_SETTING_FONT_SUBPIXEL_LAYOUT, G_VARIANT_TYPE_BYTE, g_variant_ref_sink(g_variant_new_byte(WPE_SETTINGS_SUBPIXEL_LAYOUT_NONE)) },
             { WPE_SETTING_FONT_DPI, G_VARIANT_TYPE_DOUBLE, g_variant_ref_sink(g_variant_new_double(96.0)) },
             { WPE_SETTING_KEY_REPEAT_DELAY, G_VARIANT_TYPE_UINT32, g_variant_ref_sink(g_variant_new_uint32(400)) },
             { WPE_SETTING_KEY_REPEAT_INTERVAL, G_VARIANT_TYPE_UINT32, g_variant_ref_sink(g_variant_new_uint32(80)) },
@@ -104,10 +106,11 @@ struct _WPESettingsPrivate {
             { WPE_SETTING_DOUBLE_CLICK_TIME, G_VARIANT_TYPE_UINT32, g_variant_ref_sink(g_variant_new_uint32(400)) },
             { WPE_SETTING_DRAG_THRESHOLD, G_VARIANT_TYPE_UINT32, g_variant_ref_sink(g_variant_new_uint32(8)) },
             { WPE_SETTING_CREATE_VIEWS_WITH_A_TOPLEVEL, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(true)) },
+            { WPE_SETTING_OVERLAY_SCROLLBARS, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(true)) },
         };
 
         for (auto& setting : defaultSettings)
-            settings.add(setting.key, SettingEntry(setting.defaultValue, GUniquePtr<GVariantType>(g_variant_type_copy(setting.type))));
+            settings.add(UTF8CString::unsafeFromUTF8(setting.key), SettingEntry(setting.defaultValue, GUniquePtr<GVariantType>(g_variant_type_copy(setting.type))));
     }
 };
 
@@ -129,7 +132,7 @@ static void wpe_settings_class_init(WPESettingsClass* settingsClass)
      * @key: the key that changed
      * @value: the new value
      *
-     * Emitted when a settings is changed.
+     * Emitted when a setting is changed.
      * It will contain a detail of the specific key that changed.
      */
     signals[CHANGED] = g_signal_new(
@@ -143,13 +146,13 @@ static void wpe_settings_class_init(WPESettingsClass* settingsClass)
         G_TYPE_VARIANT);
 }
 
-static CString makeKeyPath(const char* group, const char* key)
+static UTF8CString makeKeyPath(const char* group, const char* key)
 {
-    std::span<char> buffer;
+    std::span<char8_t> buffer;
     size_t length = strlen(group) + strlen(key) + 3;
 
-    CString path = CString::newUninitialized(length - 1, buffer);
-    g_snprintf(buffer.data(), length, "/%s/%s", group, key);
+    auto path = UTF8CString::newUninitialized(length - 1, buffer);
+    g_snprintf(byteCast<char>(buffer).data(), length, "/%s/%s", group, key);
 
     return path;
 }
@@ -178,12 +181,12 @@ gboolean wpe_settings_register(WPESettings* settingsObject, const char* key, con
     g_return_val_if_fail(type, FALSE);
     g_return_val_if_fail(g_variant_type_equal(type, g_variant_get_type(defaultValue)), FALSE);
 
-    if (settingsObject->priv->settings.contains(key)) {
+    if (settingsObject->priv->settings.contains(UTF8CString::unsafeFromUTF8(key))) {
         g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_ALREADY_REGISTERED, "%s has already been reigstered", key);
         return FALSE;
     }
 
-    settingsObject->priv->settings.add(key, SettingEntry(defaultValue, GUniquePtr<GVariantType>(g_variant_type_copy(type))));
+    settingsObject->priv->settings.add(UTF8CString::unsafeFromUTF8(key), SettingEntry(defaultValue, GUniquePtr<GVariantType>(g_variant_type_copy(type))));
 
     return TRUE;
 }
@@ -231,14 +234,14 @@ gboolean wpe_settings_load_from_keyfile(WPESettings* settingsObject, GKeyFile* k
             auto path = makeKeyPath(group, key);
             auto iter = settingsObject->priv->settings.find(path);
             if (iter == settingsObject->priv->settings.end()) {
-                g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_NOT_REGISTERED, "Key %s not registered", path.data());
+                SAFE_G_SET_ERROR(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_NOT_REGISTERED, "Key %s not registered", path);
                 return FALSE;
             }
 
             GUniqueOutPtr<GError> innerError;
             GRefPtr<GVariant> parsedValue = adoptGRef(g_variant_parse(iter->value.type.get(), value.get(), nullptr, nullptr, &innerError.outPtr()));
             if (!parsedValue) {
-                g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_INVALID_VALUE, "Failed to parse value for key %s: %s", path.data(), innerError->message);
+                SAFE_G_SET_ERROR(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_INVALID_VALUE, "Failed to parse value for key %s: %s", path, innerError->message);
                 return FALSE;
             }
 
@@ -246,7 +249,7 @@ gboolean wpe_settings_load_from_keyfile(WPESettings* settingsObject, GKeyFile* k
                 continue;
 
             iter->value.setValue = WTF::move(parsedValue);
-            g_signal_emit(settingsObject, signals[CHANGED], g_quark_from_string(path.data()), path.data(), iter->value.setValue.get());
+            gSignalEmit(settingsObject, signals[CHANGED], gQuarkFromString(path), path, iter->value.setValue.get());
         }
     }
 
@@ -273,7 +276,7 @@ void wpe_settings_save_to_keyfile(WPESettings* settingsObject, GKeyFile* keyFile
             continue;
 
         // Transform "/foo/bar/baz" into "foo/bar" and "baz".
-        GUniquePtr<char> keyString(g_strdup(key.data()));
+        GUniquePtr<char> keyString(gStrdup(key));
         auto* keyStart = strrchr(keyString.get(), '/');
         ASSERT(keyStart && keyStart != keyString.get());
         *keyStart = '\0';
@@ -315,7 +318,7 @@ gboolean wpe_settings_set_value(WPESettings* settingsObject, const char* key, GV
     g_return_val_if_fail(!error || !*error, FALSE);
     g_return_val_if_fail(key && *key == '/', FALSE);
 
-    auto iter = settingsObject->priv->settings.find(key);
+    auto iter = settingsObject->priv->settings.find(UTF8CString::unsafeFromUTF8(key));
     if (iter == settingsObject->priv->settings.end()) {
         g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_NOT_REGISTERED, "Key %s not registered", key);
         return FALSE;
@@ -364,7 +367,7 @@ GVariant* wpe_settings_get_value(WPESettings* settingsObject, const char* key, G
     g_return_val_if_fail(WPE_IS_SETTINGS(settingsObject), NULL);
     g_return_val_if_fail(key && *key == '/', NULL);
 
-    const auto iter = settingsObject->priv->settings.find(key);
+    const auto iter = settingsObject->priv->settings.find(UTF8CString::unsafeFromUTF8(key));
     if (iter == settingsObject->priv->settings.end()) {
         g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_NOT_REGISTERED, "Key %s not registered", key);
         return nullptr;

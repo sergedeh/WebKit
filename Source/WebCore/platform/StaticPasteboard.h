@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <WebCore/Pasteboard.h>
+#include "Pasteboard.h"
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
@@ -41,7 +41,7 @@ public:
 
     PasteboardCustomData takeCustomData();
 
-    bool hasNonDefaultData() const;
+    bool NODELETE hasNonDefaultData() const;
     bool isStatic() const final { return true; }
 
     bool hasData() final;
@@ -66,7 +66,7 @@ public:
     void writeMarkup(const String&) final;
     void writePlainText(const String&, SmartReplaceOption) final;
 
-    void writeCustomData(const Vector<PasteboardCustomData>&) final { }
+    void writeCustomData(const Vector<PasteboardCustomData>&, PasteboardWriteType = PasteboardWriteType::General) final { }
 
     Pasteboard::FileContentState fileContentState() final { return m_fileContentState; }
     bool canSmartReplace() final { return false; }

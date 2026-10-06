@@ -50,7 +50,7 @@ public:
     ExceptionOr<void> append(const String& name, const String& value);
     ExceptionOr<void> remove(const String&);
     ExceptionOr<String> get(const String&) const;
-    const Vector<String>& getSetCookie() const;
+    const Vector<String>& NODELETE getSetCookie() const;
     ExceptionOr<bool> has(const String&) const;
     ExceptionOr<void> set(const String& name, const String& value);
 
@@ -77,7 +77,7 @@ public:
     Iterator createIterator(ScriptExecutionContext*) { return Iterator { *this }; }
 
     void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTF::move(headers); }
-    const HTTPHeaderMap& internalHeaders() const { return m_headers; }
+    const HTTPHeaderMap& internalHeaders() const LIFETIME_BOUND { return m_headers; }
 
     void setGuard(Guard);
     Guard guard() const { return m_guard; }

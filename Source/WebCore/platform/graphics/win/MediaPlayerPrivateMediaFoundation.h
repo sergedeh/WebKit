@@ -31,17 +31,17 @@
 #include "COMPtr.h"
 #include "MediaPlayerPrivate.h"
 
-#include <D3D9.h>
-#include <Dxva2api.h>
-
-#include <Mfapi.h>
 #include <Mferror.h>
-#include <Mfidl.h>
+#include <d3d9.h>
+#include <dxva2api.h>
 #include <evcode.h>
 #include <evr.h>
+#include <mfapi.h>
+#include <mfidl.h>
 
 #include <wtf/Deque.h>
 #include <wtf/Lock.h>
+#include <wtf/NativePromise.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadingPrimitives.h>
@@ -85,8 +85,7 @@ public:
 
     void setPageIsVisible(bool) final;
 
-    bool seeking() const final;
-    void seekToTarget(const SeekTarget&) final;
+    Ref<MediaTimePromise> seekToTarget(const SeekTarget&) final;
 
     void setRate(float) final;
 
@@ -111,7 +110,7 @@ public:
 
     void paint(GraphicsContext&, const FloatRect&) final;
 
-    DestinationColorSpace colorSpace() final;
+    ColorSpace colorSpace() final;
 
 protected:
     void onCreatedMediaSource(COMPtr<IMFMediaSource>&&, bool loadingProgress);
@@ -131,7 +130,7 @@ private:
     bool m_visible;
     bool m_loadingProgress;
     bool m_paused;
-    bool m_seeking { false };
+    std::optional<MediaTimePromise::AutoRejectProducer> m_seekPromise;
     bool m_sessionEnded { false };
     bool m_hasAudio;
     bool m_hasVideo;
@@ -221,8 +220,8 @@ private:
         void setFrameRate(const MFRatio& fps);
         void setClockRate(float rate) { m_playbackRate = rate; }
 
-        const LONGLONG& lastSampleTime() const { return m_lastSampleTime; }
-        const LONGLONG& frameDuration() const { return m_frameDuration; }
+        const LONGLONG& lastSampleTime() const LIFETIME_BOUND { return m_lastSampleTime; }
+        const LONGLONG& frameDuration() const LIFETIME_BOUND { return m_frameDuration; }
 
         HRESULT startScheduler(IMFClock*);
         HRESULT stopScheduler();
@@ -431,7 +430,7 @@ private:
         COMPtr<IMediaEventSink> m_mediaEventSink;
         COMPtr<IMFTransform> m_mixer;
         COMPtr<IMFMediaType> m_mediaType;
-        std::unique_ptr<Direct3DPresenter> m_presenterEngine;
+        const std::unique_ptr<Direct3DPresenter> m_presenterEngine;
         MFVideoNormalizedRect m_sourceRect;
         bool m_sampleNotify { false };
         bool m_prerolled { false };

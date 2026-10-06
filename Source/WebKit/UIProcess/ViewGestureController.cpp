@@ -53,6 +53,13 @@
 #include "ViewGestureGeometryCollectorMessages.h"
 #endif
 
+#if PLATFORM(MAC)
+#include "SwipeProgressTrackerMac.h"
+#endif
+
+// FIXME: https://bugs.webkit.org/show_bug.cgi?id=306415
+#include "WebKit-Swift.h"
+
 namespace WebKit {
 using namespace WebCore;
 
@@ -67,7 +74,7 @@ static const float minimumScrollEventRatioForSwipe = 0.5;
 static const float swipeSnapshotRemovalRenderTreeSizeTargetFraction = 0.5;
 #endif
 
-static HashMap<WebPageProxyIdentifier, WeakRef<ViewGestureController>>& viewGestureControllersForAllPages()
+static HashMap<WebPageProxyIdentifier, WeakRef<ViewGestureController>>& NODELETE viewGestureControllersForAllPages()
 {
     // The key in this map is the associated page ID.
     static NeverDestroyed<HashMap<WebPageProxyIdentifier, WeakRef<ViewGestureController>>> viewGestureControllers;
@@ -95,6 +102,8 @@ ViewGestureController::ViewGestureController(WebPageProxy& webPageProxy)
 {
     if (webPageProxy.hasRunningProcess())
         connectToProcess();
+
+    platformInitialize();
 
     viewGestureControllersForAllPages().add(m_webPageProxyIdentifier, *this);
 }
@@ -145,11 +154,23 @@ ViewGestureController* ViewGestureController::controllerForGesture(WebPageProxyI
     return gestureControllerIter->value.ptr();
 }
 
+ViewGestureController* ViewGestureController::controllerForPage(WebPageProxyIdentifier pageID)
+{
+    auto it = viewGestureControllersForAllPages().find(pageID);
+    if (it == viewGestureControllersForAllPages().end())
+        return nullptr;
+    return it->value.ptr();
+}
+
 #if PLATFORM(COCOA)
 
 RefPtr<WebBackForwardListItem> ViewGestureController::itemForSwipeDirection(SwipeDirection direction) const
 {
+#if ENABLE(BACK_FORWARD_LIST_SWIFT)
+    std::optional<WebBackForwardList> backForwardList = backForwardListForNavigation();
+#else
     RefPtr backForwardList = backForwardListForNavigation();
+#endif
     if (!backForwardList)
         return { };
 
@@ -184,6 +205,9 @@ void ViewGestureController::didEndGesture()
 
     m_activeGestureType = ViewGestureType::None;
     m_currentGestureID = 0;
+#if !PLATFORM(IOS_FAMILY)
+    m_magnificationGestureInputSource = std::nullopt;
+#endif
 
     if (RefPtr page = m_webPageProxy.get())
         page->didEndViewGesture();
@@ -213,10 +237,17 @@ bool ViewGestureController::canSwipeInDirection(SwipeDirection direction, DeferT
         return false;
 
     RefPtr<WebPageProxy> alternateBackForwardListSourcePage = m_alternateBackForwardListSourcePage.get();
+#if ENABLE(BACK_FORWARD_LIST_SWIFT)
+    WebBackForwardList backForwardList = alternateBackForwardListSourcePage ? alternateBackForwardListSourcePage->backForwardList() : page->backForwardList();
+    if (direction == SwipeDirection::Back)
+        return !!backForwardList.backItem();
+    return !!backForwardList.forwardItem();
+#else
     Ref<WebBackForwardList> backForwardList = alternateBackForwardListSourcePage ? alternateBackForwardListSourcePage->backForwardList() : page->backForwardList();
     if (direction == SwipeDirection::Back)
         return !!backForwardList->backItem();
     return !!backForwardList->forwardItem();
+#endif
 }
 
 void ViewGestureController::didStartProvisionalOrSameDocumentLoadForMainFrame()
@@ -304,7 +335,7 @@ void ViewGestureController::didSameDocumentNavigationForMainFrame(SameDocumentNa
 void ViewGestureController::checkForActiveLoads()
 {
     RefPtr page = m_webPageProxy.get();
-    if (page && protect(page->pageLoadState())->isLoading()) {
+    if (page && page->pageLoadState().isLoading()) {
         if (!m_swipeActiveLoadMonitoringTimer.isActive())
             m_swipeActiveLoadMonitoringTimer.startRepeating(swipeSnapshotRemovalActiveLoadMonitoringInterval);
         return;
@@ -350,7 +381,7 @@ String ViewGestureController::SnapshotRemovalTracker::eventsDescription(Events e
 
 void ViewGestureController::SnapshotRemovalTracker::log(StringView log) const
 {
-    RELEASE_LOG(ViewGestures, "Swipe Snapshot Removal (%0.2f ms) - %s", (MonotonicTime::now() - m_startTime).milliseconds(), log.utf8().data());
+    RELEASE_LOG(ViewGestures, "Swipe Snapshot Removal (%0.2f ms) - %s", (MonotonicTime::now() - m_startTime).milliseconds(), log.utf8());
 }
 
 void ViewGestureController::SnapshotRemovalTracker::resume()
@@ -454,7 +485,7 @@ void ViewGestureController::SnapshotRemovalTracker::startWatchdog(Seconds durati
 }
 
 #if !PLATFORM(IOS_FAMILY)
-static bool deltaShouldCancelSwipe(FloatSize delta)
+static bool NODELETE deltaShouldCancelSwipe(FloatSize delta)
 {
     return std::abs(delta.height()) >= std::abs(delta.width()) * minimumScrollEventRatioForSwipe;
 }
@@ -475,11 +506,6 @@ ViewGestureController::PendingSwipeTracker::PendingSwipeTracker(WebPageProxy& we
 {
 }
 
-Ref<ViewGestureController> ViewGestureController::PendingSwipeTracker::protectedViewGestureController() const
-{
-    return m_viewGestureController.get();
-}
-
 bool ViewGestureController::PendingSwipeTracker::scrollEventCanBecomeSwipe(PlatformScrollEvent event, ViewGestureController::SwipeDirection& potentialSwipeDirection)
 {
     if (!scrollEventCanStartSwipe(event) || !scrollEventCanInfluenceSwipe(event))
@@ -487,7 +513,10 @@ bool ViewGestureController::PendingSwipeTracker::scrollEventCanBecomeSwipe(Platf
 
     FloatSize size = scrollEventGetScrollingDeltas(event);
 
-    if (deltaShouldCancelSwipe(size))
+    if (auto shouldCancel = protect(m_viewGestureController)->platformEventShouldCancelSwipe(event, size)) {
+        if (*shouldCancel)
+            return false;
+    } else if (deltaShouldCancelSwipe(size))
         return false;
 
     Ref page = m_webPageProxy.get();
@@ -503,7 +532,7 @@ bool ViewGestureController::PendingSwipeTracker::scrollEventCanBecomeSwipe(Platf
         return false;
 
     potentialSwipeDirection = tryingToSwipeBack ? SwipeDirection::Back : SwipeDirection::Forward;
-    return protectedViewGestureController()->canSwipeInDirection(potentialSwipeDirection, DeferToConflictingGestures::No);
+    return protect(m_viewGestureController)->canSwipeInDirection(potentialSwipeDirection, DeferToConflictingGestures::No);
 }
 
 bool ViewGestureController::PendingSwipeTracker::handleEvent(PlatformScrollEvent event)
@@ -570,7 +599,7 @@ bool ViewGestureController::PendingSwipeTracker::tryToStartSwipe(PlatformScrollE
     }
 
     if (std::abs(m_cumulativeDelta.width()) >= minimumHorizontalSwipeDistance)
-        protectedViewGestureController()->startSwipeGesture(event, m_direction);
+        protect(m_viewGestureController)->startSwipeGesture(event, m_direction);
     else
         m_state = State::InsufficientMagnitude;
 
@@ -598,10 +627,17 @@ void ViewGestureController::startSwipeGesture(PlatformScrollEvent event, SwipeDi
 
     page->recordAutomaticNavigationSnapshot();
 
+#if ENABLE(BACK_FORWARD_LIST_SWIFT)
+    WebBackForwardList backForwardList = page->backForwardList();
+    RefPtr targetItem = (direction == SwipeDirection::Back)
+        ? backForwardList.goBackItemSkippingItemsWithoutUserGesture()
+        : backForwardList.goForwardItemSkippingItemsWithoutUserGesture();
+#else
     Ref backForwardList = page->backForwardList();
     RefPtr targetItem = (direction == SwipeDirection::Back)
         ? backForwardList->goBackItemSkippingItemsWithoutUserGesture()
         : backForwardList->goForwardItemSkippingItemsWithoutUserGesture();
+#endif
     if (!targetItem)
         return;
 
@@ -618,7 +654,7 @@ bool ViewGestureController::isPhysicallySwipingLeft(SwipeDirection direction) co
 
 bool ViewGestureController::shouldUseSnapshotForSize(ViewSnapshot& snapshot, FloatSize swipeLayerSize, FloatBoxExtent obscuredContentInsets)
 {
-    RefPtr page = m_webPageProxy.get();
+    auto* page = m_webPageProxy.get();
     if (!page)
         return false;
 
@@ -675,7 +711,11 @@ void ViewGestureController::willEndSwipeGesture(WebBackForwardListItem& targetIt
     m_didStartProvisionalLoad = false;
     m_pendingNavigation = page->goToBackForwardItem(targetItem);
 
-    RefPtr currentItem = protect(page->backForwardList())->currentItem();
+#if ENABLE(BACK_FORWARD_LIST_SWIFT)
+    RefPtr currentItem = page->backForwardList().currentItem();
+#else
+    RefPtr currentItem = page->backForwardList().currentItem();
+#endif
     // The main frame will not be navigated so hide the snapshot right away.
     if (currentItem && currentItem->itemIsClone(targetItem)) {
         removeSwipeSnapshot();
@@ -755,7 +795,15 @@ FloatPoint ViewGestureController::scaledMagnificationOrigin(FloatPoint origin, d
     scaledMagnificationOrigin.moveBy(m_visibleContentRect.location());
     float magnificationOriginScale = 1 - (scale / m_initialMagnification);
     scaledMagnificationOrigin.scale(magnificationOriginScale);
-    scaledMagnificationOrigin.move(origin - m_initialMagnificationOrigin);
+
+    // Trackpad magnification (InputSource::UserDriven) should not have a moving origin
+    // during transient zoom. However, in configurations where that is possible, we do
+    // not want to double account for the potential scroll from the magnification origin
+    // moving around, which should already have been accounted for since we produced
+    // representative wheel events.
+    if (m_magnificationGestureInputSource != WebEventInputSource::Automation)
+        scaledMagnificationOrigin.move(origin - m_initialMagnificationOrigin);
+
     return scaledMagnificationOrigin;
 }
 
@@ -778,7 +826,7 @@ void ViewGestureController::prepareMagnificationGesture(FloatPoint origin)
     if (!page)
         return;
 
-    m_magnification = page->pageScaleFactor();
+    m_magnification = magnification();
     protect(page->legacyMainFrameProcess())->send(Messages::ViewGestureGeometryCollector::CollectGeometryForMagnificationGesture(), page->webPageIDInMainFrameProcess());
 
     m_initialMagnification = m_magnification;
@@ -817,8 +865,10 @@ void ViewGestureController::endMagnificationGesture()
     if (m_frameHandlesMagnificationGesture)
         page->scalePage(newMagnification, roundedIntPoint(m_magnificationOrigin), [] { });
     else {
+        // No target scroll position: this zoom tracked a gesture, so it is anchored about the origin the drawing
+        // area followed through adjustTransientZoom() rather than landing somewhere chosen up front.
         if (RefPtr drawingArea = page->drawingArea())
-            drawingArea->commitTransientZoom(newMagnification, scaledMagnificationOrigin(m_magnificationOrigin, newMagnification));
+            drawingArea->commitTransientZoom(newMagnification, scaledMagnificationOrigin(m_magnificationOrigin, newMagnification), std::nullopt);
     }
 
 #if PLATFORM(MAC)
@@ -835,9 +885,26 @@ double ViewGestureController::magnification() const
         return m_magnification;
 
     RefPtr page = m_webPageProxy.get();
-    return page ? page->pageScaleFactor() : 1;
+    if (!page)
+        return 1;
+
+    if (RefPtr drawingArea = page->drawingArea()) {
+        if (auto committedTransientZoomScale = drawingArea->committedTransientZoomScale())
+            return *committedTransientZoomScale;
+    }
+
+    return page->pageScaleFactor();
 }
 
 #endif // !PLATFORM(IOS_FAMILY)
+
+#if !PLATFORM(COCOA)
+
+std::optional<bool> ViewGestureController::platformEventShouldCancelSwipe(PlatformScrollEvent, FloatSize)
+{
+    return std::nullopt;
+}
+
+#endif
 
 } // namespace WebKit

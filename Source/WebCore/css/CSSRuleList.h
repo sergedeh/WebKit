@@ -54,7 +54,7 @@ public:
 
     static Ref<StaticCSSRuleList> create() { return adoptRef(*new StaticCSSRuleList); }
 
-    Vector<RefPtr<CSSRule>>& rules() { return m_rules; }
+    Vector<RefPtr<CSSRule>>& rules() LIFETIME_BOUND { return m_rules; }
     
     CSSStyleSheet* styleSheet() const final { return nullptr; }
 
@@ -82,8 +82,8 @@ public:
     void deref() const final { m_rule.deref(); }
 
 private:
-    unsigned length() const final { return m_rule.length(); }
-    CSSRule* item(unsigned index) const final { return m_rule.item(index); }
+    unsigned length() const final { return protect(m_rule)->length(); }
+    CSSRule* item(unsigned index) const final { return protect(m_rule)->item(index); }
     CSSStyleSheet* styleSheet() const final { return m_rule.parentStyleSheet(); }
     
     Rule& m_rule;

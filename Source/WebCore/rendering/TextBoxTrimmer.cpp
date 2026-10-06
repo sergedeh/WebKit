@@ -29,6 +29,7 @@
 #include "InlineIteratorBox.h"
 #include "InlineIteratorLineBox.h"
 #include "InlineIteratorLineBoxInlines.h"
+#include "LocalFrameViewInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderObjectDocument.h"
@@ -37,14 +38,14 @@
 
 namespace WebCore {
 
-static TextBoxTrim textBoxTrim(const RenderBlockFlow& textBoxTrimRoot)
+static TextBoxTrim NODELETE textBoxTrim(const RenderBlockFlow& textBoxTrimRoot)
 {
     if (auto* multiColumnFlow = dynamicDowncast<RenderMultiColumnFlow>(textBoxTrimRoot))
         return multiColumnFlow->multiColumnBlockFlow()->style().textBoxTrim();
     return textBoxTrimRoot.style().textBoxTrim();
 }
 
-static void removeTextBoxTrimStart(LocalFrameViewLayoutContext& layoutContext)
+static void NODELETE removeTextBoxTrimStart(LocalFrameViewLayoutContext& layoutContext)
 {
     auto textBoxTrim = layoutContext.textBoxTrim();
     if (!textBoxTrim || !textBoxTrim->trimFirstFormattedLine) {
@@ -56,9 +57,9 @@ static void removeTextBoxTrimStart(LocalFrameViewLayoutContext& layoutContext)
 
 static bool shouldIgnoreAsFirstLastFormattedLineContainer(const RenderBlockFlow& container)
 {
-    if (container.style().display() == DisplayType::RubyAnnotation || container.createsNewFormattingContext())
+    if (container.style().display() == Style::DisplayType::RubyText || container.createsNewFormattingContext())
         return true;
-    // Empty continuation pre/post blocks should be ignored as they are implementation detail.
+    // Empty anonymous blocks should be ignored as they are implementation detail.
     if (container.isAnonymousBlock()) {
         if (auto firstLineBox = InlineIterator::firstLineBoxFor(container))
             return !firstLineBox->lineLeftmostLeafBox();
@@ -95,7 +96,6 @@ static CheckedPtr<RenderBlockFlow> lastFormattedLineRoot(const RenderBlockFlow& 
             return { };
         };
         if (auto box = firstBoxOnLastFormattedLineWithContent(); box && box->isBlockLevelBox()) {
-            ASSERT(box->renderer().settings().blocksInInlineLayoutEnabled());
             ASSERT(is<RenderBlockFlow>(box->renderer()));
             if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(const_cast<RenderObject&>(box->renderer()))) {
                 if (CheckedPtr candidate = lastFormattedLineRoot(*blockFlow))

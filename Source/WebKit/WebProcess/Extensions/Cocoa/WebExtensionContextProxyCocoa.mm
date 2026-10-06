@@ -34,6 +34,7 @@
 
 #import "CocoaHelpers.h"
 #import "JSWebExtensionWrapper.h"
+#import "MessageSenderInlines.h"
 #import "WebExtensionAPINamespace.h"
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionContextProxyMessages.h"
@@ -48,7 +49,7 @@
 
 namespace WebKit {
 
-static HashMap<WebExtensionContextIdentifier, WeakPtr<WebExtensionContextProxy>>& webExtensionContextProxies()
+static HashMap<WebExtensionContextIdentifier, WeakPtr<WebExtensionContextProxy>>& NODELETE webExtensionContextProxies()
 {
     static MainRunLoopNeverDestroyed<HashMap<WebExtensionContextIdentifier, WeakPtr<WebExtensionContextProxy>>> contexts;
     return contexts;
@@ -84,9 +85,10 @@ Ref<WebExtensionContextProxy> WebExtensionContextProxy::getOrCreate(const WebExt
         context.m_grantedPermissions = parameters.grantedPermissions;
         context.m_localization = parseLocalization(parameters.localizationJSON, parameters.baseURL);
         Ref manifestJSON = *parameters.manifestJSON;
-        context.m_manifest = parseJSON(manifestJSON);
+        context.m_manifest = JSON::Value::parseJSON(String::fromUTF8(manifestJSON->span()));
         context.m_manifestVersion = parameters.manifestVersion;
-        context.m_isSessionStorageAllowedInContentScripts = parameters.isSessionStorageAllowedInContentScripts;
+        context.m_storageAccessLevels = parameters.storageAccessLevels;
+        context.m_defaultSessionID = parameters.defaultSessionID;
 
         if (parameters.privilegedIdentifier)
             context.m_privilegedIdentifier = parameters.privilegedIdentifier;
@@ -200,6 +202,11 @@ Ref<WebCore::DOMWrapperWorld> WebExtensionContextProxy::toDOMWrapperWorld(WebExt
         ASSERT_NOT_REACHED();
         return mainWorldSingleton();
     }
+}
+
+void WebExtensionContextProxy::didEncounterScriptError(const String& message, const String& sourceURL, unsigned lineNumber, unsigned columnNumber, WebExtensionContentWorldType worldType)
+{
+    WebProcess::singleton().send(Messages::WebExtensionContext::DidEncounterScriptError(message, sourceURL, lineNumber, columnNumber, worldType), identifier());
 }
 
 } // namespace WebKit

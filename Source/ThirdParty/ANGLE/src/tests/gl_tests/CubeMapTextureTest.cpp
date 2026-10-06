@@ -4,10 +4,9 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/angle_test_configs.h"
 #include "test_utils/gl_raii.h"
@@ -61,7 +60,7 @@ class CubeMapTextureTest : public ANGLETest<>
 // face.
 TEST_P(CubeMapTextureTest, UploadToFacesConsecutively)
 {
-    const GLColor faceColors[] = {
+    const std::array<GLColor, 6> faceColors = {
         GLColor::red,    GLColor::green,   GLColor::blue,
         GLColor::yellow, GLColor::magenta, GLColor::cyan,
     };
@@ -136,14 +135,15 @@ TEST_P(CubeMapTextureTest, RenderToFacesConsecutively)
 
         glUseProgram(mProgram);
 
-        const GLfloat *faceColor = faceColors + (face * 4);
-        glUniform4f(mColorLocation, faceColor[0], faceColor[1], faceColor[2], faceColor[3]);
+        const GLfloat *faceColor = ANGLE_UNSAFE_TODO(faceColors + (face * 4));
+        ANGLE_UNSAFE_TODO(
+            glUniform4f(mColorLocation, faceColor[0], faceColor[1], faceColor[2], faceColor[3]));
 
         drawQuad(mProgram, essl1_shaders::PositionAttrib(), 0.5f);
         EXPECT_GL_NO_ERROR();
 
-        EXPECT_PIXEL_EQ(0, 0, faceColor[0] * 255, faceColor[1] * 255, faceColor[2] * 255,
-                        faceColor[3] * 255);
+        ANGLE_UNSAFE_TODO(EXPECT_PIXEL_EQ(0, 0, faceColor[0] * 255, faceColor[1] * 255,
+                                          faceColor[2] * 255, faceColor[3] * 255));
         EXPECT_GL_NO_ERROR();
     }
 
@@ -153,9 +153,9 @@ TEST_P(CubeMapTextureTest, RenderToFacesConsecutively)
                                GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, tex, 0);
         EXPECT_GL_NO_ERROR();
 
-        const GLfloat *faceColor = faceColors + (face * 4);
-        EXPECT_PIXEL_EQ(0, 0, faceColor[0] * 255, faceColor[1] * 255, faceColor[2] * 255,
-                        faceColor[3] * 255);
+        const GLfloat *faceColor = ANGLE_UNSAFE_TODO(faceColors + (face * 4));
+        ANGLE_UNSAFE_TODO(EXPECT_PIXEL_EQ(0, 0, faceColor[0] * 255, faceColor[1] * 255,
+                                          faceColor[2] * 255, faceColor[3] * 255));
         EXPECT_GL_NO_ERROR();
     }
 
@@ -174,7 +174,7 @@ void CubeMapTextureTest::runSampleCoordinateTransformTest(const char *shader, co
     constexpr GLsizei kCubeFaceSectionCount     = 4;
     constexpr GLsizei kCubeFaceSectionCountSqrt = 2;
 
-    constexpr GLColor faceColors[kCubeFaceCount][kCubeFaceSectionCount] = {
+    constexpr std::array<std::array<GLColor, kCubeFaceSectionCount>, kCubeFaceCount> faceColors = {{
         {GLColor(255, 0, 0, 255), GLColor(191, 0, 0, 255), GLColor(127, 0, 0, 255),
          GLColor(63, 0, 0, 255)},
         {GLColor(0, 255, 0, 255), GLColor(0, 191, 0, 255), GLColor(0, 127, 0, 255),
@@ -187,7 +187,7 @@ void CubeMapTextureTest::runSampleCoordinateTransformTest(const char *shader, co
          GLColor(0, 63, 255, 255)},
         {GLColor(63, 0, 255, 255), GLColor(127, 0, 191, 255), GLColor(191, 0, 127, 255),
          GLColor(255, 0, 63, 255)},
-    };
+    }};
 
     constexpr GLsizei kTextureSize = 32;
 
@@ -263,9 +263,15 @@ void CubeMapTextureTest::runSampleCoordinateTransformTest(const char *shader, co
         // always generates (row,col) coordinates (0, 0), (0, 1), (1, 0), (1, 1) which is the order
         // the data is uploaded to the faces, but based on the table above, the sample order would
         // be different.
-        constexpr size_t faceSampledSections[kCubeFaceCount][kCubeFaceSectionCount] = {
-            {3, 2, 1, 0}, {2, 3, 0, 1}, {0, 1, 2, 3}, {2, 3, 0, 1}, {2, 3, 0, 1}, {3, 2, 1, 0},
-        };
+        constexpr std::array<std::array<size_t, kCubeFaceSectionCount>, kCubeFaceCount>
+            faceSampledSections = {{
+                {3, 2, 1, 0},
+                {2, 3, 0, 1},
+                {0, 1, 2, 3},
+                {2, 3, 0, 1},
+                {2, 3, 0, 1},
+                {3, 2, 1, 0},
+            }};
 
         for (size_t section = 0; section < kCubeFaceSectionCount; ++section)
         {
@@ -282,8 +288,6 @@ void CubeMapTextureTest::runSampleCoordinateTransformTest(const char *shader, co
 // within each face.  See section 3.7.5 of GLES2.0 (Cube Map Texture Selection).
 TEST_P(CubeMapTextureTest, SampleCoordinateTransform)
 {
-    // http://anglebug.com/40096654
-    ANGLE_SKIP_TEST_IF(IsWindows() && IsD3D9());
     // Create a program that samples from 6x4 directions of the cubemap, draw and verify that the
     // colors match the right color from |faceColors|.
     constexpr char kFS[] = R"(precision mediump float;

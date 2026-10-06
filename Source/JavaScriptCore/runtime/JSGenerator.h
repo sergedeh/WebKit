@@ -26,12 +26,13 @@
 #pragma once
 
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
+#include <wtf/EnumClassOperatorOverloads.h>
 
 namespace JSC {
 
-class JSGenerator final : public JSInternalFieldObjectImpl<5> {
+class JSGenerator final : public JSInternalFieldObjectImpl<4> {
 public:
-    using Base = JSInternalFieldObjectImpl<5>;
+    using Base = JSInternalFieldObjectImpl<4>;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -67,9 +68,8 @@ public:
         Next,
         This,
         Frame,
-        Context,
     };
-    static_assert(numberOfInternalFields == 5);
+    static_assert(numberOfInternalFields == 4);
     static std::array<JSValue, numberOfInternalFields> initialValues()
     {
         return { {
@@ -77,16 +77,20 @@ public:
             jsUndefined(),
             jsUndefined(),
             jsUndefined(),
-            jsUndefined(),
         } };
     }
 
+    using Base::internalField;
+    const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
+    WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
+
     static JSGenerator* create(VM&, Structure*);
+    static JSGenerator* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     int32_t state() const
     {
-        return Base::internalField(static_cast<unsigned>(Field::State)).get().asInt32AsAnyInt();
+        return internalField(Field::State).get().asInt32AsAnyInt();
     }
 
     void setState(int32_t state)
@@ -107,11 +111,6 @@ public:
     JSValue frame() const
     {
         return Base::internalField(static_cast<unsigned>(Field::Frame)).get();
-    }
-
-    JSValue context() const
-    {
-        return Base::internalField(static_cast<unsigned>(Field::Context)).get();
     }
 
     DECLARE_EXPORT_INFO;

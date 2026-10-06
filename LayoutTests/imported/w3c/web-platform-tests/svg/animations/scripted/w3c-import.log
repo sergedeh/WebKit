@@ -10,8 +10,6 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/animations/scripted/SVGAnimationElement-exceptions.html
@@ -27,4 +25,5 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/animations/scripted/keytimes-attribute-trailing-semi.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/animations/scripted/onhover-syncbases.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/animations/scripted/paced-value-animation-overwrites-keyTimes.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/animations/scripted/smil-values-empty-segments.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/animations/scripted/syncbase-after-removal.html

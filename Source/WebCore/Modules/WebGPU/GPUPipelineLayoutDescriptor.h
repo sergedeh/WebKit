@@ -39,10 +39,12 @@ struct GPUPipelineLayoutDescriptor : public GPUObjectDescriptorBase {
         return {
             { label },
             bindGroupLayouts.map([&](const auto& bindGroupLayout) -> Ref<WebGPU::BindGroupLayout> {
-                return bindGroupLayout ? Ref { bindGroupLayout->backing() } : device.emptyBindGroupLayout();
+                return bindGroupLayout ? protect(bindGroupLayout->backing()) : device.emptyBindGroupLayout();
             }),
         };
     }
+
+    Ref<JSON::Object> toJSON() const;
 
     Vector<RefPtr<GPUBindGroupLayout>> bindGroupLayouts;
 };

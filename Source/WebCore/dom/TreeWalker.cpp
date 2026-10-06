@@ -40,19 +40,29 @@ TreeWalker::TreeWalker(Node& rootNode, unsigned long whatToShow, RefPtr<NodeFilt
 {
 }
 
+WebCoreOpaqueRoot TreeWalker::opaqueRootForCurrentNodeInGCThread() const
+{
+    Locker locker { m_currentLock };
+    // Cannot ref in a GC thread.
+    SUPPRESS_UNCOUNTED_LOCAL return m_current->opaqueRoot();
+}
+
 void TreeWalker::setCurrentNode(Node& node)
 {
+    Locker locker { m_currentLock };
     m_current = node;
 }
 
 inline Node* TreeWalker::setCurrent(Ref<Node>&& node)
 {
+    Locker locker { m_currentLock };
     m_current = WTF::move(node);
     return m_current.ptr();
 }
 
 ExceptionOr<Node*> TreeWalker::parentNode()
 {
+    assertIsOwnerThread();
     RefPtr node = m_current.ptr();
     while (node != &root()) {
         node = node->parentNode();
@@ -71,6 +81,7 @@ ExceptionOr<Node*> TreeWalker::parentNode()
 
 ExceptionOr<Node*> TreeWalker::firstChild()
 {
+    assertIsOwnerThread();
     for (RefPtr node = m_current->firstChild(); node; ) {
         auto filterResult = acceptNode(*node);
         if (filterResult.hasException())
@@ -78,8 +89,7 @@ ExceptionOr<Node*> TreeWalker::firstChild()
 
         switch (filterResult.returnValue()) {
             case NodeFilter::FILTER_ACCEPT:
-                m_current = node.releaseNonNull();
-                return m_current.ptr();
+                return setCurrent(node.releaseNonNull());
             case NodeFilter::FILTER_SKIP:
                 if (node->firstChild()) {
                     node = node->firstChild();
@@ -105,6 +115,7 @@ ExceptionOr<Node*> TreeWalker::firstChild()
 
 ExceptionOr<Node*> TreeWalker::lastChild()
 {
+    assertIsOwnerThread();
     for (RefPtr node = m_current->lastChild(); node; ) {
         auto filterResult = acceptNode(*node);
         if (filterResult.hasException())
@@ -112,8 +123,7 @@ ExceptionOr<Node*> TreeWalker::lastChild()
 
         switch (filterResult.returnValue()) {
             case NodeFilter::FILTER_ACCEPT:
-                m_current = node.releaseNonNull();
-                return m_current.ptr();
+                return setCurrent(node.releaseNonNull());
             case NodeFilter::FILTER_SKIP:
                 if (node->lastChild()) {
                     node = node->lastChild();
@@ -139,6 +149,7 @@ ExceptionOr<Node*> TreeWalker::lastChild()
 
 template<TreeWalker::SiblingTraversalType type> ExceptionOr<Node*> TreeWalker::traverseSiblings()
 {
+    assertIsOwnerThread();
     RefPtr node = m_current.ptr();
     if (node == &root())
         return nullptr;
@@ -150,10 +161,8 @@ template<TreeWalker::SiblingTraversalType type> ExceptionOr<Node*> TreeWalker::t
             if (filterResult.hasException())
                 return filterResult.releaseException();
 
-            if (filterResult.returnValue() == NodeFilter::FILTER_ACCEPT) {
-                m_current = sibling.releaseNonNull();
-                return m_current.ptr();
-            }
+            if (filterResult.returnValue() == NodeFilter::FILTER_ACCEPT)
+                return setCurrent(sibling.releaseNonNull());
             node = sibling;
             sibling = isNext ? sibling->firstChild() : sibling->lastChild();
             if (filterResult.returnValue() == NodeFilter::FILTER_REJECT || !sibling)
@@ -184,6 +193,7 @@ ExceptionOr<Node*> TreeWalker::nextSibling()
 
 ExceptionOr<Node*> TreeWalker::previousNode()
 {
+    assertIsOwnerThread();
     if (!filter()) {
         if (m_current.ptr() == &root())
             return nullptr;
@@ -218,10 +228,8 @@ ExceptionOr<Node*> TreeWalker::previousNode()
                 if (acceptNodeResult == NodeFilter::FILTER_REJECT)
                     break;
             }
-            if (acceptNodeResult == NodeFilter::FILTER_ACCEPT) {
-                m_current = node.releaseNonNull();
-                return m_current.ptr();
-            }
+            if (acceptNodeResult == NodeFilter::FILTER_ACCEPT)
+                return setCurrent(node.releaseNonNull());
         }
         if (node == &root())
             return nullptr;
@@ -242,6 +250,7 @@ ExceptionOr<Node*> TreeWalker::previousNode()
 
 ExceptionOr<Node*> TreeWalker::nextNode()
 {
+    assertIsOwnerThread();
     if (!filter()) {
         for (RefPtr node = NodeTraversal::next(m_current, &root()); node; node = NodeTraversal::next(*node, &root())) {
             if (matchesWhatToShow(*node))

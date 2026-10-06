@@ -51,6 +51,7 @@ struct Options {
     bool allowAnyHTTPSCertificateForAllowedHosts { false };
     bool enableAllExperimentalFeatures { true };
     bool lockdownModeEnabled { false };
+    bool siteIsolationEnabledByDefault { false };
 #if PLATFORM(WPE)
     bool useWPELegacyAPI { false };
 #endif
@@ -58,6 +59,7 @@ struct Options {
     std::set<std::string> allowedHosts;
     std::set<std::string> localhostAliases;
     std::string webCoreLogChannels;
+    std::string ipAddressSpaceOverrides;
     std::string webKitLogChannels;
     TestFeatures features;
 };

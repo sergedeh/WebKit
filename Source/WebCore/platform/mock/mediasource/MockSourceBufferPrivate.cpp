@@ -69,8 +69,9 @@ private:
     void offsetTimestampsBy(const MediaTime& offset) override { m_box.offsetTimestampsBy(offset); }
     void setTimestamps(const MediaTime& presentationTimestamp, const MediaTime& decodeTimestamp) override { m_box.setTimestamps(presentationTimestamp, decodeTimestamp); }
     Ref<MediaSample> createNonDisplayingCopy() const override;
+    Ref<MediaSample> createCopyWithAdjustedStartTime(const MediaTime& offset) const override;
 
-    unsigned generation() const { return m_box.generation(); }
+    unsigned NODELETE generation() const { return m_box.generation(); }
 
     MockSampleBox m_box;
     TrackID m_id;
@@ -100,6 +101,16 @@ Ref<MediaSample> MockMediaSample::createNonDisplayingCopy() const
 {
     auto copy = MockMediaSample::create(m_box);
     copy->m_box.setFlag(MockSampleBox::IsNonDisplaying);
+    return copy;
+}
+
+Ref<MediaSample> MockMediaSample::createCopyWithAdjustedStartTime(const MediaTime& offset) const
+{
+    MediaTime clampedOffset = std::max(MediaTime::zeroTime(), std::min(offset, m_box.duration()));
+
+    auto copy = MockMediaSample::create(m_box);
+    copy->m_box.setTimestamps(m_box.presentationTimestamp() + clampedOffset, m_box.decodeTimestamp() + clampedOffset);
+    copy->m_box.setDuration(m_box.duration() - clampedOffset);
     return copy;
 }
 
@@ -222,9 +233,10 @@ bool MockSourceBufferPrivate::canSetMinimumUpcomingPresentationTime(TrackID) con
 
 bool MockSourceBufferPrivate::canSwitchToType(const ContentType& contentType)
 {
-    MediaEngineSupportParameters parameters;
-    parameters.isMediaSource = true;
-    parameters.type = contentType;
+    MediaEngineSupportParameters parameters {
+        .platformType = PlatformMediaDecodingType::MediaSource,
+        .type = contentType
+    };
     return MockMediaPlayerMediaSource::supportsType(parameters) != MediaPlayer::SupportsType::IsNotSupported;
 }
 

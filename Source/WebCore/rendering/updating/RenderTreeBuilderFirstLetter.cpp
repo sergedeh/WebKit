@@ -31,29 +31,31 @@
 #include "RenderInline.h"
 #include "RenderObjectDocument.h"
 #include "RenderSVGText.h"
-#include "RenderStyle+SettersInlines.h"
 #include "RenderTable.h"
 #include "RenderTextFragment.h"
 #include "RenderTreeBuilder.h"
 #include "RenderView.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "StyleChange.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/CharacterProperties.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTreeBuilder::FirstLetter);
 
-static std::optional<RenderStyle> styleForFirstLetter(const RenderElement& firstLetterContainer)
+static std::optional<Style::ComputedStyle> styleForFirstLetter(const RenderElement& firstLetterContainer)
 {
     auto& styleContainer = firstLetterContainer.isAnonymous() ? *firstLetterContainer.firstNonAnonymousAncestor() : firstLetterContainer;
-    auto style = styleContainer.style().getCachedPseudoStyle({ PseudoElementType::FirstLetter });
+    auto style = styleContainer.style().pseudoElementStyle({ PseudoElementType::FirstLetter });
     if (!style)
         return { };
 
-    auto firstLetterStyle = RenderStyle::clone(*style);
+    auto firstLetterStyle = Style::ComputedStyle::clone(*style);
 
     // If we have an initial letter drop that is >= 1, then we need to force floating to be on.
-    if (firstLetterStyle.initialLetter().drop() >= 1 && !firstLetterStyle.isFloating())
+    if (firstLetterStyle.initialLetter().drop() >= 1 && firstLetterStyle.floating() == Float::None)
         firstLetterStyle.setFloating(firstLetterStyle.writingMode().isBidiLTR() ? Float::Left : Float::Right);
 
     // We have to compute the correct font-size for the first-letter if it has an initial letter height set.
@@ -65,23 +67,23 @@ static std::optional<RenderStyle> styleForFirstLetter(const RenderElement& first
         // Mathematically we can't rely on font-size, since font().height() doesn't necessarily match. For reliability, the best approach is simply to
         // compare the final measured cap-heights of the two fonts in order to get to the closest possible value.
         firstLetterStyle.setLineBoxContain({ Style::WebkitLineBoxContainValue::InitialLetter });
-        int lineHeight = paragraph->style().computedLineHeight();
+        int lineHeight = paragraph->style().usedLineHeight();
 
         // Set the font to be one line too big and then ratchet back to get to a precise fit. We can't just set the desired font size based off font height metrics
         // because many fonts bake ascent into the font metrics. Therefore we have to look at actual measured cap height values in order to know when we have a good fit.
         auto newFontDescription = firstLetterStyle.fontDescription();
-        float capRatio = firstLetterStyle.metricsOfPrimaryFont().capHeight().value() / firstLetterStyle.computedFontSize();
+        float capRatio = firstLetterStyle.metricsOfPrimaryFont().capHeight().value() / firstLetterStyle.usedFontSize();
         float startingFontSize = ((firstLetterStyle.initialLetter().height() - 1) * lineHeight + paragraph->style().metricsOfPrimaryFont().intCapHeight()) / capRatio;
-        newFontDescription.setSpecifiedSize(startingFontSize);
         newFontDescription.setComputedSize(startingFontSize);
+        newFontDescription.setUsedSize(startingFontSize);
         firstLetterStyle.setFontDescription(WTF::move(newFontDescription));
 
         int desiredCapHeight = (firstLetterStyle.initialLetter().height() - 1) * lineHeight + paragraph->style().metricsOfPrimaryFont().intCapHeight();
         int actualCapHeight = firstLetterStyle.metricsOfPrimaryFont().intCapHeight();
         while (actualCapHeight > desiredCapHeight) {
             auto newFontDescription = firstLetterStyle.fontDescription();
-            newFontDescription.setSpecifiedSize(newFontDescription.specifiedSize() - 1);
-            newFontDescription.setComputedSize(newFontDescription.computedSize() -1);
+            newFontDescription.setComputedSize(newFontDescription.computedSize() - 1);
+            newFontDescription.setUsedSize(newFontDescription.usedSize() - 1);
             firstLetterStyle.setFontDescription(WTF::move(newFontDescription));
             actualCapHeight = firstLetterStyle.metricsOfPrimaryFont().intCapHeight();
         }
@@ -89,24 +91,108 @@ static std::optional<RenderStyle> styleForFirstLetter(const RenderElement& first
 
     firstLetterStyle.setPseudoElementIdentifier({ { PseudoElementType::FirstLetter } });
     // Force inline display (except for floating first-letters).
-    firstLetterStyle.setDisplay(firstLetterStyle.isFloating() ? DisplayType::Block : DisplayType::Inline);
+    firstLetterStyle.setDisplay(firstLetterStyle.floating() != Float::None ? Style::DisplayType::BlockFlow : Style::DisplayType::InlineFlow);
     // CSS2 says first-letter can't be positioned.
     firstLetterStyle.setPosition(PositionType::Static);
 
     return firstLetterStyle;
 }
 
-// CSS 2.1 http://www.w3.org/TR/CSS21/selector.html#first-letter
-// "Punctuation (i.e, characters defined in Unicode [UNICODE] in the "open" (Ps), "close" (Pe),
-// "initial" (Pi). "final" (Pf) and "other" (Po) punctuation classes), that precedes or follows the first letter should be included"
-static inline bool isPunctuationForFirstLetter(char32_t c)
+// https://drafts.csswg.org/css-pseudo/#first-letter-pattern
+static inline bool isPrecedingPunctuationForFirstLetter(char32_t c)
 {
-    return U_GET_GC_MASK(c) & (U_GC_PS_MASK | U_GC_PE_MASK | U_GC_PI_MASK | U_GC_PF_MASK | U_GC_PO_MASK);
+    return isPunctuation(c);
 }
 
-static inline bool shouldSkipForFirstLetter(char32_t c)
+static inline bool isFollowingPunctuationForFirstLetter(char32_t c)
 {
-    return deprecatedIsSpaceOrNewline(c) || c == noBreakSpace || isPunctuationForFirstLetter(c);
+    auto mask = U_GET_GC_MASK(c);
+    return (mask & U_GC_P_MASK) && !(mask & (U_GC_PS_MASK | U_GC_PD_MASK));
+}
+
+static inline bool isPrecedingTypographicSpaceForFirstLetter(char32_t c)
+{
+    if (c == ideographicSpace)
+        return false;
+    return U_GET_GC_MASK(c) & U_GC_ZS_MASK;
+}
+
+// https://drafts.csswg.org/css-text/#word-separator
+static inline bool isWordSeparator(char32_t c)
+{
+    switch (c) {
+    case ' ':
+    case noBreakSpace:
+    case ethiopicWordspace:
+    case aegeanWordSeparatorLine:
+    case aegeanWordSeparatorDot:
+    case ugariticWordDivider:
+    case phoenicianWordSeparator:
+        return true;
+    }
+    return false;
+}
+
+static inline bool isFollowingTypographicSpaceForFirstLetter(char32_t c)
+{
+    if (isWordSeparator(c))
+        return false;
+    return isPrecedingTypographicSpaceForFirstLetter(c);
+}
+
+static inline bool shouldSkipBeforeFirstLetter(char32_t c)
+{
+    // isASCIIWhitespace covers HTML source whitespace that may still be present
+    // in originalText() before whitespace collapsing.
+    return isASCIIWhitespace(c)
+        || isPrecedingPunctuationForFirstLetter(c)
+        || isPrecedingTypographicSpaceForFirstLetter(c);
+}
+
+static bool isDutchIJDigraph(StringView text, unsigned offset)
+{
+    if (offset + 1 >= text.length())
+        return false;
+    auto first = text[offset];
+    auto second = text[offset + 1];
+    return (first == 'i' && second == 'j') || (first == 'I' && second == 'J');
+}
+
+static unsigned firstLetterLength(StringView text, const AtomString& locale)
+{
+    if (text.isEmpty())
+        return 0;
+
+    unsigned length = 0;
+
+    // Account for leading spaces and punctuation.
+    while (length < text.length() && shouldSkipBeforeFirstLetter(text.codePointAt(length)))
+        length += numCodeUnitsInGraphemeClusters(text.substring(length), 1);
+
+    // Account for first grapheme cluster.
+    length += numCodeUnitsInGraphemeClusters(text.substring(length), 1);
+
+    // In Dutch, "ij" is a digraph treated as a single letter for ::first-letter.
+    if (length < text.length() && isDutchLocale(locale) && isDutchIJDigraph(text, length - 1))
+        length += numCodeUnitsInGraphemeClusters(text.substring(length), 1);
+
+    // Keep looking for following punctuation and intervening typographic space,
+    // but avoid accumulating just whitespace into the :first-letter.
+    unsigned numCodeUnits = 0;
+    for (unsigned scanLength = length; scanLength < text.length(); scanLength += numCodeUnits) {
+        char32_t c = text.codePointAt(scanLength);
+
+        bool isFollowingPunctuation = isFollowingPunctuationForFirstLetter(c);
+        if (!isFollowingPunctuation && !isFollowingTypographicSpaceForFirstLetter(c))
+            break;
+
+        numCodeUnits = numCodeUnitsInGraphemeClusters(text.substring(scanLength), 1);
+
+        if (isFollowingPunctuation)
+            length = scanLength + numCodeUnits;
+    }
+
+    return length;
 }
 
 static bool supportsFirstLetter(RenderBlock& block)
@@ -143,8 +229,46 @@ void RenderTreeBuilder::FirstLetter::updateAfterDescendants(RenderBlock& block)
         return;
 
     // If the child already has style, then it has already been created, so we just want
-    // to update it.
-    if (firstLetter->parent()->style().pseudoElementType() == PseudoElementType::FirstLetter) {
+    // to update it — unless the first letter text is stale because a new text node was
+    // inserted before it in the DOM. In that case, reset the remaining fragment to its
+    // full text (which tears down the old first-letter) and let createRenderers rebuild.
+    if (WeakPtr anonymousFirstLetterContainer = dynamicDowncast<RenderBoxModelObject>(firstLetter->parent()); anonymousFirstLetterContainer && anonymousFirstLetterContainer->style().pseudoElementType() == PseudoElementType::FirstLetter) {
+        WeakPtr remainingText = anonymousFirstLetterContainer->firstLetterRemainingText();
+        auto isFirstLetterStale = [&] {
+            if (!remainingText)
+                return false;
+            if (auto* firstLetterNextSibling = dynamicDowncast<RenderElement>(anonymousFirstLetterContainer->nextSibling()); firstLetterNextSibling && firstLetterNextSibling->style().pseudoElementType() == PseudoElementType::Before) {
+                // When ::before is dynamically added, its renderer is placed after the existing first-letter wrapper (which already holds the first-child slot).
+                // If the first letter were already from ::before content, the wrapper would be inside the ::before renderer, not beside it.
+                return true;
+            }
+            // The first-letter split is anchored to the remaining fragment's text node.
+            RefPtr textNode = remainingText->textNode();
+            if (!textNode)
+                return false;
+            // If a new text node was inserted before the first-letter's text node,
+            // the first letter of the block has changed and the split must be rebuilt.
+            if (is<Text>(textNode->previousSibling()))
+                return true;
+            // Length can change due to a locale change.
+            // FIXME: This should probably be using `fontDescription().usedLocale()`, as that is what is used for shaping.
+            return firstLetterLength(textNode->data(), remainingText->style().fontDescription().computedLocale()) != remainingText->start();
+        };
+        if (isFirstLetterStale()) {
+            ASSERT(remainingText.get());
+            // <div>BC</div> splits into first-letter "B" + remaining "C".
+            // When "A" is added before "BC": <div>ABC</div>, the first letter should now be "A".
+            // Reset the remaining renderer from "C" back to the full text "BC" - this
+            // triggers setTextInternal which destroys the stale first-letter "B".
+            // createRenderers then rebuilds the split from the actual first text ("A").
+            remainingText->setText(remainingText->textNode()->data(), true);
+            auto [newFirstLetter, container] = block.firstLetterAndContainer();
+            ASSERT(container == firstLetterContainer);
+            ASSERT(is<RenderText>(newFirstLetter));
+            if (WeakPtr renderer = dynamicDowncast<RenderText>(newFirstLetter))
+                createRenderers(*renderer);
+            return;
+        }
         updateStyle(block, *firstLetter);
         return;
     }
@@ -184,10 +308,10 @@ void RenderTreeBuilder::FirstLetter::updateStyle(RenderBlock& firstLetterBlock, 
 
     // The first-letter renderer needs to be replaced. Create a new renderer of the right type.
     RenderPtr<RenderBoxModelObject> newFirstLetter;
-    if (pseudoStyle->display() == DisplayType::Inline)
-        newFirstLetter = createRenderer<RenderInline>(RenderObject::Type::Inline, firstLetterBlock.document(), WTF::move(*pseudoStyle));
+    if (pseudoStyle->display() == Style::DisplayType::InlineFlow)
+        newFirstLetter = createRenderer<RenderInline>(RenderObject::Type::Inline, protect(firstLetterBlock.document()), WTF::move(*pseudoStyle));
     else
-        newFirstLetter = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, firstLetterBlock.document(), WTF::move(*pseudoStyle));
+        newFirstLetter = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, protect(firstLetterBlock.document()), WTF::move(*pseudoStyle));
     newFirstLetter->initializeStyle();
     newFirstLetter->setIsFirstLetter();
 
@@ -225,10 +349,10 @@ void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChil
         return;
 
     RenderPtr<RenderBoxModelObject> newFirstLetter;
-    if (pseudoStyle->display() == DisplayType::Inline)
-        newFirstLetter = createRenderer<RenderInline>(RenderObject::Type::Inline, currentTextChild.document(), WTF::move(*pseudoStyle));
+    if (pseudoStyle->display() == Style::DisplayType::InlineFlow)
+        newFirstLetter = createRenderer<RenderInline>(RenderObject::Type::Inline, protect(currentTextChild.document()), WTF::move(*pseudoStyle));
     else
-        newFirstLetter = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, currentTextChild.document(), WTF::move(*pseudoStyle));
+        newFirstLetter = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, protect(currentTextChild.document()), WTF::move(*pseudoStyle));
     newFirstLetter->initializeStyle();
     newFirstLetter->setIsFirstLetter();
 
@@ -239,29 +363,8 @@ void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChil
     ASSERT(!oldText.isNull());
 
     if (!oldText.isEmpty()) {
-        unsigned length = 0;
-
-        // Account for leading spaces and punctuation.
-        while (length < oldText.length() && shouldSkipForFirstLetter(oldText.characterStartingAt(length)))
-            length += numCodeUnitsInGraphemeClusters(StringView(oldText).substring(length), 1);
-
-        // Account for first grapheme cluster.
-        length += numCodeUnitsInGraphemeClusters(StringView(oldText).substring(length), 1);
-
-        // Keep looking for whitespace and allowed punctuation, but avoid
-        // accumulating just whitespace into the :first-letter.
-        unsigned numCodeUnits = 0;
-        for (unsigned scanLength = length; scanLength < oldText.length(); scanLength += numCodeUnits) {
-            char32_t c = oldText.characterStartingAt(scanLength);
-
-            if (!shouldSkipForFirstLetter(c))
-                break;
-
-            numCodeUnits = numCodeUnitsInGraphemeClusters(StringView(oldText).substring(scanLength), 1);
-
-            if (isPunctuationForFirstLetter(c))
-                length = scanLength + numCodeUnits;
-        }
+        // FIXME: This should probably be using `fontDescription().usedLocale()`, as that is what is used for shaping.
+        unsigned length = firstLetterLength(oldText, currentTextChild.style().fontDescription().computedLocale());
 
         RefPtr textNode = currentTextChild.textNode();
         WeakPtr beforeChild = currentTextChild.nextSibling();
@@ -276,7 +379,7 @@ void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChil
             newRemainingText = createRenderer<RenderTextFragment>(*textNode, oldText, length, oldText.length() - length);
             textNode->setRenderer(newRemainingText.get());
         } else
-            newRemainingText = createRenderer<RenderTextFragment>(m_builder.m_view.document(), oldText, length, oldText.length() - length);
+            newRemainingText = createRenderer<RenderTextFragment>(protect(m_builder.m_view.document()), oldText, length, oldText.length() - length);
 
         RenderTextFragment& remainingText = *newRemainingText;
         ASSERT_UNUSED(hasInlineWrapperForDisplayContents, hasInlineWrapperForDisplayContents == inlineWrapperForDisplayContents.get());
@@ -290,7 +393,7 @@ void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChil
         m_builder.attach(*firstLetterContainer, WTF::move(newFirstLetter), &remainingText);
 
         // Construct text fragment for the first letter.
-        auto letter = createRenderer<RenderTextFragment>(m_builder.m_view.document(), oldText, 0, length);
+        auto letter = createRenderer<RenderTextFragment>(protect(m_builder.m_view.document()), oldText, 0, length);
         m_builder.attach(firstLetter, WTF::move(letter));
     }
 }

@@ -29,12 +29,11 @@
 #include <functional>
 #include <sqlite3.h>
 #include <wtf/CheckedRef.h>
-#include <wtf/Expected.h>
+#include <wtf/CurrentThread.h>
 #include <wtf/Lock.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Threading.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
@@ -126,19 +125,19 @@ public:
     void setSynchronous(SynchronousPragma);
     
     WEBCORE_EXPORT int lastError();
-    WEBCORE_EXPORT const char* lastErrorMsg();
+    WEBCORE_EXPORT const char* lastErrorMsg() LIFETIME_BOUND;
     
-    sqlite3* sqlite3Handle() const
+    sqlite3* sqlite3Handle() const LIFETIME_BOUND
     {
 #if !PLATFORM(IOS_FAMILY)
-        ASSERT(m_sharable || m_openingThread == &Thread::currentSingleton() || !m_db);
+        ASSERT(m_sharable || m_openingThreadID == currentThreadID() || !m_db);
 #endif
         return m_db;
     }
     
     void setAuthorizer(DatabaseAuthorizer&);
 
-    Lock& databaseMutex() { return m_lockingMutex; }
+    Lock& databaseMutex() LIFETIME_BOUND { return m_lockingMutex; }
     bool isAutoCommitOn() const;
 
     // The SQLite AUTO_VACUUM pragma can be either NONE, FULL, or INCREMENTAL.
@@ -195,12 +194,12 @@ private:
     RefPtr<DatabaseAuthorizer> m_authorizer WTF_GUARDED_BY_LOCK(m_authorizerLock);
 
     Lock m_lockingMutex;
-    RefPtr<Thread> m_openingThread { nullptr };
+    uint32_t m_openingThreadID { 0 };
 
     Lock m_databaseClosingMutex;
 
     int m_openError { SQLITE_ERROR };
-    CString m_openErrorMessage;
+    UTF8CString m_openErrorMessage;
 };
 
 inline void SQLiteDatabase::incrementStatementCount()

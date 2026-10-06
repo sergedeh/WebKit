@@ -26,10 +26,8 @@
 #pragma once
 
 #include "ActiveDOMObject.h"
-#include "EventHandler.h"
 #include "EventTarget.h"
 #include "EventTargetInterfaces.h"
-#include "HistoryItem.h"
 #include "ReferrerPolicy.h"
 #include "ScriptExecutionContextIdentifier.h"
 #include <wtf/RefCounted.h>
@@ -40,6 +38,7 @@ class JSValue;
 
 namespace WebCore {
 
+class HistoryItem;
 class JSDOMGlobalObject;
 class Navigation;
 class SerializedScriptValue;
@@ -57,7 +56,7 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    const String& url() const;
+    const String& url() const LIFETIME_BOUND;
     String key() const;
     String id() const;
     uint64_t index() const;
@@ -79,22 +78,20 @@ private:
         ReferrerPolicy referrerPolicy { ReferrerPolicy::Default };
     };
 
-    NavigationHistoryEntry(Navigation&, const DocumentState&, Ref<HistoryItem>&&, String urlString, WTF::UUID key, RefPtr<SerializedScriptValue>&& state = { }, WTF::UUID = WTF::UUID::createVersion4());
+    NavigationHistoryEntry(Navigation&, const DocumentState&, Ref<HistoryItem>&&, String urlString, RefPtr<SerializedScriptValue>&& state = { }, WTF::UUID = WTF::UUID::createVersion4());
 
     // ActiveDOMObject.
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     // EventTarget.
     enum EventTargetInterfaceType eventTargetInterface() const final;
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final;
 
     WeakPtr<Navigation, WeakPtrImplWithEventTargetData> m_navigation;
     const String m_urlString;
-    const WTF::UUID m_key;
     const WTF::UUID m_id;
     RefPtr<SerializedScriptValue> m_state;
     const Ref<HistoryItem> m_associatedHistoryItem;

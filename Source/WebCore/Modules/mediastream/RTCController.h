@@ -24,8 +24,8 @@
 
 #pragma once
 
-#include <WebCore/EventTarget.h>
-#include <WebCore/SecurityOrigin.h>
+#include "EventTarget.h"
+#include "SecurityOrigin.h"
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakHashSet.h>
@@ -42,10 +42,6 @@ class WeakPtrImplWithEventTargetData;
 
 #if USE(LIBWEBRTC)
 class LibWebRTCLogSink;
-#endif
-
-#if USE(GSTREAMER_WEBRTC)
-class GStreamerWebRTCLogSink;
 #endif
 
 class RTCController : public RefCountedAndCanMakeWeakPtr<RTCController> {
@@ -90,9 +86,6 @@ private:
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_gatheringLogsDocument;
 #if USE(LIBWEBRTC)
     std::unique_ptr<LibWebRTCLogSink> m_logSink;
-#endif
-#if USE(GSTREAMER_WEBRTC)
-    std::unique_ptr<GStreamerWebRTCLogSink> m_logSink;
 #endif
 #endif // ENABLE(WEB_RTC)
 };

@@ -45,6 +45,26 @@ class CLDeviceVk : public CLDeviceImpl
 
     spv_target_env getSpirvVersion() const { return mSpirvVersion; }
 
+  public:
+    // WGS creation strategies when user leaves this up to the driver
+    static cl::WorkgroupSize CalculateSimplePow2WGS(const cl::NDRange &ndrange,
+                                                    const uint32_t maxSize);
+    static cl::WorkgroupSize CalculateUniformFitWGS(const cl::NDRange &ndrange,
+                                                    const uint32_t maxSize);
+    uint32_t getWorkGroupSizeMultiple() const;
+
+  private:
+    uint32_t getNumComputeUnits() const;
+    cl_ulong getSingleFpConfig() const;
+    cl_ulong getHalfFpConfig() const;
+    cl_ulong getDoubleFpConfig() const;
+    cl_ulong getCacheSize() const;
+    cl_ulong getHeapSizeForResource(const VkMemoryPropertyFlags supportedProperties,
+                                    const VkMemoryPropertyFlags avoidedProperties) const;
+    cl_ulong getGlobalMemSize() const;
+    cl_ulong getMaxMemAllocSize() const;
+    size_t getImageMaxBufferSize() const;
+
   private:
     vk::Renderer *mRenderer;
     spv_target_env mSpirvVersion;
@@ -58,6 +78,7 @@ class CLDeviceVk : public CLDeviceImpl
     cl_device_integer_dot_product_acceleration_properties_khr
     getIntegerDotProductAccelerationProperties4x8BitPacked() const;
     bool populateSupportedExternalMemoryHandleTypes(Info &info) const;
+    bool setupAndReportDepthImageSupport(Info &info) const;
 };
 
 }  // namespace rx

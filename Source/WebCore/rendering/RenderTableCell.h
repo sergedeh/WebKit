@@ -4,7 +4,7 @@
  *           (C) 1998 Waldo Bastian (bastian@kde.org)
  *           (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
- * Copyright (C) 2003, 2004, 2005, 2006, 2007, 2009 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include "HTMLTableCellElement.h"
 #include "RenderBlockFlow.h"
 #include "RenderTableRow.h"
 #include "RenderTableSection.h"
@@ -40,12 +41,13 @@ class RenderTableCell final : public RenderBlockFlow {
     WTF_MAKE_TZONE_ALLOCATED(RenderTableCell);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTableCell);
 public:
-    RenderTableCell(Element&, RenderStyle&&);
-    RenderTableCell(Document&, RenderStyle&&);
+    RenderTableCell(Element&, Style::ComputedStyle&&);
+    RenderTableCell(Document&, Style::ComputedStyle&&);
     virtual ~RenderTableCell();
     
     unsigned colSpan() const;
     unsigned rowSpan() const;
+    bool hasRowSpanZero() const;
 
     // Called from HTMLTableCellElement.
     void colSpanOrRowSpanChanged();
@@ -59,7 +61,6 @@ public:
     RenderTableRow* row() const { return downcast<RenderTableRow>(parent()); }
     RenderTableSection* section() const;
     RenderTable* table() const;
-    CheckedPtr<RenderTable> checkedTable() const;
     unsigned rowIndex() const;
     inline std::pair<Style::PreferredSize, Style::ZoomFactor> styleOrColLogicalWidth() const;
     LayoutUnit logicalHeightForRowSizing() const;
@@ -119,10 +120,10 @@ public:
     // Table layout always uses the table's writing mode.
     const WritingMode tableWritingMode() const { return table()->writingMode(); }
 
-    inline const BorderValue& borderAdjoiningTableStart() const;
-    inline const BorderValue& borderAdjoiningTableEnd() const;
-    inline const BorderValue& borderAdjoiningCellBefore(const RenderTableCell&);
-    inline const BorderValue& borderAdjoiningCellAfter(const RenderTableCell&);
+    inline const BorderValue& borderAdjoiningTableStart() const LIFETIME_BOUND;
+    inline const BorderValue& borderAdjoiningTableEnd() const LIFETIME_BOUND;
+    inline const BorderValue& borderAdjoiningCellBefore(const RenderTableCell&) LIFETIME_BOUND;
+    inline const BorderValue& borderAdjoiningCellAfter(const RenderTableCell&) LIFETIME_BOUND;
 
     using RenderBlockFlow::nodeAtPoint;
 #if ASSERT_ENABLED
@@ -142,12 +143,12 @@ protected:
     LogicalExtentComputedValues computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop) const override;
 
 private:
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) override;
-    void computePreferredLogicalWidths() override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
+    void computeIntrinsicLogicalWidthContributions() override;
 
-    LayoutRect frameRectForStickyPositioning() const override;
+    LayoutUnit containingBlockLogicalWidthForContent() const override;
 
-    static RenderPtr<RenderTableCell> createTableCellWithStyle(Document&, const RenderStyle&);
+    static RenderPtr<RenderTableCell> createTableCellWithStyle(Document&, const Style::ComputedStyle&);
 
     ASCIILiteral renderName() const override;
 
@@ -159,7 +160,7 @@ private:
     void paintMask(PaintInfo&, const LayoutPoint&) override;
 
     LayoutSize offsetFromContainer(const RenderElement&, const LayoutPoint&, bool* offsetDependsOnPoint = 0) const override;
-    std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, VisibleRectContext) const override;
+    std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState) const override;
 
     LayoutUnit borderHalfLeft(bool outer) const;
     LayoutUnit borderHalfRight(bool outer) const;
@@ -175,7 +176,7 @@ private:
     void setIntrinsicPaddingAfter(LayoutUnit p) { m_intrinsicPaddingAfter = p; }
     void setIntrinsicPadding(LayoutUnit before, LayoutUnit after) { setIntrinsicPaddingBefore(before); setIntrinsicPaddingAfter(after); }
 
-    bool hasStartBorderAdjoiningTable() const;
+    bool NODELETE hasStartBorderAdjoiningTable() const;
     bool hasEndBorderAdjoiningTable() const;
 
     CollapsedBorderValue collapsedStartBorder(IncludeBorderColorOrNot = IncludeBorderColor) const;
@@ -201,21 +202,21 @@ private:
 
     unsigned parseRowSpanFromDOM() const;
     unsigned parseColSpanFromDOM() const;
+    unsigned calculateRowSpanForRowSpanZero() const;
 
     void nextSibling() const = delete;
     void previousSibling() const = delete;
 
     bool hasLineIfEmpty() const final;
 
-    // Note MSVC will only pack members if they have identical types, hence we use unsigned instead of bool here.
-    unsigned m_column : 25;
-    unsigned m_cellWidthChanged : 1;
-    unsigned m_hasColSpan: 1;
-    unsigned m_hasRowSpan: 1;
-    mutable unsigned m_hasEmptyCollapsedBeforeBorder: 1;
-    mutable unsigned m_hasEmptyCollapsedAfterBorder: 1;
-    mutable unsigned m_hasEmptyCollapsedStartBorder: 1;
-    mutable unsigned m_hasEmptyCollapsedEndBorder: 1;
+    unsigned m_column : 25 { unsetColumnIndex };
+    bool m_cellWidthChanged : 1 { false };
+    bool m_hasColSpan : 1 { false };
+    bool m_hasRowSpan : 1 { false };
+    mutable bool m_hasEmptyCollapsedBeforeBorder : 1 { false };
+    mutable bool m_hasEmptyCollapsedAfterBorder : 1 { false };
+    mutable bool m_hasEmptyCollapsedStartBorder : 1 { false };
+    mutable bool m_hasEmptyCollapsedEndBorder : 1 { false };
     bool m_isComputingPreferredSize { false };
     LayoutUnit m_intrinsicPaddingBefore { 0 };
     LayoutUnit m_intrinsicPaddingAfter { 0 };
@@ -243,7 +244,20 @@ inline unsigned RenderTableCell::rowSpan() const
 {
     if (!m_hasRowSpan)
         return 1;
-    return parseRowSpanFromDOM();
+
+    unsigned span = parseRowSpanFromDOM();
+
+    // Handle rowspan="0" which means "span all remaining rows in the row group"
+    // Per HTML spec: https://html.spec.whatwg.org/multipage/tables.html#attr-tdth-rowspan
+    if (!span)
+        span = calculateRowSpanForRowSpanZero();
+
+    return std::min(span, maxRowIndex);
+}
+
+inline bool RenderTableCell::hasRowSpanZero() const
+{
+    return m_hasRowSpan && !parseRowSpanFromDOM();
 }
 
 inline void RenderTableCell::setCol(unsigned column)
@@ -275,11 +289,6 @@ inline RenderTable* RenderTableCell::table() const
     return downcast<RenderTable>(section->parent());
 }
 
-inline CheckedPtr<RenderTable> RenderTableCell::checkedTable() const
-{
-    return table();
-}
-
 inline unsigned RenderTableCell::rowIndex() const
 {
     // This function shouldn't be called on a detached cell.
@@ -300,22 +309,18 @@ inline RenderTableCell* RenderTableRow::lastCell() const
 inline void RenderTableCell::setHasEmptyCollapsedBorder(CollapsedBorderSide side, bool empty) const
 {
     switch (side) {
-    case CBSAfter: {
+    case CollapsedBorderSide::After:
         m_hasEmptyCollapsedAfterBorder = empty;
         break;
-    }
-    case CBSBefore: {
+    case CollapsedBorderSide::Before:
         m_hasEmptyCollapsedBeforeBorder = empty;
         break;
-    }
-    case CBSStart: {
+    case CollapsedBorderSide::Start:
         m_hasEmptyCollapsedStartBorder = empty;
         break;
-    }
-    case CBSEnd: {
+    case CollapsedBorderSide::End:
         m_hasEmptyCollapsedEndBorder = empty;
         break;
-    }
     }
     if (empty)
         table()->collapsedEmptyBorderIsPresent();

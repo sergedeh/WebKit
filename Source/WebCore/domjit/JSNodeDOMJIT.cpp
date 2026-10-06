@@ -33,6 +33,7 @@
 #include "DOMJITHelpers.h"
 #include "JSDOMWrapper.h"
 #include "Node.h"
+#include <JavaScriptCore/DOMJITCallDOMGetterSnippet.h>
 #include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/Snippet.h>
 #include <JavaScriptCore/SnippetParams.h>
@@ -53,7 +54,7 @@ static Ref<JSC::DOMJIT::CallDOMGetterSnippet> createCallDOMGetterForOffsetAccess
     Ref<JSC::DOMJIT::CallDOMGetterSnippet> snippet = JSC::DOMJIT::CallDOMGetterSnippet::create();
     snippet->numGPScratchRegisters = 1;
     snippet->setGenerator([=](CCallHelpers& jit, JSC::SnippetParams& params) {
-        JSValueRegs result = params[0].jsValueRegs();
+        GPRReg result = params[0].gpr();
         GPRReg node = params[1].gpr();
         GPRReg globalObject = params[2].gpr();
         GPRReg scratch = params.gpScratch(0);
@@ -126,11 +127,11 @@ Ref<JSC::DOMJIT::CallDOMGetterSnippet> compileNodeNodeTypeAttribute()
     snippet->effect = JSC::DOMJIT::Effect::forPure();
     snippet->requireGlobalObject = false;
     snippet->setGenerator([=](CCallHelpers& jit, JSC::SnippetParams& params) {
-        JSValueRegs result = params[0].jsValueRegs();
+        GPRReg result = params[0].gpr();
         GPRReg node = params[1].gpr();
-        jit.load8(CCallHelpers::Address(node, JSC::JSCell::typeInfoTypeOffset()), result.payloadGPR());
-        jit.and32(CCallHelpers::TrustedImm32(JSNodeTypeMask), result.payloadGPR());
-        jit.boxInt32(result.payloadGPR(), result);
+        jit.load8(CCallHelpers::Address(node, JSC::JSCell::typeInfoTypeOffset()), result);
+        jit.and32(CCallHelpers::TrustedImm32(JSNodeTypeMask), result);
+        jit.boxInt32(result, result);
         return CCallHelpers::JumpList();
     });
     return snippet;
@@ -141,7 +142,7 @@ Ref<JSC::DOMJIT::CallDOMGetterSnippet> compileNodeOwnerDocumentAttribute()
     Ref<JSC::DOMJIT::CallDOMGetterSnippet> snippet = JSC::DOMJIT::CallDOMGetterSnippet::create();
     snippet->numGPScratchRegisters = 2;
     snippet->setGenerator([=](CCallHelpers& jit, JSC::SnippetParams& params) {
-        JSValueRegs result = params[0].jsValueRegs();
+        GPRReg result = params[0].gpr();
         GPRReg node = params[1].gpr();
         GPRReg globalObject = params[2].gpr();
         JSValue globalObjectValue = params[2].value();

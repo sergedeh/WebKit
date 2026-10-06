@@ -31,7 +31,7 @@
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/JSONValues.h>
 #include <wtf/Forward.h>
-#include <wtf/Platform.h>
+#include <wtf/MathExtras.h>
 
 #if USE(CG)
 typedef struct CGSize CGSize;
@@ -93,8 +93,8 @@ public:
 
     void scale(float widthScale, float heightScale)
     {
-        m_width = static_cast<int>(static_cast<float>(m_width) * widthScale);
-        m_height = static_cast<int>(static_cast<float>(m_height) * heightScale);
+        m_width = truncateFloatToInt32(static_cast<float>(m_width) * widthScale);
+        m_height = truncateFloatToInt32(static_cast<float>(m_height) * heightScale);
     }
 
     void scale(float scale)
@@ -146,12 +146,12 @@ public:
 
     template<typename T = CrashOnOverflow> Checked<unsigned, T> area() const
     {
-        return Checked<unsigned, T>(std::abs(m_width)) * std::abs(m_height);
+        return Checked<unsigned, T>(unclampedArea());
     }
 
     uint64_t unclampedArea() const
     {
-        return static_cast<uint64_t>(std::abs(m_width)) * std::abs(m_height);
+        return static_cast<uint64_t>(std::abs(static_cast<int64_t>(m_width) * m_height));
     }
 
     constexpr int diagonalLengthSquared() const
@@ -176,7 +176,7 @@ public:
     WEBCORE_EXPORT operator SIZE() const;
 #endif
 
-    String toJSONString() const;
+    WEBCORE_EXPORT String toJSONString() const;
     Ref<JSON::Object> toJSONObject() const;
 
 private:

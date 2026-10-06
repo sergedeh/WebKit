@@ -28,6 +28,7 @@
 #include "FenceMonitor.h"
 #include "MessageReceiver.h"
 #include "RendererBufferDescription.h"
+#include <WebCore/DMABufBuffer.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/IntSize.h>
 #include <WebCore/RefPtrCairo.h>
@@ -64,11 +65,11 @@ public:
     using Rects = Vector<WebCore::IntRect, 1>;
 
     static OptionSet<RendererBufferTransportMode> rendererBufferTransportMode();
-    static bool checkRequirements();
+    static bool canUseHardwareAcceleration();
 #if USE(GBM)
     static Vector<RendererBufferFormat> preferredBufferFormats();
 #endif
-    static RefPtr<AcceleratedBackingStore> create(WebPageProxy&);
+    static Ref<AcceleratedBackingStore> create(WebPageProxy&);
     ~AcceleratedBackingStore();
 
     void ref() const final { RefCounted::ref(); }
@@ -91,11 +92,12 @@ private:
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
-    void didCreateDMABufBuffer(uint64_t id, const WebCore::IntSize&, uint32_t format, Vector<WTF::UnixFileDescriptor>&&, Vector<uint32_t>&& offsets, Vector<uint32_t>&& strides, uint64_t modifier, RendererBufferFormat::Usage);
+    void didCreateDMABufBuffer(uint64_t id, WebCore::DMABufBufferAttributes&&, RendererBufferFormat::Usage);
     void didCreateSHMBuffer(uint64_t id, WebCore::ShareableBitmapHandle&&);
     void didDestroyBuffer(uint64_t id);
     void frame(uint64_t id, Rects&&, WTF::UnixFileDescriptor&&);
     void frameDone();
+    void queuePendingDamageDraw();
 
     void ensureGLContext();
     bool swapBuffersIfNeeded();
@@ -151,7 +153,7 @@ private:
 #if GTK_CHECK_VERSION(4, 13, 4)
     class BufferDMABuf final : public Buffer {
     public:
-        static RefPtr<Buffer> create(WebPageProxy&, uint64_t id, uint64_t surfaceID, const WebCore::IntSize&, RendererBufferFormat::Usage, uint32_t format, Vector<WTF::UnixFileDescriptor>&&, Vector<uint32_t>&& offsets, Vector<uint32_t>&& strides, uint64_t modifier);
+        static RefPtr<Buffer> create(WebPageProxy&, uint64_t id, uint64_t surfaceID, RendererBufferFormat::Usage, WebCore::DMABufBufferAttributes&&);
 
     private:
         BufferDMABuf(WebPageProxy&, uint64_t id, uint64_t surfaceID, const WebCore::IntSize&, RendererBufferFormat::Usage, Vector<WTF::UnixFileDescriptor>&&, GRefPtr<GdkDmabufTextureBuilder>&&);
@@ -171,11 +173,11 @@ private:
 
     class BufferEGLImage final : public Buffer {
     public:
-        static RefPtr<Buffer> create(WebPageProxy&, uint64_t id, uint64_t surfaceID, const WebCore::IntSize&, RendererBufferFormat::Usage, uint32_t format, Vector<WTF::UnixFileDescriptor>&&, Vector<uint32_t>&& offsets, Vector<uint32_t>&& strides, uint64_t modifier);
+        static RefPtr<Buffer> create(WebPageProxy&, uint64_t id, uint64_t surfaceID, const WebCore::IntSize&, RendererBufferFormat::Usage, WebCore::DMABufBufferAttributes&&);
         ~BufferEGLImage();
 
     private:
-        BufferEGLImage(WebPageProxy&, uint64_t id, uint64_t surfaceID, const WebCore::IntSize&, RendererBufferFormat::Usage, uint32_t format, Vector<WTF::UnixFileDescriptor>&&, uint64_t modifier, EGLImage);
+        BufferEGLImage(WebPageProxy&, uint64_t id, uint64_t surfaceID, const WebCore::IntSize&, RendererBufferFormat::Usage, WebCore::DMABufBufferAttributes&&, EGLImage);
 
         Buffer::Type type() const override { return Buffer::Type::EglImage; }
         void didUpdateContents(Buffer*, const Rects&) override;
@@ -188,7 +190,7 @@ private:
         RefPtr<WebCore::NativeImage> asNativeImageForTesting() const override;
         void release() override;
 
-        Vector<WTF::UnixFileDescriptor> m_fds;
+        WebCore::DMABufBufferAttributes m_dmaBufAttributes;
         EGLImage m_image { nullptr };
 #if USE(GTK4)
         GRefPtr<GdkTexture> m_texture;
@@ -196,8 +198,6 @@ private:
         GRefPtr<GdkGLContext> m_gdkGLContext;
         unsigned m_textureID { 0 };
 #endif
-        uint32_t m_fourcc { 0 };
-        uint64_t m_modifier { 0 };
     };
 
 #if USE(GBM)
@@ -211,14 +211,23 @@ private:
 
         Buffer::Type type() const override { return Buffer::Type::Gbm; }
         void didUpdateContents(Buffer*, const Rects&) override;
+#if GTK_CHECK_VERSION(4, 16, 0)
+        GdkTexture* texture() const override { return m_texture.get(); }
+#else
         cairo_surface_t* surface() const override { return m_surface.get(); }
+#endif
         RendererBufferDescription description() const override;
         RefPtr<WebCore::NativeImage> asNativeImageForTesting() const override;
         void release() override;
 
         WTF::UnixFileDescriptor m_fd;
         struct gbm_bo* m_buffer { nullptr };
+#if GTK_CHECK_VERSION(4, 16, 0)
+        GRefPtr<GdkMemoryTextureBuilder> m_builder;
+        GRefPtr<GdkTexture> m_texture;
+#else
         RefPtr<cairo_surface_t> m_surface;
+#endif
     };
 #endif
 
@@ -231,13 +240,22 @@ private:
 
         Buffer::Type type() const override { return Buffer::Type::SharedMemory; }
         void didUpdateContents(Buffer*, const Rects&) override;
+#if GTK_CHECK_VERSION(4, 16, 0)
+        GdkTexture* texture() const override { return m_texture.get(); }
+#else
         cairo_surface_t* surface() const override { return m_surface.get(); }
+#endif
         RendererBufferDescription description() const override;
         RefPtr<WebCore::NativeImage> asNativeImageForTesting() const override;
         void release() override;
 
-        RefPtr<WebCore::ShareableBitmap> m_bitmap;
+        const RefPtr<WebCore::ShareableBitmap> m_bitmap;
+#if GTK_CHECK_VERSION(4, 16, 0)
+        GRefPtr<GdkMemoryTextureBuilder> m_builder;
+        GRefPtr<GdkTexture> m_texture;
+#else
         RefPtr<cairo_surface_t> m_surface;
+#endif
     };
 
     WeakPtr<WebPageProxy> m_webPage;
@@ -250,6 +268,7 @@ private:
     RefPtr<Buffer> m_committedBuffer;
     Rects m_pendingDamageRects;
     HashMap<uint64_t, RefPtr<Buffer>> m_buffers;
+    bool m_needsFrame { false };
 };
 
 } // namespace WebKit

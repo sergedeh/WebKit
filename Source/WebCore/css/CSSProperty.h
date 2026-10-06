@@ -23,16 +23,14 @@
 
 #include <WebCore/CSSPropertyNames.h>
 #include <WebCore/CSSValue.h>
-#include <WebCore/CSSValueKeywords.h>
 #include <WebCore/IsImportant.h>
-#include <WebCore/WritingMode.h>
 #include <wtf/BitSet.h>
-#include <wtf/RefPtr.h>
 
 namespace WebCore {
 
 class CSSValueList;
 class Settings;
+class WritingMode;
 struct CSSParserContext;
 
 enum class IsImplicit : bool { No, Yes };
@@ -81,7 +79,6 @@ public:
     bool isImportant() const { return m_metadata.m_important; }
 
     CSSValue* value() const { return m_value.ptr(); }
-    Ref<CSSValue> protectedValue() const { return m_value; }
 
     static CSSPropertyID resolveDirectionAwareProperty(CSSPropertyID, WritingMode);
     static CSSPropertyID unresolvePhysicalProperty(CSSPropertyID, WritingMode);
@@ -142,6 +139,10 @@ public:
 
     static bool disablesNativeAppearance(CSSPropertyID);
 
+    // Properties that apply to the highlight pseudo-elements.
+    // https://drafts.csswg.org/css-pseudo-4/#highlight-styling
+    static bool NODELETE appliesToHighlightPseudoElements(CSSPropertyID);
+
     // Returns the valid keyword values for a property from CSSProperties.json.
     // This is used by the Inspector to provide completions for properties
     // that aren't keyword-fast-path eligible but still have enumerated values.
@@ -151,7 +152,7 @@ public:
     // This is used by the Inspector to filter keywords based on enabled settings.
     static bool isKeywordValidForPropertyValues(CSSPropertyID, CSSValueID, const CSSParserContext&);
 
-    const StylePropertyMetadata& metadata() const { return m_metadata; }
+    const StylePropertyMetadata& metadata() const LIFETIME_BOUND { return m_metadata; }
     static bool isColorProperty(CSSPropertyID propertyId)
     {
         return colorProperties.get(propertyId);

@@ -3,7 +3,7 @@
 #
 # Copyright (C) 2005 Nikolas Zimmermann <wildfox@kde.org>
 # Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
-# Copyright (C) 2007, 2008, 2009, 2010 Apple Inc. All rights reserved.
+# Copyright (C) 2007-2026 Apple Inc. All rights reserved.
 # Copyright (C) 2009 Cameron McCormack <cam@mcc.id.au>
 # Copyright (C) Research In Motion Limited 2010. All rights reserved.
 # Copyright (C) 2013 Samsung Electronics. All rights reserved.
@@ -30,19 +30,20 @@ use strict;
 
 use File::Basename;
 use Carp qw<longmess>;
+use Storable qw(dclone);
 use Data::Dumper;
 
 my $useDocument = "";
 my $useGenerator = "";
 my $useOutputDir = "";
 my $useOutputHeadersDir = "";
-my $preprocessor;
 my $idlAttributes;
 my $writeDependencies = 0;
 my $defines = "";
 my $targetIdlFilePath = "";
 my $supplementalDependencies;
 my $idlFileNamesList;
+my $ignoreStandaloneConstructorAttributes = 0;
 
 my $codeGenerator = 0;
 
@@ -126,6 +127,7 @@ my $cachedExtendedAttributes = {};
 my $cachedExternalDictionaries = {};
 my $cachedExternalEnumerations = {};
 my $cachedTypes = {};
+my %cachedParsedDocuments;
 
 sub assert
 {
@@ -146,16 +148,21 @@ sub new
     $useGenerator = shift;
     $useOutputDir = shift;
     $useOutputHeadersDir = shift;
-    $preprocessor = shift;
     $writeDependencies = shift;
     $verbose = shift;
     $targetIdlFilePath = shift;
     $idlAttributes = shift;
     $supplementalDependencies = shift;
     $idlFileNamesList = shift;
+    $ignoreStandaloneConstructorAttributes = shift // 0;
 
     bless($reference, $object);
     return $reference;
+}
+
+sub IgnoreStandaloneConstructorAttributes
+{
+    return $ignoreStandaloneConstructorAttributes;
 }
 
 sub ProcessDocument
@@ -256,9 +263,59 @@ sub ProcessInterfaces
     $object->ProcessInterfaceSupplementalDependencies($interface, $useDocument);
     $object->ProcessDictionaryAndEnumerationImplementedAsOverrides($useDocument);
 
+    $object->WriteInspectorNativeFunctionParameters($interface) if $useGenerator eq "JS";
+
     print "Generating $useGenerator bindings code for IDL interface \"" . $interface->type->name . "\"\n" if $verbose;
     $codeGenerator->GenerateInterface($interface, $defines, $useDocument->enumerations, $useDocument->dictionaries);
     $codeGenerator->WriteData($interface, $useOutputDir, $useOutputHeadersDir);
+}
+
+sub WriteInspectorNativeFunctionParameters
+{
+    my ($object, $interface) = @_;
+
+    return unless $interface->extendedAttributes->{"Exposed"};
+
+    my %entry = ("prototype" => {}, "constructor" => {});
+
+    foreach my $operation (@{$interface->operations}) {
+        my $operationName = $operation->name;
+        next unless defined $operationName && $operationName ne "";
+
+        my $kind = ($interface->isNamespaceObject || $operation->isStatic) ? "constructor" : "prototype";
+        next if exists $entry{$kind}{$operationName}; # Only keep the first overload.
+
+        my @formattedArguments = ();
+        foreach my $argument (@{$operation->arguments}) {
+            my $argumentName = $argument->name;
+            $argumentName =~ s/^_//;
+            if ($argument->isVariadic) {
+                push(@formattedArguments, "...${argumentName}");
+            } elsif ($argument->isOptional) {
+                push(@formattedArguments, "[${argumentName}]");
+            } else {
+                push(@formattedArguments, $argumentName);
+            }
+        }
+        next if scalar @formattedArguments == 0;
+
+        $entry{$kind}{$operationName} = join(", ", @formattedArguments);
+    }
+
+    delete $entry{"prototype"} unless %{$entry{"prototype"}};
+    delete $entry{"constructor"} unless %{$entry{"constructor"}};
+    return unless %entry;
+
+    my $interfaceName = $interface->extendedAttributes->{"InterfaceName"} || $interface->type->name;
+
+    require JSON::PP;
+    my $contents = JSON::PP->new->utf8->canonical->pretty->indent_length(4)->space_before(0)->encode({ $interfaceName => \%entry });
+
+    my $basename = fileparse($useDocument->fileName, ".idl");
+    my $filename = "${basename}.inspector-native-function-parameters.json";
+    open FH, ">", "${useOutputDir}/${filename}" or die "Couldn't open ${filename}: $!\n";
+    print FH $contents;
+    close FH;
 }
 
 sub ProcessCallbackFunctions
@@ -347,7 +404,7 @@ sub MergeExtendedAttributesFromSupplemental
         # Handle case that the attribute already has a extented attribute with this key.
         if ($property->extendedAttributes->{$extendedAttributeName}) {
             if (!$idlAttributes->{$extendedAttributeName}->{"supportsConjunction"}) {
-                die "Duplicate non-mergeable extended attribute ($extendedAttributeName) found when merging extended attributes for ${property->name}";
+                die "Duplicate non-mergeable extended attribute ($extendedAttributeName) found when merging extended attributes for " . $property->name;
             }
             $property->extendedAttributes->{$extendedAttributeName} = $property->extendedAttributes->{$extendedAttributeName} . "&" . $supplementalExtendedAttributes->{$extendedAttributeName};
         } else {
@@ -399,8 +456,13 @@ sub ProcessInterfaceSupplementalDependencies
         next if fileparse($idlFile) eq $targetFileName;
 
         my $interfaceName = fileparse($idlFile, ".idl");
-        my $parser = IDLParser->new(!$verbose);
-        my $document = $parser->Parse($idlFile, $defines, $preprocessor, $idlAttributes);
+        my $document;
+        if (exists $cachedParsedDocuments{$idlFile}) {
+            $document = dclone($cachedParsedDocuments{$idlFile});
+        } else {
+            $document = IDLParser->new(!$verbose)->Parse($idlFile, $defines, $idlAttributes);
+            $cachedParsedDocuments{$idlFile} = dclone($document);
+        }
 
         foreach my $interface (@{$document->interfaces}) {
             next unless $object->IsValidSupplementalInterface($interface, $targetInterface, \%includesMap);
@@ -477,8 +539,13 @@ sub ProcessDictionarySupplementalDependencies
         next if fileparse($idlFile) eq $targetFileName;
 
         my $dictionaryName = fileparse($idlFile, ".idl");
-        my $parser = IDLParser->new(!$verbose);
-        my $document = $parser->Parse($idlFile, $defines, $preprocessor, $idlAttributes);
+        my $document;
+        if (exists $cachedParsedDocuments{$idlFile}) {
+            $document = dclone($cachedParsedDocuments{$idlFile});
+        } else {
+            $document = IDLParser->new(!$verbose)->Parse($idlFile, $defines, $idlAttributes);
+            $cachedParsedDocuments{$idlFile} = dclone($document);
+        }
 
         foreach my $dictionary (@{$document->dictionaries}) {
             next unless $object->IsValidSupplementalDictionary($dictionary, $targetDictionary);
@@ -529,8 +596,6 @@ sub UpdateFile
     my $fileName = shift;
     my $contents = shift;
 
-    # FIXME: We should only write content if it is different from what is in the file.
-    # But that would mean running more often the binding generator, see https://bugs.webkit.org/show_bug.cgi?id=131756
     open FH, ">", $fileName or die "Couldn't open $fileName: $!\n";
     print FH $contents;
     close FH;
@@ -553,7 +618,7 @@ sub ForAllParents
             my $parentInterface = $object->ParseInterface($outerInterface, $interfaceName);
 
             if ($beforeRecursion) {
-                &$beforeRecursion($parentInterface) eq 'prune' and next;
+                &$beforeRecursion($parentInterface) eq 'prune' and return;
             }
             &$recurse($outerInterface, $parentInterface);
             &$afterRecursion($parentInterface) if $afterRecursion;
@@ -657,7 +722,7 @@ sub ParseInterface
 
     # Step #2: Parse the found IDL file (in quiet mode).
     my $parser = IDLParser->new(1);
-    my $document = $parser->Parse($filename, $defines, $preprocessor, $idlAttributes);
+    my $document = $parser->Parse($filename, $defines, $idlAttributes);
 
     foreach my $interface (@{$document->interfaces}) {
         if ($interface->type->name eq $interfaceName) {
@@ -782,7 +847,7 @@ sub GetEnumByType
     if ($fileContents =~ /\benum\s+$name/gs) {
         # Parse the IDL.
         my $parser = IDLParser->new(1);
-        my $document = $parser->Parse($filename, $defines, $preprocessor, $idlAttributes);
+        my $document = $parser->Parse($filename, $defines, $idlAttributes);
 
         foreach my $enumeration (@{$document->enumerations}) {
             next unless $enumeration->type->name eq $name;
@@ -850,7 +915,7 @@ sub GetDictionaryByType
     if ($fileContents =~ /\bdictionary\s+$name/gs) {
         # Parse the IDL.
         my $parser = IDLParser->new(1);
-        my $document = $parser->Parse($filename, $defines, $preprocessor, $idlAttributes);
+        my $document = $parser->Parse($filename, $defines, $idlAttributes);
 
         foreach my $dictionary (@{$document->dictionaries}) {
             if ($dictionary->type->name eq $name) {
@@ -920,22 +985,6 @@ sub IsSVGAnimatedType
     return $object->IsSVGAnimatedTypeName($type->name);
 }
 
-sub IsSVGPathSegTypeName
-{
-    my ($object, $typeName) = @_;
-
-    return $typeName =~ /^SVGPathSeg/;
-}
-
-sub IsSVGPathSegType
-{
-    my ($object, $type) = @_;
-
-    assert("Not a type") if ref($type) ne "IDLType";
-
-    return $object->IsSVGPathSegTypeName($type->name);
-}
-
 sub IsConstructorType
 {
     my ($object, $type) = @_;
@@ -997,6 +1046,44 @@ sub IsBufferSourceType
     assert("Not a type") if ref($type) ne "IDLType";
 
     return 1 if $bufferSourceTypes{$type->name};
+    return 0;
+}
+
+sub GetTypesAllowedForExtendedAttribute
+{
+    my ($object, $extendedAttributeName) = @_;
+
+    return exists $idlAttributes->{$extendedAttributeName} ? $idlAttributes->{$extendedAttributeName}->{"typesAllowed"} : undef;
+}
+
+# Whether the type matches the "typesAllowed", "supportsNullableTypes", and "supportsUnionTypes" entries
+# of the extended attribute in IDLAttributes.json. Extended attributes without "typesAllowed" allow any type.
+sub IsTypeAllowedForExtendedAttribute
+{
+    my ($object, $type, $extendedAttributeName) = @_;
+
+    assert("Not a type") if ref($type) ne "IDLType";
+
+    my $typesAllowed = $object->GetTypesAllowedForExtendedAttribute($extendedAttributeName);
+    return 1 unless $typesAllowed;
+
+    my $idlAttribute = $idlAttributes->{$extendedAttributeName};
+    return 0 if $type->isNullable && !$idlAttribute->{"supportsNullableTypes"};
+
+    if ($type->isUnion) {
+        return 0 unless $idlAttribute->{"supportsUnionTypes"};
+        foreach my $memberType (@{$type->subtypes}) {
+            return 0 unless $object->IsTypeAllowedForExtendedAttribute($memberType, $extendedAttributeName);
+        }
+        return 1;
+    }
+
+    foreach my $typeAllowed (@{$typesAllowed}) {
+        return 1 if $typeAllowed eq $type->name;
+        return 1 if $typeAllowed eq "integer types" && $object->IsIntegerType($type);
+        return 1 if $typeAllowed eq "buffer source types" && $object->IsBufferSourceType($type);
+    }
+
     return 0;
 }
 
@@ -1501,12 +1588,16 @@ sub ConditionalComparator
     ($a =~ s/^(!?)(.+)/$2$1/r) cmp ($b =~ s/^(!?)(.+)/$2$1/r)
 }
 
+my %conditionalStringCache;
+
 sub GenerateConditionalStringFromAttributeValue
 {
     my ($generator, $conditional) = @_;
 
     # Unquote string literals if needed.
     $conditional = UnquoteStringLiteral($generator, $conditional) if $conditional =~ /^['"]/;
+
+    return $conditionalStringCache{$conditional} if exists $conditionalStringCache{$conditional};
 
     my %disjunction = map {
         my %conjunction = map {
@@ -1518,9 +1609,12 @@ sub GenerateConditionalStringFromAttributeValue
         join(" && ", sort ConditionalComparator keys %conjunction) => 1
     } split(/\|/, $conditional);
 
-    return "1" if %disjunction == 0;
-    return (keys %disjunction)[0] if %disjunction == 1;
-    return join(" || ", map { / / ? "($_)" : $_ } sort ConditionalComparator keys %disjunction);
+    my $result;
+    $result = "1" if %disjunction == 0;
+    $result = (keys %disjunction)[0] if !defined($result) && %disjunction == 1;
+    $result = join(" || ", map { / / ? "($_)" : $_ } sort ConditionalComparator keys %disjunction) if !defined($result);
+    $conditionalStringCache{$conditional} = $result;
+    return $result;
 }
 
 sub GenerateCompileTimeCheckForEnumsIfNeeded
@@ -1534,9 +1628,12 @@ sub GenerateCompileTimeCheckForEnumsIfNeeded
 
     my @checks = ();
     foreach my $constant (@{$interface->constants}) {
-        my $scope = $constant->extendedAttributes->{"ImplementedBy"} || $baseScope;
+        next if $constant->extendedAttributes->{"DoNotCheckConstants"};
+        my $constantEnum = $constant->extendedAttributes->{"ConstantsEnum"} || $enum;
+        $constantEnum =~ s/^"(.*)"$/$1/ if $constantEnum;
+        my $scope = $constant->extendedAttributes->{"ImplementedBy"} || $constantEnum || $baseScope;
         my $name = $constant->extendedAttributes->{"ImplementedAs"} || $constant->name;
-        my $value = $enum ? "static_cast<" . $enum . ">(" . $constant->value . ")" : $constant->value;
+        my $value = $constantEnum ? "static_cast<" . $constantEnum . ">(" . $constant->value . ")" : $constant->value;
         my $conditional = $constant->extendedAttributes->{"Conditional"};
         push(@checks, "#if " . $generator->GenerateConditionalStringFromAttributeValue($conditional) . "\n") if $conditional;
         push(@checks, "static_assert(${scope}::${name} == ${value}, \"${name} in ${scope} does not match value from IDL\");\n");

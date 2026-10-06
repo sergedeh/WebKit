@@ -32,17 +32,24 @@
 #include "config.h"
 #include "InspectorDOMDebuggerAgent.h"
 
+#include "Document.h"
 #include "Event.h"
 #include "EventTarget.h"
+#include "FrameDebuggerAgent.h"
+#include "FrameDestructionObserverInlines.h"
+#include "FrameInspectorController.h"
 #include "InspectorDOMAgent.h"
 #include "InstrumentingAgents.h"
 #include "JSDOMGlobalObject.h"
+#include "JSDOMWrapperCache.h"
 #include "JSEvent.h"
 #include "JSEventListener.h"
+#include "LocalFrame.h"
 #include "RegisteredEventListener.h"
 #include "ResourceRequest.h"
 #include "ScriptDisallowedScope.h"
 #include "ScriptExecutionContext.h"
+#include "WebInjectedScriptManager.h"
 #include <JavaScriptCore/ContentSearchUtilities.h>
 #include <JavaScriptCore/InjectedScript.h>
 #include <JavaScriptCore/InjectedScriptManager.h>
@@ -60,13 +67,49 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorDOMDebuggerAgent);
 InspectorDOMDebuggerAgent::InspectorDOMDebuggerAgent(WebAgentContext& context, InspectorDebuggerAgent* debuggerAgent)
     : InspectorAgentBase("DOMDebugger"_s, context)
     , m_debuggerAgent(debuggerAgent)
-    , m_backendDispatcher(Inspector::DOMDebuggerBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(Inspector::DOMDebuggerBackendDispatcher::create(protect(context.backendDispatcher), this))
     , m_injectedScriptManager(context.injectedScriptManager)
 {
-    m_debuggerAgent->addListener(*this);
+    if (CheckedPtr agent = m_debuggerAgent)
+        agent->addListener(*this);
 }
 
 InspectorDOMDebuggerAgent::~InspectorDOMDebuggerAgent() = default;
+
+// FIXME: <https://webkit.org/b/298981> Remove once DOMDebugger is served by a frame target agent.
+// Under site isolation PageDebugger is attached to nothing, so pauses scheduled on the page's
+// debugger agent are silently dropped; the frame's FrameDebugger is the attached one.
+// The page's InstrumentingAgents never has enabledFrameDebuggerAgent set (only
+// FrameDebuggerAgent::internalEnable sets it, on its own frame), so the fallback chain yields null
+// here rather than the page's slot.
+Inspector::InspectorDebuggerAgent* InspectorDOMDebuggerAgent::pausingDebuggerAgentForFrame(RefPtr<LocalFrame>&& frame) const
+{
+    if (frame) {
+        if (auto* frameDebuggerAgent = frame->inspectorController().instrumentingAgents().enabledFrameDebuggerAgent())
+            return frameDebuggerAgent;
+    }
+    return m_debuggerAgent.get();
+}
+
+Inspector::InspectorDebuggerAgent* InspectorDOMDebuggerAgent::pausingDebuggerAgent(ScriptExecutionContext& context) const
+{
+    RefPtr document = dynamicDowncast<Document>(context);
+    RefPtr<LocalFrame> frame = document ? document->frame() : nullptr;
+    return pausingDebuggerAgentForFrame(WTF::move(frame));
+}
+
+// `$event` is read back by evaluateOnCallFrame on the paused call frame's target, so it must be written
+// to that target's manager; FrameInspectorController owns one separate from the page's.
+Inspector::InjectedScriptManager& InspectorDOMDebuggerAgent::injectedScriptManagerForContext(ScriptExecutionContext& context) const
+{
+    if (RefPtr document = dynamicDowncast<Document>(context)) {
+        if (RefPtr frame = document->frame()) {
+            if (frame->inspectorController().instrumentingAgents().enabledFrameDebuggerAgent())
+                return frame->inspectorController().injectedScriptManager();
+        }
+    }
+    return m_injectedScriptManager.get();
+}
 
 bool InspectorDOMDebuggerAgent::enabled() const
 {
@@ -88,8 +131,7 @@ void InspectorDOMDebuggerAgent::disable()
     m_pauseOnAllTimeoutsBreakpoint = nullptr;
     m_pauseOnAllAnimationFramesBreakpoint = nullptr;
 
-    m_urlTextBreakpoints.clear();
-    m_urlRegexBreakpoints.clear();
+    m_urlBreakpoints.clear();
     m_pauseOnAllURLsBreakpoint = nullptr;
 }
 
@@ -117,7 +159,8 @@ void InspectorDOMDebuggerAgent::willDestroyFrontendAndBackend(Inspector::Disconn
 
 void InspectorDOMDebuggerAgent::discardAgent()
 {
-    m_debuggerAgent->removeListener(*this);
+    if (CheckedPtr agent = m_debuggerAgent)
+        agent->removeListener(*this);
     m_debuggerAgent = nullptr;
 }
 
@@ -274,7 +317,7 @@ void InspectorDOMDebuggerAgent::willHandleEvent(ScriptExecutionContext& scriptEx
     // `scriptExecutionContext` parameter will always match in companion calls to `willHandleEvent` and
     // `didHandleEvent`, and will not be null.
     auto state = globalObjectFor(scriptExecutionContext, registeredEventListener.callback());
-    auto injectedScript = m_injectedScriptManager.injectedScriptFor(state);
+    auto injectedScript = CheckedRef { injectedScriptManagerForContext(scriptExecutionContext) }->injectedScriptFor(state);
     if (injectedScript.hasNoValue())
         return;
 
@@ -285,11 +328,12 @@ void InspectorDOMDebuggerAgent::willHandleEvent(ScriptExecutionContext& scriptEx
         injectedScript.setEventValue(toJS(state, deprecatedGlobalObjectForPrototype(state), event));
     }
 
-    if (!m_debuggerAgent->breakpointsActive())
+    CheckedPtr debuggerAgent = pausingDebuggerAgent(scriptExecutionContext);
+    if (!debuggerAgent->breakpointsActive())
         return;
 
     Ref agents = m_instrumentingAgents.get();
-    auto* domAgent = agents->persistentDOMAgent();
+    CheckedPtr domAgent = agents->persistentDOMAgent();
 
     auto breakpoint = m_pauseOnAllListenersBreakpoint;
     if (!breakpoint) {
@@ -302,19 +346,19 @@ void InspectorDOMDebuggerAgent::willHandleEvent(ScriptExecutionContext& scriptEx
         }
     }
     if (!breakpoint && domAgent)
-        breakpoint = domAgent->breakpointForEventListener(*event.currentTarget(), event.type(), registeredEventListener.callback(), registeredEventListener.useCapture());
+        breakpoint = domAgent->breakpointForEventListener(*protect(event.currentTarget()), event.type(), registeredEventListener.callback(), registeredEventListener.useCapture());
     if (!breakpoint)
         return;
 
     Ref<JSON::Object> eventData = JSON::Object::create();
     eventData->setString("eventName"_s, event.type());
     if (domAgent) {
-        int eventListenerId = domAgent->idForEventListener(*event.currentTarget(), event.type(), registeredEventListener.callback(), registeredEventListener.useCapture());
+        int eventListenerId = domAgent->idForEventListener(*protect(event.currentTarget()), event.type(), registeredEventListener.callback(), registeredEventListener.useCapture());
         if (eventListenerId)
             eventData->setInteger("eventListenerId"_s, eventListenerId);
     }
 
-    m_debuggerAgent->schedulePauseForSpecialBreakpoint(*breakpoint, Inspector::DebuggerFrontendDispatcher::Reason::Listener, WTF::move(eventData));
+    debuggerAgent->schedulePauseForSpecialBreakpoint(*breakpoint, Inspector::DebuggerFrontendDispatcher::Reason::Listener, WTF::move(eventData));
 }
 
 void InspectorDOMDebuggerAgent::didHandleEvent(ScriptExecutionContext& scriptExecutionContext, Event& event, const RegisteredEventListener& registeredEventListener)
@@ -323,7 +367,7 @@ void InspectorDOMDebuggerAgent::didHandleEvent(ScriptExecutionContext& scriptExe
     // could also be nullptr. The passed `scriptExecutionContext` parameter here will always match in companion calls to
     // `willHandleEvent` and `didHandleEvent`, and will not be null.
     auto state = globalObjectFor(scriptExecutionContext, registeredEventListener.callback());
-    auto injectedScript = m_injectedScriptManager.injectedScriptFor(state);
+    auto injectedScript = CheckedRef { injectedScriptManagerForContext(scriptExecutionContext) }->injectedScriptFor(state);
     if (injectedScript.hasNoValue())
         return;
 
@@ -334,7 +378,13 @@ void InspectorDOMDebuggerAgent::didHandleEvent(ScriptExecutionContext& scriptExe
         injectedScript.clearEventValue();
     }
 
-    if (!m_debuggerAgent->breakpointsActive())
+    // The frame's Debugger domain can be enabled between will/did (an iframe created from a listener
+    // reaches Debugger.enable), so the agent resolved here may not be the one willHandleEvent armed.
+    // Cancel on both candidates: an uncancelled arm occupies that debugger's only special-breakpoint
+    // slot for good, and cancelling an agent that never armed this breakpoint is a no-op.
+    CheckedPtr debuggerAgent = pausingDebuggerAgent(scriptExecutionContext);
+    CheckedPtr fallbackDebuggerAgent = m_debuggerAgent != debuggerAgent ? m_debuggerAgent : nullptr;
+    if (!debuggerAgent->breakpointsActive() && !(fallbackDebuggerAgent && fallbackDebuggerAgent->breakpointsActive()))
         return;
 
     auto breakpoint = m_pauseOnAllListenersBreakpoint;
@@ -349,18 +399,20 @@ void InspectorDOMDebuggerAgent::didHandleEvent(ScriptExecutionContext& scriptExe
     }
     if (!breakpoint) {
         Ref agents = m_instrumentingAgents.get();
-        if (auto* domAgent = agents->persistentDOMAgent())
-            breakpoint = domAgent->breakpointForEventListener(*event.currentTarget(), event.type(), registeredEventListener.callback(), registeredEventListener.useCapture());
+        if (CheckedPtr domAgent = agents->persistentDOMAgent())
+            breakpoint = domAgent->breakpointForEventListener(*protect(event.currentTarget()), event.type(), registeredEventListener.callback(), registeredEventListener.useCapture());
     }
     if (!breakpoint)
         return;
 
-    m_debuggerAgent->cancelPauseForSpecialBreakpoint(*breakpoint);
+    debuggerAgent->cancelPauseForSpecialBreakpoint(*breakpoint);
+    if (fallbackDebuggerAgent)
+        fallbackDebuggerAgent->cancelPauseForSpecialBreakpoint(*breakpoint);
 }
 
-void InspectorDOMDebuggerAgent::willFireTimer(bool oneShot)
+void InspectorDOMDebuggerAgent::willFireTimer(Inspector::InspectorDebuggerAgent* debuggerAgent, bool oneShot)
 {
-    if (!m_debuggerAgent->breakpointsActive())
+    if (!debuggerAgent || !debuggerAgent->breakpointsActive())
         return;
 
     auto breakpoint = oneShot ? m_pauseOnAllTimeoutsBreakpoint : m_pauseOnAllIntervalsBreakpoint;
@@ -368,56 +420,56 @@ void InspectorDOMDebuggerAgent::willFireTimer(bool oneShot)
         return;
 
     auto breakReason = oneShot ? Inspector::DebuggerFrontendDispatcher::Reason::Timeout : Inspector::DebuggerFrontendDispatcher::Reason::Interval;
-    m_debuggerAgent->schedulePauseForSpecialBreakpoint(*breakpoint, breakReason);
+    protect(debuggerAgent)->schedulePauseForSpecialBreakpoint(*breakpoint, breakReason);
 }
 
-void InspectorDOMDebuggerAgent::didFireTimer(bool oneShot)
+void InspectorDOMDebuggerAgent::didFireTimer(Inspector::InspectorDebuggerAgent* debuggerAgent, bool oneShot)
 {
-    if (!m_debuggerAgent->breakpointsActive())
+    if (!debuggerAgent || !debuggerAgent->breakpointsActive())
         return;
 
     auto breakpoint = oneShot ? m_pauseOnAllTimeoutsBreakpoint : m_pauseOnAllIntervalsBreakpoint;
     if (!breakpoint)
         return;
 
-    m_debuggerAgent->cancelPauseForSpecialBreakpoint(*breakpoint);
+    protect(debuggerAgent)->cancelPauseForSpecialBreakpoint(*breakpoint);
 }
 
-void InspectorDOMDebuggerAgent::willFireAnimationFrame()
+void InspectorDOMDebuggerAgent::willFireAnimationFrame(Inspector::InspectorDebuggerAgent* debuggerAgent)
 {
-    if (!m_debuggerAgent->breakpointsActive())
+    if (!debuggerAgent || !debuggerAgent->breakpointsActive())
         return;
 
     auto breakpoint = m_pauseOnAllAnimationFramesBreakpoint;
     if (!breakpoint)
         return;
 
-    m_debuggerAgent->schedulePauseForSpecialBreakpoint(*breakpoint, Inspector::DebuggerFrontendDispatcher::Reason::AnimationFrame);
+    protect(debuggerAgent)->schedulePauseForSpecialBreakpoint(*breakpoint, Inspector::DebuggerFrontendDispatcher::Reason::AnimationFrame);
 }
 
-void InspectorDOMDebuggerAgent::didFireAnimationFrame()
+void InspectorDOMDebuggerAgent::didFireAnimationFrame(Inspector::InspectorDebuggerAgent* debuggerAgent)
 {
-    if (!m_debuggerAgent->breakpointsActive())
+    if (!debuggerAgent || !debuggerAgent->breakpointsActive())
         return;
 
     auto breakpoint = m_pauseOnAllAnimationFramesBreakpoint;
     if (!breakpoint)
         return;
 
-    m_debuggerAgent->cancelPauseForSpecialBreakpoint(*breakpoint);
+    protect(debuggerAgent)->cancelPauseForSpecialBreakpoint(*breakpoint);
 }
 
-void InspectorDOMDebuggerAgent::willSendRequest(ResourceRequest& request)
+void InspectorDOMDebuggerAgent::willSendRequest(Inspector::InspectorDebuggerAgent* debuggerAgent, ResourceRequest& request)
 {
     if (request.requester() == ResourceRequestRequester::XHR || request.requester() == ResourceRequestRequester::Fetch)
         return;
 
-    breakOnURLIfNeeded(request.url().string());
+    breakOnURLIfNeeded(debuggerAgent, request.url().string());
 }
 
-void InspectorDOMDebuggerAgent::willSendRequestOfType(ResourceRequest& request)
+void InspectorDOMDebuggerAgent::willSendRequestOfType(Inspector::InspectorDebuggerAgent* debuggerAgent, ResourceRequest& request)
 {
-    willSendRequest(request);
+    willSendRequest(debuggerAgent, request);
 }
 
 Inspector::Protocol::ErrorStringOr<void> InspectorDOMDebuggerAgent::setURLBreakpoint(const String& url, std::optional<bool>&& isRegex, RefPtr<JSON::Object>&& options)
@@ -435,13 +487,11 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMDebuggerAgent::setURLBreakp
         return { };
     }
 
-    if (isRegex && *isRegex) {
-        if (!m_urlRegexBreakpoints.add(url, breakpoint.releaseNonNull()))
-            return makeUnexpected("Breakpoint for given regex already exists"_s);
-    } else {
-        if (!m_urlTextBreakpoints.add(url, breakpoint.releaseNonNull()))
-            return makeUnexpected("Breakpoint for given URL already exists"_s);
-    }
+    bool isRegexBreakpoint = isRegex && *isRegex;
+    auto searchType = isRegexBreakpoint ? ContentSearchUtilities::SearchType::Regex : ContentSearchUtilities::SearchType::ContainsString;
+    auto searcher = ContentSearchUtilities::createSearcherForString(url, searchType, ContentSearchUtilities::SearchCaseSensitive::No);
+    if (!m_urlBreakpoints.appendIfNotContains(URLBreakpoint { url, isRegexBreakpoint, breakpoint.releaseNonNull(), WTF::move(searcher) }))
+        return makeUnexpected("Breakpoint for given url and given isRegex already exists"_s);
 
     return { };
 }
@@ -455,46 +505,29 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMDebuggerAgent::removeURLBre
         return { };
     }
 
-    if (isRegex && *isRegex) {
-        if (!m_urlRegexBreakpoints.remove(url))
-            return makeUnexpected("Missing breakpoint for given regex"_s);
-    } else {
-        if (!m_urlTextBreakpoints.remove(url))
-            return makeUnexpected("Missing breakpoint for given URL"_s);
-    }
+    bool isRegexBreakpoint = isRegex && *isRegex;
+    if (!m_urlBreakpoints.removeFirstMatching([&](auto& existing) { return existing.isRegex == isRegexBreakpoint && existing.url == url; }))
+        return makeUnexpected("Missing breakpoint for given url and isRegex"_s);
 
     return { };
 }
 
-void InspectorDOMDebuggerAgent::breakOnURLIfNeeded(const String& url)
+void InspectorDOMDebuggerAgent::breakOnURLIfNeeded(Inspector::InspectorDebuggerAgent* debuggerAgent, const String& url)
 {
-    if (!m_debuggerAgent->breakpointsActive())
+    if (!debuggerAgent || !debuggerAgent->breakpointsActive())
         return;
 
     // FIXME: <https://webkit.org/b/245053> Web Inspector: URL breakpoints should still be able to pause when script is disallowed
     if (!ScriptDisallowedScope::isScriptAllowedInMainThread())
         return;
 
-    constexpr auto searchCaseSensitive = ContentSearchUtilities::SearchCaseSensitive::No;
-
     auto breakpointURL = emptyString();
     auto breakpoint = m_pauseOnAllURLsBreakpoint.copyRef();
     if (!breakpoint) {
-        for (auto& [query, textBreakpoint] : m_urlTextBreakpoints) {
-            auto searcher = ContentSearchUtilities::createSearcherForString(query, ContentSearchUtilities::SearchType::ContainsString, searchCaseSensitive);
-            if (ContentSearchUtilities::searcherMatchesText(searcher, url)) {
-                breakpoint = textBreakpoint.copyRef();
-                breakpointURL = query;
-                break;
-            }
-        }
-    }
-    if (!breakpoint) {
-        for (auto& [query, regexBreakpoint] : m_urlRegexBreakpoints) {
-            auto searcher = ContentSearchUtilities::createSearcherForString(query, ContentSearchUtilities::SearchType::Regex, searchCaseSensitive);
-            if (ContentSearchUtilities::searcherMatchesText(searcher, url)) {
-                breakpoint = regexBreakpoint.copyRef();
-                breakpointURL = query;
+        for (auto& urlBreakpoint : m_urlBreakpoints) {
+            if (ContentSearchUtilities::searcherMatchesText(urlBreakpoint.searcher, url)) {
+                breakpoint = urlBreakpoint.specialBreakpoint.copyRef();
+                breakpointURL = urlBreakpoint.url;
                 break;
             }
         }
@@ -505,17 +538,17 @@ void InspectorDOMDebuggerAgent::breakOnURLIfNeeded(const String& url)
     Ref<JSON::Object> eventData = JSON::Object::create();
     eventData->setString("breakpointURL"_s, breakpointURL);
     eventData->setString("url"_s, url);
-    m_debuggerAgent->breakProgram(Inspector::DebuggerFrontendDispatcher::Reason::URL, WTF::move(eventData), WTF::move(breakpoint));
+    protect(debuggerAgent)->breakProgram(Inspector::DebuggerFrontendDispatcher::Reason::URL, WTF::move(eventData), WTF::move(breakpoint));
 }
 
-void InspectorDOMDebuggerAgent::willSendXMLHttpRequest(const String& url)
+void InspectorDOMDebuggerAgent::willSendXMLHttpRequest(Inspector::InspectorDebuggerAgent* debuggerAgent, const String& url)
 {
-    breakOnURLIfNeeded(url);
+    breakOnURLIfNeeded(debuggerAgent, url);
 }
 
-void InspectorDOMDebuggerAgent::willFetch(const String& url)
+void InspectorDOMDebuggerAgent::willFetch(Inspector::InspectorDebuggerAgent* debuggerAgent, const String& url)
 {
-    breakOnURLIfNeeded(url);
+    breakOnURLIfNeeded(debuggerAgent, url);
 }
 
 bool InspectorDOMDebuggerAgent::EventBreakpoint::matches(const String& eventName)

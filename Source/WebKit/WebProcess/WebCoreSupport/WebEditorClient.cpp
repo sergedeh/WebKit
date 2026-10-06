@@ -75,19 +75,19 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebEditorClient);
 bool WebEditorClient::shouldDeleteRange(const std::optional<SimpleRange>& range)
 {
     RefPtr page = m_page.get();
-    return page ? page->injectedBundleEditorClient().shouldDeleteRange(*page, range) : false;
+    return page && page->injectedBundleEditorClient().shouldDeleteRange(*page, range);
 }
 
 bool WebEditorClient::smartInsertDeleteEnabled()
 {
-    RefPtr page = m_page.get();
-    return page ? page->isSmartInsertDeleteEnabled() : false;
+    auto* page = m_page.get();
+    return page && page->isSmartInsertDeleteEnabled();
 }
 
 bool WebEditorClient::isSelectTrailingWhitespaceEnabled() const
 {
-    RefPtr page = m_page.get();
-    return page ? page->isSelectTrailingWhitespaceEnabled() : false;
+    auto* page = m_page.get();
+    return page && page->isSelectTrailingWhitespaceEnabled();
 }
 
 bool WebEditorClient::isContinuousSpellCheckingEnabled()
@@ -119,37 +119,37 @@ int WebEditorClient::spellCheckerDocumentTag()
 bool WebEditorClient::shouldBeginEditing(const SimpleRange& range)
 {
     RefPtr page = m_page.get();
-    return page ? page->injectedBundleEditorClient().shouldBeginEditing(*page, range) : false;
+    return page && page->injectedBundleEditorClient().shouldBeginEditing(*page, range);
 }
 
 bool WebEditorClient::shouldEndEditing(const SimpleRange& range)
 {
     RefPtr page = m_page.get();
-    return page ? page->injectedBundleEditorClient().shouldEndEditing(*page, range) : false;
+    return page && page->injectedBundleEditorClient().shouldEndEditing(*page, range);
 }
 
 bool WebEditorClient::shouldInsertNode(Node& node, const std::optional<SimpleRange>& rangeToReplace, EditorInsertAction action)
 {
     RefPtr page = m_page.get();
-    return page ? page->injectedBundleEditorClient().shouldInsertNode(*page, node, rangeToReplace, action) : false;
+    return page && page->injectedBundleEditorClient().shouldInsertNode(*page, node, rangeToReplace, action);
 }
 
 bool WebEditorClient::shouldInsertText(const String& text, const std::optional<SimpleRange>& rangeToReplace, EditorInsertAction action)
 {
     RefPtr page = m_page.get();
-    return page ? page->injectedBundleEditorClient().shouldInsertText(*page, text, rangeToReplace, action) : false;
+    return page && page->injectedBundleEditorClient().shouldInsertText(*page, text, rangeToReplace, action);
 }
 
 bool WebEditorClient::shouldChangeSelectedRange(const std::optional<SimpleRange>& fromRange, const std::optional<SimpleRange>& toRange, Affinity affinity, bool stillSelecting)
 {
     RefPtr page = m_page.get();
-    return page ? page->injectedBundleEditorClient().shouldChangeSelectedRange(*page, fromRange, toRange, affinity, stillSelecting) : false;
+    return page && page->injectedBundleEditorClient().shouldChangeSelectedRange(*page, fromRange, toRange, affinity, stillSelecting);
 }
 
 bool WebEditorClient::shouldApplyStyle(const StyleProperties& style, const std::optional<SimpleRange>& range)
 {
     RefPtr page = m_page.get();
-    return page ? page->injectedBundleEditorClient().shouldApplyStyle(*page, style, range) : false;
+    return page && page->injectedBundleEditorClient().shouldApplyStyle(*page, style, range);
 }
 
 #if ENABLE(ATTACHMENT_ELEMENT)
@@ -324,7 +324,7 @@ void WebEditorClient::getClientPasteboardData(const std::optional<SimpleRange>& 
 bool WebEditorClient::performTwoStepDrop(DocumentFragment& fragment, const SimpleRange& destination, bool isMove)
 {
     RefPtr page = m_page.get();
-    return page ? page->injectedBundleEditorClient().performTwoStepDrop(*page, fragment, destination, isMove) : false;
+    return page && page->injectedBundleEditorClient().performTwoStepDrop(*page, fragment, destination, isMove);
 }
 
 void WebEditorClient::registerUndoStep(UndoStep& step)
@@ -382,14 +382,18 @@ bool WebEditorClient::canRedo() const
     return result;
 }
 
-static void applyPendingUndoRedo(WebPage& page, uint32_t undoVersion, const Vector<std::pair<WebKit::WebUndoStepID, WebKit::UndoOrRedo>>& pendingUndoRedo)
+static void applyUndoRedo(WebPage& page, uint64_t firstSequence, const Vector<std::pair<WebKit::WebUndoStepID, WebKit::UndoOrRedo>>& undoRedo)
 {
-    for (auto undoRedo : pendingUndoRedo) {
-        if (undoRedo.second == UndoOrRedo::Undo)
-            page.unapplyEditCommand(undoVersion, undoRedo.first, [] { });
+    // The entries are a contiguous run in send order starting at firstSequence, so each one's sequence
+    // number follows from its position.
+    for (size_t i = 0; i < undoRedo.size(); ++i) {
+        auto [stepID, action] = undoRedo[i];
+        auto sequence = firstSequence + i;
+        if (action == UndoOrRedo::Undo)
+            page.unapplyEditCommand(sequence, stepID, [] { });
         else {
-            ASSERT(undoRedo.second == UndoOrRedo::Redo);
-            page.reapplyEditCommand(undoVersion, undoRedo.first, [] { });
+            ASSERT(action == UndoOrRedo::Redo);
+            page.reapplyEditCommand(sequence, stepID, [] { });
         }
     }
 }
@@ -399,7 +403,7 @@ void WebEditorClient::undo()
     if (RefPtr page = m_page.get()) {
         auto result = page->sendSync(Messages::WebPageProxy::ExecuteUndoRedo(UndoOrRedo::Undo));
         if (result.succeeded())
-            applyPendingUndoRedo(*page, std::get<0>(result.reply()), std::get<1>(result.reply()));
+            applyUndoRedo(*page, std::get<0>(result.reply()), std::get<1>(result.reply()));
     }
 }
 
@@ -408,7 +412,7 @@ void WebEditorClient::redo()
     if (RefPtr page = m_page.get()) {
         auto result = page->sendSync(Messages::WebPageProxy::ExecuteUndoRedo(UndoOrRedo::Redo));
         if (result.succeeded())
-            applyPendingUndoRedo(*page, std::get<0>(result.reply()), std::get<1>(result.reply()));
+            applyUndoRedo(*page, std::get<0>(result.reply()), std::get<1>(result.reply()));
     }
 }
 
@@ -454,7 +458,7 @@ void WebEditorClient::textFieldDidEndEditing(Element& element)
     if (!inputElement)
         return;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
+    RefPtr webFrame = WebFrame::fromCoreFrame(*element.document().frame());
     ASSERT(webFrame);
 
     if (RefPtr page = m_page.get())
@@ -469,7 +473,7 @@ void WebEditorClient::textDidChangeInTextField(Element& element)
 
     bool initiatedByUserTyping = UserTypingGestureIndicator::processingUserTypingGesture() && UserTypingGestureIndicator::focusedElementAtGestureStart() == inputElement;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
+    RefPtr webFrame = WebFrame::fromCoreFrame(*element.document().frame());
     ASSERT(webFrame);
 
     if (RefPtr page = m_page.get())
@@ -485,7 +489,7 @@ void WebEditorClient::textDidChangeInTextArea(Element& element)
     if (!textAreaElement)
         return;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
+    RefPtr webFrame = WebFrame::fromCoreFrame(*element.document().frame());
     ASSERT(webFrame);
 
     if (RefPtr page = m_page.get())
@@ -506,6 +510,23 @@ void WebEditorClient::subFrameScrollPositionChanged()
 }
 
 #endif
+
+#if PLATFORM(COCOA)
+
+bool WebEditorClient::shouldAllowSingleClickToChangeSelection(WebCore::Node& targetNode, const WebCore::VisibleSelection& newSelection, WebCore::MouseEventInputSource inputSource) const
+{
+    RefPtr page = m_page.get();
+    return page && page->shouldAllowSingleClickToChangeSelection(targetNode, newSelection, inputSource);
+}
+
+HashMap<WebCore::FrameIdentifier, WebCore::AttributedString> WebEditorClient::collectAttributedStringsForRemoteFrames(WebCore::FrameIdentifier rootFrameIdentifier, const Vector<WebCore::FrameIdentifier>& frameIdentifiers)
+{
+    if (RefPtr page = m_page.get())
+        return page->attributedStringsForRemoteFrames(rootFrameIdentifier, frameIdentifiers);
+    return { };
+}
+
+#endif // PLATFORM(COCOA)
 
 static bool getActionTypeForKeyEvent(KeyboardEvent* event, WKInputFieldActionType& type)
 {
@@ -529,7 +550,7 @@ static bool getActionTypeForKeyEvent(KeyboardEvent* event, WKInputFieldActionTyp
     return true;
 }
 
-static API::InjectedBundle::FormClient::InputFieldAction toInputFieldAction(WKInputFieldActionType action)
+static API::InjectedBundle::FormClient::InputFieldAction NODELETE toInputFieldAction(WKInputFieldActionType action)
 {
     switch (action) {
     case WKInputFieldActionTypeMoveUp:
@@ -562,11 +583,11 @@ bool WebEditorClient::doTextFieldCommandFromEvent(Element& element, KeyboardEven
     if (!getActionTypeForKeyEvent(event, actionType))
         return false;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
+    RefPtr webFrame = WebFrame::fromCoreFrame(*element.document().frame());
     ASSERT(webFrame);
 
     RefPtr page = m_page.get();
-    return page ? page->injectedBundleFormClient().shouldPerformActionInTextField(page.get(), *inputElement, toInputFieldAction(actionType), webFrame.get()) : false;
+    return page && page->injectedBundleFormClient().shouldPerformActionInTextField(page.get(), *inputElement, toInputFieldAction(actionType), webFrame.get());
 }
 
 void WebEditorClient::textWillBeDeletedInTextField(Element& element)
@@ -575,7 +596,7 @@ void WebEditorClient::textWillBeDeletedInTextField(Element& element)
     if (!inputElement)
         return;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
+    RefPtr webFrame = WebFrame::fromCoreFrame(*element.document().frame());
     ASSERT(webFrame);
 
     if (RefPtr page = m_page.get())
@@ -712,13 +733,13 @@ void WebEditorClient::requestExtendedCheckingOfString(TextCheckingRequest& reque
 
 void WebEditorClient::willChangeSelectionForAccessibility()
 {
-    if (RefPtr page = m_page.get())
+    if (auto* page = m_page.get())
         page->willChangeSelectionForAccessibility();
 }
 
 void WebEditorClient::didChangeSelectionForAccessibility()
 {
-    if (RefPtr page = m_page.get())
+    if (auto* page = m_page.get())
         page->didChangeSelectionForAccessibility();
 }
 

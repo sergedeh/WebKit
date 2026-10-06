@@ -7,12 +7,9 @@
 //    CPU-side storage of commands to delay GPU-side allocation until commands are submitted.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/vulkan/SecondaryCommandBuffer.h"
 #include "common/debug.h"
+#include "common/unsafe_buffers.h"
 #include "libANGLE/renderer/vulkan/vk_utils.h"
 #include "libANGLE/trace.h"
 
@@ -46,6 +43,8 @@ const char *GetCommandString(CommandID id)
             return "BindIndexBuffer";
         case CommandID::BindIndexBuffer2:
             return "BindIndexBuffer2";
+        case CommandID::BindTileMemory:
+            return "BindTileMemory";
         case CommandID::BindTransformFeedbackBuffers:
             return "BindTransformFeedbackBuffers";
         case CommandID::BindVertexBuffers:
@@ -62,6 +61,8 @@ const char *GetCommandString(CommandID id)
             return "BlitImage";
         case CommandID::BufferBarrier:
             return "BufferBarrier";
+        case CommandID::BufferBarrier2:
+            return "BufferBarrier2";
         case CommandID::ClearAttachments:
             return "ClearAttachments";
         case CommandID::ClearColorImage:
@@ -110,16 +111,22 @@ const char *GetCommandString(CommandID id)
             return "FillBuffer";
         case CommandID::ImageBarrier:
             return "ImageBarrier";
+        case CommandID::ImageBarrier2:
+            return "ImageBarrier2";
         case CommandID::ImageWaitEvent:
             return "ImageWaitEvent";
         case CommandID::InsertDebugUtilsLabel:
             return "InsertDebugUtilsLabel";
         case CommandID::MemoryBarrier:
             return "MemoryBarrier";
+        case CommandID::MemoryBarrier2:
+            return "MemoryBarrier2";
         case CommandID::NextSubpass:
             return "NextSubpass";
         case CommandID::PipelineBarrier:
             return "PipelineBarrier";
+        case CommandID::PipelineBarrier2:
+            return "PipelineBarrier2";
         case CommandID::PushConstants:
             return "PushConstants";
         case CommandID::ResetEvent:
@@ -154,6 +161,8 @@ const char *GetCommandString(CommandID id)
             return "SetLogicOp";
         case CommandID::SetPrimitiveRestartEnable:
             return "SetPrimitiveRestartEnable";
+        case CommandID::SetPrimitiveTopology:
+            return "SetPrimitiveTopology";
         case CommandID::SetRasterizerDiscardEnable:
             return "SetRasterizerDiscardEnable";
         case CommandID::SetScissor:
@@ -176,10 +185,8 @@ const char *GetCommandString(CommandID id)
             return "WaitEvents";
         case CommandID::WriteTimestamp:
             return "WriteTimestamp";
-        default:
-            // Need this to work around MSVC warning 4715.
-            UNREACHABLE();
-            return "--unreachable--";
+        case CommandID::WriteTimestamp2:
+            return "WriteTimestamp2";
     }
 }
 
@@ -203,8 +210,8 @@ ANGLE_INLINE const NextT *GetNextArrayParameter(const PrevT *array, size_t array
 
 ANGLE_INLINE const CommandHeader *NextCommand(const CommandHeader *command)
 {
-    return reinterpret_cast<const CommandHeader *>(reinterpret_cast<const uint8_t *>(command) +
-                                                   command->size);
+    return reinterpret_cast<const CommandHeader *>(
+        ANGLE_UNSAFE_TODO(reinterpret_cast<const uint8_t *>(command) + command->size));
 }
 
 // Parse the cmds in this cmd buffer into given primary cmd buffer
@@ -214,6 +221,9 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
 
     ANGLE_TRACE_EVENT0("gpu.angle", "SecondaryCommandBuffer::executeCommands");
 
+    // Track all commands using single scope since tracking each command adds too much CPU overhead.
+    ScopedVulkanApiPerfTimer timer(angle::VulkanApiPerfCounterGroup::Command);
+
     for (const CommandHeader *command : mCommands)
     {
         for (const CommandHeader *currentCommand                      = command;
@@ -221,6 +231,9 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
         {
             switch (currentCommand->id)
             {
+                case CommandID::Invalid:
+                    UNREACHABLE();
+                    break;
                 case CommandID::BeginDebugUtilsLabel:
                 {
                     const DebugUtilsLabelParams *params =
@@ -247,8 +260,8 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                         getParamPtr<BeginTransformFeedbackParams>(currentCommand);
                     const VkBuffer *counterBuffers = GetFirstArrayParameter<VkBuffer>(params);
                     const VkDeviceSize *counterBufferOffsets =
-                        reinterpret_cast<const VkDeviceSize *>(counterBuffers +
-                                                               params->bufferCount);
+                        reinterpret_cast<const VkDeviceSize *>(
+                            ANGLE_UNSAFE_TODO(counterBuffers + params->bufferCount));
                     vkCmdBeginTransformFeedbackEXT(cmdBuffer, 0, params->bufferCount,
                                                    counterBuffers, counterBufferOffsets);
                     break;
@@ -297,6 +310,15 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                         getParamPtr<BindIndexBuffer2Params>(currentCommand);
                     vkCmdBindIndexBuffer2KHR(cmdBuffer, params->buffer, params->offset,
                                              params->size, params->indexType);
+                    break;
+                }
+                case CommandID::BindTileMemory:
+                {
+                    const BindTileMemoryParams *params =
+                        getParamPtr<BindTileMemoryParams>(currentCommand);
+                    const VkTileMemoryBindInfoQCOM tileMemoryBindInfo = {
+                        VK_STRUCTURE_TYPE_TILE_MEMORY_BIND_INFO_QCOM, nullptr, params->tileMemory};
+                    vkCmdBindTileMemoryQCOM(cmdBuffer, &tileMemoryBindInfo);
                     break;
                 }
                 case CommandID::BindTransformFeedbackBuffers:
@@ -569,8 +591,8 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                         getParamPtr<EndTransformFeedbackParams>(currentCommand);
                     const VkBuffer *counterBuffers = GetFirstArrayParameter<VkBuffer>(params);
                     const VkDeviceSize *counterBufferOffsets =
-                        reinterpret_cast<const VkDeviceSize *>(counterBuffers +
-                                                               params->bufferCount);
+                        reinterpret_cast<const VkDeviceSize *>(
+                            ANGLE_UNSAFE_TODO(counterBuffers + params->bufferCount));
                     vkCmdEndTransformFeedbackEXT(cmdBuffer, 0, params->bufferCount, counterBuffers,
                                                  counterBufferOffsets);
                     break;
@@ -740,7 +762,7 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                 {
                     const SetBlendConstantsParams *params =
                         getParamPtr<SetBlendConstantsParams>(currentCommand);
-                    vkCmdSetBlendConstants(cmdBuffer, params->blendConstants);
+                    vkCmdSetBlendConstants(cmdBuffer, params->blendConstants.data());
                     break;
                 }
                 case CommandID::SetCullMode:
@@ -830,6 +852,13 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                     const SetPrimitiveRestartEnableParams *params =
                         getParamPtr<SetPrimitiveRestartEnableParams>(currentCommand);
                     vkCmdSetPrimitiveRestartEnableEXT(cmdBuffer, params->primitiveRestartEnable);
+                    break;
+                }
+                case CommandID::SetPrimitiveTopology:
+                {
+                    const SetPrimitiveTopologyParams *params =
+                        getParamPtr<SetPrimitiveTopologyParams>(currentCommand);
+                    vkCmdSetPrimitiveTopologyEXT(cmdBuffer, params->primitiveTopology);
                     break;
                 }
                 case CommandID::SetRasterizerDiscardEnable:
@@ -946,11 +975,6 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                         getParamPtr<WriteTimestampParams>(currentCommand);
                     vkCmdWriteTimestamp2KHR(cmdBuffer, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                             params->queryPool, params->query);
-                    break;
-                }
-                default:
-                {
-                    UNREACHABLE();
                     break;
                 }
             }

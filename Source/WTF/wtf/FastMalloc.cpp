@@ -28,12 +28,12 @@
 
 #include <bmalloc/bmalloc.h>
 #include <string.h>
+#include <string_view>
+#include <wtf/Atomics.h>
 #include <wtf/CheckedArithmetic.h>
-
-#if OS(DARWIN)
-#include <malloc/malloc.h>
-#include <wtf/darwin/DispatchExtras.h>
-#endif
+#include <wtf/PageBlock.h>
+#include <wtf/SequesteredImmortalHeap.h>
+#include <wtf/SequesteredMalloc.h>
 
 #if OS(WINDOWS)
 #include <windows.h>
@@ -60,6 +60,11 @@
 #include <notify.h>
 #endif
 
+#endif
+
+#if defined(PAS_PRESERVE_MOST)
+static_assert(std::string_view { _STRINGIFY(PRESERVE_MOST) } == std::string_view { _STRINGIFY(PAS_PRESERVE_MOST) },
+    "PRESERVE_MOST and PAS_PRESERVE_MOST disagree; this is catastrophic for performance");
 #endif
 
 namespace WTF {
@@ -333,7 +338,7 @@ bool isFastMallocEnabled()
     return bmalloc::api::isEnabled();
 }
 
-void* fastMalloc(size_t size)
+PRESERVE_MOST void* fastMalloc(size_t size)
 {
     ASSERT_IS_WITHIN_LIMIT(size);
     assertMallocRestrictionForCurrentThreadScope();
@@ -393,13 +398,18 @@ void* fastRealloc(void* object, size_t size)
     return result;
 }
 
-void fastFree(void* object)
+PRESERVE_MOST void fastFree(void* object)
 {
     bmalloc::api::free(object);
 #if ENABLE(MALLOC_HEAP_BREAKDOWN) && TRACK_MALLOC_CALLSTACK
     if (!AvoidRecordingScope::avoidRecordingCount())
         MallocCallTracker::singleton().recordFree(object);
 #endif
+}
+
+void fastFreeCallback(void* object)
+{
+    fastFree(object);
 }
 
 size_t fastMallocSize(const void* p)
@@ -424,7 +434,7 @@ size_t fastMallocGoodSize(size_t size)
 #endif
 }
 
-void* fastAlignedMalloc(size_t alignment, size_t size)
+PRESERVE_MOST void* fastAlignedMalloc(size_t alignment, size_t size)
 {
     ASSERT_IS_WITHIN_LIMIT(size);
     assertMallocRestrictionForCurrentThreadScope();
@@ -437,7 +447,7 @@ void* fastAlignedMalloc(size_t alignment, size_t size)
     return result;
 }
 
-void* tryFastAlignedMalloc(size_t alignment, size_t size)
+PRESERVE_MOST void* tryFastAlignedMalloc(size_t alignment, size_t size)
 {
     FAIL_IF_EXCEEDS_LIMIT(size);
     assertMallocRestrictionForCurrentThreadScope();
@@ -450,7 +460,7 @@ void* tryFastAlignedMalloc(size_t alignment, size_t size)
     return result;
 }
 
-TryMallocReturnValue tryFastMalloc(size_t size)
+PRESERVE_MOST TryMallocReturnValue tryFastMalloc(size_t size)
 {
     FAIL_IF_EXCEEDS_LIMIT(size);
     assertMallocRestrictionForCurrentThreadScope();
@@ -478,7 +488,7 @@ TryMallocReturnValue tryFastRealloc(void* object, size_t newSize)
     return result;
 }
 
-void* fastCompactMalloc(size_t size)
+PRESERVE_MOST void* fastCompactMalloc(size_t size)
 {
     ASSERT_IS_WITHIN_LIMIT(size);
     assertMallocRestrictionForCurrentThreadScope();
@@ -536,7 +546,7 @@ void* fastCompactRealloc(void* object, size_t size)
     return result;
 }
 
-void* fastCompactAlignedMalloc(size_t alignment, size_t size)
+PRESERVE_MOST void* fastCompactAlignedMalloc(size_t alignment, size_t size)
 {
     ASSERT_IS_WITHIN_LIMIT(size);
     assertMallocRestrictionForCurrentThreadScope();
@@ -549,7 +559,7 @@ void* fastCompactAlignedMalloc(size_t alignment, size_t size)
     return result;
 }
 
-void* tryFastCompactAlignedMalloc(size_t alignment, size_t size)
+PRESERVE_MOST void* tryFastCompactAlignedMalloc(size_t alignment, size_t size)
 {
     FAIL_IF_EXCEEDS_LIMIT(size);
     assertMallocRestrictionForCurrentThreadScope();
@@ -562,7 +572,7 @@ void* tryFastCompactAlignedMalloc(size_t alignment, size_t size)
     return result;
 }
 
-TryMallocReturnValue tryFastCompactMalloc(size_t size)
+PRESERVE_MOST TryMallocReturnValue tryFastCompactMalloc(size_t size)
 {
     FAIL_IF_EXCEEDS_LIMIT(size);
     assertMallocRestrictionForCurrentThreadScope();
@@ -598,6 +608,10 @@ void releaseFastMallocFreeMemoryForThisThread()
 void releaseFastMallocFreeMemory()
 {
     bmalloc::api::scavenge();
+#if USE(PROTECTED_JIT)
+    if (isSequesteredArenaMallocEnabled())
+        SequesteredImmortalHeap::instance().reclaimIdleGranulesOnce();
+#endif
 }
 
 FastMallocStatistics fastMallocStatistics()
@@ -652,9 +666,110 @@ void fastDisableScavenger()
     bmalloc::api::disableScavenger();
 }
 
+#if HAVE(QOS_CLASSES)
+void fastSetScavengerThreadQOSClass(unsigned qosClass)
+{
+    bmalloc::api::setScavengerThreadQOSClass(static_cast<qos_class_t>(qosClass));
+}
+#endif
+
 void forceEnablePGM(uint16_t guardMallocRate)
 {
     bmalloc::api::forceEnablePGM(guardMallocRate);
 }
 
 } // namespace WTF
+
+namespace Gigacage {
+
+void* tryAlignedMalloc(Kind kind, size_t alignment, size_t size)
+{
+    void* result = bmalloc::api::tryMemalign(alignment, size, bmalloc::CompactAllocationMode::Compact, bmalloc::heapKind(kind));
+    BPROFILE_TRY_ALLOCATION(GIGACAGE, kind, result, size);
+    WTF::compilerFence();
+    return result;
+}
+
+void* tryMalloc(Kind kind, size_t size)
+{
+    void* result = bmalloc::api::tryMalloc(size, bmalloc::CompactAllocationMode::Compact, bmalloc::heapKind(kind));
+    BPROFILE_TRY_ALLOCATION(GIGACAGE, kind, result, size);
+    WTF::compilerFence();
+    return result;
+}
+
+void* malloc(Kind kind, size_t size)
+{
+    void* result = bmalloc::api::malloc(size, bmalloc::CompactAllocationMode::Compact, bmalloc::heapKind(kind));
+    BPROFILE_ALLOCATION(GIGACAGE, kind, result, size);
+    WTF::compilerFence();
+    return result;
+}
+
+void* tryZeroedMalloc(Kind kind, size_t size)
+{
+    void* result = bmalloc::api::tryZeroedMalloc(size, bmalloc::CompactAllocationMode::Compact, bmalloc::heapKind(kind));
+    BPROFILE_TRY_ALLOCATION(GIGACAGE, kind, result, size);
+    WTF::compilerFence();
+    return result;
+}
+
+void* zeroedMalloc(Kind kind, size_t size)
+{
+    void* result = bmalloc::api::zeroedMalloc(size, bmalloc::CompactAllocationMode::Compact, bmalloc::heapKind(kind));
+    BPROFILE_ALLOCATION(GIGACAGE, kind, result, size);
+    WTF::compilerFence();
+    return result;
+}
+
+void* tryRealloc(Kind kind, void* pointer, size_t size)
+{
+    void* result = bmalloc::api::tryRealloc(pointer, size, bmalloc::CompactAllocationMode::Compact, bmalloc::heapKind(kind));
+    BPROFILE_TRY_ALLOCATION(GIGACAGE, kind, result, size);
+    WTF::compilerFence();
+    return result;
+}
+
+void free(Kind kind, void* p)
+{
+    if (!p)
+        return;
+    RELEASE_ASSERT(isCaged(kind, p));
+    bmalloc::api::free(p, bmalloc::heapKind(kind));
+    WTF::compilerFence();
+}
+
+void* tryAllocateZeroedVirtualPages(Kind kind, size_t size)
+{
+    void* result = bmalloc::api::tryLargeZeroedMemalignVirtual(WTF::pageSize(), size, bmalloc::CompactAllocationMode::Compact, bmalloc::heapKind(kind));
+    BPROFILE_TRY_ALLOCATION(GIGACAGE, kind, result, size);
+    WTF::compilerFence();
+    return result;
+}
+
+void freeVirtualPages(Kind kind, void* basePtr, size_t size)
+{
+    if (!basePtr)
+        return;
+    RELEASE_ASSERT(isCaged(kind, basePtr));
+    bmalloc::api::freeLargeVirtual(basePtr, size, bmalloc::heapKind(kind));
+    WTF::compilerFence();
+}
+
+void* tryMallocArray(Kind kind, size_t numElements, size_t elementSize)
+{
+    WTF::CheckedSize checkedSize = elementSize;
+    checkedSize *= numElements;
+    if (checkedSize.hasOverflowed())
+        return nullptr;
+    return tryMalloc(kind, checkedSize);
+}
+
+void* mallocArray(Kind kind, size_t numElements, size_t elementSize)
+{
+    void* result = tryMallocArray(kind, numElements, elementSize);
+    RELEASE_ASSERT(result);
+    return result;
+}
+
+} // namespace Gigacage

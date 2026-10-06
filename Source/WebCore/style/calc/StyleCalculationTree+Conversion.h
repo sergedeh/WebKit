@@ -30,8 +30,6 @@
 
 namespace WebCore {
 
-class RenderStyle;
-
 namespace CSS {
 enum class Category : uint8_t;
 }
@@ -51,9 +49,6 @@ struct ToCSSOptions {
 
     // `range` represents the allowed numeric range for the calculated result.
     CSS::Range range;
-
-    // `style` represents the RenderStyle the Tree is from for zoom calculations.
-    const RenderStyle& style;
 };
 
 struct ToStyleOptions {

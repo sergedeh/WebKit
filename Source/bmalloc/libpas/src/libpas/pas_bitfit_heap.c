@@ -31,11 +31,9 @@
 
 #include "pas_bitfit_directory.h"
 #include "pas_bitfit_size_class.h"
-#include "pas_bitfit_page.h"
 #include "pas_bitfit_view.h"
 #include "pas_heap_config.h"
 #include "pas_immortal_heap.h"
-#include "pas_segregated_size_directory.h"
 
 pas_bitfit_heap* pas_bitfit_heap_create(pas_segregated_heap* segregated_heap,
                                         const pas_heap_config* heap_config)
@@ -45,7 +43,7 @@ pas_bitfit_heap* pas_bitfit_heap_create(pas_segregated_heap* segregated_heap,
 
     result = pas_immortal_heap_allocate_with_alignment(
         sizeof(pas_bitfit_heap),
-        sizeof(pas_versioned_field),
+        PAS_ALIGNOF(pas_bitfit_heap),
         "pas_bitfit_heap",
         pas_object_allocation);
 

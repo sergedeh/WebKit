@@ -125,6 +125,19 @@ TextStream& operator<<(TextStream& ts, ScrollbarMode behavior)
     return ts;
 }
 
+TextStream& operator<<(TextStream& ts, ScrollbarRevealBehavior behavior)
+{
+    switch (behavior) {
+    case ScrollbarRevealBehavior::DontReveal:
+        ts << "dont-reveal"_s;
+        break;
+    case ScrollbarRevealBehavior::Default:
+        ts << "default"_s;
+        break;
+    }
+    return ts;
+}
+
 TextStream& operator<<(TextStream& ts, OverflowAnchor behavior)
 {
     switch (behavior) {
@@ -132,6 +145,19 @@ TextStream& operator<<(TextStream& ts, OverflowAnchor behavior)
         ts << 0;
         break;
     case OverflowAnchor::None:
+        ts << 1;
+        break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, ScrollAxisLock behavior)
+{
+    switch (behavior) {
+    case ScrollAxisLock::Auto:
+        ts << 0;
+        break;
+    case ScrollAxisLock::None:
         ts << 1;
         break;
     }
@@ -199,6 +225,7 @@ TextStream& operator<<(TextStream& ts, ScrollPositionChangeOptions options)
     ts.dumpProperty("animated"_s, options.animated == ScrollIsAnimated::Yes);
     ts.dumpProperty("snap point selection method"_s, options.snapPointSelectionMethod);
     ts.dumpProperty("original scroll delta"_s, options.originalScrollDelta ? *options.originalScrollDelta : FloatSize());
+    ts.dumpProperty("interrupts animation"_s, options.interruptsAnimation == ScrollInterruptsAnimation::Yes);
 
     return ts;
 }
@@ -211,6 +238,9 @@ TextStream& operator<<(TextStream& ts, ScrollSnapPointSelectionMethod option)
         break;
     case ScrollSnapPointSelectionMethod::Closest:
         ts << "Closest"_s;
+        break;
+    case ScrollSnapPointSelectionMethod::Paging:
+        ts << "Paging"_s;
         break;
     }
     return ts;

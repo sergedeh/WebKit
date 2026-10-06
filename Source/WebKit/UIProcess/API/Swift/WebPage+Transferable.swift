@@ -21,19 +21,19 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
 public import CoreTransferable
 import Foundation
 import UniformTypeIdentifiers
-@_weakLinked internal import SwiftUI
-internal import WebKit_Private
-internal import WebKit_Private.WKSnapshotConfigurationPrivate
-internal import WebKit_Private.WKWebViewPrivate
+@_weakLinked import SwiftUI
+import WebKit_Private
+import WebKit_Private.WKSnapshotConfigurationPrivate
+import WebKit_Private.WKWebViewPrivate
 
-@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-@available(watchOS, unavailable)
-@available(tvOS, unavailable)
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 extension WebPage: Transferable {
     /// A specialized configuration of a specific exportable type that can have specific properties unique to the content type.
     public nonisolated struct ExportedContentConfiguration: Sendable {
@@ -241,7 +241,7 @@ extension WebPage {
         let configuration = WKSnapshotConfiguration()
         configuration.rect = region.rect ?? .null
 
-        #if os(macOS)
+        #if WTF_PLATFORM_MAC
         // FIXME: This should not be limited to macOS.
         configuration._usesContentsRect = region.usesContentsRect
         #endif
@@ -258,7 +258,7 @@ extension WebPage {
             throw WKError(.unknown)
         }
 
-        #if os(macOS)
+        #if WTF_PLATFORM_MAC
         let image = Image(nsImage: snapshot)
         #else
         let image = Image(uiImage: snapshot)
@@ -295,4 +295,4 @@ extension WebPage {
     }
 }
 
-#endif // ENABLE_SWIFTUI && compiler(>=6.0)
+#endif // ENABLE_SWIFTUI

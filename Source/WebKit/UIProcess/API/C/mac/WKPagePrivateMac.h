@@ -27,6 +27,7 @@
 #define WKPagePrivateMac_h
 
 #include <WebKit/WKBase.h>
+#include <WebKit/WKDeprecated.h>
 #include <sys/types.h>
 
 #ifdef __cplusplus
@@ -36,46 +37,23 @@ extern "C" {
 #ifdef __OBJC__
 
 @class WKWebView;
-@class _WKRemoteObjectRegistry;
-
-@protocol _WKObservablePageState
-
-@property (nonatomic, readonly, copy) NSString *title;
-@property (nonatomic, readonly, copy) NSURL *URL;
-@property (nonatomic, readonly, getter=isLoading) BOOL loading;
-@property (nonatomic, readonly) double estimatedProgress;
-@property (nonatomic, readonly) BOOL hasOnlySecureContent;
-@property (nonatomic, readonly) BOOL _webProcessIsResponsive;
-
-// Not KVO compliant.
-@property (nonatomic, readonly) NSURL *unreachableURL;
-@property (nonatomic, readonly) SecTrustRef serverTrust;
-
-@end
-
-WK_EXPORT id <_WKObservablePageState> WKPageCreateObservableState(WKPageRef page) NS_RETURNS_RETAINED;
-WK_EXPORT _WKRemoteObjectRegistry *WKPageGetObjectRegistry(WKPageRef page);
-
-@protocol _WKFullscreenDelegate;
-WK_EXPORT void WKPageSetFullscreenDelegate(WKPageRef page, id <_WKFullscreenDelegate>);
-WK_EXPORT id <_WKFullscreenDelegate> WKPageGetFullscreenDelegate(WKPageRef page);
 
 @class WKNavigation;
-WK_EXPORT WKNavigation *WKPageLoadURLRequestReturningNavigation(WKPageRef page, WKURLRequestRef request);
 WK_EXPORT WKNavigation *WKPageLoadFileReturningNavigation(WKPageRef page, WKURLRef fileURL, WKURLRef resourceDirectoryURL);
 
 WK_EXPORT WKWebView *WKPageGetWebView(WKPageRef page);
 
 @class NSDictionary;
+@class NSArray;
 WK_EXPORT NSDictionary *WKPageGetAccessibilityWebProcessDebugInfo(WKPageRef page);
+WK_EXPORT NSArray *WKPageGetAccessibilityWebProcessDebugInfoForAllProcesses(WKPageRef page);
 WK_EXPORT void WKPageAccessibilityClearIsolatedTree(WKPageRef page);
 
 #endif // __OBJC__
 
-WK_EXPORT bool WKPageIsURLKnownHSTSHost(WKPageRef page, WKURLRef url);
-
 #if !TARGET_OS_IPHONE
-WK_EXPORT bool WKPageIsPlayingVideoInEnhancedFullscreen(WKPageRef page);
+WK_EXPORT bool WKPageIsPlayingVideoInPictureInPicture(WKPageRef page);
+WK_EXPORT bool WKPageIsPlayingVideoInEnhancedFullscreen(WKPageRef page) WK_C_API_DEPRECATED_WITH_REPLACEMENT(WKPageIsPlayingVideoInPictureInPicture);
 #endif
 
 #ifdef __cplusplus

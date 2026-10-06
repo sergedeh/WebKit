@@ -29,7 +29,7 @@
 #include "LayoutContainingBlockChainIterator.h"
 #include "LayoutInitialContainingBlock.h"
 #include "LayoutShape.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -114,12 +114,16 @@ void PlacedFloats::add(Item newFloatItem)
 bool PlacedFloats::Item::isInFormattingContextOf(const ElementBox& formattingContextRoot) const
 {
     ASSERT(formattingContextRoot.establishesFormattingContext());
+    // FIXME: No layout box means the render tree integration codepath put it here, which it only does for intruding floats from outside the inline formatting context.
+    // This works as long as the incoming formattingContextRoot is the current IFC.
+    if (!m_layoutBox)
+        return false;
+
     ASSERT(!is<InitialContainingBlock>(m_layoutBox));
-    for (auto& containingBlock : containingBlockChain(*m_layoutBox)) {
-        if (&containingBlock == &formattingContextRoot)
+    for (CheckedRef containingBlock : containingBlockChain(*m_layoutBox)) {
+        if (containingBlock.ptr() == &formattingContextRoot)
             return true;
     }
-    ASSERT_NOT_REACHED();
     return false;
 }
 

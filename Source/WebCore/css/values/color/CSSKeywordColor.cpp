@@ -30,21 +30,26 @@
 #include "CSSPlatformColorResolutionState.h"
 #include "CSSValueKeywords.h"
 #include "HashTools.h"
+#include "PlatformRenderTheme.h"
 #include "RenderTheme.h"
 #include "StyleColorOptions.h"
 #include <wtf/OptionSet.h>
 
+#if PLATFORM(COCOA)
+#include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#endif
+
 namespace WebCore {
 namespace CSS {
 
-static bool isVGAPaletteColor(CSSValueID id)
+static bool NODELETE isVGAPaletteColor(CSSValueID id)
 {
     // https://drafts.csswg.org/css-color-4/#named-colors
     // "16 of CSS’s named colors come from the VGA palette originally, and were then adopted into HTML"
     return id >= CSSValueAqua && id <= CSSValueGrey;
 }
 
-static bool isNonVGANamedColor(CSSValueID id)
+static bool NODELETE isNonVGANamedColor(CSSValueID id)
 {
     // https://drafts.csswg.org/css-color-4/#named-colors
     return id >= CSSValueAliceblue && id <= CSSValueYellowgreen;
@@ -64,11 +69,18 @@ bool isCurrentColorKeyword(CSSValueID id)
 bool isSystemColorKeyword(CSSValueID id)
 {
     // https://drafts.csswg.org/css-color-4/#css-system-colors
-    return (id >= CSSValueCanvas && id <= CSSValueInternalDocumentTextColor) || id == CSSValueText || isDeprecatedSystemColorKeyword(id);
+    return (id >= CSSValueCanvas && id <= CSSValueInternalDocumentTextColor) || isDeprecatedSystemColorKeyword(id);
 }
 
-bool isDeprecatedSystemColorKeyword(CSSValueID id)
+SUPPRESS_NODELETE bool isDeprecatedSystemColorKeyword(CSSValueID id)
 {
+    if (id == CSSValueText)
+#if PLATFORM(COCOA)
+        return !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::NoTextValueForCSSColor);
+#else
+        return false;
+#endif
+
     // https://drafts.csswg.org/css-color-4/#deprecated-system-colors
     return (id >= CSSValueActiveborder && id <= CSSValueWindowtext) || id == CSSValueMenu;
 }

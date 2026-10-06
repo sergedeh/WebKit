@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include <WebCore/RenderObjectNode.h>
-#include <WebCore/RenderWidget.h>
+#include "RenderObjectNode.h"
+#include "RenderWidget.h"
 
 namespace WebCore {
 
@@ -39,11 +39,6 @@ inline void WidgetHierarchyUpdatesSuspensionScope::scheduleWidgetToMove(Widget& 
 inline HTMLFrameOwnerElement& RenderWidget::frameOwnerElement() const
 {
     return downcast<HTMLFrameOwnerElement>(nodeForNonAnonymous());
-}
-
-inline Ref<HTMLFrameOwnerElement> RenderWidget::protectedFrameOwnerElement() const
-{
-    return frameOwnerElement();
 }
 
 } // namespace WebCore

@@ -51,6 +51,7 @@
 #import "LocalCurrentGraphicsContext.h"
 #import "LocalDefaultSystemAppearance.h"
 #import "LocalFrame.h"
+#import "LocalFrameInlines.h"
 #import "LocalFrameView.h"
 #import "LocalizedStrings.h"
 #import "Logging.h"
@@ -60,15 +61,18 @@
 #import "RenderAttachment.h"
 #import "RenderMedia.h"
 #import "RenderMeter.h"
+#import "RenderObjectInlines.h"
+#import "RenderProgress.h"
 #import "RenderSlider.h"
-#import "RenderStyle+GettersInlines.h"
-#import "RenderStyle+SettersInlines.h"
+#import "StyleComputedStyle+GettersInlines.h"
+#import "StyleComputedStyle+SettersInlines.h"
 #import "RenderView.h"
 #import "SliderThumbElement.h"
 #import "StringTruncator.h"
 #import "StyleComputedStyle+InitialInlines.h"
 #import "StylePadding.h"
 #import "UTIUtilities.h"
+#import "UserAgentParts.h"
 #import <Carbon/Carbon.h>
 #import <Cocoa/Cocoa.h>
 #import <CoreServices/CoreServices.h>
@@ -83,13 +87,17 @@
 #import <pal/spi/mac/NSImageSPI.h>
 #import <pal/spi/mac/NSSharingServicePickerSPI.h>
 #import <pal/spi/mac/NSSpellCheckerSPI.h>
+#import <wtf/BlockObjCExceptions.h>
 #import <wtf/MathExtras.h>
 #import <wtf/ObjCRuntimeExtras.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/StdLibExtras.h>
+#import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#import <wtf/text/CString.h>
 
 #if ENABLE(SERVICE_CONTROLS)
 #include "ImageControlsMac.h"
+#include "Page.h"
 #endif
 
 @interface WebCoreRenderThemeNotificationObserver : NSObject
@@ -130,6 +138,8 @@
 @end
 
 namespace WebCore {
+
+constexpr CGFloat attachmentIconSelectionBorderThickness = 1;
 
 using namespace CSS::Literals;
 using namespace HTMLNames;
@@ -195,8 +205,7 @@ bool RenderThemeMac::canPaint(const PaintInfo& paintInfo, const Settings& settin
     case StyleAppearance::SliderThumbVertical:
     case StyleAppearance::SliderHorizontal:
     case StyleAppearance::SliderVertical:
-    case StyleAppearance::SwitchThumb:
-    case StyleAppearance::SwitchTrack:
+    case StyleAppearance::Switch:
     case StyleAppearance::SquareButton:
     case StyleAppearance::TextArea:
     case StyleAppearance::TextField:
@@ -249,8 +258,7 @@ bool RenderThemeMac::canCreateControlPartForRenderer(const RenderElement& render
         || type == StyleAppearance::SliderHorizontal
         || type == StyleAppearance::SliderVertical
         || type == StyleAppearance::SquareButton
-        || type == StyleAppearance::SwitchThumb
-        || type == StyleAppearance::SwitchTrack;
+        || type == StyleAppearance::Switch;
 }
 
 bool RenderThemeMac::canCreateControlPartForBorderOnly(const RenderElement& renderer) const
@@ -439,7 +447,12 @@ static Color activeButtonTextColor()
 
 #endif
 
-static SRGBA<uint8_t> menuBackgroundColor()
+static bool usesLegacyDeprecatedSystemColors()
+{
+    return !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DeprecatedSystemColorsUseCSSColor4Mappings);
+}
+
+static SRGBA<uint8_t> legacyMenuBackgroundColor()
 {
     RetainPtr offscreenRep = adoptNS([[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nil pixelsWide:1 pixelsHigh:1
         bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:4 bitsPerPixel:32]);
@@ -460,6 +473,74 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [offscreenRep getPixel:pixel.data() atX:0 y:0];
 
     return makeFromComponentsClamping<SRGBA<uint8_t>>(pixel[0], pixel[1], pixel[2], pixel[3]);
+}
+
+static std::optional<Color> legacyDeprecatedSystemColor(CSSValueID cssValueID, OptionSet<StyleColorOptions> options)
+{
+    auto selectCocoaColor = [cssValueID, useDarkAppearance = options.contains(StyleColorOptions::UseDarkAppearance)] () -> SEL {
+        switch (cssValueID) {
+        case CSSValueActivecaption:
+            return @selector(windowFrameTextColor);
+        case CSSValueAppworkspace:
+            return @selector(headerColor);
+        case CSSValueThreedface:
+            // Fallback to hardcoded color below in light mode.
+            return useDarkAppearance ? @selector(controlColor) : nullptr;
+        case CSSValueButtonhighlight:
+            return @selector(controlHighlightColor);
+        case CSSValueButtonshadow:
+            return @selector(controlShadowColor);
+        case CSSValueCaptiontext:
+            return @selector(textColor);
+        case CSSValueInactiveborder:
+            return @selector(controlBackgroundColor);
+        case CSSValueInactivecaption:
+            return @selector(controlBackgroundColor);
+        case CSSValueInactivecaptiontext:
+            return @selector(textColor);
+        case CSSValueInfotext:
+            return @selector(textColor);
+        case CSSValueMenutext:
+            return @selector(labelColor);
+        case CSSValueScrollbar:
+            return @selector(scrollBarColor);
+        case CSSValueThreeddarkshadow:
+            return @selector(controlDarkShadowColor);
+        case CSSValueThreedshadow:
+            return @selector(shadowColor);
+        case CSSValueThreedhighlight:
+            return @selector(highlightColor);
+        case CSSValueThreedlightshadow:
+            return @selector(controlLightHighlightColor);
+        case CSSValueWindow:
+            return @selector(windowBackgroundColor);
+        case CSSValueWindowframe:
+            return @selector(windowFrameColor);
+        case CSSValueWindowtext:
+            return @selector(windowFrameTextColor);
+        default:
+            return nullptr;
+        }
+    };
+
+    if (auto selector = selectCocoaColor()) {
+        if (RetainPtr color = wtfObjCMsgSend<NSColor *>([NSColor class], selector))
+            return semanticColorFromNSColor(color.get());
+    }
+
+    switch (cssValueID) {
+    case CSSValueActiveborder:
+        return defaultFocusRingColor(options);
+    case CSSValueThreedface:
+        return Color::lightGray;
+    case CSSValueInfobackground:
+        // No corresponding NSColor for this so we use a hard coded value.
+        return SRGBA<uint8_t> { 251, 252, 197 };
+    case CSSValueMenu:
+        return legacyMenuBackgroundColor();
+    default:
+        return std::nullopt;
+    }
 }
 
 Color RenderThemeMac::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOptions> options) const
@@ -501,8 +582,12 @@ Color RenderThemeMac::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
         // The following colors would expose user appearance preferences to the web, and could be used for fingerprinting.
         // These are available only when the web view opts into the system appearance.
         case CSSValueWebkitFocusRingColor:
-        case CSSValueActiveborder:
             return focusRingColor(options);
+
+        case CSSValueActiveborder:
+            if (usesLegacyDeprecatedSystemColors())
+                return focusRingColor(options);
+            break;
 
         case CSSValueAppleSystemControlAccent:
             return systemAppearanceColor(cache.systemControlAccentColor, @selector(controlAccentColor));
@@ -533,27 +618,21 @@ Color RenderThemeMac::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
     auto color = [this, cssValueID, options, useDarkAppearance]() -> Color {
         LocalDefaultSystemAppearance localAppearance(useDarkAppearance);
 
+        if (usesLegacyDeprecatedSystemColors()) {
+            if (auto color = legacyDeprecatedSystemColor(cssValueID, options))
+                return *color;
+        }
+
         auto selectCocoaColor = [cssValueID, useDarkAppearance] () -> SEL {
             switch (cssValueID) {
-            case CSSValueActivecaption:
-                return @selector(windowFrameTextColor);
-            case CSSValueAppworkspace:
-                return @selector(headerColor);
             case CSSValueButtonface:
-            case CSSValueThreedface:
                 // Fallback to hardcoded color below in light mode.
                 return useDarkAppearance ? @selector(controlColor) : nullptr;
-            case CSSValueButtonhighlight:
-                return @selector(controlHighlightColor);
-            case CSSValueButtonshadow:
-                return @selector(controlShadowColor);
             case CSSValueButtontext:
                 return @selector(controlTextColor);
             case CSSValueCanvas:
                 return @selector(textBackgroundColor);
             case CSSValueCanvastext:
-                return @selector(textColor);
-            case CSSValueCaptiontext:
                 return @selector(textColor);
             case CSSValueField:
                 return @selector(controlColor);
@@ -563,34 +642,8 @@ Color RenderThemeMac::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
                 return @selector(disabledControlTextColor);
             case CSSValueHighlighttext:
                 return @selector(selectedTextColor);
-            case CSSValueInactiveborder:
-                return @selector(controlBackgroundColor);
-            case CSSValueInactivecaption:
-                return @selector(controlBackgroundColor);
-            case CSSValueInactivecaptiontext:
-                return @selector(textColor);
-            case CSSValueInfotext:
-                return @selector(textColor);
-            case CSSValueMenutext:
-                return @selector(labelColor);
-            case CSSValueScrollbar:
-                return @selector(scrollBarColor);
             case CSSValueText:
                 return @selector(textColor);
-            case CSSValueThreeddarkshadow:
-                return @selector(controlDarkShadowColor);
-            case CSSValueThreedshadow:
-                return @selector(shadowColor);
-            case CSSValueThreedhighlight:
-                return @selector(highlightColor);
-            case CSSValueThreedlightshadow:
-                return @selector(controlLightHighlightColor);
-            case CSSValueWindow:
-                return @selector(windowBackgroundColor);
-            case CSSValueWindowframe:
-                return @selector(windowFrameColor);
-            case CSSValueWindowtext:
-                return @selector(windowFrameTextColor);
             case CSSValueAppleSystemHeaderText:
                 return @selector(headerTextColor);
             case CSSValueAppleSystemBackground:
@@ -684,22 +737,13 @@ Color RenderThemeMac::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
             return textColorForActiveButton();
 
         case CSSValueButtonface:
-        case CSSValueThreedface:
             // Dark mode uses [NSColor controlColor].
             // We selected this value instead of [NSColor controlColor] to avoid website incompatibilities.
             // We may want to consider changing to [NSColor controlColor] some day.
             ASSERT(!localAppearance.usingDarkAppearance());
             return Color::lightGray;
 
-        case CSSValueInfobackground:
-            // No corresponding NSColor for this so we use a hard coded value.
-            return SRGBA<uint8_t> { 251, 252, 197 };
-
-        case CSSValueMenu:
-            return menuBackgroundColor();
-
         case CSSValueWebkitFocusRingColor:
-        case CSSValueActiveborder:
             return defaultFocusRingColor(options);
 
         case CSSValueAppleSystemControlAccent:
@@ -756,7 +800,7 @@ bool RenderThemeMac::usesTestModeFocusRingColor() const
     return WebCore::usesTestModeFocusRingColor();
 }
 
-bool RenderThemeMac::searchFieldShouldAppearAsTextField(const RenderStyle& style, const Settings& settings) const
+bool RenderThemeMac::searchFieldShouldAppearAsTextField(const Style::ComputedStyle& style, const Settings& settings) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (settings.formControlRefreshEnabled())
@@ -768,7 +812,7 @@ bool RenderThemeMac::searchFieldShouldAppearAsTextField(const RenderStyle& style
     return !style.writingMode().isHorizontal();
 }
 
-bool RenderThemeMac::isControlStyled(const RenderStyle& style) const
+bool RenderThemeMac::isControlStyled(const Style::ComputedStyle& style) const
 {
     auto appearance = style.usedAppearance();
     if (appearance == StyleAppearance::TextField || appearance == StyleAppearance::TextArea || appearance == StyleAppearance::SearchField || appearance == StyleAppearance::Listbox)
@@ -785,7 +829,7 @@ bool RenderThemeMac::isControlStyled(const RenderStyle& style) const
     return RenderTheme::isControlStyled(style);
 }
 
-static FloatRect inflateRect(const FloatRect& rect, const IntSize& size, std::span<const int, 4> margins, float zoomLevel)
+static FloatRect NODELETE inflateRect(const FloatRect& rect, const IntSize& size, std::span<const int, 4> margins, float zoomLevel)
 {
     // Only do the inflation if the available width/height are too small. Otherwise try to
     // fit the glow/check space into the available box's width/height.
@@ -842,9 +886,9 @@ static Style::PreferredSizePair sizeFromNSControlSize(NSControlSize nsControlSiz
         controlSize = IntSize(controlSize.width() * zoomFactor, controlSize.height() * zoomFactor);
     auto resultWidth = zoomedSize.width();
     auto resultHeight = zoomedSize.height();
-    if (zoomedSize.width().isIntrinsicOrLegacyIntrinsicOrAuto() && controlSize.width() > 0)
+    if (zoomedSize.width().isSizingKeywordOrAuto() && controlSize.width() > 0)
         resultWidth = Style::PreferredSize::Fixed { static_cast<float>(controlSize.width()) };
-    if (zoomedSize.height().isIntrinsicOrLegacyIntrinsicOrAuto() && controlSize.height() > 0)
+    if (zoomedSize.height().isSizingKeywordOrAuto() && controlSize.height() > 0)
         resultHeight = Style::PreferredSize::Fixed { static_cast<float>(controlSize.height()) };
     return { WTF::move(resultWidth), WTF::move(resultHeight) };
 }
@@ -856,7 +900,7 @@ static Style::PreferredSizePair sizeFromFont(const FontCascade& font, const Styl
 
 // Popup button
 
-static std::span<const int, 4> popupButtonMargins(NSControlSize size)
+static std::span<const int, 4> NODELETE popupButtonMargins(NSControlSize size)
 {
     static constexpr std::array margins {
         std::array { 0, 3, 1, 3 },
@@ -867,7 +911,7 @@ static std::span<const int, 4> popupButtonMargins(NSControlSize size)
     return margins[size];
 }
 
-static std::span<const IntSize, 4> popupButtonSizes()
+static std::span<const IntSize, 4> NODELETE popupButtonSizes()
 {
     static constexpr std::array sizes {
         IntSize { 0, 21 },
@@ -878,26 +922,20 @@ static std::span<const IntSize, 4> popupButtonSizes()
     return sizes;
 }
 
-static std::span<const int, 4> popupButtonPadding(NSControlSize size, bool isRTL)
+static std::span<const int, 4> NODELETE popupButtonPadding(NSControlSize size)
 {
-    static constexpr std::array paddingLTR {
+    static constexpr std::array padding {
         std::array { 2, 26, 3, 8 },
         std::array { 2, 23, 3, 8 },
         std::array { 2, 22, 3, 10 },
         std::array { 2, 26, 3, 8 },
     };
-    static constexpr std::array paddingRTL {
-        std::array { 2, 8, 3, 26 },
-        std::array { 2, 8, 3, 23 },
-        std::array { 2, 8, 3, 22 },
-        std::array { 2, 8, 3, 26 },
-    };
-    return isRTL ? paddingRTL[size] : paddingLTR[size];
+    return padding[size];
 }
 
 // Checkboxes and radio buttons
 
-static const std::span<const IntSize, 4> checkboxSizes()
+static const std::span<const IntSize, 4> NODELETE checkboxSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 14, 14 },
@@ -908,7 +946,7 @@ static const std::span<const IntSize, 4> checkboxSizes()
     return sizes;
 }
 
-static std::span<const int, 4> checkboxMargins(NSControlSize controlSize)
+static std::span<const int, 4> NODELETE checkboxMargins(NSControlSize controlSize)
 {
     static constexpr std::array margins {
         // top right bottom left
@@ -923,7 +961,7 @@ static std::span<const int, 4> checkboxMargins(NSControlSize controlSize)
 static Style::PreferredSizePair checkboxSize(const Style::PreferredSizePair& zoomedSize, float zoomFactor)
 {
     // If the width and height are both specified, then we have nothing to do.
-    if (!zoomedSize.width().isIntrinsicOrLegacyIntrinsicOrAuto() && !zoomedSize.height().isIntrinsicOrLegacyIntrinsicOrAuto())
+    if (!zoomedSize.width().isSizingKeywordOrAuto() && !zoomedSize.height().isSizingKeywordOrAuto())
         return zoomedSize;
 
     return sizeFromNSControlSize(NSControlSizeSmall, zoomedSize, zoomFactor, checkboxSizes());
@@ -941,7 +979,7 @@ static const std::span<const IntSize, 4> radioSizes()
     return sizes;
 }
 
-static std::span<const int, 4> radioMargins(NSControlSize controlSize)
+static std::span<const int, 4> NODELETE radioMargins(NSControlSize controlSize)
 {
     static constexpr std::array margins {
         // top right bottom left
@@ -956,7 +994,7 @@ static std::span<const int, 4> radioMargins(NSControlSize controlSize)
 static Style::PreferredSizePair radioSize(const Style::PreferredSizePair& zoomedSize, float zoomFactor)
 {
     // If the width and height are both specified, then we have nothing to do.
-    if (!zoomedSize.width().isIntrinsicOrLegacyIntrinsicOrAuto() && !zoomedSize.height().isIntrinsicOrLegacyIntrinsicOrAuto())
+    if (!zoomedSize.width().isSizingKeywordOrAuto() && !zoomedSize.height().isSizingKeywordOrAuto())
         return zoomedSize;
 
     return sizeFromNSControlSize(NSControlSizeSmall, zoomedSize, zoomFactor, radioSizes());
@@ -965,7 +1003,7 @@ static Style::PreferredSizePair radioSize(const Style::PreferredSizePair& zoomed
 // Buttons
 
 // Buttons really only constrain height. They respect width.
-static const std::span<const IntSize, 4> buttonSizes()
+static const std::span<const IntSize, 4> NODELETE buttonSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 0, 20 },
@@ -976,7 +1014,7 @@ static const std::span<const IntSize, 4> buttonSizes()
     return sizes;
 }
 
-static std::span<const int, 4> buttonMargins(NSControlSize controlSize)
+static std::span<const int, 4> NODELETE buttonMargins(NSControlSize controlSize)
 {
     // FIXME: These values may need to be reevaluated. They appear to have been originally chosen
     // to reflect the size of shadows around native form controls on macOS, but as of macOS 10.15,
@@ -992,7 +1030,7 @@ static std::span<const int, 4> buttonMargins(NSControlSize controlSize)
 
 // Stepper
 
-static const std::span<const IntSize, 4> stepperSizes()
+static const std::span<const IntSize, 4> NODELETE stepperSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 19, 27 },
@@ -1019,7 +1057,7 @@ static NSControlSize stepperControlSizeForFont(const FontCascade& font)
 
 // Switch
 
-static const std::span<const IntSize, 4> switchSizes()
+static const std::span<const IntSize, 4> NODELETE switchSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 38, 22 },
@@ -1030,7 +1068,7 @@ static const std::span<const IntSize, 4> switchSizes()
     return sizes;
 }
 
-static std::span<const int, 4> visualSwitchMargins(NSControlSize controlSize, bool isVertical)
+static std::span<const int, 4> NODELETE visualSwitchMargins(NSControlSize controlSize, bool isVertical)
 {
     static constexpr std::array switchMarginsNonMini { 2, 2, 1, 2 };
     static constexpr std::array switchMarginsMini { 1, 1, 0, 1 };
@@ -1046,7 +1084,7 @@ static std::span<const int, 4> visualSwitchMargins(NSControlSize controlSize, bo
 static Style::PreferredSizePair switchSize(const Style::PreferredSizePair& zoomedSize, float zoomFactor)
 {
     // If the width and height are both specified, then we have nothing to do.
-    if (!zoomedSize.width().isIntrinsicOrLegacyIntrinsicOrAuto() && !zoomedSize.height().isIntrinsicOrLegacyIntrinsicOrAuto())
+    if (!zoomedSize.width().isSizingKeywordOrAuto() && !zoomedSize.height().isSizingKeywordOrAuto())
         return zoomedSize;
 
     return sizeFromNSControlSize(NSControlSizeSmall, zoomedSize, zoomFactor, switchSizes());
@@ -1169,9 +1207,9 @@ bool RenderThemeMac::controlSupportsTints(const RenderElement& renderer) const
     return true;
 }
 
-static NSControlSize controlSizeForSystemFont(const RenderStyle& style)
+static NSControlSize controlSizeForSystemFont(const Style::ComputedStyle& style)
 {
-    auto fontSize = style.computedFontSize();
+    auto fontSize = style.usedFontSize();
     if (fontSize >= [NSFont systemFontSizeForControlSize:NSControlSizeLarge] && supportsLargeFormControls())
         return NSControlSizeLarge;
     if (fontSize >= [NSFont systemFontSizeForControlSize:NSControlSizeRegular])
@@ -1181,9 +1219,9 @@ static NSControlSize controlSizeForSystemFont(const RenderStyle& style)
     return NSControlSizeMini;
 }
 
-static NSControlSize controlSizeForFont(const RenderStyle& style)
+static NSControlSize controlSizeForFont(const Style::ComputedStyle& style)
 {
-    auto fontSize = style.computedFontSize();
+    auto fontSize = style.usedFontSize();
     if (fontSize >= 21 && supportsLargeFormControls())
         return NSControlSizeLarge;
     if (fontSize >= 16)
@@ -1193,16 +1231,12 @@ static NSControlSize controlSizeForFont(const RenderStyle& style)
     return NSControlSizeMini;
 }
 
-static IntSize sizeForFont(const RenderStyle& style, std::span<const IntSize, 4> sizes)
+static IntSize sizeForFont(const Style::ComputedStyle& style, std::span<const IntSize, 4> sizes)
 {
-    if (style.usedZoom() != 1.0f && !style.evaluationTimeZoomEnabled()) {
-        IntSize result = sizes[controlSizeForFont(style)];
-        return IntSize(result.width() * style.usedZoom(), result.height() * style.usedZoom());
-    }
     return sizes[controlSizeForFont(style)];
 }
 
-static IntSize sizeForSystemFont(const RenderStyle& style, std::span<const IntSize, 4> sizes)
+static IntSize sizeForSystemFont(const Style::ComputedStyle& style, std::span<const IntSize, 4> sizes)
 {
     if (style.usedZoom() != 1.0f) {
         IntSize result = sizes[controlSizeForSystemFont(style)];
@@ -1211,32 +1245,34 @@ static IntSize sizeForSystemFont(const RenderStyle& style, std::span<const IntSi
     return sizes[controlSizeForSystemFont(style)];
 }
 
-static void setSizeFromFont(RenderStyle& style, std::span<const IntSize, 4> sizes)
+static void setSizeFromFont(Style::ComputedStyle& style, std::span<const IntSize, 4> sizes)
 {
     // FIXME: Check is flawed, since it doesn't take min-width/max-width into account.
     IntSize size = sizeForFont(style, sizes);
-    if (style.width().isIntrinsicOrLegacyIntrinsicOrAuto() && size.width() > 0)
+    if (style.width().isSizingKeywordOrAuto() && size.width() > 0)
         style.setWidth(Style::PreferredSize::Fixed { static_cast<float>(size.width()) });
     if (style.height().isAuto() && size.height() > 0)
         style.setHeight(Style::PreferredSize::Fixed { static_cast<float>(size.height()) });
 }
 
-static void setFontFromControlSize(RenderStyle& style, NSControlSize controlSize)
+static void setFontFromControlSize(Style::ComputedStyle& style, NSControlSize controlSize)
 {
     FontCascadeDescription fontDescription;
     fontDescription.setIsAbsoluteSize(true);
 
     NSFont* font = [NSFont systemFontOfSize:[NSFont systemFontSizeForControlSize:controlSize]];
     fontDescription.setOneFamily("-apple-system"_s);
-    fontDescription.setComputedSize([font pointSize] * style.usedZoom());
-    fontDescription.setSpecifiedSize([font pointSize] * style.usedZoom());
+    fontDescription.setUsedSize([font pointSize] * style.usedZoom(), style.usedZoom());
+    fontDescription.setComputedSize([font pointSize]);
 
     // Reset line height
     style.setLineHeight(Style::ComputedStyle::initialLineHeight());
+    style.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
+
     style.setFontDescription(WTF::move(fontDescription));
 }
 
-void RenderThemeMac::adjustListButtonStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustListButtonStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -1253,7 +1289,7 @@ void RenderThemeMac::adjustListButtonStyle(RenderStyle& style, const Element* el
 }
 
 #if ENABLE(SERVICE_CONTROLS)
-void RenderThemeMac::adjustImageControlsButtonStyle(RenderStyle& style, const Element*) const
+void RenderThemeMac::adjustImageControlsButtonStyle(Style::ComputedStyle& style, const Element*) const
 {
     style.setHeight(Style::PreferredSize::Fixed { static_cast<float>(imageControlsButtonSize().height()) });
     style.setWidth(Style::PreferredSize::Fixed { static_cast<float>(imageControlsButtonSize().width()) });
@@ -1288,7 +1324,7 @@ void RenderThemeMac::createColorWellSwatchSubtree(HTMLElement& swatch)
 
 void RenderThemeMac::setColorWellSwatchBackground(HTMLElement& swatch, Color color)
 {
-    Ref swatchChild = *downcast<HTMLElement>(swatch.protectedFirstChild());
+    Ref swatchChild = *downcast<HTMLElement>(swatch.firstChild());
 
     auto backgroundColor = color.isOpaque() ? color : blendSourceOver(Color::white, color);
     auto foregroundColor = color.isOpaque() ? Color::transparentBlack : blendSourceOver(Color::black, color);
@@ -1317,13 +1353,13 @@ const int styledPopupPaddingLeft = 8;
 const int styledPopupPaddingTop = 1;
 const int styledPopupPaddingBottom = 2;
 
-static std::span<const IntSize, 4> menuListButtonSizes()
+static std::span<const IntSize, 4> NODELETE menuListButtonSizes()
 {
     static constexpr std::array sizes { IntSize(0, 21), IntSize(0, 18), IntSize(0, 15), IntSize(0, 28) };
     return sizes;
 }
 
-void RenderThemeMac::adjustMenuListStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustMenuListStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -1357,15 +1393,15 @@ void RenderThemeMac::adjustMenuListStyle(RenderStyle& style, const Element* elem
     style.setBoxShadow(CSS::Keyword::None { });
 }
 
-static Style::PaddingEdge toTruncatedPaddingEdge(auto value)
+static Style::PaddingEdge NODELETE toTruncatedPaddingEdge(auto value)
 {
     return Style::PaddingEdge::Fixed { static_cast<float>(std::trunc(value)) };
 }
 
-Style::PaddingBox RenderThemeMac::popupInternalPaddingBox(const RenderStyle& style) const
+Style::PaddingBox RenderThemeMac::platformPopupInternalPaddingBox(const Style::ComputedStyle& style) const
 {
     if (style.usedAppearance() == StyleAppearance::Menulist) {
-        auto padding = popupButtonPadding(controlSizeForFont(style), style.writingMode().isBidiRTL());
+        auto padding = popupButtonPadding(controlSizeForFont(style));
         return {
             toTruncatedPaddingEdge(padding[topPadding]),
             toTruncatedPaddingEdge(padding[rightPadding]),
@@ -1375,11 +1411,9 @@ Style::PaddingBox RenderThemeMac::popupInternalPaddingBox(const RenderStyle& sty
     }
 
     if (style.usedAppearance() == StyleAppearance::MenulistButton) {
-        float arrowWidth = baseArrowWidth * (style.computedFontSize() / baseFontSize);
+        float arrowWidth = baseArrowWidth * (style.usedFontSize() / baseFontSize);
         float rightPadding = ceilf(arrowWidth + (arrowPaddingBefore + arrowPaddingAfter + paddingBeforeSeparator) * style.usedZoom());
         float leftPadding = styledPopupPaddingLeft;
-        if (style.writingMode().isBidiRTL())
-            std::swap(rightPadding, leftPadding);
 
         return {
             toTruncatedPaddingEdge(styledPopupPaddingTop),
@@ -1392,7 +1426,7 @@ Style::PaddingBox RenderThemeMac::popupInternalPaddingBox(const RenderStyle& sty
     return { 0_css_px };
 }
 
-PopupMenuStyle::Size RenderThemeMac::popupMenuSize(const RenderStyle& style, IntRect& rect) const
+PopupMenuStyle::Size RenderThemeMac::popupMenuSize(const Style::ComputedStyle& style, IntRect& rect) const
 {
     auto size = controlSizeFromPixelSize(popupButtonSizes(), rect.size(), style.usedZoom());
     switch (size) {
@@ -1409,7 +1443,7 @@ PopupMenuStyle::Size RenderThemeMac::popupMenuSize(const RenderStyle& style, Int
     }
 }
 
-void RenderThemeMac::adjustMenuListButtonStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustMenuListButtonStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled())
@@ -1417,7 +1451,9 @@ void RenderThemeMac::adjustMenuListButtonStyle(RenderStyle& style, const Element
 #else
     UNUSED_PARAM(element);
 #endif
-    float fontScale = style.computedFontSize() / baseFontSize;
+
+    auto usedZoom = style.usedZoomForLength();
+    float fontScale = style.usedFontSize() / baseFontSize / usedZoom.value;
 
     style.resetPadding();
 
@@ -1427,6 +1463,7 @@ void RenderThemeMac::adjustMenuListButtonStyle(RenderStyle& style, const Element
     style.setMinHeight(18_css_px);
 
     style.setLineHeight(Style::ComputedStyle::initialLineHeight());
+    style.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
 }
 
 std::span<const IntSize, 4> RenderThemeMac::menuListSizes() const
@@ -1435,18 +1472,18 @@ std::span<const IntSize, 4> RenderThemeMac::menuListSizes() const
     return sizes;
 }
 
-int RenderThemeMac::minimumMenuListSize(const RenderStyle& style) const
+int RenderThemeMac::minimumMenuListSize(const Style::ComputedStyle& style) const
 {
     return sizeForSystemFont(style, menuListSizes()).width();
 }
 
-void RenderThemeMac::adjustSliderTrackStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustSliderTrackStyle(Style::ComputedStyle& style, const Element* element) const
 {
     RenderThemeCocoa::adjustSliderTrackStyle(style, element);
     style.setBoxShadow(CSS::Keyword::None { });
 }
 
-void RenderThemeMac::adjustSliderThumbStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustSliderThumbStyle(Style::ComputedStyle& style, const Element* element) const
 {
     RenderThemeCocoa::adjustSliderThumbStyle(style, element);
     style.setBoxShadow(CSS::Keyword::None { });
@@ -1458,17 +1495,17 @@ std::span<const IntSize, 4> RenderThemeMac::searchFieldSizes() const
     return sizes;
 }
 
-void RenderThemeMac::setSearchFieldSize(RenderStyle& style) const
+void RenderThemeMac::setSearchFieldSize(Style::ComputedStyle& style) const
 {
     // If the width and height are both specified, then we have nothing to do.
-    if (!style.width().isIntrinsicOrLegacyIntrinsicOrAuto() && !style.height().isAuto())
+    if (!style.width().isSizingKeywordOrAuto() && !style.height().isAuto())
         return;
 
     // Use the font size to determine the intrinsic width of the control.
     setSizeFromFont(style, searchFieldSizes());
 }
 
-void RenderThemeMac::adjustSearchFieldStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustSearchFieldStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -1511,7 +1548,7 @@ std::span<const IntSize, 4> RenderThemeMac::cancelButtonSizes() const
     return sizes;
 }
 
-void RenderThemeMac::adjustSearchFieldCancelButtonStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustSearchFieldCancelButtonStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -1536,7 +1573,7 @@ std::span<const IntSize, 4> RenderThemeMac::resultsButtonSizes() const
 }
 
 constexpr int emptyResultsOffset = 9;
-void RenderThemeMac::adjustSearchFieldDecorationPartStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustSearchFieldDecorationPartStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -1566,7 +1603,7 @@ void RenderThemeMac::adjustSearchFieldDecorationPartStyle(RenderStyle& style, co
     style.setBoxShadow(CSS::Keyword::None { });
 }
 
-void RenderThemeMac::adjustSearchFieldResultsDecorationPartStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustSearchFieldResultsDecorationPartStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -1583,7 +1620,7 @@ void RenderThemeMac::adjustSearchFieldResultsDecorationPartStyle(RenderStyle& st
     style.setBoxShadow(CSS::Keyword::None { });
 }
 
-void RenderThemeMac::adjustSearchFieldResultsButtonStyle(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustSearchFieldResultsButtonStyle(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -1614,7 +1651,7 @@ int RenderThemeMac::sliderTickOffsetFromTrackCenter() const
 // However, the method currently returns an incorrect value, both with and without a control view associated with the cell.
 constexpr int sliderThumbThickness = 17;
 
-void RenderThemeMac::adjustSliderThumbSize(RenderStyle& style, const Element* element) const
+void RenderThemeMac::adjustSliderThumbSize(Style::ComputedStyle& style, const Element* element) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (element && element->document().settings().formControlRefreshEnabled()) {
@@ -1641,8 +1678,8 @@ std::optional<FontCascadeDescription> RenderThemeMac::controlFont(StyleAppearanc
 
         NSFont* nsFont = [NSFont systemFontOfSize:[NSFont systemFontSizeForControlSize:controlSizeForFont(font)]];
         fontDescription.setOneFamily("-apple-system"_s);
-        fontDescription.setComputedSize([nsFont pointSize] * zoomFactor);
-        fontDescription.setSpecifiedSize([nsFont pointSize] * zoomFactor);
+        fontDescription.setUsedSize([nsFont pointSize] * zoomFactor, zoomFactor);
+        fontDescription.setComputedSize([nsFont pointSize]);
         return fontDescription;
     }
     default:
@@ -1680,7 +1717,7 @@ Style::PreferredSizePair RenderThemeMac::controlSize(StyleAppearance appearance,
         // Height is reset to auto so that specified heights can be ignored.
         return sizeFromFont(font, { zoomedSize.width(), CSS::Keyword::Auto { } }, zoomFactor, buttonSizes());
     case StyleAppearance::InnerSpinButton:
-        if (!zoomedSize.width().isIntrinsicOrLegacyIntrinsicOrAuto() && !zoomedSize.height().isIntrinsicOrLegacyIntrinsicOrAuto())
+        if (!zoomedSize.width().isSizingKeywordOrAuto() && !zoomedSize.height().isSizingKeywordOrAuto())
             return zoomedSize;
         return sizeFromNSControlSize(stepperControlSizeForFont(font), zoomedSize, zoomFactor, stepperSizes());
     default:
@@ -1775,7 +1812,7 @@ LayoutSize RenderThemeMac::attachmentIntrinsicSize(const RenderAttachment& attac
 static RefPtr<Icon> iconForAttachment(const String& fileName, const String& attachmentType, const String& title)
 {
 // FIXME: Remove after rdar://136373445 is fixed.
-#define LOG_ATTACHMENT(fmt, ...) RELEASE_LOG(Editing, "iconForAttachment(type='%s') " fmt, attachmentType.utf8().data(), ##__VA_ARGS__);
+#define LOG_ATTACHMENT(fmt, ...) RELEASE_LOG(Editing, "iconForAttachment(type='%s') " fmt, attachmentType.utf8(), ##__VA_ARGS__);
 
     if (!attachmentType.isEmpty() && !equalLettersIgnoringASCIICase(attachmentType, "public.data"_s)) {
         if (equalLettersIgnoringASCIICase(attachmentType, "public.directory"_s) || equalLettersIgnoringASCIICase(attachmentType, "multipart/x-folder"_s) || equalLettersIgnoringASCIICase(attachmentType, "application/vnd.apple.folder"_s)) {
@@ -1792,10 +1829,10 @@ static RefPtr<Icon> iconForAttachment(const String& fileName, const String& atta
                 type = UTIFromMIMEType(attachmentType);
 
             if (auto icon = Icon::createIconForUTI(type)) {
-                LOG_ATTACHMENT("-> Got icon for %s '%s'", type == attachmentType ? "declared UTI" : "UTI-from-MIMEtype", type.utf8().data());
+                LOG_ATTACHMENT("-> Got icon for %s '%s'", type == attachmentType ? "declared UTI" : "UTI-from-MIMEtype", type.utf8());
                 return icon;
             }
-            LOG_ATTACHMENT("-> No icon for %s '%s'! Will fallback to filename or title...", type == attachmentType ? "declared UTI" : "UTI-from-MIMEtype", type.utf8().data());
+            LOG_ATTACHMENT("-> No icon for %s '%s'! Will fallback to filename or title...", type == attachmentType ? "declared UTI" : "UTI-from-MIMEtype", type.utf8());
         }
     }
 
@@ -1810,10 +1847,10 @@ static RefPtr<Icon> iconForAttachment(const String& fileName, const String& atta
     RetainPtr nsTitle = title.createNSString();
     if (RetainPtr<NSString> fileExtension = nsTitle.get().pathExtension; fileExtension.get().length) {
         if (auto icon = Icon::createIconForFileExtension(fileExtension.get())) {
-            LOG_ATTACHMENT("-> Got icon for title file extension '%s'", String(fileExtension.get()).utf8().data());
+            LOG_ATTACHMENT("-> Got icon for title file extension '%s'", UTF8CString { fileExtension });
             return icon;
         }
-        LOG_ATTACHMENT("-> No icon for title file extension '%s'! Will fallback to public.data icon", String(fileExtension.get()).utf8().data());
+        LOG_ATTACHMENT("-> No icon for title file extension '%s'! Will fallback to public.data icon", UTF8CString { fileExtension });
     } else
         LOG_ATTACHMENT("-> No file extension in title! Will fallback to public.data icon");
 
@@ -1878,10 +1915,10 @@ static void paintAttachmentIcon(const RenderAttachment& attachment, GraphicsCont
     if (!icon)
         return;
 
-    context.drawImage(*icon, layout.iconRect);
+    context.drawBitmapImage(*icon, layout.iconRect);
 }
 
-static std::pair<RefPtr<Image>, float> createAttachmentPlaceholderImage(float deviceScaleFactor, const AttachmentLayout& layout)
+static std::pair<RefPtr<BitmapImage>, float> createAttachmentPlaceholderImage(float deviceScaleFactor, const AttachmentLayout& layout)
 {
     RetainPtr configuration = [NSImageSymbolConfiguration configurationWithPointSize:32 weight:NSFontWeightRegular scale:NSImageSymbolScaleMedium];
     RetainPtr image = [[NSImage imageWithSystemSymbolName:@"arrow.down.circle" accessibilityDescription:nil] imageWithSymbolConfiguration:configuration.get()];
@@ -1895,14 +1932,14 @@ static std::pair<RefPtr<Image>, float> createAttachmentPlaceholderImage(float de
 
 static void paintAttachmentIconPlaceholder(const RenderAttachment& attachment, GraphicsContext& context, AttachmentLayout& layout)
 {
-    auto [placeholderImage, imageScale] = createAttachmentPlaceholderImage(attachment.protectedDocument()->deviceScaleFactor(), layout);
+    auto [placeholderImage, imageScale] = createAttachmentPlaceholderImage(protect(attachment.document())->deviceScaleFactor(), layout);
 
     // Center the placeholder image where the icon would usually be.
     FloatRect placeholderRect(0, 0, placeholderImage->width() / imageScale, placeholderImage->height() / imageScale);
     placeholderRect.setX(layout.iconRect.x() + (layout.iconRect.width() - placeholderRect.width()) / 2);
     placeholderRect.setY(layout.iconRect.y() + (layout.iconRect.height() - placeholderRect.height()) / 2);
 
-    context.drawImage(*placeholderImage, placeholderRect);
+    context.drawBitmapImage(*placeholderImage, placeholderRect);
 }
 
 static void paintAttachmentTitleBackground(const RenderAttachment& attachment, GraphicsContext& context, AttachmentLayout& layout)
@@ -1917,7 +1954,7 @@ static void paintAttachmentTitleBackground(const RenderAttachment& attachment, G
         return line.backgroundRect;
     });
 
-    auto backgroundColor = colorFromCocoaColor(attachment.frame().checkedSelection()->isFocusedAndActive() ? [NSColor selectedContentBackgroundColor] : [NSColor unemphasizedSelectedContentBackgroundColor]);
+    auto backgroundColor = colorFromCocoaColor(attachment.frame().selection().isFocusedAndActive() ? [NSColor selectedContentBackgroundColor] : [NSColor unemphasizedSelectedContentBackgroundColor]);
 
     Style::ColorResolver colorResolver { attachment.style() };
 
@@ -1948,7 +1985,7 @@ static void paintAttachmentProgress(const RenderAttachment& attachment, Graphics
 
         FloatRect progressRect = progressBounds;
         progressRect.setWidth(progressRect.width() * progress);
-        progressRect = encloseRectToDevicePixels(progressRect, attachment.protectedDocument()->deviceScaleFactor());
+        progressRect = encloseRectToDevicePixels(progressRect, protect(attachment.document())->deviceScaleFactor());
 
         context.fillRect(progressRect, attachmentProgressBarFillColor);
     }
@@ -2003,7 +2040,7 @@ bool RenderThemeMac::paintAttachment(const RenderElement& renderer, const PaintI
     GraphicsContextStateSaver saver(context);
 
     context.translate(toFloatSize(paintRect.location()));
-    context.translate(floorSizeToDevicePixels({ LayoutUnit((paintRect.width() - attachmentIconBackgroundSize) / 2), 0 }, renderer.protectedDocument()->deviceScaleFactor()));
+    context.translate(floorSizeToDevicePixels({ LayoutUnit((paintRect.width() - attachmentIconBackgroundSize) / 2), 0 }, protect(renderer.document())->deviceScaleFactor()));
 
     bool usePlaceholder = validProgress && !progress;
 

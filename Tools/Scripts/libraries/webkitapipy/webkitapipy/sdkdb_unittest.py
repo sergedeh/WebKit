@@ -35,18 +35,27 @@ F_NonNormalized = Path('/foo/../libdoesntexist.dylib')
 R_Selector = APIReport.Selector('initWithData:', 'WKDoesntExist')
 R = APIReport(
     file=F, arch='arm64e',
-    exports={'_WKDoesntExistLibraryVersion', '_OBJC_CLASS_$_WKDoesntExist'},
-    methods={R_Selector}
+    exports={'_WKDoesntExistLibraryVersion', '_OBJC_CLASS_$_WKDoesntExist',
+             # class WKTest { func foo() { ... } }
+             '_$s4Test6WKTestCMF', '_$s4Test6WKTestC3fooyyF'},
+    methods={R_Selector},
+    platform='iOS', min_os='1.0', sdk='1.0'
 )
 
 F_Client = Path('/libdoesntexist_client.dylib')
 R_Client = APIReport(
     file=F_Client, arch='arm64e',
-    imports={'_WKDoesntExistLibraryVersion', '_OBJC_CLASS_$_WKDoesntExist'},
-    selrefs={'initWithData:'}
+    imports={'_WKDoesntExistLibraryVersion', '_OBJC_CLASS_$_WKDoesntExist',
+             '_$s4Test6WKTestCMF', '_$s4Test6WKTestC3fooyyF'},
+    selrefs={'initWithData:'},
+    platform='iOS', min_os='1.0', sdk='1.0'
 )
 R_MissingSymbol = MissingName(name='_WKDoesntExistLibraryVersion',
                               file=F_Client, arch='arm64e', kind=SYMBOL)
+R_MissingSwiftSymbol1 = MissingName(name='_$s4Test6WKTestCMF',
+                                    file=F_Client, arch='arm64e', kind=SYMBOL)
+R_MissingSwiftSymbol2 = MissingName(name='_$s4Test6WKTestC3fooyyF',
+                                    file=F_Client, arch='arm64e', kind=SYMBOL)
 R_MissingClass = MissingName(name='WKDoesntExist', file=F_Client, arch='arm64e', kind=OBJC_CLS)
 R_MissingSelector = MissingName(name='initWithData:', file=F_Client, arch='arm64e', kind=OBJC_SEL)
 
@@ -55,7 +64,8 @@ A = AllowList.from_dict({'temporary-usage': [
      'cleanup': 'rdar://12346',
      'classes': ['WKDoesntExist'],
      'selectors': [{'name': 'initWithData:', 'class': '?'}],
-     'symbols': ['WKDoesntExistLibraryVersion']}
+     'symbols': ['WKDoesntExistLibraryVersion'],
+     'swift-decls': [{'name': 'Test.WKTest'}]}
 ]})
 A_File = Path('/allowed.toml')
 A_Hash = 23456
@@ -65,6 +75,7 @@ A_ExplicitlyAllowUnused = AllowList.from_dict({'temporary-usage': [
      'classes': ['WKDoesntExist'],
      'selectors': [{'name': 'initWithData:', 'class': '?'}],
      'symbols': ['WKDoesntExistLibraryVersion'],
+     'swift-decls': [{'name': 'Test.WKTest'}],
      'allow-unused': True}
 ]})
 
@@ -72,11 +83,14 @@ A_UnusedAllow = UnusedAllowedName(name='WKDoesntExist', file=A_File,
                                   kind=OBJC_CLS)
 A_AllowedAPI = UnnecessaryAllowedName(name='WKDoesntExist', file=A_File,
                                       kind=OBJC_CLS, exported_in=F)
+A_AllowedSwift = UnusedAllowedName(name='_$s4Test6WKTest*', file=A_File,
+                                   kind=SYMBOL)
 
 R_Uses_Own_Selector = APIReport(
     file=F_Client, arch='arm64e',
     methods={APIReport.Selector('someInternalMethodWithObject:', 'Class')},
-    selrefs={'someInternalMethodWithObject:'}
+    selrefs={'someInternalMethodWithObject:'},
+    platform='iOS', min_os='1.0', sdk='1.0'
 )
 
 A_Conditional = AllowList.from_dict({'temporary-usage': [
@@ -85,7 +99,10 @@ A_Conditional = AllowList.from_dict({'temporary-usage': [
      'classes': ['WKDoesntExist'],
      'selectors': [{'name': 'initWithData:', 'class': '?'}],
      'symbols': ['WKDoesntExistLibraryVersion'],
-     'requires': ['ENABLE_FEATURE']}
+     'swift-decls': [{'name': 'Test.WKTest'}],
+     'requires': ['ENABLE_FEATURE'],
+     'requires-os': ['iOS>=1.0'],
+     'requires-sdk': ['iOS < 99']}
 ]})
 
 A_NegatedConditional = AllowList.from_dict({'temporary-usage': [
@@ -94,6 +111,7 @@ A_NegatedConditional = AllowList.from_dict({'temporary-usage': [
      'classes': ['WKDoesntExist'],
      'selectors': [{'name': 'initWithData:', 'class': '?'}],
      'symbols': ['WKDoesntExistLibraryVersion'],
+     'swift-decls': [{'name': 'Test.WKTest'}],
      'requires': ['!ENABLE_FEATURE']}
 ]})
 
@@ -103,6 +121,7 @@ A_MultipleConditions = AllowList.from_dict({'temporary-usage': [
      'classes': ['WKDoesntExist'],
      'selectors': [{'name': 'initWithData:', 'class': '?'}],
      'symbols': ['WKDoesntExistLibraryVersion'],
+     'swift-decls': [{'name': 'Test.WKTest'}],
      'requires': ['ENABLE_A', 'ENABLE_B', '!ENABLE_C']}
 ]})
 
@@ -111,7 +130,19 @@ A_QualifiedSelector = AllowList.from_dict({'temporary-usage': [
      'cleanup': 'rdar://12346',
      'classes': ['WKDoesntExist'],
      'selectors': [{'name': 'initWithData:', 'class': 'WKDoesntExist'}],
-     'symbols': ['WKDoesntExistLibraryVersion']}
+     'symbols': ['WKDoesntExistLibraryVersion'],
+     'swift-decls': [{'name': 'Test.WKTest'}]}
+]})
+
+A_NonmatchingOS = AllowList.from_dict({'temporary-usage': [
+    {'request': 'rdar://12345',
+     'cleanup': 'rdar://12346',
+     'classes': ['WKDoesntExist'],
+     'selectors': [{'name': 'initWithData:', 'class': '?'}],
+     'symbols': ['WKDoesntExistLibraryVersion'],
+     'swift-decls': [{'name': 'Test.WKTest'}],
+     'requires': ['ENABLE_FEATURE'],
+     'requires-os': ['iOS>=99.0']}
 ]})
 
 S = {
@@ -126,9 +157,21 @@ S = {
         }]
     }]
 }
+S_SwiftSymbols = {
+    'PublicSDKContentRoot': [{
+        'target': 'arm64-apple-ios18.5',
+        'globals': [
+            {'access': 'public', 'name': '_$s4Test6WKTestCMF'},
+            {'access': 'public', 'name': '_$s4Test6WKTestC3fooyyF'},
+        ]
+    }]
+}
 S_File = Path('/Foundation.partial.sdkdb')
 S_Hash = 3456789
 S_UnnecessarySelector = UnnecessaryAllowedName(name='initWithData:', file=A_File, kind=OBJC_SEL, exported_in=S_File)
+S_UnnecessarySwiftDecl = UnnecessaryAllowedName(name="_$s4Test6WKTest*",
+                                                file=A_File, kind=SYMBOL,
+                                                exported_in=S_File)
 
 class TestSDKDB(TestCase):
     def setUp(self):
@@ -143,10 +186,10 @@ class TestSDKDB(TestCase):
             self.sdkdb._cache_hit_preparing_to_insert(file, file_hash)
             self.sdkdb._add_api_report(fixture, file)
 
-    def add_partial_sdkdb(self):
+    def add_partial_sdkdb(self, fixture=S, file=S_File, file_hash=S_Hash):
         with self.sdkdb:
-            self.sdkdb._cache_hit_preparing_to_insert(S_File, S_Hash)
-            self.sdkdb._add_partial_sdkdb(S, S_File, spi=False, abi=False)
+            self.sdkdb._cache_hit_preparing_to_insert(file, file_hash)
+            self.sdkdb._add_partial_sdkdb(fixture, file, spi=False, abi=False)
 
     def add_allowlist(self, fixture=A, file=A_File, hash=A_Hash):
         with self.sdkdb:
@@ -191,7 +234,8 @@ class TestSDKDB(TestCase):
         self.add_library()
 
         # When it is replaced with a new version that contains different exports...
-        new_report = APIReport(file=F, arch='arm64e', exports=set(), methods=set())
+        new_report = APIReport(file=F, arch='arm64e', exports=set(), methods=set(),
+                               platform='iOS', min_os='1.0', sdk='1.0')
         new_hash = F_Hash + 1
         with self.sdkdb:
             self.assertFalse(self.sdkdb._cache_hit_preparing_to_insert(F, new_hash))
@@ -199,7 +243,9 @@ class TestSDKDB(TestCase):
 
         # ...the old exports should be removed:
         diagnostics = set(self.audit_with(R_Client))
-        self.assertEqual({R_MissingSymbol, R_MissingClass, R_MissingSelector},
+        self.assertEqual({R_MissingSymbol, R_MissingSwiftSymbol1,
+                          R_MissingSwiftSymbol2, R_MissingClass,
+                          R_MissingSelector},
                          diagnostics)
 
     def test_audit_missing_name_from_spi(self):
@@ -211,37 +257,41 @@ class TestSDKDB(TestCase):
 
     def test_audit_allowed_conditional(self):
         self.add_allowlist(A_Conditional)
-        self.sdkdb.add_defines(['ENABLE_FEATURE'])
+        self.sdkdb.add_conditions({'ENABLE_FEATURE': 1})
         self.assertEmpty(self.audit_with(R_Client))
 
     def test_audit_missing_name_conditional(self):
         self.add_allowlist(A_Conditional)
-        self.sdkdb.add_defines(['OTHER_FEATURE'])
+        self.sdkdb.add_conditions({'OTHER_FEATURE': 1})
         self.assertIn(R_MissingSymbol, self.audit_with(R_Client))
 
     def test_audit_missing_name_negated_conditional(self):
         self.add_allowlist(A_NegatedConditional)
-        self.sdkdb.add_defines(['ENABLE_FEATURE'])
+        self.sdkdb.add_conditions({'ENABLE_FEATURE': 1})
         self.assertIn(R_MissingSymbol, self.audit_with(R_Client))
 
     def test_audit_allowed_negated_conditional(self):
         self.add_allowlist(A_NegatedConditional)
-        self.sdkdb.add_defines(['OTHER_FEATURE'])
+        self.sdkdb.add_conditions({'OTHER_FEATURE': 1})
         self.assertEmpty(self.audit_with(R_Client))
 
     def test_audit_allowed_multiple_conditions(self):
         self.add_allowlist(A_MultipleConditions)
-        self.sdkdb.add_defines(['ENABLE_A', 'ENABLE_B'])
+        self.sdkdb.add_conditions({'ENABLE_A': 1, 'ENABLE_B': 1})
         self.assertEmpty(self.audit_with(R_Client))
 
     def test_audit_missing_name_multiple_conditions(self):
         self.add_allowlist(A_MultipleConditions)
-        self.sdkdb.add_defines(['ENABLE_A'])
+        self.sdkdb.add_conditions({'ENABLE_A': 1})
         self.assertIn(R_MissingSymbol, self.audit_with(R_Client))
 
     def test_audit_missing_name_multiple_conditions_negation(self):
         self.add_allowlist(A_MultipleConditions)
-        self.sdkdb.add_defines(['ENABLE_A', 'ENABLE_B', 'ENABLE_C'])
+        self.sdkdb.add_conditions({'ENABLE_A': 1, 'ENABLE_B': 1, 'ENABLE_C': 1})
+        self.assertIn(R_MissingSymbol, self.audit_with(R_Client))
+
+    def test_audit_minos_conditions(self):
+        self.add_allowlist(A_NonmatchingOS)
         self.assertIn(R_MissingSymbol, self.audit_with(R_Client))
 
     def test_audit_api_from_loaded_file(self):
@@ -278,9 +328,41 @@ class TestSDKDB(TestCase):
         self.add_allowlist()
         self.assertIn(S_UnnecessarySelector, self.audit_with(R_Client))
 
+    def test_audit_unnecessary_allow_from_swift_partial_symbol(self):
+        self.add_partial_sdkdb(S_SwiftSymbols)
+        self.add_allowlist()
+        diagnostics = list(self.audit_with(R_Client))
+        self.assertIn(S_UnnecessarySwiftDecl, diagnostics)
+        self.assertEqual(1, diagnostics.count(S_UnnecessarySwiftDecl))
+
     def test_audit_allowed_fully_qualified_selector(self):
         self.add_partial_sdkdb()
         self.add_allowlist(A_QualifiedSelector)
+        self.assertEmpty(self.audit_with(R_Client))
+
+    def test_audit_allowed_fully_qualified_selector_with_bystander(self):
+        # Same test as above but with an additional, unloaded, unrelated
+        # library exporting a method with the same selector.
+        bystander = APIReport(file=F, arch='arm64e',
+                              platform='iOS', min_os='1.0', sdk='1.0',
+                              methods={APIReport.Selector('initWithData:',
+                                                          'UnrelatedClass')})
+        self.add_library(bystander, file=F, file_hash=F_Hash)
+        self.reconnect()
+
+        self.add_partial_sdkdb()  # -[NSData initWithData:]
+        self.add_allowlist(A_QualifiedSelector)  # -[WKDoesntExist initWithData:]
+        self.assertEmpty(self.audit_with(R_Client))
+
+    def test_audit_allowed_fully_qualified_selector_with_different_class_unloaded(self):
+        # Add -[NSData initWithData:] to the exports table, then reconnect to
+        # move it out of the window.
+        self.add_partial_sdkdb()
+        self.reconnect()
+        # Add -[WKDoesntExist initWithData:] to the allow table.
+        self.add_allowlist(A_QualifiedSelector)
+        # A client that sends "initWithData:" should have no audit issues
+        # (it's covered by the WKDoesntExist entry).
         self.assertEmpty(self.audit_with(R_Client))
 
     def test_audit_unused_allow_from_loaded_allowlist(self):
@@ -296,6 +378,10 @@ class TestSDKDB(TestCase):
         self.add_allowlist(A_ExplicitlyAllowUnused)
         self.assertIn(A_UnusedAllow, self.sdkdb.audit())
 
+    def test_audit_unused_allow_from_swift_decl(self):
+        self.add_allowlist()
+        self.assertIn(A_AllowedSwift, list(self.sdkdb.audit()))
+
     def test_audit_no_unused_allow_from_unloaded_allowlist(self):
         self.add_allowlist()
         self.reconnect()
@@ -305,7 +391,8 @@ class TestSDKDB(TestCase):
         # When two libraries which implement the same method are in the cache,
         # and one is unloaded, the other method should still be matched.
         other_library = APIReport(file=Path('/libunrelated.dylib'),
-                                  arch='arm64e', methods={R_Selector})
+                                  arch='arm64e', methods={R_Selector},
+                                  platform='iOS', min_os='1.0', sdk='1.0')
         with self.sdkdb:
             self.sdkdb._cache_hit_preparing_to_insert(other_library.file, 23456789)
             self.sdkdb._add_api_report(other_library, other_library.file)
@@ -379,6 +466,7 @@ class TestSDKDB(TestCase):
         ]})
         self.add_allowlist(allowlist)
         client = APIReport(file=F_Client, arch='arm64e',
+                           platform='iOS', min_os='1.0', sdk='1.0',
                            methods={APIReport.Selector('initWithData:',
                                                        'UnrelatedClass')},
                            imports={'_WKDoesntExistLibraryVersion',
@@ -389,6 +477,7 @@ class TestSDKDB(TestCase):
     def test_audit_unnecessary_allow_unqualified_methods_same_name(self):
         self.add_allowlist()
         client = APIReport(file=F_Client, arch='arm64e',
+                           platform='iOS', min_os='1.0', sdk='1.0',
                            methods={APIReport.Selector('initWithData:',
                                                        'UnrelatedClass')},
                            imports={'_WKDoesntExistLibraryVersion',

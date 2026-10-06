@@ -87,7 +87,7 @@ bool FontCache::configurePatternForFontDescription(FcPattern* pattern, const Fon
         return false;
     if (!FcPatternAddInteger(pattern, FC_WEIGHT, fontWeightToFontconfigWeight(fontDescription.weight())))
         return false;
-    if (!FcPatternAddDouble(pattern, FC_PIXEL_SIZE, fontDescription.computedSize()))
+    if (!FcPatternAddDouble(pattern, FC_PIXEL_SIZE, fontDescription.usedSize()))
         return false;
     return true;
 }
@@ -117,7 +117,7 @@ static void getFontPropertiesFromPattern(FcPattern* pattern, const FontDescripti
     // We requested an italic font, but Fontconfig gave us one that was neither oblique nor italic.
     syntheticOblique = false;
     int actualFontSlant;
-    bool allowSyntheticOblique = fontDescription.hasAutoFontSynthesisStyle()
+    bool allowSyntheticOblique = fontDescription.allowsItalicOrObliqueFontSynthesisStyle()
         && !options.contains(FontLookupOptions::DisallowObliqueSynthesis);
     if (allowSyntheticOblique && fontDescription.fontStyleSlope()
         && FcPatternGetInteger(pattern, FC_SLANT, 0, &actualFontSlant) == FcResultMatch) {
@@ -135,7 +135,7 @@ RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription&
     getFontPropertiesFromPattern(resultPattern.get(), description, { }, fixedWidth, syntheticBold, syntheticOblique);
 
     RefPtr<cairo_font_face_t> fontFace = adoptRef(cairo_ft_font_face_create_for_pattern(resultPattern.get()));
-    FontPlatformData alternateFontData(fontFace.get(), WTF::move(resultPattern), description.computedSize(), fixedWidth, syntheticBold, syntheticOblique, description.orientation());
+    FontPlatformData alternateFontData(fontFace.get(), WTF::move(resultPattern), description.usedSize(), fixedWidth, syntheticBold, syntheticOblique, description.orientation());
     return fontForPlatformData(alternateFontData);
 }
 
@@ -294,7 +294,7 @@ static AliasStrength strengthOfFirstAlias(const FcPattern& original)
 static Vector<String> strongAliasesForFamily(const String& family)
 {
     RefPtr<FcPattern> pattern = adoptRef(FcPatternCreate());
-    if (!FcPatternAddString(pattern.get(), FC_FAMILY, reinterpret_cast<const FcChar8*>(family.utf8().data())))
+    if (!FcPatternAddString(pattern.get(), FC_FAMILY, reinterpret_cast<const FcChar8*>(family.utf8().legacyCStringPointer())))
         return Vector<String>();
 
     FcConfigSubstitute(nullptr, pattern.get(), FcMatchPattern);
@@ -376,7 +376,7 @@ std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDe
     FcPatternAddBool(pattern.get(), FC_VARIABLE, FcDontCare);
 #endif
     String familyNameString(getFamilyNameStringFromFamily(family));
-    if (!FcPatternAddString(pattern.get(), FC_FAMILY, reinterpret_cast<const FcChar8*>(familyNameString.utf8().data())))
+    if (!FcPatternAddString(pattern.get(), FC_FAMILY, reinterpret_cast<const FcChar8*>(familyNameString.utf8().legacyCStringPointer())))
         return nullptr;
 
     if (!configurePatternForFontDescription(pattern.get(), fontDescription))
@@ -461,14 +461,14 @@ std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDe
     if (FT_Face freeTypeFace = cairoFtFaceLocker.ftFace()) {
         auto variants = buildVariationSettings(freeTypeFace, fontDescription, fontCreationContext);
         if (!variants.isEmpty())
-            FcPatternAddString(resultPattern.get(), FC_FONT_VARIATIONS, reinterpret_cast<const FcChar8*>(variants.utf8().data()));
+            FcPatternAddString(resultPattern.get(), FC_FONT_VARIATIONS, reinterpret_cast<const FcChar8*>(variants.utf8().legacyCStringPointer()));
     }
 #endif
 
     auto size = fontDescription.adjustedSizeForFontFace(fontCreationContext.sizeAdjust());
-    FontPlatformData platformData(fontFace.get(), WTF::move(resultPattern), size, fixedWidth, syntheticBold, syntheticOblique, fontDescription.orientation());
+    FontPlatformData platformData(fontFace.get(), WTF::move(resultPattern), size, fixedWidth, syntheticBold, syntheticOblique, fontDescription.orientation(), fontCreationContext.metricsOverrides());
 
-    platformData.updateSizeWithFontSizeAdjust(fontDescription.fontSizeAdjust(), fontDescription.computedSize());
+    platformData.updateSizeWithFontSizeAdjust(fontDescription.fontSizeAdjust(), fontDescription.usedSize());
     auto platformDataUniquePtr = makeUnique<FontPlatformData>(platformData);
 
     // Verify that this font has an encoding compatible with Fontconfig. Fontconfig currently
@@ -571,12 +571,12 @@ String buildVariationSettings(FT_Face face, const FontDescription& fontDescripti
     if (auto slopeValue = fontCreationContext.fontFaceCapabilities().slope)
         slope = std::max(std::min(slope, static_cast<float>(slopeValue->maximum)), static_cast<float>(slopeValue->minimum));
 
-    variationsToBeApplied.set({ { 'w', 'g', 'h', 't' } }, weight);
-    variationsToBeApplied.set({ { 'w', 'd', 't', 'h' } }, width);
+    variationsToBeApplied.set(FontVariationAxisTag::wght, weight);
+    variationsToBeApplied.set(FontVariationAxisTag::wdth, width);
     if (fontStyleAxis == FontStyleAxis::ital)
-        variationsToBeApplied.set({ { 'i', 't', 'a', 'l' } }, 1);
+        variationsToBeApplied.set(FontVariationAxisTag::ital, 1);
     else
-        variationsToBeApplied.set({ { 's', 'l', 'n', 't' } }, slope);
+        variationsToBeApplied.set(FontVariationAxisTag::slnt, slope);
 
     auto applyVariation = [&](const FontTag& tag, float value) {
         auto iterator = defaultValues.find(tag);

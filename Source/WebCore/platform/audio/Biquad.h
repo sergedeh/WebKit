@@ -64,12 +64,13 @@ public:
     void setNotchParams(size_t index, double frequency, double Q);
 
     // Resets filter state
-    void reset();
+    void NODELETE reset();
 
-    // Filter response at a set of n frequencies. The magnitude and
-    // phase response are returned in magResponse and phaseResponse.
-    // The phase response is in radians.
-    void getFrequencyResponse(unsigned nFrequencies, std::span<const float> frequency, std::span<float> magResponse, std::span<float> phaseResponse);
+    // Filter response at the frequencies in |frequencyHz|, given in Hz and normalized
+    // against |nyquist|. The magnitude and phase response are returned in magResponse
+    // and phaseResponse, which must be at least as long as |frequencyHz|. The phase
+    // response is in radians.
+    void getFrequencyResponse(std::span<const float> frequencyHz, std::span<float> magResponse, std::span<float> phaseResponse, double nyquist);
 
     // Compute tail frame based on the filter coefficents at index
     // |coefIndex|. The tail frame is the frame number where the
@@ -79,7 +80,7 @@ public:
     double tailFrame(size_t coefIndex, double maxFrame);
 
 private:
-    void setNormalizedCoefficients(size_t index, double b0, double b1, double b2, double a0, double a1, double a2);
+    void NODELETE setNormalizedCoefficients(size_t index, double b0, double b1, double b2, double a0, double a1, double a2);
 
     // Filter coefficients. The filter is defined as
     //
@@ -92,7 +93,7 @@ private:
 
 #if USE(ACCELERATE)
     void processFast(std::span<const float> source, std::span<float> destination);
-    void processSliceFast(std::span<double> source, std::span<double> destination, std::span<double> coefficients, size_t framesToProcess);
+    void processSliceFast(std::span<double> source, std::span<double> destination, std::span<const double, 5> coefficients, size_t framesToProcess);
     AudioDoubleArray m_inputBuffer;
     AudioDoubleArray m_outputBuffer;
 #endif

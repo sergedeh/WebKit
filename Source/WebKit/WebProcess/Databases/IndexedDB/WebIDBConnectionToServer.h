@@ -42,7 +42,7 @@ public:
     static Ref<WebIDBConnectionToServer> create(PAL::SessionID);
     virtual ~WebIDBConnectionToServer();
 
-    WebCore::IDBClient::IDBConnectionToServer& coreConnectionToServer();
+    WebCore::IDBClient::IDBConnectionToServer& NODELETE coreConnectionToServer();
     std::optional<WebCore::IDBConnectionIdentifier> identifier() const final;
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
@@ -112,6 +112,8 @@ private:
     void didCloseFromServer(WebCore::IDBDatabaseConnectionIdentifier, const WebCore::IDBError&);
     void notifyOpenDBRequestBlocked(const WebCore::IDBResourceIdentifier& requestIdentifier, uint64_t oldVersion, uint64_t newVersion);
     void didGetAllDatabaseNamesAndVersions(const WebCore::IDBResourceIdentifier&, Vector<WebCore::IDBDatabaseNameAndVersion>&&);
+
+    void attachStorageKeepAliveIfNeeded(const WebIDBResult&, const WebCore::IDBValue&);
 
     const RefPtr<WebCore::IDBClient::IDBConnectionToServer> m_connectionToServer;
 };

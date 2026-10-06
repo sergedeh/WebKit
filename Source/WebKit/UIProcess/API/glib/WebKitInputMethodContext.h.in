@@ -66,14 +66,23 @@ typedef enum {
     WEBKIT_INPUT_PURPOSE_PHONE,
     WEBKIT_INPUT_PURPOSE_URL,
     WEBKIT_INPUT_PURPOSE_EMAIL,
-    WEBKIT_INPUT_PURPOSE_PASSWORD
+    WEBKIT_INPUT_PURPOSE_PASSWORD,
+
+    /**
+     * WEBKIT_INPUT_PURPOSE_SEARCH:
+     *
+     * Edited field contents will be used for searching data.
+     *
+     * Since: 2.54
+     */
+    WEBKIT_INPUT_PURPOSE_SEARCH,
 } WebKitInputPurpose;
 
 /**
  * WebKitInputHints:
  * @WEBKIT_INPUT_HINT_NONE: No special behavior suggested
  * @WEBKIT_INPUT_HINT_SPELLCHECK: Suggest spell checking
- * @WEBKIT_INPUT_HINT_LOWERCASE: Suggest to not autocapitlize
+ * @WEBKIT_INPUT_HINT_LOWERCASE: Suggest to not autocapitalize
  * @WEBKIT_INPUT_HINT_UPPERCASE_CHARS: Suggest to capitalize all text
  * @WEBKIT_INPUT_HINT_UPPERCASE_WORDS: Suggest to capitalize the first character of each word
  * @WEBKIT_INPUT_HINT_UPPERCASE_SENTENCES: Suggest to capitalize the first word of each sentence

@@ -26,7 +26,11 @@
 #include "config.h"
 #include "LocalFrameLoaderClient.h"
 
+#include "Document.h"
 #include "FrameLoader.h"
+#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
+#include "ResourceTiming.h"
 
 namespace WebCore {
 
@@ -52,9 +56,50 @@ void LocalFrameLoaderClient::didExceedNetworkUsageThreshold()
 }
 #endif
 
+void LocalFrameLoaderClient::applyMonitorUnloadToOwnerFrame(IFrameUnloadReason)
+{
+}
+
+// The three notifications below are entry points for the multi-process BFCache
+// coordination on top of WebKit's UIProcess. WebKitLegacy's WebFrameLoaderClient
+// does not run a UIProcess and tracks BFCache locally, so the base class
+// default is a silent no-op rather than an assert.
+void LocalFrameLoaderClient::didCacheBackForwardItem(BackForwardItemIdentifier, BackForwardFrameItemIdentifier)
+{
+}
+
+void LocalFrameLoaderClient::didEvictBackForwardItem(BackForwardItemIdentifier)
+{
+}
+
+void LocalFrameLoaderClient::didTakeBackForwardItemForRestoration(BackForwardItemIdentifier)
+{
+}
+
 RefPtr<Frame> LocalFrameLoaderClient::provisionalParentFrame() const
 {
     return nullptr;
+}
+
+bool LocalFrameLoaderClient::isProvisionalFrame() const
+{
+    return false;
+}
+
+void LocalFrameLoaderClient::dispatchBackForwardItemLoading(const URL& url, const String& referer, LocalFrame& childFrame)
+{
+    Ref loader = m_loader;
+    ASSERT(isBackForwardLoadType(loader->loadType()));
+    ASSERT(!loader->frame().document()->loadEventFinished());
+
+    if (loader->loadChildHistoryItemIntoFrame(childFrame))
+        return;
+
+    loader->continueLoadURLIntoChildFrame(url, referer, childFrame);
+}
+
+void LocalFrameLoaderClient::broadcastFrameViewportInfoToOtherProcessesIfNeeded(const FrameViewportInfo&, bool)
+{
 }
 
 } // namespace WebCore

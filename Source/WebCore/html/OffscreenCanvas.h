@@ -30,12 +30,14 @@
 #include <WebCore/ActiveDOMObject.h>
 #include <WebCore/AffineTransform.h>
 #include <WebCore/CanvasBase.h>
+#include <WebCore/CanvasElementImage.h>
 #include <WebCore/ContextDestructionObserver.h>
 #include <WebCore/EventTarget.h>
 #include <WebCore/EventTargetInterfaces.h>
 #include <WebCore/IDLTypes.h>
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/IntSize.h>
+#include <WebCore/PlaceholderRenderingContextIdentifier.h>
 #include <WebCore/ScriptWrappable.h>
 #include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
@@ -52,6 +54,7 @@
 namespace WebCore {
 
 class CanvasRenderingContext;
+class DOMMatrix;
 class DeferredPromise;
 class GPU;
 class GPUCanvasContext;
@@ -66,14 +69,16 @@ class WebGLRenderingContextBase;
 
 template<typename> class ExceptionOr;
 
+struct UpdateElementGeometryOptions;
+
 using OffscreenRenderingContext = Variant<
 #if ENABLE(WEBGL)
-    RefPtr<WebGLRenderingContext>,
-    RefPtr<WebGL2RenderingContext>,
+    Ref<WebGLRenderingContext>,
+    Ref<WebGL2RenderingContext>,
 #endif
-    RefPtr<GPUCanvasContext>,
-    RefPtr<ImageBitmapRenderingContext>,
-    RefPtr<OffscreenCanvasRenderingContext2D>
+    Ref<GPUCanvasContext>,
+    Ref<ImageBitmapRenderingContext>,
+    Ref<OffscreenCanvasRenderingContext2D>
 >;
 
 class PlaceholderRenderingContext;
@@ -86,13 +91,23 @@ class DetachedOffscreenCanvas {
 
 public:
     DetachedOffscreenCanvas(const IntSize&, bool originClean, RefPtr<PlaceholderRenderingContextSource>&&);
+    // Decoded after crossing a process boundary, where only the placeholder's identity can travel.
+    WEBCORE_EXPORT DetachedOffscreenCanvas(const IntSize&, bool originClean, std::optional<RemotePlaceholderRenderingContextIdentifier>);
+    WEBCORE_EXPORT DetachedOffscreenCanvas(DetachedOffscreenCanvas&&);
+    WEBCORE_EXPORT DetachedOffscreenCanvas& operator=(DetachedOffscreenCanvas&&);
     WEBCORE_EXPORT ~DetachedOffscreenCanvas();
-    const IntSize& size() const { return m_size; }
+
+    std::unique_ptr<DetachedOffscreenCanvas> clone() const;
+
+    const IntSize& size() const LIFETIME_BOUND { return m_size; }
     bool originClean() const { return m_originClean; }
-    RefPtr<PlaceholderRenderingContextSource> takePlaceholderSource();
+    WEBCORE_EXPORT std::optional<RemotePlaceholderRenderingContextIdentifier> placeholderIdentifier() const;
 
 private:
-    RefPtr<PlaceholderRenderingContextSource> m_placeholderSource;
+    RefPtr<PlaceholderRenderingContextSource> takePlaceholderSource(ScriptExecutionContext&);
+
+    // Null when the canvas has no placeholder.
+    Variant<RefPtr<PlaceholderRenderingContextSource>, RemotePlaceholderRenderingContextIdentifier> m_placeholder;
     IntSize m_size;
     bool m_originClean;
 };
@@ -127,25 +142,24 @@ public:
 
     void setWidth(unsigned);
     void setHeight(unsigned);
+    void setSizeForControllingContext(IntSize) final;
 
-    void setImageBufferAndMarkDirty(RefPtr<ImageBuffer>&&) final;
+    ExceptionOr<void> updateElementGeometry(const CanvasElementImageSource&, std::optional<UpdateElementGeometryOptions>);
+    ExceptionOr<void> clearElementGeometry(const CanvasElementImageSource&);
 
     CanvasRenderingContext* renderingContext() const final { return m_context.get(); }
 
     std::unique_ptr<CSSParserContext> createCSSParserContext() const final;
 
     ExceptionOr<std::optional<OffscreenRenderingContext>> getContext(JSC::JSGlobalObject&, RenderingContextType, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
-    ExceptionOr<RefPtr<ImageBitmap>> transferToImageBitmap();
+    ExceptionOr<Ref<ImageBitmap>> transferToImageBitmap();
     void convertToBlob(ImageEncodeOptions&&, Ref<DeferredPromise>&&);
 
-    void didDraw(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect) final;
-
-    Image* copiedImage() const final;
-    void clearCopiedImage() const final;
+    void willUpdateContents(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect) final;
 
     SecurityOrigin* securityOrigin() const final;
 
-    bool canDetach() const;
+    bool NODELETE canDetach() const;
     std::unique_ptr<DetachedOffscreenCanvas> detach();
 
     void commitToPlaceholderCanvas();
@@ -157,6 +171,12 @@ public:
 private:
     OffscreenCanvas(ScriptExecutionContext&, IntSize, RefPtr<PlaceholderRenderingContextSource>&&);
 
+    // ActiveDOMObject.
+    bool virtualHasPendingActivity() const final;
+
+    // EventTarget.
+    void eventListenersDidChange() final;
+
     bool isOffscreenCanvas() const final { return true; }
 
     ScriptExecutionContext* scriptExecutionContext() const final;
@@ -166,16 +186,17 @@ private:
     void refEventTarget() final { RefCounted::ref(); }
     void derefEventTarget() final { RefCounted::deref(); }
 
-    void didUpdateSizeProperties();
-    void createImageBuffer() const final;
+    void didUpdateSizeProperties(bool sizeChanged);
 
     void scheduleCommitToPlaceholderCanvas();
 
     std::unique_ptr<CanvasRenderingContext> m_context;
     RefPtr<PlaceholderRenderingContextSource> m_placeholderSource;
-    mutable RefPtr<Image> m_copiedImage;
     bool m_detached { false };
     bool m_hasScheduledCommit { false };
+#if ENABLE(WEBGL)
+    bool m_hasRelevantWebGLEventListener { false };
+#endif
 };
 
 }

@@ -28,7 +28,7 @@
 
 #include "CSSDynamicRangeLimitMix.h"
 #include "StyleDynamicRangeLimit.h"
-#include "StylePrimitiveKeyword+Logging.h"
+#include "StyleKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 
@@ -62,7 +62,7 @@ void addWeightedLimitTo(DynamicRangeLimitMixFunction& addingTo, const DynamicRan
 
 // MARK: - Conversion
 
-auto ToCSS<DynamicRangeLimitMixFunction>::operator()(const DynamicRangeLimitMixFunction& mix, const RenderStyle& style) -> CSS::DynamicRangeLimitMixFunction
+auto ToCSS<DynamicRangeLimitMixFunction>::operator()(const DynamicRangeLimitMixFunction& mix, const Style::ComputedStyle& style) -> CSS::DynamicRangeLimitMixFunction
 {
     CSS::DynamicRangeLimitMixFunction result;
 
@@ -91,8 +91,7 @@ auto ToStyle<CSS::DynamicRangeLimitMixFunction>::operator()(const CSS::DynamicRa
     // 1. Let v1, ..., vN be the computed values for the parameters to be mixed
     // 2. Let p1, ..., pN be the mixing percentages, normalized to sum to 100%.
 
-    // FIXME: Ideally we'd be able to mark the computedMixComponents() lamdba as NOESCAPE to avoid having to suppress.
-    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE auto computedMixComponents = mix->parameters.map([&](auto& componentCSS) -> ComputedMixComponent {
+    auto computedMixComponents = mix->parameters.map([&](auto& componentCSS) -> ComputedMixComponent {
         return { toStyle(get<0>(componentCSS), state), toStyle(get<1>(componentCSS), state) };
     });
 

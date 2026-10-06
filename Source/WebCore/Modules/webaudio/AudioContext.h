@@ -61,14 +61,12 @@ public:
     void ref() const final { ThreadSafeRefCounted::ref(); }
     void deref() const final { ThreadSafeRefCounted::deref(); }
 
-    WEBCORE_EXPORT static void setDefaultSampleRateForTesting(std::optional<float>);
+    WEBCORE_EXPORT static void NODELETE setDefaultSampleRateForTesting(std::optional<float>);
 
     void close(DOMPromiseDeferred<void>&&);
 
     DefaultAudioDestinationNode& destination() final { return m_destinationNode.get(); }
-    Ref<DefaultAudioDestinationNode> protectedDestination() { return destination(); }
     const DefaultAudioDestinationNode& destination() const final { return m_destinationNode.get(); }
-    Ref<const DefaultAudioDestinationNode> protectedDestination() const { return destination(); }
 
     double baseLatency();
     double outputLatency();
@@ -106,7 +104,7 @@ public:
     void defaultDestinationWillBecomeConnected();
 
 #if PLATFORM(IOS_FAMILY)
-    const String& sceneIdentifier() const final;
+    const String& sceneIdentifier() const LIFETIME_BOUND final;
 #endif
 
 private:
@@ -149,7 +147,7 @@ private:
     std::optional<MediaSessionGroupIdentifier> mediaSessionGroupIdentifier() const final;
     bool shouldOverrideBackgroundPlaybackRestriction(PlatformMediaSession::InterruptionType) const final;
     bool isSuspended() const final;
-    bool isPlaying() const final;
+    bool NODELETE isPlaying() const final;
     bool isAudible() const final;
     bool isNowPlayingEligible() const final;
     std::optional<NowPlayingInfo> nowPlayingInfo() const final;
@@ -159,9 +157,10 @@ private:
     void mediaCanStart(Document&) final;
 
     // ActiveDOMObject
+    void stop() final;
     void suspend(ReasonForSuspension) final;
     void resume() final;
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     const UniqueRef<DefaultAudioDestinationNode> m_destinationNode;
     const Ref<PlatformMediaSession> m_mediaSession;
@@ -172,6 +171,12 @@ private:
     // [[suspended by user]] flag in the specification:
     // https://www.w3.org/TR/webaudio/#dom-audiocontext-suspended-by-user-slot
     bool m_wasSuspendedByScript { false };
+
+    // Serializes resumeRendering()/suspendRendering() against each other so their DOMPromiseDeferred
+    // arguments settle in call order — resume() then immediately suspend() must not let suspend's
+    // promise settle first just because clientWillPausePlayback() is synchronous while
+    // clientWillBeginPlayback() goes through the (async) session admission chain.
+    Ref<GenericPromise> m_currentRenderingOperation { GenericPromise::createAndResolve() };
 
     bool m_canOverrideBackgroundPlaybackRestriction { true };
 };

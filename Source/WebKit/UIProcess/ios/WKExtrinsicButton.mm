@@ -28,6 +28,8 @@
 
 #if PLATFORM(IOS_FAMILY)
 
+#import <wtf/RetainPtr.h>
+
 @implementation WKExtrinsicButton
 
 - (void)setExtrinsicContentSize:(CGSize)size
@@ -38,20 +40,22 @@
 
 - (CGSize)intrinsicContentSize
 {
-    return _extrinsicContentSize;
+    if (_extrinsicContentSize.width > 0 && _extrinsicContentSize.height > 0)
+        return _extrinsicContentSize;
+    return [super intrinsicContentSize];
 }
 
 #if !PLATFORM(WATCHOS)
 - (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction willDisplayMenuForConfiguration:(UIContextMenuConfiguration *)configuration animator:(id<UIContextMenuInteractionAnimating>)animator
 {
     [super contextMenuInteraction:interaction willDisplayMenuForConfiguration:configuration animator:animator];
-    [_delegate wkExtrinsicButtonWillDisplayMenu:self];
+    [protect(_delegate) wkExtrinsicButtonWillDisplayMenu:self];
 }
 
 - (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction willEndForConfiguration:(UIContextMenuConfiguration *)configuration animator:(id<UIContextMenuInteractionAnimating>)animator
 {
     [super contextMenuInteraction:interaction willEndForConfiguration:configuration animator:animator];
-    [_delegate wkExtrinsicButtonWillDismissMenu:self];
+    [protect(_delegate) wkExtrinsicButtonWillDismissMenu:self];
 }
 #endif // !PLATFORM(WATCHOS)
 

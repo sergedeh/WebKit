@@ -55,7 +55,7 @@ enum EventTargetInterfaceType VisualViewport::eventTargetInterface() const
 
 ScriptExecutionContext* VisualViewport::scriptExecutionContext() const
 {
-    RefPtr window = this->window();
+    auto* window = this->window();
     return window ? window->document() : nullptr;
 }
 
@@ -65,14 +65,14 @@ bool VisualViewport::addEventListener(const AtomString& eventType, Ref<EventList
         return false;
 
     if (RefPtr frame = this->frame())
-        frame->document()->addListenerTypeIfNeeded(eventType);
+        protect(frame->document())->addListenerTypeIfNeeded(eventType);
     return true;
 }
 
 void VisualViewport::updateFrameLayout() const
 {
     ASSERT(frame());
-    frame()->document()->updateLayout({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::RunPostLayoutTasksSynchronously });
+    protect(frame()->document())->updateLayout({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::RunPostLayoutTasksSynchronously });
 }
 
 double VisualViewport::offsetLeft() const

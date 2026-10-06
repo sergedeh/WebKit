@@ -77,6 +77,8 @@ typedef struct AudioComponentDescription AudioComponentDescription;
 typedef UInt32 AudioUnitPropertyID;
 typedef UInt32 AudioUnitScope;
 typedef UInt32 AudioUnitElement;
+typedef UInt32 AudioUnitParameterID;
+typedef Float32 AudioUnitParameterValue;
 
 enum SpatialContentTypeID : UInt32;
 struct SpatialAudioPreferences;
@@ -125,6 +127,10 @@ SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, AudioFileClose, OSStatus, (Audi
 #define AudioFileClose softLink_AudioToolbox_AudioFileClose
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, AudioFileOpenWithCallbacks, OSStatus, (void* inClientData, AudioFile_ReadProc inReadFunc, AudioFile_WriteProc inWriteFunc, AudioFile_GetSizeProc inGetSizeFunc, AudioFile_SetSizeProc inSetSizeFunc, AudioFileTypeID inFileTypeHint, AudioFileID* outAudioFile), (inClientData, inReadFunc, inWriteFunc, inGetSizeFunc, inSetSizeFunc, inFileTypeHint, outAudioFile))
 #define AudioFileOpenWithCallbacks softLink_AudioToolbox_AudioFileOpenWithCallbacks
+SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, AudioFileGetPropertyInfo, OSStatus, (AudioFileID inAudioFile, AudioFilePropertyID inPropertyID, UInt32* outDataSize, UInt32 *isWritable), (inAudioFile, inPropertyID, outDataSize, isWritable))
+#define AudioFileGetPropertyInfo softLink_AudioToolbox_AudioFileGetPropertyInfo
+SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, AudioFileGetProperty, OSStatus, (AudioFileID inAudioFile, AudioFilePropertyID inPropertyID, UInt32* ioDataSize, void *outPropertyData), (inAudioFile, inPropertyID, ioDataSize, outPropertyData))
+#define AudioFileGetProperty softLink_AudioToolbox_AudioFileGetProperty
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, ExtAudioFileDispose, OSStatus, (ExtAudioFileRef inExtAudioFile), (inExtAudioFile))
 #define ExtAudioFileDispose softLink_AudioToolbox_ExtAudioFileDispose
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, ExtAudioFileGetProperty, OSStatus, (ExtAudioFileRef inExtAudioFile, ExtAudioFilePropertyID inPropertyID, UInt32* ioPropertyDataSize, void* outPropertyData), (inExtAudioFile, inPropertyID, ioPropertyDataSize, outPropertyData))
@@ -148,6 +154,8 @@ SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, AudioUnitInitialize, OSStatus, 
 #define AudioUnitInitialize softLink_AudioToolbox_AudioUnitInitialize
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, AudioUnitSetProperty, OSStatus, (AudioUnit inUnit, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement, const void* inData, UInt32 inDataSize), (inUnit, inID, inScope, inElement, inData, inDataSize))
 #define AudioUnitSetProperty softLink_AudioToolbox_AudioUnitSetProperty
+SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, AudioUnitSetParameter, OSStatus, (AudioUnit inUnit, AudioUnitParameterID inID, AudioUnitScope inScope, AudioUnitElement inElement, AudioUnitParameterValue inValue, UInt32 inBufferOffsetInFrames), (inUnit, inID, inScope, inElement, inValue, inBufferOffsetInFrames))
+#define AudioUnitSetParameter softLink_AudioToolbox_AudioUnitSetParameter
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, AudioUnitRender, OSStatus, (AudioUnit inUnit, AudioUnitRenderActionFlags* ioActionFlags, const AudioTimeStamp* inTimeStamp, UInt32 inOutputBusNumber, UInt32 inNumberFrames, AudioBufferList* ioData), (inUnit, ioActionFlags, inTimeStamp, inOutputBusNumber, inNumberFrames, ioData))
 #define AudioUnitRender softLink_AudioToolbox_AudioUnitRender
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, AudioToolbox, AudioUnitUninitialize, OSStatus, (AudioUnit inUnit), (inUnit))

@@ -68,14 +68,17 @@ public:
     virtual void receivedEventAfterDefaultHandling(const WebCore::PlatformWheelEvent&, std::optional<WebCore::WheelScrollGestureState>) { };
     virtual WebCore::WheelEventHandlingResult handleWheelEventAfterDefaultHandling(const WebCore::PlatformWheelEvent&, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>) { return WebCore::WheelEventHandlingResult::unhandled(); }
 
-    RemoteScrollingCoordinatorProxy* scrollingCoordinatorProxy() const;
+    virtual bool isPointInScrollbar(WebCore::FloatPoint locationInViewCoordinates) { return false; }
+
+    RemoteScrollingCoordinatorProxy* NODELETE scrollingCoordinatorProxy() const;
 
     void scrollingTreeNodeDidScroll(WebCore::ScrollingTreeScrollingNode&, WebCore::ScrollingLayerPositionAction = WebCore::ScrollingLayerPositionAction::Sync) override;
     void scrollingTreeNodeDidStopAnimatedScroll(WebCore::ScrollingTreeScrollingNode&) override;
     void scrollingTreeNodeDidStopWheelEventScroll(WebCore::ScrollingTreeScrollingNode&) override;
-    bool scrollingTreeNodeRequestsScroll(WebCore::ScrollingNodeID, const WebCore::RequestedScrollData&) override;
+    WebCore::RequestsScrollHandling scrollingTreeNodeRequestsScroll(WebCore::ScrollingNodeID, const WebCore::RequestedScrollData&) override;
     bool scrollingTreeNodeRequestsKeyboardScroll(WebCore::ScrollingNodeID, const WebCore::RequestedKeyboardScrollData&) override;
-    void scrollingTreeNodeDidStopProgrammaticScroll(WebCore::ScrollingTreeScrollingNode&) override;
+
+    void didHandleScrollRequestForNode(WebCore::ScrollingNodeID, WebCore::ScrollRequestType, WebCore::FloatPoint scrollPosition, WebCore::ShouldFireScrollEnd, Markable<WebCore::ScrollRequestIdentifier>) override;
 
     void scrollingTreeNodeWillStartScroll(WebCore::ScrollingNodeID) override;
     void scrollingTreeNodeDidEndScroll(WebCore::ScrollingNodeID) override;
@@ -86,14 +89,32 @@ public:
 
     void stickyScrollingTreeNodeBeganSticking(WebCore::ScrollingNodeID) final;
 
+    void hostedSubtreeNeedsFullCommit(WebCore::FrameIdentifier) final;
+#if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
+    void stickyScrollingTreeNodeEndedSticking(WebCore::ScrollingNodeID) final;
+    void scrollingTreeNodeWillBeRemoved(WebCore::ScrollingNodeID) final;
+#endif
+
     void currentSnapPointIndicesDidChange(WebCore::ScrollingNodeID, std::optional<unsigned> horizontal, std::optional<unsigned> vertical) override;
     void reportExposedUnfilledArea(MonotonicTime, unsigned unfilledArea) override;
     void reportSynchronousScrollingReasonsChanged(MonotonicTime, OptionSet<WebCore::SynchronousScrollingReason>) override;
 
     void tryToApplyLayerPositions();
 
+#if HAVE(NSREFRESHCONTROLLER)
+    float topScrollStretchForRefreshController() const override { return m_topScrollStretchForRefreshController; }
+    void setTopScrollStretchForRefreshController(float height) { m_topScrollStretchForRefreshController = height; }
+    float refreshControllerSnappingThreshold() const override { return m_refreshControllerSnappingThreshold; }
+    void setRefreshControllerSnappingThreshold(float height) { m_refreshControllerSnappingThreshold = height; }
+    void triggerMainFrameRubberBandSnapBack() override { }
+
+    bool hasRefreshController() const override { return m_hasRefreshController; }
+    void setHasRefreshController(bool hasRefreshController) { m_hasRefreshController = hasRefreshController; }
+#endif
+
 #if ENABLE(THREADED_ANIMATIONS)
     void updateTimelinesRegistration(WebCore::ProcessIdentifier, const WebCore::AcceleratedTimelinesUpdate&);
+    void removeTimelines(WebCore::ProcessIdentifier);
     RefPtr<const RemoteAnimationTimeline> timeline(const TimelineID&) const;
     HashSet<Ref<RemoteProgressBasedTimeline>> timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID) const;
 #endif
@@ -111,30 +132,21 @@ protected:
     // This gets nulled out via invalidate(), since the scrolling thread can hold a ref to the ScrollingTree after the RemoteScrollingCoordinatorProxy has gone away.
     WeakPtr<RemoteScrollingCoordinatorProxy> m_scrollingCoordinatorProxy;
     bool m_hasNodesWithSynchronousScrollingReasons WTF_GUARDED_BY_LOCK(m_treeLock) { false };
+#if HAVE(NSREFRESHCONTROLLER)
+    float m_topScrollStretchForRefreshController { 0 };
+    float m_refreshControllerSnappingThreshold { 0 };
+    bool m_hasRefreshController { false };
+#endif
 
 #if ENABLE(THREADED_ANIMATIONS)
     void updateProgressBasedTimelinesForNode(const WebCore::ScrollingTreeScrollingNode&);
 
 private:
-    std::unique_ptr<RemoteProgressBasedTimelineRegistry> m_progressBasedTimelineRegistry;
+    void didAddPendingScrollUpdate() override;
+
+    mutable Lock m_progressBasedTimelineRegistryLock;
+    std::unique_ptr<RemoteProgressBasedTimelineRegistry> m_progressBasedTimelineRegistry WTF_GUARDED_BY_LOCK(m_progressBasedTimelineRegistryLock);
 #endif
-};
-
-class RemoteLayerTreeHitTestLocker {
-public:
-    RemoteLayerTreeHitTestLocker(RemoteScrollingTree& scrollingTree)
-        : m_scrollingTree(scrollingTree)
-    {
-        m_scrollingTree->lockLayersForHitTesting();
-    }
-    
-    ~RemoteLayerTreeHitTestLocker()
-    {
-        m_scrollingTree->unlockLayersForHitTesting();
-    }
-
-private:
-    const Ref<RemoteScrollingTree> m_scrollingTree;
 };
 
 } // namespace WebKit

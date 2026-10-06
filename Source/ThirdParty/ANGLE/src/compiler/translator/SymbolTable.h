@@ -215,6 +215,12 @@ class TSymbolTable : angle::NonCopyable, TSymbolTableBase
     // successful, and false if the declaration failed due to redefinition.
     bool declare(TSymbol *symbol);
 
+#ifdef ANGLE_IR
+    // Going from IR back to AST, the symbols get redeclared.  Make sure the symbol table is
+    // updated.
+    void redeclare(TSymbol *symbol);
+#endif
+
     // Only used to declare internal variables.
     bool declareInternal(TSymbol *symbol);
 
@@ -234,6 +240,7 @@ class TSymbolTable : angle::NonCopyable, TSymbolTableBase
 
     const TVariable *gl_FragData() const;
     const TVariable *gl_SecondaryFragDataEXT() const;
+    bool isSecondaryFragDataUsed() const;
 
     void markStaticUse(const TVariable &variable);
 

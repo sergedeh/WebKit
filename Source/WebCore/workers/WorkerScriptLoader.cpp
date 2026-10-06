@@ -44,6 +44,7 @@
 #include "WorkerSWClientConnection.h"
 #include "WorkerScriptLoaderClient.h"
 #include "WorkerThreadableLoader.h"
+#include <WebCore/HTTPStatusCodes.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -60,9 +61,8 @@ static void accessWorkerScriptLoaderMap(CompletionHandler<void(HashMap<ScriptExe
     callback(map.get());
 }
 
-WorkerScriptLoader::WorkerScriptLoader(AlwaysUseUTF8 alwaysUseUTF8)
+WorkerScriptLoader::WorkerScriptLoader()
     : m_script(ScriptBuffer::empty())
-    , m_alwaysUseUTF8(alwaysUseUTF8 == AlwaysUseUTF8::Yes)
 {
 }
 
@@ -82,6 +82,7 @@ std::optional<Exception> WorkerScriptLoader::loadSynchronously(ScriptExecutionCo
     m_destination = FetchOptions::Destination::Script;
     m_isCOEPEnabled = scriptExecutionContext->settingsValues().crossOriginEmbedderPolicyEnabled;
     m_advancedPrivacyProtections = scriptExecutionContext->advancedPrivacyProtections();
+    m_globalPrivacyControlEnabled = scriptExecutionContext->settingsValues().globalPrivacyControlEnabled;
 
     RefPtr serviceWorkerGlobalScope = dynamicDowncast<ServiceWorkerGlobalScope>(workerGlobalScope);
     if (serviceWorkerGlobalScope) {
@@ -129,7 +130,7 @@ std::optional<Exception> WorkerScriptLoader::loadSynchronously(ScriptExecutionCo
     return std::nullopt;
 }
 
-void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecutionContext, ResourceRequest&& scriptRequest, Source source, FetchOptions&& fetchOptions, ContentSecurityPolicyEnforcement contentSecurityPolicyEnforcement, ServiceWorkersMode serviceWorkerMode, WorkerScriptLoaderClient& client, String&& taskMode, std::optional<ScriptExecutionContextIdentifier> clientIdentifier)
+void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecutionContext, ResourceRequest&& scriptRequest, Source source, FetchOptions&& fetchOptions, ContentSecurityPolicyEnforcement contentSecurityPolicyEnforcement, ServiceWorkersMode serviceWorkerMode, WorkerScriptLoaderClient& client, String&& taskMode, std::optional<ScriptExecutionContextIdentifier> clientIdentifier, String&& referrer)
 {
     m_client = client;
     m_url = scriptRequest.url();
@@ -138,6 +139,7 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
     m_isCOEPEnabled = scriptExecutionContext.settingsValues().crossOriginEmbedderPolicyEnabled;
     m_clientIdentifier = clientIdentifier;
     m_advancedPrivacyProtections = scriptExecutionContext.advancedPrivacyProtections();
+    m_globalPrivacyControlEnabled = scriptExecutionContext.settingsValues().globalPrivacyControlEnabled;
 
     ASSERT(scriptRequest.httpMethod() == "GET"_s);
 
@@ -146,7 +148,7 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
     ThreadableLoaderOptions options { WTF::move(fetchOptions) };
     options.sendLoadCallbacks = SendCallbackPolicy::SendCallbacks;
     options.contentSecurityPolicyEnforcement = contentSecurityPolicyEnforcement;
-    if (fetchOptions.destination == FetchOptions::Destination::Serviceworker)
+    if (options.destination == FetchOptions::Destination::Serviceworker)
         options.certificateInfoPolicy = CertificateInfoPolicy::IncludeCertificateInfo;
 
     // FIXME: We should drop the sameOriginDataURLFlag flag and implement the latest Fetch specification.
@@ -160,7 +162,7 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
         options.clientIdentifier = scriptExecutionContext.identifier().object();
         options.resultingClientIdentifier = clientIdentifier->object();
         Ref serviceWorkerDataManager = ServiceWorkerDataManager::create(*clientIdentifier);
-        m_serviceWorkerDataManager = serviceWorkerDataManager.copyRef();
+        lazyInitialize(m_serviceWorkerDataManager, serviceWorkerDataManager.copyRef());
         m_context = scriptExecutionContext;
 
         // In case of blob URLs, we reuse the context controlling service worker.
@@ -180,7 +182,7 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
 
     // During create, callbacks may happen which remove the last reference to this object.
     Ref<WorkerScriptLoader> protectedThis(*this);
-    m_threadableLoader = ThreadableLoader::create(scriptExecutionContext, *this, WTF::move(*request), options, { }, WTF::move(taskMode));
+    m_threadableLoader = ThreadableLoader::create(scriptExecutionContext, *this, WTF::move(*request), options, WTF::move(referrer), WTF::move(taskMode));
 }
 
 const URL& WorkerScriptLoader::responseURL() const
@@ -205,10 +207,12 @@ static ResourceError constructJavaScriptMIMETypeError(const ResourceResponse& re
 
 ResourceError WorkerScriptLoader::validateWorkerResponse(const ResourceResponse& response, Source source, FetchOptions::Destination destination)
 {
-    if (response.httpStatusCode() / 100 != 2 && response.httpStatusCode())
+    if (!response.isSuccessful() && response.httpStatusCode())
         return { errorDomainWebKitInternal, 0, response.url(), "Response is not 2xx"_s, ResourceError::Type::General };
 
-    if (!isScriptAllowedByNosniff(response)) {
+    // https://fetch.spec.whatwg.org/#should-response-to-request-be-blocked-due-to-nosniff
+    // Only a script-like destination is blocked; a JSON or text module accepts any MIME type.
+    if (isScriptLikeDestination(destination) && !isScriptAllowedByNosniff(response)) {
         auto message = makeString("Refused to execute "_s, response.url().stringCenterEllipsizedToLength(), " as script because \"X-Content-Type-Options: nosniff\" was given and its Content-Type is not a script MIME type."_s);
         return { errorDomainWebKitInternal, 0, response.url(), WTF::move(message), ResourceError::Type::General };
     }
@@ -290,8 +294,7 @@ void WorkerScriptLoader::didReceiveData(const SharedBuffer& buffer)
     if (!m_decoder) {
         // FIXME: Share more code with CachedScript / CachedScriptSourceProvider.
         Ref decoder = TextResourceDecoder::create("text/javascript"_s, "UTF-8"_s);
-        if (m_alwaysUseUTF8)
-            decoder->setAlwaysUseUTF8();
+        decoder->setAlwaysUseUTF8();
         lazyInitialize(m_decoder, WTF::move(decoder));
     }
 

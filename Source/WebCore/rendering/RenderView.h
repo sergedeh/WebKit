@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
- * Copyright (C) 2006-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -21,19 +21,20 @@
 
 #pragma once
 
-#include <WebCore/LocalFrameView.h>
+#include <WebCore/DocumentEnums.h>
 #include <WebCore/Region.h>
 #include <WebCore/RenderBlockFlow.h>
 #include <WebCore/RenderSelection.h>
 #include <WebCore/RenderWidget.h>
 #include <memory>
 #include <wtf/HashSet.h>
-#include <wtf/ListHashSet.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 
+class LocalFrameView;
 class ImageQualityController;
+class RenderImage;
 class RenderLayerCompositor;
 class RenderLayoutState;
 class RenderCounter;
@@ -48,14 +49,14 @@ class RenderView final : public RenderBlockFlow {
     WTF_MAKE_TZONE_ALLOCATED(RenderView);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderView);
 public:
-    RenderView(Document&, RenderStyle&&);
+    RenderView(Document&, Style::ComputedStyle&&);
     virtual ~RenderView();
 
     ASCIILiteral renderName() const override { return "RenderView"_s; }
 
     bool requiresLayer() const override { return true; }
 
-    bool isChildAllowed(const RenderObject&, const RenderStyle&) const override;
+    bool isChildAllowed(const RenderObject&, const Style::ComputedStyle&) const override;
 
     void layout() override;
     void updateLogicalWidth() override;
@@ -72,9 +73,9 @@ public:
     LayoutUnit clientLogicalWidthForFixedPosition() const;
     LayoutUnit clientLogicalHeightForFixedPosition() const;
 
-    float zoomFactor() const;
+    float NODELETE pageZoomFactor() const;
 
-    LocalFrameView& frameView() const { return m_frameView.get(); }
+    inline LocalFrameView& NODELETE frameView() const LIFETIME_BOUND; // Defined in LocalFrameViewInlines.h.
 
     Layout::InitialContainingBlock& initialContainingBlock() { return m_initialContainingBlock.get(); }
     const Layout::InitialContainingBlock& initialContainingBlock() const { return m_initialContainingBlock.get(); }
@@ -87,35 +88,56 @@ public:
     bool needsEventRegionUpdateForNonCompositedFrame() const { return m_needsEventRegionUpdateForNonCompositedFrame; }
     void setNeedsEventRegionUpdateForNonCompositedFrame(bool value = true) { m_needsEventRegionUpdateForNonCompositedFrame = value; }
 
-    std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, VisibleRectContext) const override;
+    enum class TextAutosizingState : uint8_t {
+        Normal,
+        ResetScheduled,
+        SkipAfterReset,
+    };
+    TextAutosizingState textAutosizingState() const { return m_textAutosizingState; }
+    void setTextAutosizingState(TextAutosizingState state) { m_textAutosizingState = state; }
+
+    std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState) const override;
     void repaintRootContents();
     void repaintViewRectangle(const LayoutRect&);
     void repaintViewAndCompositedLayers();
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    void adjustAXCustomColorModeAfterLayout();
+#endif
+
+#if ENABLE(SMART_IMAGE_RESIZER)
+    DidInvalidateStyle updateForSmartImageResizer();
+    void setSmartImageResizerNeedsUpdate();
+
+    void registerImageForSmartImageResizer(RenderImage&);
+    void unregisterImageForSmartImageResizer(RenderImage&);
+    void rebuildImagesForSmartImageResizer();
+#endif
 
     void paint(PaintInfo&, const LayoutPoint&) override;
     void paintBoxDecorations(PaintInfo&, const LayoutPoint&) override;
     // Return the renderer whose background style is used to paint the root background.
     RenderElement* rendererForRootBackground() const;
 
-    RenderSelection& selection() { return m_selection; }
+    RenderSelection& selection() LIFETIME_BOUND { return m_selection; }
 
     bool printing() const;
 
-    void boundingRects(Vector<LayoutRect>&, const LayoutPoint& accumulatedOffset) const override;
+    Vector<FloatRect> localBorderBoxRects() const final;
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const override;
 
     LayoutRect viewRect() const;
 
     void updateHitTestResult(HitTestResult&, const LayoutPoint&) const override;
 
-    void setPageLogicalSize(LayoutSize);
+    void NODELETE setPageLogicalSize(LayoutSize);
     LayoutUnit pageOrViewLogicalHeight() const;
 
     // This method is used to assign a page number only when pagination modes have
     // a block progression. This happens with vertical-rl books for example, but it
     // doesn't happen for normal horizontal-tb books. This is a very specialized
     // function and should not be mistaken for a general page number API.
-    unsigned pageNumberForBlockProgressionOffset(int offset) const;
+    unsigned NODELETE pageNumberForBlockProgressionOffset(int offset) const;
 
     unsigned pageCount() const;
 
@@ -130,7 +152,7 @@ public:
         m_legacyPrinting.m_truncatorWidth = 0;
         m_legacyPrinting.m_forcedPageBreak = false;
     }
-    const IntRect& printRect() const { return m_legacyPrinting.m_printRect; }
+    const IntRect& printRect() const LIFETIME_BOUND { return m_legacyPrinting.m_printRect; }
     void setPrintRect(const IntRect& r) { m_legacyPrinting.m_printRect = r; }
     // End deprecated functions.
 
@@ -138,8 +160,7 @@ public:
     void setIsInWindow(bool);
 
     WEBCORE_EXPORT RenderLayerCompositor& compositor();
-    WEBCORE_EXPORT CheckedRef<RenderLayerCompositor> checkedCompositor();
-    WEBCORE_EXPORT bool usesCompositing() const;
+    WEBCORE_EXPORT bool NODELETE usesCompositing() const;
 
     WEBCORE_EXPORT IntRect unscaledDocumentRect() const;
     LayoutRect unextendedBackgroundRect() const;
@@ -159,19 +180,22 @@ public:
     FloatSize sizeForCSSDefaultViewportUnits() const;
 
     bool hasQuotesNeedingUpdate() const { return m_hasQuotesNeedingUpdate; }
-    void setHasQuotesNeedingUpdate(bool b) { m_hasQuotesNeedingUpdate = b; }
+    void setHasQuotesNeedingUpdate(bool hasQuotesNeedingUpdate) { m_hasQuotesNeedingUpdate = hasQuotesNeedingUpdate; }
 
     void addCounterNeedingUpdate(RenderCounter&);
     SingleThreadWeakHashSet<RenderCounter> takeCountersNeedingUpdate();
 
+    bool hasCounterTreeNeedingUpdate() const { return m_hasCounterTreeNeedingUpdate; }
+    void setHasCounterTreeNeedingUpdate(bool hasCounterTreeNeedingUpdate) { m_hasCounterTreeNeedingUpdate = hasCounterTreeNeedingUpdate; }
+
     void incrementRendersWithOutline() { ++m_renderersWithOutlineCount; }
     void decrementRendersWithOutline() { ASSERT(m_renderersWithOutlineCount > 0); --m_renderersWithOutlineCount; }
     bool hasRenderersWithOutline() const { return m_renderersWithOutlineCount; }
+    void incrementRenderersWithPixelMovingFilter() { ++m_renderersWithPixelMovingFilterCount; }
+    void decrementRenderersWithPixelMovingFilter() { ASSERT(m_renderersWithPixelMovingFilterCount > 0); --m_renderersWithPixelMovingFilterCount; }
+    bool hasRenderersWithPixelMovingFilter() const { return m_renderersWithPixelMovingFilterCount; }
 
-    ImageQualityController& imageQualityController();
-
-    void setHasSoftwareFilters(bool hasSoftwareFilters) { m_hasSoftwareFilters = hasSoftwareFilters; }
-    bool hasSoftwareFilters() const { return m_hasSoftwareFilters; }
+    ImageQualityController& imageQualityController() LIFETIME_BOUND;
 
     uint64_t rendererCount() const { return m_rendererCount; }
     void didCreateRenderer() { ++m_rendererCount; }
@@ -202,37 +226,41 @@ public:
 
     void registerBoxWithScrollSnapPositions(const RenderBox&);
     void unregisterBoxWithScrollSnapPositions(const RenderBox&);
-    const SingleThreadWeakHashSet<const RenderBox>& boxesWithScrollSnapPositions() { return m_boxesWithScrollSnapPositions; }
+    const SingleThreadWeakHashSet<const RenderBox>& boxesWithScrollSnapPositions() LIFETIME_BOUND { return m_boxesWithScrollSnapPositions; }
 
     void registerContainerQueryBox(const RenderBox&);
     void unregisterContainerQueryBox(const RenderBox&);
-    const SingleThreadWeakHashSet<const RenderBox>& containerQueryBoxes() const { return m_containerQueryBoxes; }
+    const SingleThreadWeakHashSet<const RenderBox>& containerQueryBoxes() const LIFETIME_BOUND { return m_containerQueryBoxes; }
+
+    void registerScrollStateQueryBox(const RenderBox&);
+    void unregisterScrollStateQueryBox(const RenderBox&);
+    const SingleThreadWeakHashSet<const RenderBox>& scrollStateQueryBoxes() const LIFETIME_BOUND { return m_scrollStateQueryBoxes; }
 
     void registerAnchor(const RenderBoxModelObject&);
     void unregisterAnchor(const RenderBoxModelObject&);
-    const SingleThreadWeakHashSet<const RenderBoxModelObject>& anchors() const { return m_anchors; }
+    const SingleThreadWeakHashSet<const RenderBoxModelObject>& anchors() const LIFETIME_BOUND { return m_anchors; }
 
     void registerPositionTryBox(const RenderBox&);
     void unregisterPositionTryBox(const RenderBox&);
-    const SingleThreadWeakHashSet<const RenderBox>& positionTryBoxes() const { return m_positionTryBoxes; }
+    const SingleThreadWeakHashSet<const RenderBox>& positionTryBoxes() const LIFETIME_BOUND { return m_positionTryBoxes; }
 
-    SingleThreadWeakPtr<RenderBlockFlow> viewTransitionContainingBlock() const;
-    void setViewTransitionContainingBlock(RenderBlockFlow& renderer);
+    SingleThreadWeakPtr<RenderBlockFlow> NODELETE viewTransitionContainingBlock() const;
+    void NODELETE setViewTransitionContainingBlock(RenderBlockFlow& renderer);
 
     void addViewTransitionGroup(const AtomString&, RenderBox&);
     void removeViewTransitionGroup(const AtomString&);
-    RenderBox* viewTransitionGroupForName(const AtomString&);
+    RenderBox* NODELETE viewTransitionGroupForName(const AtomString&);
 
 protected:
     void willBeDestroyed() override;
 
 private:
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
     void mapLocalToContainer(const RenderLayerModelObject* repaintContainer, TransformState&, OptionSet<MapCoordinatesMode>, bool* wasFixed) const override;
     const RenderElement* pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&) const override;
     void mapAbsoluteToLocalPoint(OptionSet<MapCoordinatesMode>, TransformState&) const override;
-    bool requiresColumns(int desiredColumnCount) const override;
+    bool requiresFragmentedFlow() const override;
 
     void computeColumnCountAndWidth() override;
 
@@ -275,20 +303,21 @@ private:
 
     bool shouldUsePrintingLayout() const;
 
-    std::unique_ptr<ImageQualityController> m_imageQualityController;
+    const std::unique_ptr<ImageQualityController> m_imageQualityController;
     std::optional<LayoutSize> m_pageLogicalSize;
     bool m_pageLogicalHeightChanged { false };
-    std::unique_ptr<RenderLayerCompositor> m_compositor;
+    const std::unique_ptr<RenderLayerCompositor> m_compositor;
 
     bool m_hasQuotesNeedingUpdate { false };
 
     SingleThreadWeakHashSet<RenderCounter> m_countersNeedingUpdate;
-    unsigned m_renderCounterCount { 0 };
+    bool m_hasCounterTreeNeedingUpdate { false };
     unsigned m_renderersWithOutlineCount { 0 };
-
-    bool m_hasSoftwareFilters { false };
+    unsigned m_renderersWithPixelMovingFilterCount { 0 };
     bool m_needsRepaintHackAfterCompositingLayerUpdateForDebugOverlaysOnly { false };
     bool m_needsEventRegionUpdateForNonCompositedFrame { false };
+
+    TextAutosizingState m_textAutosizingState { TextAutosizingState::Normal };
 
     SingleThreadWeakHashMap<RenderElement, Vector<WeakPtr<CachedImage>>> m_renderersWithPausedImageAnimation;
     WeakHashSet<SVGSVGElement, WeakPtrImplWithEventTargetData> m_SVGSVGElementsWithPausedImageAnimation;
@@ -296,6 +325,7 @@ private:
 
     SingleThreadWeakHashSet<const RenderBox> m_boxesWithScrollSnapPositions;
     SingleThreadWeakHashSet<const RenderBox> m_containerQueryBoxes;
+    SingleThreadWeakHashSet<const RenderBox> m_scrollStateQueryBoxes;
     SingleThreadWeakHashSet<const RenderBoxModelObject> m_anchors;
     SingleThreadWeakHashSet<const RenderBox> m_positionTryBoxes;
 

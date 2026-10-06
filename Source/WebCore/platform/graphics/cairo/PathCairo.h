@@ -38,8 +38,10 @@ class GraphicsContext;
 class PathStream;
 
 class PathCairo final : public PathImpl {
+    WTF_MAKE_TZONE_ALLOCATED(PathCairo);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PathCairo);
 public:
-    static Ref<PathCairo> create(std::span<const PathSegment> = { });
+    WEBCORE_EXPORT static Ref<PathCairo> create(std::span<const PathSegment> = { });
     static Ref<PathCairo> create(RefPtr<cairo_t>&&, RefPtr<PathStream>&& = nullptr);
     static PlatformPathPtr emptyPlatformPath();
 
@@ -66,7 +68,7 @@ public:
     void add(PathContinuousRoundedRect) final;
     void add(PathCloseSubpath) final;
 
-    bool applyElements(const PathElementApplier&) const final;
+    bool applyElements(NOESCAPE const PathElementApplier&) const final;
 
     bool transform(const AffineTransform&) final;
 
@@ -81,7 +83,7 @@ private:
     FloatRect fastBoundingRect() const final;
     FloatRect boundingRect() const final;
 
-    RefPtr<cairo_t> m_platformPath;
+    const RefPtr<cairo_t> m_platformPath;
     RefPtr<PathStream> m_elementsStream;
 };
 

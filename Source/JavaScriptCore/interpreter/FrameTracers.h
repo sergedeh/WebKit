@@ -28,11 +28,12 @@
 #include <JavaScriptCore/StackAlignment.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/VM.h>
+#include <wtf/SetForScope.h>
 
 namespace JSC {
 
 struct EntryFrame;
-class StructureStubInfo;
+class PropertyInlineCache;
 
 class SuspendExceptionScope {
 public:
@@ -98,6 +99,19 @@ public:
     }
 };
 
+// This class should be used instead of SlowPathFrameTracer *only* in contexts where the sole
+// reason the topCallFrame is accessed is to update ShadowChicken. In other words, in contexts
+// where a JS exception cannot be thrown.
+class WasmSlowPathWithoutCallFrameTracer {
+public:
+    ALWAYS_INLINE WasmSlowPathWithoutCallFrameTracer(VM& vm)
+    {
+        // Wasm frames don't participate in ShadowChicken.
+        if (vm.shadowChicken()) [[unlikely]]
+            vm.topCallFrame = nullptr;
+    }
+};
+
 class NativeCallFrameTracer {
 public:
     ALWAYS_INLINE NativeCallFrameTracer(VM& vm, CallFrame* callFrame)
@@ -133,13 +147,11 @@ public:
         ASSERT(callFrame);
         ASSERT(reinterpret_cast<void*>(callFrame) < reinterpret_cast<void*>(vm.topEntryFrame));
         assertStackPointerIsAligned();
-#if USE(BUILTIN_FRAME_ADDRESS)
-        // If ASSERT_ENABLED and USE(BUILTIN_FRAME_ADDRESS), prepareCallOperation() will put the frame pointer into vm.topCallFrame.
+        // If ASSERT_ENABLED, prepareCallOperation() will put the frame pointer into vm.topCallFrame.
         // We can ensure here that a call to prepareCallOperation() (or its equivalent) is not missing by comparing vm.topCallFrame to
         // the result of __builtin_frame_address which is passed in as callFrame.
         ASSERT(vm.topCallFrame == callFrame);
         vm.topCallFrame = callFrame;
-#endif
     }
 
 #if ASSERT_ENABLED
@@ -155,7 +167,7 @@ public:
 
 class ICSlowPathCallFrameTracer {
 public:
-    inline ICSlowPathCallFrameTracer(VM&, CallFrame*, StructureStubInfo*);
+    inline ICSlowPathCallFrameTracer(VM&, CallFrame*, PropertyInlineCache*);
 
 #if ASSERT_ENABLED
     ~ICSlowPathCallFrameTracer()

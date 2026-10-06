@@ -11,11 +11,9 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_VK_CACHE_UTILS_H_
 #define LIBANGLE_RENDERER_VULKAN_VK_CACHE_UTILS_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include <array>
 #include <deque>
+#include "common/unsafe_buffers.h"
 
 #include "common/Color.h"
 #include "common/FixedVector.h"
@@ -197,8 +195,6 @@ class alignas(4) RenderPassDesc final
 
     // Set format for an enabled GL color attachment.
     void packColorAttachment(size_t colorIndexGL, angle::FormatID formatID);
-    // Mark a GL color attachment index as disabled.
-    void packColorAttachmentGap(size_t colorIndexGL);
     // The caller must pack the depth/stencil attachment last, which is packed right after the color
     // attachments (including gaps), i.e. with an index starting from |colorAttachmentRange()|.
     void packDepthStencilAttachment(angle::FormatID angleFormatID);
@@ -213,6 +209,7 @@ class alignas(4) RenderPassDesc final
     // Indicate that a color attachment should take its data from the resolve attachment initially.
     void packColorUnresolveAttachment(size_t colorIndexGL);
     void removeColorUnresolveAttachment(size_t colorIndexGL);
+    void resetColorUnresolveAttachments();
     // Indicate that a depth/stencil attachment should have a corresponding resolve attachment.
     void packDepthResolveAttachment();
     void packStencilResolveAttachment();
@@ -297,6 +294,12 @@ class alignas(4) RenderPassDesc final
     void updateRenderToTexture(bool isRenderToTexture) { mIsRenderToTexture = isRenderToTexture; }
     bool isRenderToTexture() const { return mIsRenderToTexture; }
 
+    void setDynamicMSRTTUnresolve(bool isDynamicMSRTTUnresolve)
+    {
+        mIsDynamicMSRTTUnresolve = isDynamicMSRTTUnresolve;
+    }
+    bool isDynamicMSRTTUnresolve() const { return mIsDynamicMSRTTUnresolve; }
+
     void setFragmentShadingAttachment(bool value) { mHasFragmentShadingAttachment = value; }
     bool hasFragmentShadingAttachment() const { return mHasFragmentShadingAttachment; }
 
@@ -360,6 +363,7 @@ class alignas(4) RenderPassDesc final
     uint8_t mIsRenderToTexture : 1;
     uint8_t mUnresolveDepth : 1;
     uint8_t mUnresolveStencil : 1;
+    uint8_t mIsDynamicMSRTTUnresolve : 1;
 
     // Dithering state when using VK_EXT_legacy_dithering
     uint8_t mLegacyDitherEnabled : 1;
@@ -371,7 +375,7 @@ class alignas(4) RenderPassDesc final
     uint8_t mHasFragmentShadingAttachment : 1;
 
     // Available space for expansion.
-    uint8_t mPadding2 : 5;
+    uint8_t mPadding2 : 4;
 
     // Whether each color attachment has a corresponding resolve attachment.  Color resolve
     // attachments can be used to optimize resolve through glBlitFramebuffer() as well as support
@@ -515,7 +519,7 @@ static_assert(kPackedAttribDescSize == 4, "Size mismatch");
 
 struct PackedVertexInputAttributes final
 {
-    PackedAttribDesc attribs[gl::MAX_VERTEX_ATTRIBS];
+    std::array<PackedAttribDesc, gl::MAX_VERTEX_ATTRIBS> attribs;
 
     // Component type of the corresponding input in the program.  Used to adjust the format if
     // necessary.  Takes values from gl::ComponentType.
@@ -525,7 +529,7 @@ struct PackedVertexInputAttributes final
     // greater than MAX_USHORT should not be that helpful. Note that stride limits are
     // introduced in ES 3.1.
     // Dynamic in VK_EXT_extended_dynamic_state
-    uint16_t strides[gl::MAX_VERTEX_ATTRIBS];
+    std::array<uint16_t, gl::MAX_VERTEX_ATTRIBS> strides;
 };
 
 constexpr size_t kPackedVertexInputAttributesSize = sizeof(PackedVertexInputAttributes);
@@ -668,7 +672,7 @@ static_assert(kPackedColorBlendAttachmentStateSize == 4, "Size check failed");
 
 struct PackedColorBlendState final
 {
-    uint8_t colorWriteMaskBits[gl::IMPLEMENTATION_MAX_DRAW_BUFFERS / 2];
+    std::array<uint8_t, gl::IMPLEMENTATION_MAX_DRAW_BUFFERS / 2> colorWriteMaskBits;
     PackedColorBlendAttachmentState attachments[gl::IMPLEMENTATION_MAX_DRAW_BUFFERS];
 };
 
@@ -778,11 +782,9 @@ struct GraphicsPipelineShadersVulkanStructs
     VkPipelineRasterizationLineStateCreateInfoEXT rasterLineState                 = {};
     VkPipelineRasterizationProvokingVertexStateCreateInfoEXT provokingVertexState = {};
     VkPipelineRasterizationStateStreamCreateInfoEXT rasterStreamState             = {};
-    VkSpecializationInfo specializationInfo                                       = {};
 
     // Support storage
     angle::FixedVector<VkPipelineShaderStageCreateInfo, 5> shaderStages;
-    SpecializationConstantMap<VkSpecializationMapEntry> specializationEntries;
 };
 
 struct GraphicsPipelineSharedNonVertexInputVulkanStructs
@@ -803,7 +805,7 @@ struct GraphicsPipelineFragmentOutputVulkanStructs
 
 ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
 
-using GraphicsPipelineDynamicStateList = angle::FixedVector<VkDynamicState, 23>;
+using GraphicsPipelineDynamicStateList = angle::FixedVector<VkDynamicState, 24>;
 
 enum class PipelineRobustness
 {
@@ -880,10 +882,7 @@ class PipelineHelper;
 struct GraphicsPipelineShadersInfo final
 {
   public:
-    GraphicsPipelineShadersInfo(const ShaderModuleMap *shaders,
-                                const SpecializationConstants *specConsts)
-        : mShaders(shaders), mSpecConsts(specConsts)
-    {}
+    GraphicsPipelineShadersInfo(const ShaderModuleMap *shaders) : mShaders(shaders) {}
     GraphicsPipelineShadersInfo(vk::PipelineHelper *pipelineLibrary)
         : mPipelineLibrary(pipelineLibrary)
     {}
@@ -894,7 +893,6 @@ struct GraphicsPipelineShadersInfo final
   private:
     // If the shaders state should be directly specified in the final pipeline.
     const ShaderModuleMap *mShaders            = nullptr;
-    const SpecializationConstants *mSpecConsts = nullptr;
 
     // If the shaders state is provided via a pipeline library.
     vk::PipelineHelper *mPipelineLibrary = nullptr;
@@ -953,6 +951,11 @@ class GraphicsPipelineDesc final
                            GLuint divisor,
                            angle::FormatID format,
                            GLuint relativeOffset);
+    void updateVertexInputWithStride(ContextVk *contextVk,
+                                     GraphicsPipelineTransitionBits *transition,
+                                     uint32_t attribIndex,
+                                     GLuint stride);
+
     void setVertexShaderComponentTypes(gl::AttributesMask activeAttribLocations,
                                        gl::ComponentTypeMask componentTypeMask);
     void updateVertexShaderComponentTypes(GraphicsPipelineTransitionBits *transition,
@@ -1153,7 +1156,6 @@ class GraphicsPipelineDesc final
     void initializePipelineShadersState(
         ErrorContext *context,
         const ShaderModuleMap &shaders,
-        const SpecializationConstants &specConsts,
         GraphicsPipelineShadersVulkanStructs *stateOut,
         GraphicsPipelineDynamicStateList *dynamicStateListOut) const;
 
@@ -1317,6 +1319,7 @@ class YcbcrConversionDesc final
 
     size_t hash() const;
     bool operator==(const YcbcrConversionDesc &other) const;
+    bool operator!=(const YcbcrConversionDesc &other) const;
 
     bool valid() const { return mExternalOrVkFormat != 0; }
     void reset();
@@ -1491,8 +1494,10 @@ ANGLE_INLINE bool GraphicsPipelineTransitionMatch(GraphicsPipelineTransitionBits
 
     for (size_t dirtyBit : bitsA)
     {
-        if (rawPtrA[dirtyBit] != rawPtrB[dirtyBit])
+        if (ANGLE_UNSAFE_TODO(rawPtrA[dirtyBit] != rawPtrB[dirtyBit]))
+        {
             return false;
+        }
     }
 
     return true;
@@ -1542,7 +1547,6 @@ class CreateMonolithicPipelineTask : public ErrorContext, public angle::Closure
                                  const PipelineCacheAccess &pipelineCache,
                                  const PipelineLayout &pipelineLayout,
                                  const ShaderModuleMap &shaders,
-                                 const SpecializationConstants &specConsts,
                                  const GraphicsPipelineDesc &desc);
 
     // The compatible render pass is set only when the task is ready to run.  This is because the
@@ -1571,7 +1575,6 @@ class CreateMonolithicPipelineTask : public ErrorContext, public angle::Closure
     const RenderPass *mCompatibleRenderPass;
     const PipelineLayout &mPipelineLayout;
     const ShaderModuleMap &mShaders;
-    SpecializationConstants mSpecConsts;
     GraphicsPipelineDesc mDesc;
 
     // Results
@@ -1699,38 +1702,6 @@ class PipelineHelper final : public Resource
     WaitableMonolithicPipelineCreationTask mMonolithicPipelineCreationTask;
 };
 
-class FramebufferHelper : public Resource
-{
-  public:
-    FramebufferHelper();
-    ~FramebufferHelper() override;
-
-    FramebufferHelper(FramebufferHelper &&other);
-    FramebufferHelper &operator=(FramebufferHelper &&other);
-
-    angle::Result init(ErrorContext *context, const VkFramebufferCreateInfo &createInfo);
-    void destroy(Renderer *renderer);
-    void release(ContextVk *contextVk);
-
-    bool valid() { return mFramebuffer.valid(); }
-
-    const Framebuffer &getFramebuffer() const
-    {
-        ASSERT(mFramebuffer.valid());
-        return mFramebuffer;
-    }
-
-    Framebuffer &getFramebuffer()
-    {
-        ASSERT(mFramebuffer.valid());
-        return mFramebuffer;
-    }
-
-  private:
-    // Vulkan object.
-    Framebuffer mFramebuffer;
-};
-
 ANGLE_INLINE PipelineHelper::PipelineHelper(Pipeline &&pipeline, CacheLookUpFeedback feedback)
     : mPipeline(std::move(pipeline)), mCacheLookUpFeedback(feedback)
 {}
@@ -1744,6 +1715,8 @@ ANGLE_INLINE PipelineHelper &PipelineHelper::operator=(PipelineHelper &&other)
 
     return *this;
 }
+
+ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
 
 struct ImageSubresourceRange
 {
@@ -1785,7 +1758,10 @@ struct ImageOrBufferViewSubresourceSerial
 {
     ImageOrBufferViewSerial viewSerial;
     ImageSubresourceRange subresource;
+    uint32_t padding;
 };
+
+static_assert(sizeof(ImageOrBufferViewSubresourceSerial) == 16, "Size check failed");
 
 inline bool operator==(const ImageOrBufferViewSubresourceSerial &a,
                        const ImageOrBufferViewSubresourceSerial &b)
@@ -1794,7 +1770,7 @@ inline bool operator==(const ImageOrBufferViewSubresourceSerial &a,
 }
 
 constexpr ImageOrBufferViewSubresourceSerial kInvalidImageOrBufferViewSubresourceSerial = {
-    kInvalidImageOrBufferViewSerial, kInvalidImageSubresourceRange};
+    kInvalidImageOrBufferViewSerial, kInvalidImageSubresourceRange, 0};
 
 // Always starts with array element zero, with descriptorCount descriptors.
 struct WriteDescriptorDesc
@@ -1809,13 +1785,15 @@ static_assert(sizeof(WriteDescriptorDesc) == 4, "Size mismatch");
 
 struct DescriptorInfoDesc
 {
-    uint32_t samplerOrBufferSerial;
-    uint32_t imageViewSerialOrOffset;
+    uint64_t samplerOrBufferSerialOrStorageFormat;
+    uint64_t imageViewSerialOrOffset;
     uint32_t imageLayoutOrRange;
     uint32_t imageSubresourceRange;
 };
 
-static_assert(sizeof(DescriptorInfoDesc) == 16, "Size mismatch");
+static_assert(sizeof(DescriptorInfoDesc) == 24, "Size mismatch");
+
+ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
 
 // Generic description of a descriptor set. Used as a key when indexing descriptor set caches. The
 // key storage is an angle:FixedVector. Beyond a certain fixed size we'll end up using heap memory
@@ -1827,7 +1805,6 @@ static constexpr size_t kFastDescriptorSetDescLimit = 8;
 struct DescriptorDescHandles
 {
     VkBuffer buffer;
-    VkSampler sampler;
     VkImageView imageView;
     VkBufferView bufferView;
 };
@@ -1855,10 +1832,6 @@ class WriteDescriptorDescs
     void updateImages(const gl::ProgramExecutable &executable,
                       const ShaderInterfaceVariableInfoMap &variableInfoMap);
 
-    void updateInputAttachments(const gl::ProgramExecutable &executable,
-                                const ShaderInterfaceVariableInfoMap &variableInfoMap,
-                                const FramebufferVk *framebufferVk);
-
     void updateExecutableActiveTextures(const ShaderInterfaceVariableInfoMap &variableInfoMap,
                                         const gl::ProgramExecutable &executable);
 
@@ -1871,6 +1844,10 @@ class WriteDescriptorDescs
 
     void updateDynamicDescriptorsCount();
 
+    void initInputAttachments(const gl::ProgramExecutable &executable,
+                              const ShaderInterfaceVariableInfoMap &variableInfoMap,
+                              uint32_t maxColorCount);
+
     size_t size() const { return mDescs.size(); }
     bool empty() const { return mDescs.size() == 0; }
 
@@ -1878,6 +1855,8 @@ class WriteDescriptorDescs
     {
         return mDescs[bindingIndex];
     }
+
+    WriteDescriptorDesc &operator[](uint32_t bindingIndex) { return mDescs[bindingIndex]; }
 
     size_t getTotalDescriptorCount() const { return mCurrentInfoIndex; }
     size_t getDynamicDescriptorSetCount() const { return mDynamicDescriptorSetCount; }
@@ -1949,8 +1928,8 @@ class DescriptorSetDesc
     bool operator==(const DescriptorSetDesc &other) const
     {
         return mDescriptorInfos.size() == other.mDescriptorInfos.size() &&
-               memcmp(mDescriptorInfos.data(), other.mDescriptorInfos.data(),
-                      mDescriptorInfos.size() * sizeof(DescriptorInfoDesc)) == 0;
+               ANGLE_UNSAFE_TODO(memcmp(mDescriptorInfos.data(), other.mDescriptorInfos.data(),
+                                        mDescriptorInfos.size() * sizeof(DescriptorInfoDesc))) == 0;
     }
 
     DescriptorInfoDesc &getInfoDesc(uint32_t infoDescIndex)
@@ -2118,11 +2097,13 @@ class DescriptorSetDescBuilder final
                                const gl::ActiveTextureArray<TextureVk *> &activeImages,
                                const std::vector<gl::ImageUnit> &imageUnits,
                                const WriteDescriptorDescs &writeDescriptorDescs);
+
     angle::Result updateInputAttachments(ContextVk *contextVk,
                                          const gl::ProgramExecutable &executable,
                                          const ShaderInterfaceVariableInfoMap &variableInfoMap,
                                          const FramebufferVk *framebufferVk,
-                                         const WriteDescriptorDescs &writeDescriptorDescs);
+                                         WriteDescriptorDescs &writeDescriptorDescs,
+                                         gl::AttachmentsMask *currentMaskOut);
 
     // Specialized update for textures.
     void updatePreCacheActiveTextures(Context *context,
@@ -2132,9 +2113,14 @@ class DescriptorSetDescBuilder final
                                       const WriteDescriptorDescs &writeDescriptorDescs);
 
     const uint32_t *getDynamicOffsets() const { return mDynamicOffsets.data(); }
-    size_t getDynamicOffsetsSize() const { return mDynamicOffsets.size(); }
 
     const DescriptorDescHandles *getHandles() const { return mHandles.data(); }
+
+    void resetDescriptor(uint32_t infoIndex)
+    {
+        mDesc.getInfoDesc(infoIndex) = {};
+        mHandles[infoIndex]          = {};
+    }
 
   private:
     void updateInputAttachment(Context *context,
@@ -2263,11 +2249,12 @@ class FramebufferDesc
     // Used by SharedFramebufferCacheKey to indicate if this cache key is valid or not.
     uint16_t mIsValid : 1;
 
+    uint32_t mPadding;
+
     FramebufferAttachmentArray<ImageOrBufferViewSubresourceSerial> mSerials;
 };
 
-constexpr size_t kFramebufferDescSize = sizeof(FramebufferDesc);
-static_assert(kFramebufferDescSize == 156, "Size check failed");
+static_assert(sizeof(FramebufferDesc) == 312, "Size check failed");
 
 // Disable warnings about struct padding.
 ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
@@ -2447,7 +2434,7 @@ struct hash<rx::vk::SamplerDesc>
     {                                                            \
         size_t operator()(const rx::vk::Type##Serial &key) const \
         {                                                        \
-            return key.getValue();                               \
+            return std::hash<uint64_t>()(key.getValue());        \
         }                                                        \
     };
 
@@ -2589,14 +2576,14 @@ class FramebufferCache final : angle::NonCopyable
     bool get(ContextVk *contextVk, const vk::FramebufferDesc &desc, vk::Framebuffer &framebuffer);
     void insert(ContextVk *contextVk,
                 const vk::FramebufferDesc &desc,
-                vk::FramebufferHelper &&framebufferHelper);
+                vk::Framebuffer &&framebuffer);
     void erase(ContextVk *contextVk, const vk::FramebufferDesc &desc);
 
     size_t getSize() const { return mPayload.size(); }
     bool empty() const { return mPayload.empty(); }
 
   private:
-    angle::HashMap<vk::FramebufferDesc, vk::FramebufferHelper> mPayload;
+    angle::HashMap<vk::FramebufferDesc, vk::Framebuffer> mPayload;
     CacheStats mCacheStats;
 };
 
@@ -2794,6 +2781,8 @@ class GraphicsPipelineCache final : public HasCacheStats<VulkanCacheType::Graphi
                   vk::Pipeline &&pipeline,
                   vk::PipelineHelper **pipelineHelperOut);
 
+    void remove(const vk::GraphicsPipelineDesc &desc) { mPayload.erase(desc); }
+
     // Get a pipeline from the cache, if it exists
     ANGLE_INLINE bool getPipeline(const vk::GraphicsPipelineDesc &desc,
                                   const vk::GraphicsPipelineDesc **descPtrOut,
@@ -2887,7 +2876,7 @@ class SamplerCache final : public HasCacheStats<VulkanCacheType::Sampler>
     SamplerCache();
     ~SamplerCache() override;
 
-    void destroy(vk::Renderer *renderer, bool orphanReferencedSamplers);
+    void destroy(vk::Renderer *renderer);
 
     angle::Result getSampler(ContextVk *contextVk,
                              const vk::SamplerDesc &desc,
@@ -2905,7 +2894,7 @@ class SamplerYcbcrConversionCache final
     SamplerYcbcrConversionCache();
     ~SamplerYcbcrConversionCache() override;
 
-    void destroy(vk::Renderer *renderer, bool orphanConversionInfo);
+    void destroy(vk::Renderer *renderer);
 
     angle::Result getSamplerYcbcrConversion(vk::ErrorContext *context,
                                             const vk::YcbcrConversionDesc &ycbcrConversionDesc,

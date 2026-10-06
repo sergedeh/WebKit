@@ -56,7 +56,7 @@ ImageBufferShareableAllocator::ImageBufferShareableAllocator(const ProcessIdenti
 }
 #endif
 
-RefPtr<ImageBuffer> ImageBufferShareableAllocator::createImageBuffer(const FloatSize& size, const DestinationColorSpace& colorSpace, RenderingMode renderingMode) const
+RefPtr<ImageBuffer> ImageBufferShareableAllocator::createImageBuffer(const FloatSize& size, const ColorSpace& colorSpace, RenderingMode renderingMode) const
 {
 #if HAVE(IOSURFACE)
     if (renderingMode == RenderingMode::Accelerated) {
@@ -94,7 +94,7 @@ RefPtr<PixelBuffer> ImageBufferShareableAllocator::createPixelBuffer(const Pixel
     if (!pixelBuffer)
         return nullptr;
 
-    auto handle = pixelBuffer->protectedData()->createHandle(SharedMemory::Protection::ReadOnly);
+    auto handle = protect(pixelBuffer->data())->createHandle(SharedMemory::Protection::ReadOnly);
     if (!handle)
         return nullptr;
 

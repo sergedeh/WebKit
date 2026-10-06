@@ -293,6 +293,8 @@ static NSNumber *_currentBadge;
         _WKProcessPoolConfiguration *processConfiguration = [[_WKProcessPoolConfiguration alloc] init];
         if (_settingsController.perWindowWebProcessesDisabled)
             processConfiguration.usesSingleWebProcess = YES;
+        else
+            processConfiguration.usesWebProcessCache = YES;
 
         configuration.processPool = [[WKProcessPool alloc] _initWithConfiguration:processConfiguration];
 #pragma clang diagnostic pop
@@ -636,26 +638,6 @@ static NSNumber *_currentBadge;
     [[self persistentDataStore] removeDataOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] modifiedSince:[NSDate distantPast] completionHandler:^{
         NSLog(@"Did clear default store website data.");
     }];
-}
-
-static const char* windowProxyPropertyDescription(WKWindowProxyProperty property)
-{
-    switch (property) {
-    case WKWindowProxyPropertyInitialOpen:
-        return "initialOpen";
-    case WKWindowProxyPropertyClosed:
-        return "closed";
-    case WKWindowProxyPropertyPostMessage:
-        return "postMessage";
-    case WKWindowProxyPropertyOther:
-        return "other";
-    }
-    return "other";
-}
-
-- (void)websiteDataStore:(WKWebsiteDataStore *)dataStore domain:(NSString *)registrableDomain didOpenDomainViaWindowOpen:(NSString *)openedRegistrableDomain withProperty:(WKWindowProxyProperty)property directly:(BOOL)directly
-{
-    NSLog(@"MiniBrowser detected cross-tab WindowProxy access between parent origin %@ and child origin %@ via property %s (directlyAccessed = %d)", registrableDomain, openedRegistrableDomain, windowProxyPropertyDescription(property), directly);
 }
 
 @end

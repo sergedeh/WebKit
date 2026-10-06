@@ -25,8 +25,8 @@
 
 #import "config.h"
 
-#import "PlatformUtilities.h"
-#import "SoftLinkShim.h"
+#import "Helpers/PlatformUtilities.h"
+#import "Helpers/SoftLinkShim.h"
 #import <CoreFoundation/CoreFoundation.h>
 #import <WebCore/CaptionUserPreferencesMediaAF.h>
 #import <WebCore/Color.h>
@@ -60,16 +60,6 @@
 #if HAVE(AVLEGIBLEMEDIAOPTIONSMENUCONTROLLER)
 - (void)findAndDismissContextMenus;
 #endif
-@end
-
-// Simple delegate for testing
-@interface TestContextMenuDelegate : NSObject <UIContextMenuInteractionDelegate>
-@end
-
-@implementation TestContextMenuDelegate
-- (UIContextMenuConfiguration *)contextMenuInteraction:(UIContextMenuInteraction *)interaction configurationForMenuAtLocation:(CGPoint)location {
-    return nil;
-}
 @end
 #endif
 
@@ -352,13 +342,13 @@ TEST_F(CaptionPreferenceTests, FontFace)
     auto preferences = CaptionUserPreferencesMediaAF::create(group);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyFontDescriptorForStyle, adoptCF(CTFontDescriptorCreateWithNameAndSize(CFSTR(".AppleSystemUIFontMonospaced-Romulan"), 10)));
-    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().data(), "font-family: \"ui-monospace\";");
+    EXPECT_EQ(preferences->captionsDefaultFontCSS(), "font-family: \"ui-monospace\";"_s);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyFontDescriptorForStyle, adoptCF(CTFontDescriptorCreateWithNameAndSize(CFSTR(".AppleSystemUIFont-Klingon"), 10)));
-    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().data(), "font-family: \"system-ui\";");
+    EXPECT_EQ(preferences->captionsDefaultFontCSS(), "font-family: \"system-ui\";"_s);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyFontDescriptorForStyle, adoptCF(CTFontDescriptorCreateWithNameAndSize(CFSTR("WingDings"), 10)));
-    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().data(), "font-family: \"WingDings\";");
+    EXPECT_EQ(preferences->captionsDefaultFontCSS(), "font-family: \"WingDings\";"_s);
 }
 
 TEST_F(CaptionPreferenceTests, FontSize)
@@ -376,15 +366,10 @@ TEST_F(CaptionPreferenceTests, FontSize)
     float fontScale = preferences->captionFontSizeScaleAndImportance(important);
     EXPECT_EQ(fontScale, 0.10f);
 
-    EXPECT_STREQ(preferences->captionsFontSizeCSS().utf8().data(), "font-size: 10cqmin;");
+    EXPECT_EQ(preferences->captionsFontSizeCSS(), "font-size: 10cqmin;"_s);
 }
 
-// FIXME: https://bugs.webkit.org/show_bug.cgi?id=302171
-#if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED < 150000 && defined(__x86_64__)
-TEST_F(CaptionPreferenceTests, DISABLED_Colors)
-#else
 TEST_F(CaptionPreferenceTests, Colors)
-#endif
 {
     MediaAccessibilityShim shim;
 
@@ -395,17 +380,17 @@ TEST_F(CaptionPreferenceTests, Colors)
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyBackgroundColor, cachedCGColor(Color::blue));
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyWindowColor, cachedCGColor(Color::green));
 
-    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().data(), "color:#ff0000;");
-    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().data(), "background-color:#0000ff;");
-    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().data(), "background-color:#00ff00;");
+    EXPECT_EQ(preferences->captionsTextColorCSS(), "color:#ff0000;"_s);
+    EXPECT_EQ(preferences->captionsBackgroundCSS(), "background-color:#0000ff;"_s);
+    EXPECT_EQ(preferences->captionsWindowCSS(), "background-color:#00ff00;"_s);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetForegroundOpacity, 0.75);
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetBackgroundOpacity, 0.5);
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetWindowOpacity, 0.25);
 
-    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().data(), "color:rgba(255, 0, 0, 0.75);");
-    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().data(), "background-color:rgba(0, 0, 255, 0.5);");
-    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().data(), "background-color:rgba(0, 255, 0, 0.25);");
+    EXPECT_EQ(preferences->captionsTextColorCSS(), "color:rgba(255, 0, 0, 0.75);"_s);
+    EXPECT_EQ(preferences->captionsBackgroundCSS(), "background-color:rgba(0, 0, 255, 0.5);"_s);
+    EXPECT_EQ(preferences->captionsWindowCSS(), "background-color:rgba(0, 255, 0, 0.25);"_s);
 }
 
 TEST_F(CaptionPreferenceTests, BorderRadius)
@@ -416,7 +401,7 @@ TEST_F(CaptionPreferenceTests, BorderRadius)
     auto preferences = CaptionUserPreferencesMediaAF::create(group);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetWindowRoundedCornerRadius, 8.f);
-    EXPECT_STREQ(preferences->windowRoundedCornerRadiusCSS().utf8().data(), "border-radius:8px;padding:2px;");
+    EXPECT_EQ(preferences->windowRoundedCornerRadiusCSS(), "border-radius:8px;padding:2px;"_s);
 }
 
 TEST_F(CaptionPreferenceTests, TextEdge)
@@ -426,19 +411,67 @@ TEST_F(CaptionPreferenceTests, TextEdge)
     UniqueRef group = PageGroup::create("CaptionPreferenceTests"_s);
     auto preferences = CaptionUserPreferencesMediaAF::create(group);
 
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "");
+    EXPECT_EQ(preferences->captionsTextEdgeCSS(), ""_s);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetTextEdgeStyle, kMACaptionAppearanceTextEdgeStyleRaised);
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "text-shadow:-.1em -.1em .16em black;");
+    EXPECT_EQ(preferences->captionsTextEdgeCSS(), "text-shadow:-.1em -.1em .16em black;"_s);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetTextEdgeStyle, kMACaptionAppearanceTextEdgeStyleDepressed);
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "text-shadow:.1em .1em .16em black;");
+    EXPECT_EQ(preferences->captionsTextEdgeCSS(), "text-shadow:.1em .1em .16em black;"_s);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetTextEdgeStyle, kMACaptionAppearanceTextEdgeStyleDropShadow);
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "text-shadow:0 .1em .16em black;stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;");
+    EXPECT_EQ(preferences->captionsTextEdgeCSS(), "text-shadow:0 .1em .16em black;stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;"_s);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetTextEdgeStyle, kMACaptionAppearanceTextEdgeStyleUniform);
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;");
+    EXPECT_EQ(preferences->captionsTextEdgeCSS(), "stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;"_s);
+}
+
+TEST_F(CaptionPreferenceTests, PreviewStyles)
+{
+    if (!CaptionUserPreferencesMediaAF::canSetActiveProfileID())
+        return;
+
+    MediaAccessibilityShim shim;
+
+    auto shimmedMACaptionAppearanceExecuteBlockForProfileID = [](CFStringRef profileID, void (^aBlock)(void)) -> void {
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetDisplayType, kMACaptionAppearanceDisplayTypeAutomatic);
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyForegroundColor, cachedCGColor(Color::magenta));
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyBackgroundColor, cachedCGColor(Color::yellow));
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyWindowColor, cachedCGColor(Color::cyan));
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyFontDescriptorForStyle, adoptCF(CTFontDescriptorCreateWithNameAndSize(CFSTR(".AppleSystemUIFontMonospaced"), 10)));
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetForegroundOpacity, 0.75);
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetBackgroundOpacity, 0.5);
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetWindowOpacity, 0.25);
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetWindowRoundedCornerRadius, (CGFloat)5.f);
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetRelativeCharacterSize, (CGFloat)2.f);
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetTextEdgeStyle, kMACaptionAppearanceTextEdgeStyleDropShadow);
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyProfileIDs, adoptCF((__bridge CFArrayRef)@[@"Profile 1", @"Profile 2", @"Profile 3"]));
+        SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyActiveProfileID, CFSTR("Profile 1"));
+
+        aBlock();
+    };
+    SoftLinkShim<void, CFStringRef, void (^)(void)> MACaptionAppearanceExecuteBlockForProfileIDShim { &softLinkMediaAccessibilityMACaptionAppearanceExecuteBlockForProfileID, shimmedMACaptionAppearanceExecuteBlockForProfileID, canLoad_MediaAccessibility_MACaptionAppearanceExecuteBlockForProfileID };
+
+    UniqueRef group = PageGroup::create("CaptionPreferenceTests"_s);
+    auto preferences = CaptionUserPreferencesMediaAF::create(group);
+
+    EXPECT_EQ(preferences->captionsTextColorCSS(), "color:#ffffff;"_s);
+    EXPECT_EQ(preferences->captionsBackgroundCSS(), "background-color:#000000;"_s);
+    EXPECT_EQ(preferences->captionsWindowCSS(), "background-color:#000000;"_s);
+    EXPECT_EQ(preferences->windowRoundedCornerRadiusCSS(), ""_s);
+    EXPECT_EQ(preferences->captionsDefaultFontCSS(), "font-family: \"system-ui\";"_s);
+    EXPECT_EQ(preferences->captionsFontSizeCSS(), "font-size: 5cqmin;"_s);
+    EXPECT_EQ(preferences->captionsTextEdgeCSS(), ""_s);
+
+    preferences->setCaptionPreviewProfileID("Profile 2"_s);
+
+    EXPECT_EQ(preferences->captionsTextColorCSS(), "color:rgba(255, 0, 255, 0.75);"_s);
+    EXPECT_EQ(preferences->captionsBackgroundCSS(), "background-color:rgba(255, 255, 0, 0.5);"_s);
+    EXPECT_EQ(preferences->captionsWindowCSS(), "background-color:rgba(0, 255, 255, 0.25);"_s);
+    EXPECT_EQ(preferences->windowRoundedCornerRadiusCSS(), "border-radius:5px;padding:1.25px;"_s);
+    EXPECT_EQ(preferences->captionsDefaultFontCSS(), "font-family: \"ui-monospace\";"_s);
+    EXPECT_EQ(preferences->captionsFontSizeCSS(), "font-size: 10cqmin;"_s);
+    EXPECT_EQ(preferences->captionsTextEdgeCSS(), "text-shadow:0 .1em .16em black;stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;"_s);
 }
 
 #if !HAVE(AVLEGIBLEMEDIAOPTIONSMENUCONTROLLER)
@@ -500,10 +533,10 @@ TEST_F(CaptionPreferenceTests, CaptionStyleMenuHighlight)
         // TODO: Menu highlighting is currently not supported on IOS_FAMILY
 #if PLATFORM(MAC)
         [menu performSelector:@selector(highlightItem:) withObject:[menu itemAtIndex:1]];
-        EXPECT_WK_STREQ("Profile 2", CaptionUserPreferencesMediaAF::platformActiveProfileID());
+        EXPECT_WK_STREQ("Profile 1", CaptionUserPreferencesMediaAF::platformActiveProfileID());
 
         [menu performSelector:@selector(highlightItem:) withObject:[menu itemAtIndex:2]];
-        EXPECT_WK_STREQ("Profile 3", CaptionUserPreferencesMediaAF::platformActiveProfileID());
+        EXPECT_WK_STREQ("Profile 1", CaptionUserPreferencesMediaAF::platformActiveProfileID());
 #endif
     });
 
@@ -709,5 +742,17 @@ TEST_F(CaptionPreferenceTests, ReceievedDidOpenWhenHighlighted)
 }
 #endif
 
+TEST_F(CaptionPreferenceTests, NullProfileNameShouldYieldEmptyStyleSheet)
+{
+    if (!CaptionUserPreferencesMediaAF::canSetActiveProfileID())
+        return;
+
+    MediaAccessibilityShim shim;
+    UniqueRef group = PageGroup::create("CaptionPreferenceTests"_s);
+    auto preferences = CaptionUserPreferencesMediaAF::create(group);
+
+    SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyActiveProfileID, CFSTR(""));
+    EXPECT_TRUE(preferences->captionsStyleSheetOverride().isEmpty());
+}
 
 }

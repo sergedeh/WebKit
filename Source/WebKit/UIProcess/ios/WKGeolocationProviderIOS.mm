@@ -109,7 +109,7 @@ static void setEnableHighAccuracy(WKGeolocationManagerRef geolocationManager, bo
     // If we have the last position, it is from the initialization or warm up. It is the last known
     // good position so we can return it directly.
     if (_lastActivePosition)
-        _geolocationManager->providerDidChangePosition(_lastActivePosition.get());
+        protect(_geolocationManager)->providerDidChangePosition(_lastActivePosition.get());
 }
 
 - (void)_stopUpdating
@@ -143,7 +143,8 @@ static void setEnableHighAccuracy(WKGeolocationManagerRef geolocationManager, bo
     // This is useful for WebKitTestRunner to provide a dummy geolocation provider. It is also used by certain apps to deny all
     // geolocation authorization as a way to disable support for geolocation.
     Ref protectedProcessPool { processPool };
-    if (wrapper(protectedProcessPool.get())._coreLocationProvider) {
+    RetainPtr wrappedProcessPool = wrapper(protectedProcessPool.get());
+    if (wrappedProcessPool.get()._coreLocationProvider) {
         _geolocationManager = protectedProcessPool->supplement<WebKit::WebGeolocationManagerProxy>();
         WKGeolocationProviderV1 providerCallback = {
             { 1, self },
@@ -152,7 +153,7 @@ static void setEnableHighAccuracy(WKGeolocationManagerRef geolocationManager, bo
             setEnableHighAccuracy
         };
         WKGeolocationManagerSetProvider(toAPI(_geolocationManager.get()), &providerCallback.base);
-        _coreLocationProvider = wrapper(protectedProcessPool.get())._coreLocationProvider;
+        _coreLocationProvider = wrappedProcessPool.get()._coreLocationProvider;
         [_coreLocationProvider setListener:self];
     }
     return self;
@@ -161,7 +162,8 @@ static void setEnableHighAccuracy(WKGeolocationManagerRef geolocationManager, bo
 - (void)decidePolicyForGeolocationRequestFromOrigin:(WebKit::FrameInfoData&&)frameInfo completionHandler:(Function<void(bool)>&&)completionHandler view:(WKWebView *)contentView
 {
     WebCore::RegistrableDomain registrableDomain(frameInfo.securityOrigin);
-    GeolocationRequestData geolocationRequestData { [contentView URL], WTF::move(frameInfo), WTF::move(completionHandler), contentView };
+    URL requestingURL = frameInfo.request.url();
+    GeolocationRequestData geolocationRequestData { WTF::move(requestingURL), WTF::move(frameInfo), WTF::move(completionHandler), contentView };
     _requestsWaitingForCoreLocationAuthorization.append(WTF::move(geolocationRequestData));
     if (_coreLocationProvider) {
         // Step 1: ask the user if the app can use Geolocation.
@@ -208,7 +210,7 @@ static void setEnableHighAccuracy(WKGeolocationManagerRef geolocationManager, bo
     }
 
     auto policyListener = adoptNS([[WKWebAllowDenyPolicyListener alloc] initWithCompletionHandler:WTF::move(decisionHandler)]);
-    [[WKWebGeolocationPolicyDecider sharedPolicyDecider] decidePolicyForGeolocationRequestFromOrigin:WebCore::SecurityOriginData::fromURLWithoutStrictOpaqueness(request.url) requestingURL:request.url.createNSURL().get() view:request.view.get() listener:policyListener.get()];
+    [[WKWebGeolocationPolicyDecider sharedPolicyDecider] decidePolicyForGeolocationRequestFromOrigin:request.frameInfo.topOrigin requestingURL:request.url.createNSURL().get() view:request.view.get() listener:policyListener.get()];
 }
 
 - (void)geolocationAuthorizationDenied
@@ -221,17 +223,17 @@ static void setEnableHighAccuracy(WKGeolocationManagerRef geolocationManager, bo
 - (void)positionChanged:(_WKGeolocationPosition *)position
 {
     _lastActivePosition = position->_geolocationPosition.get();
-    _geolocationManager->providerDidChangePosition(_lastActivePosition.get());
+    protect(_geolocationManager)->providerDidChangePosition(_lastActivePosition.get());
 }
 
 - (void)errorOccurred:(NSString *)errorMessage
 {
-    _geolocationManager->providerDidFailToDeterminePosition(errorMessage);
+    protect(_geolocationManager)->providerDidFailToDeterminePosition(errorMessage);
 }
 
 - (void)resetGeolocation
 {
-    _geolocationManager->resetPermissions();
+    protect(_geolocationManager)->resetPermissions();
 }
 
 @end

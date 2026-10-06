@@ -32,25 +32,23 @@ public:
 
     virtual ~FormAssociatedElement() { RELEASE_ASSERT(!m_form); }
     virtual HTMLElement& asHTMLElement() = 0;
-    Ref<HTMLElement> asProtectedHTMLElement() { return asHTMLElement(); }
     virtual const HTMLElement& asHTMLElement() const = 0;
-    Ref<const HTMLElement> asProtectedHTMLElement() const { return asHTMLElement(); }
-    virtual bool isFormListedElement() const = 0;
+    virtual bool NODELETE isFormListedElement() const = 0;
 
     virtual void formWillBeDestroyed() { m_form = nullptr; }
 
     HTMLFormElement* form() const { return m_form; }
-    RefPtr<HTMLFormElement> protectedForm() const { return m_form; }
     virtual RefPtr<HTMLFormElement> formForBindings() const;
 
     void setForm(RefPtr<HTMLFormElement>&&);
+    void setFormSetByParser(HTMLFormElement* form) { ASSERT(!m_formSetByParser); m_formSetByParser = form; }
     virtual void elementInsertedIntoAncestor(Element&, Node::InsertionType);
     virtual void elementRemovedFromAncestor(Element&, Node::RemovalType);
 
-    virtual FormAssociatedElement* asFormAssociatedElement() = 0;
+    virtual FormAssociatedElement* NODELETE asFormAssociatedElement() = 0;
 
 protected:
-    explicit FormAssociatedElement(HTMLFormElement*);
+    FormAssociatedElement() = default;
 
     virtual void resetFormOwner() = 0;
     virtual void setFormInternal(RefPtr<HTMLFormElement>&&);

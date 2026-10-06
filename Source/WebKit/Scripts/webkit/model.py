@@ -24,9 +24,11 @@ import itertools
 
 from collections import Counter, defaultdict
 from .opaque_ipc_types import is_opaque_type, opaque_ipc_types
+from .untrusted_origins import conveys_untrusted_value, is_privileged_receiver, unwrap_if_untrusted, unwrap_untrusted
 
 BUILTIN_ATTRIBUTE = "Builtin"
 MAINTHREADCALLBACK_ATTRIBUTE = "MainThreadCallback"
+ANYTHREADCALLBACK_ATTRIBUTE = "AnyThread"
 CALL_WITH_REPLY_ID_ATTRIBUTE = "CallWithReplyID"
 ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE = "AllowedWhenWaitingForSyncReply"
 ALLOWEDWHENWAITINGFORSYNCREPLYDURINGUNBOUNDEDIPC_ATTRIBUTE = "AllowedWhenWaitingForSyncReplyDuringUnboundedIPC"
@@ -34,7 +36,7 @@ SYNCHRONOUS_ATTRIBUTE = 'Synchronous'
 STREAM_ATTRIBUTE = "Stream"
 
 class MessageReceiver(object):
-    def __init__(self, name, superclass, attributes, receiver_enabled_by, receiver_enabled_by_exception, receiver_enabled_by_conjunction, receiver_dispatched_from, receiver_dispatched_from_exception, receiver_dispatched_to, receiver_dispatched_to_exception, shared_preferences_needs_connection, messages, condition, namespace, wants_send_cancel_reply, swift_receiver, swift_receiver_build_enabled_by):
+    def __init__(self, name, superclass, attributes, receiver_enabled_by, receiver_enabled_by_exception, receiver_enabled_by_conjunction, receiver_dispatched_from, receiver_dispatched_from_exception, receiver_dispatched_to, receiver_dispatched_to_exception, shared_preferences_needs_connection, messages, condition, namespace, wants_send_cancel_reply, swift_receiver, swift_receiver_build_enabled_by, receiver_name):
         self.name = name
         self.superclass = superclass
         self.attributes = frozenset(attributes or [])
@@ -52,6 +54,7 @@ class MessageReceiver(object):
         self.wants_send_cancel_reply = wants_send_cancel_reply
         self.swift_receiver = swift_receiver
         self.swift_receiver_build_enabled_by = swift_receiver_build_enabled_by
+        self.receiver_name = receiver_name
 
     def iterparameters(self):
         return itertools.chain((parameter for message in self.messages for parameter in message.parameters),
@@ -69,14 +72,33 @@ class MessageReceiver(object):
     def enforce_opaque_ipc_types_usage(self):
         for message in self.messages:
             for parameter in message.parameters:
-                if is_opaque_type(parameter.type):
-                    if not opaque_ipc_types.message_param_tracked(self.name, message.name, parameter.name, parameter.type):
-                        raise Exception(f"Justification needed in opaque_ipc_types.tracking.in: [] MessageParam {self.name}.{message.name} {parameter.name} {parameter.type}")
+                # An opaque type stays opaque inside IPC::Untrusted<>, so look through the wrapper.
+                parameter_type = unwrap_if_untrusted(parameter.type)
+                if is_opaque_type(parameter_type):
+                    if not opaque_ipc_types.message_param_tracked(self.name, message.name, parameter.name, parameter_type):
+                        raise Exception(f"Justification needed in opaque_ipc_types.tracking.in: [] MessageParam {self.name}.{message.name} {parameter.name} {parameter_type}")
             if message.reply_parameters is not None:
                 for parameter in message.reply_parameters:
-                    if is_opaque_type(parameter.type):
-                        if not opaque_ipc_types.message_param_reply_tracked(self.name, message.name, parameter.name, parameter.type):
-                            raise Exception(f"Justification needed in opaque_ipc_types.tracking.in: [] MessageParamReply {self.name}.{message.name} {parameter.name} {parameter.type}")
+                    parameter_type = unwrap_if_untrusted(parameter.type)
+                    if is_opaque_type(parameter_type):
+                        if not opaque_ipc_types.message_param_reply_tracked(self.name, message.name, parameter.name, parameter_type):
+                            raise Exception(f"Justification needed in opaque_ipc_types.tracking.in: [] MessageParamReply {self.name}.{message.name} {parameter.name} {parameter_type}")
+
+    def enforce_untrusted_origin_usage(self):
+        """A privileged process must not be handed a bare origin or URL by web content.
+        """
+        if not is_privileged_receiver(self):
+            return
+        for message in self.messages:
+            for parameter in message.parameters:
+                untrusted_type = conveys_untrusted_value(parameter.type)
+                if untrusted_type is None or unwrap_untrusted(parameter.type):
+                    continue
+                raise Exception(
+                    f"{self.name}.{message.name} passes {untrusted_type} from web content into the "
+                    f"{self.receiver_dispatched_to} process as a bare value. Declare the parameter as "
+                    f"IPC::Untrusted<{parameter.type}> and either validate it with one of the "
+                    f"designated validation procedures or call unsafeExtractWithoutValidation() with a reason.")
 
 
 class Message(object):
@@ -109,7 +131,7 @@ class Parameter(object):
         return attribute in self.attributes
 
 
-ipc_receiver = MessageReceiver(name="IPC", superclass=None, attributes=[BUILTIN_ATTRIBUTE], receiver_enabled_by=None, receiver_enabled_by_exception=False, receiver_enabled_by_conjunction=None, receiver_dispatched_from=None, receiver_dispatched_from_exception=None, receiver_dispatched_to=None, receiver_dispatched_to_exception=None, shared_preferences_needs_connection=False, swift_receiver=False, swift_receiver_build_enabled_by=None, messages=[
+ipc_receiver = MessageReceiver(name="IPC", superclass=None, attributes=[BUILTIN_ATTRIBUTE], receiver_enabled_by=None, receiver_enabled_by_exception=False, receiver_enabled_by_conjunction=None, receiver_dispatched_from=None, receiver_dispatched_from_exception=None, receiver_dispatched_to=None, receiver_dispatched_to_exception=None, shared_preferences_needs_connection=False, swift_receiver=False, swift_receiver_build_enabled_by=None, receiver_name=None, messages=[
     Message('WrappedAsyncMessageForTesting', [], [], attributes=[BUILTIN_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE], condition=None),
     Message('SyncMessageReply', [], [], attributes=[BUILTIN_ATTRIBUTE], condition=None),
     Message('CancelSyncMessageReply', [], [], attributes=[BUILTIN_ATTRIBUTE], condition=None),
@@ -117,6 +139,7 @@ ipc_receiver = MessageReceiver(name="IPC", superclass=None, attributes=[BUILTIN_
     Message('LegacySessionState', [], [], attributes=[BUILTIN_ATTRIBUTE], condition=None),
     Message('SetStreamDestinationID', [], [], attributes=[BUILTIN_ATTRIBUTE], condition=None),
     Message('ProcessOutOfStreamMessage', [], [], attributes=[BUILTIN_ATTRIBUTE], condition=None),
+    Message('InitializeStreamClientConnection', [], [], attributes=[BUILTIN_ATTRIBUTE], condition=None),
 ], condition=None, namespace="WebKit", wants_send_cancel_reply=False)
 
 

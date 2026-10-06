@@ -35,6 +35,7 @@
 #include <WebCore/StyleSingleAnimationName.h>
 #include <WebCore/StyleSingleAnimationRange.h>
 #include <WebCore/StyleSingleAnimationTimeline.h>
+#include <WebCore/StyleSingleAnimationTrigger.h>
 #include <WebCore/StyleValueTypes.h>
 
 namespace WebCore {
@@ -48,6 +49,7 @@ namespace Style {
     macro(Animation, AnimationTimingFunction, EasingFunction, timingFunction, TimingFunction) \
     macro(Animation, AnimationRangeStart, SingleAnimationRangeStart, rangeStart, RangeStart) \
     macro(Animation, AnimationRangeEnd, SingleAnimationRangeEnd, rangeEnd, RangeEnd) \
+    macro(Animation, AnimationTrigger, SingleAnimationTrigger, trigger, Trigger) \
 \
 
 #define FOR_EACH_ANIMATION_VALUE(macro) \
@@ -77,18 +79,19 @@ struct Animation {
     Animation();
     Animation(SingleAnimationName&&);
 
-    const SingleAnimationName& name() const { return m_data->m_name; }
+    const SingleAnimationName& name() const LIFETIME_BOUND { return m_data->m_name; }
     SingleAnimationDelay delay() const { return m_data->m_delay; }
     AnimationDirection direction() const { return static_cast<AnimationDirection>(m_data->m_direction); }
     SingleAnimationDuration duration() const { return m_data->m_duration; }
     AnimationFillMode fillMode() const { return static_cast<AnimationFillMode>(m_data->m_fillMode); }
     SingleAnimationIterationCount iterationCount() const { return m_data->m_iterationCount; }
     AnimationPlayState playState() const { return static_cast<AnimationPlayState>(m_data->m_playState); }
-    const SingleAnimationTimeline& timeline() const { return m_data->m_timeline; }
-    const EasingFunction& timingFunction() const { return m_data->m_timingFunction; }
+    const SingleAnimationTimeline& timeline() const LIFETIME_BOUND { return m_data->m_timeline; }
+    const EasingFunction& timingFunction() const LIFETIME_BOUND { return m_data->m_timingFunction; }
     CompositeOperation compositeOperation() const { return static_cast<CompositeOperation>(m_data->m_compositeOperation); }
-    const SingleAnimationRangeStart& rangeStart() const { return m_data->m_rangeStart; }
-    const SingleAnimationRangeEnd& rangeEnd() const { return m_data->m_rangeEnd; }
+    const SingleAnimationRangeStart& rangeStart() const LIFETIME_BOUND { return m_data->m_rangeStart; }
+    const SingleAnimationRangeEnd& rangeEnd() const LIFETIME_BOUND { return m_data->m_rangeEnd; }
+    const SingleAnimationTrigger& trigger() const LIFETIME_BOUND { return m_data->m_trigger; }
 
     static SingleAnimationName initialName() { return CSS::Keyword::None { }; }
     static SingleAnimationDelay initialDelay() { return 0; }
@@ -102,8 +105,9 @@ struct Animation {
     static EasingFunction initialTimingFunction() { return EasingFunction { CubicBezierTimingFunction::create() }; }
     static SingleAnimationRangeStart initialRangeStart() { return CSS::Keyword::Normal { }; }
     static SingleAnimationRangeEnd initialRangeEnd() { return CSS::Keyword::Normal { }; }
+    static SingleAnimationTrigger initialTrigger() { return CSS::Keyword::None { }; }
 
-    const std::optional<EasingFunction>& defaultTimingFunctionForKeyframes() const { return m_data->m_defaultTimingFunctionForKeyframes; }
+    const std::optional<EasingFunction>& defaultTimingFunctionForKeyframes() const LIFETIME_BOUND { return m_data->m_defaultTimingFunctionForKeyframes; }
     void setDefaultTimingFunctionForKeyframes(std::optional<EasingFunction>&& function) { m_data->m_defaultTimingFunctionForKeyframes = WTF::move(function); }
 
     FOR_EACH_ANIMATION_REFERENCE(DECLARE_COORDINATED_VALUE_LIST_GETTER_AND_SETTERS_REFERENCE)
@@ -131,7 +135,6 @@ struct Animation {
 
     // CoordinatedValueList interface.
 
-    static constexpr auto computedValueUsesUsedValues = false;
     static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyAnimationName> { };
     static constexpr auto properties = std::tuple { FOR_EACH_ANIMATION_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
     static Animation clone(const Animation& other) { return Animation { Data::create(other.m_data) }; }
@@ -156,6 +159,7 @@ private:
         std::optional<EasingFunction> m_defaultTimingFunctionForKeyframes;
         SingleAnimationRangeStart m_rangeStart;
         SingleAnimationRangeEnd m_rangeEnd;
+        SingleAnimationTrigger m_trigger;
         PREFERRED_TYPE(AnimationDirection) unsigned m_direction : 2;
         PREFERRED_TYPE(AnimationFillMode) unsigned m_fillMode : 2;
         PREFERRED_TYPE(AnimationPlayState) unsigned m_playState : 2;
@@ -165,8 +169,8 @@ private:
     };
 
     // Needed by macros to access members.
-    Data& data() { return m_data.get(); }
-    const Data& data() const { return m_data.get(); }
+    Data& data() LIFETIME_BOUND { return m_data.get(); }
+    const Data& data() const LIFETIME_BOUND { return m_data.get(); }
 
     Animation(Ref<Data>&& data)
         : m_data { WTF::move(data) }

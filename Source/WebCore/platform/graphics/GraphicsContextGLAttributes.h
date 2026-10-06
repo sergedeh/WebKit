@@ -50,13 +50,10 @@ using PlatformGPUID = uint64_t;
 
 struct GraphicsContextGLAttributes {
     bool alpha { true };
-    bool depth { true };
-    bool stencil { false };
-    bool antialias { true };
     bool premultipliedAlpha { true };
-    bool preserveDrawingBuffer { false };
     GraphicsContextGLPowerPreference powerPreference { GraphicsContextGLPowerPreference::Default };
     bool isWebGL2 { false };
+    bool supportWebGLDraftExtensions { false };
 #if PLATFORM(MAC)
     PlatformGPUID windowGPUID { 0 };
 #endif

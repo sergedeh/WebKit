@@ -36,10 +36,12 @@
 #import <wtf/WeakObjCPtr.h>
 
 OBJC_CLASS PlatformTextAlternatives;
+OBJC_CLASS UIScreen;
 OBJC_CLASS WKContentView;
 OBJC_CLASS WKEditorUndoTarget;
 
 namespace WebCore {
+class ColorSpace;
 enum class DOMPasteAccessCategory : uint8_t;
 enum class DOMPasteAccessResponse : uint8_t;
 struct PromisedAttachmentInfo;
@@ -69,7 +71,7 @@ private:
     // PageClient
     Ref<DrawingAreaProxy> createDrawingAreaProxy(WebProcessProxy&) override;
     void setViewNeedsDisplay(const WebCore::Region&) override;
-    void requestScroll(const WebCore::FloatPoint& scrollPosition, const WebCore::IntPoint& scrollOrigin, WebCore::ScrollIsAnimated) override;
+    void requestScroll(const WebCore::FloatPoint& scrollPosition, const WebCore::IntPoint& scrollOrigin, WebCore::ScrollIsAnimated, WebCore::InterruptScrollAnimation) override;
     WebCore::FloatPoint viewScrollPosition() override;
     WebCore::IntSize viewSize() override;
     bool isViewWindowActive() override;
@@ -80,9 +82,13 @@ private:
     bool isViewInWindow() override;
     bool isViewVisibleOrOccluded() override;
     bool isVisuallyIdle() override;
+    WebCore::ColorSpace colorSpace() override;
+
     void processDidExit() override;
     void processWillSwap() override;
     void didRelaunchProcess() override;
+    void didStartUsingProcessForSiteIsolation(WebProcessProxy&, LayerHostingContextID) override;
+    void didStopUsingProcessForSiteIsolation(WebProcessProxy&) override;
 
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)
     void didCreateContextInWebProcessForVisibilityPropagation(LayerHostingContextID) override;
@@ -93,9 +99,10 @@ private:
     void didCreateContextInModelProcessForVisibilityPropagation(LayerHostingContextID) override;
     void didReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier>) override;
 #endif // ENABLE(MODEL_PROCESS)
-#if USE(EXTENSIONKIT)
-    UIView *createVisibilityPropagationView() override;
+    RetainPtr<UIView> createVisibilityPropagationView() override;
     void removeVisibilityPropagationView(UIView *) override;
+#if ENABLE(ENDOWMENT_BASED_APPLICATION_STATE_TRACKING)
+    RefPtr<LayerHostingVisibilityPropagator> createLayerHostingVisibilityPropagator() override;
 #endif
 #endif // HAVE(VISIBILITY_PROPAGATION_VIEW)
 
@@ -145,14 +152,17 @@ private:
     void doneDeferringTouchEnd(bool preventNativeGestures) override;
 #endif
 
+    UIScreen *screen() override;
+
 #if ENABLE(IMAGE_ANALYSIS)
     void requestTextRecognition(const URL& imageURL, WebCore::ShareableBitmap::Handle&& imageData, const String& sourceLanguageIdentifier, const String& targetLanguageIdentifier, CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&) final;
 #endif
 
     RefPtr<WebPopupMenuProxy> createPopupMenuProxy(WebPageProxy&) override;
     Ref<WebCore::ValidationBubble> createValidationBubble(String&& message, const WebCore::ValidationBubble::Settings&) final;
+    bool shouldSuppressFormValidationBubble() const final;
 
-    RefPtr<WebColorPicker> createColorPicker(WebPageProxy&, const WebCore::Color& initialColor, const WebCore::IntRect&, ColorControlSupportsAlpha, Vector<WebCore::Color>&&) final { return nullptr; }
+    RefPtr<WebColorPicker> createColorPicker(WebPageProxy&, const WebCore::Color& initialColor, ColorControlSupportsAlpha, Vector<WebCore::Color>&&, std::optional<WebCore::FrameIdentifier>) final { return nullptr; }
 
     RefPtr<WebDataListSuggestionsDropdown> createDataListSuggestionsDropdown(WebPageProxy&) final;
 
@@ -165,6 +175,7 @@ private:
     void showBrowsingWarning(const BrowsingWarning&, CompletionHandler<void(Variant<WebKit::ContinueUnsafeLoad, URL>&&)>&&) override;
     void clearBrowsingWarning() override;
     void clearBrowsingWarningIfForMainFrameNavigation() override;
+    bool hasBrowsingWarning() const override;
 
     void enterAcceleratedCompositingMode(const LayerTreeContext&) override;
     void exitAcceleratedCompositingMode() override;
@@ -176,9 +187,6 @@ private:
 
     RefPtr<ViewSnapshot> takeViewSnapshot(std::optional<WebCore::IntRect>&&) override;
     void wheelEventWasNotHandledByWebCore(const NativeWebWheelEvent&) override;
-
-    void commitPotentialTapFailed() override;
-    void didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color&, const Vector<WebCore::FloatQuad>& highlightedQuads, const WebCore::IntSize& topLeftRadius, const WebCore::IntSize& topRightRadius, const WebCore::IntSize& bottomLeftRadius, const WebCore::IntSize& bottomRightRadius, bool nodeHasBuiltInClickHandling) override;
 
     void didCommitLayerTree(const RemoteLayerTreeTransaction&, const std::optional<MainFrameData>&, const PageData&, const TransactionID&) final;
     void didCommitMainFrameData(const MainFrameData&) final;
@@ -198,14 +206,15 @@ private:
     void didProgrammaticallyClearFocusedElement(WebCore::ElementContext&&) final;
     void updateFocusedElementInformation(const FocusedElementInformation&) final;
     void elementDidBlur() override;
+    bool hasFocusedElement() const final;
     void focusedElementDidChangeInputMode(WebCore::InputMode) override;
     void didUpdateEditorState() override;
     void reconcileEnclosingScrollViewContentOffset(EditorState&) final;
     bool isFocusingElement() override;
     void selectionDidChange() override;
     bool interpretKeyEvent(const NativeWebKeyboardEvent&, KeyEventInterpretationContext&&) override;
-    void positionInformationDidChange(const InteractionInformationAtPosition&) override;
-    void saveImageToLibrary(Ref<WebCore::SharedBuffer>&&) override;
+    void positionInformationDidChange(const InteractionInformationAtPosition&, std::optional<WebCore::FrameIdentifier>) override;
+    void saveImageToLibrary(const Ref<WebCore::SharedBuffer>&) override;
     void showPlaybackTargetPicker(bool hasVideo, const WebCore::IntRect& elementRect, WebCore::RouteSharingPolicy, const String&) override;
     void showDataDetectorsUIForPositionInformation(const InteractionInformationAtPosition&) override;
 
@@ -218,17 +227,15 @@ private:
     void showContactPicker(WebCore::ContactsRequestData&&, WTF::CompletionHandler<void(std::optional<Vector<WebCore::ContactInfo>>&&)>&&) override;
 
 #if ENABLE(WEB_AUTHN)
-    void showDigitalCredentialsPicker(const WebCore::DigitalCredentialsRequestData&, WTF::CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&) override;
-    void dismissDigitalCredentialsPicker(WTF::CompletionHandler<void(bool)>&&) override;
+    void showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData&, WTF::CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&) override;
+    void dismissDigitalCredentialsChooser(WTF::CompletionHandler<void(bool)>&&) override;
 #endif
 
     void dismissAnyOpenPicker() override;
 
-    void disableDoubleTapGesturesDuringTapIfNecessary(WebKit::TapIdentifier) override;
-    void handleSmartMagnificationInformationForPotentialTap(WebKit::TapIdentifier, const WebCore::FloatRect& renderRect, bool fitEntireRect, double viewportMinimumScale, double viewportMaximumScale, bool nodeIsRootLevel, bool nodeIsPluginElement) override;
-
     double minimumZoomScale() const override;
     WebCore::FloatRect documentRect() const override;
+    WebCore::InteractiveWidgetValue viewportMetaTagInteractiveWidget() const override;
 
     void showInspectorHighlight(const WebCore::InspectorOverlay::Highlight&) override;
     void hideInspectorHighlight() override;
@@ -247,7 +254,7 @@ private:
     void requestScrollToRect(const WebCore::FloatRect& targetRect, const WebCore::FloatPoint& origin) override;
 
 #if ENABLE(FULLSCREEN_API)
-    WebFullScreenManagerProxyClient& fullScreenManagerProxyClient() final;
+    WebFullScreenManagerProxyClient& NODELETE fullScreenManagerProxyClient() final;
 
     // WebFullScreenManagerProxyClient
     void closeFullScreenManager() override;
@@ -278,9 +285,6 @@ private:
     void didFinishNavigation(API::Navigation*) override;
     void didFailNavigation(API::Navigation*) override;
     void didSameDocumentNavigationForMainFrame(SameDocumentNavigationType) override;
-    void didNotHandleTapAsClick(const WebCore::IntPoint&) override;
-    void didHandleTapAsHover() override;
-    void didCompleteSyntheticClick() override;
 
     void runModalJavaScriptDialog(CompletionHandler<void()>&& callback) final;
 
@@ -299,11 +303,11 @@ private:
     void requestPasswordForQuickLookDocument(const String& fileName, WTF::Function<void(const String&)>&&) override;
 #endif
 
-    void requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction, const WebCore::IntRect& elementRect, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&) final;
+    void requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction, WebCore::FrameIdentifier, const WebCore::IntRect& elementRect, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&) final;
 
 #if ENABLE(DRAG_SUPPORT)
     void didPerformDragOperation(bool handled) override;
-    void startDrag(const WebCore::DragItem&, WebCore::ShareableBitmap::Handle&& image, const std::optional<WebCore::NodeIdentifier>&) override;
+    void startDrag(const WebCore::DragItem&, WebCore::ShareableBitmap::Handle&& image, const std::optional<WebCore::NodeIdentifier>&, const std::optional<WebCore::FrameIdentifier>&) override;
     void willReceiveEditDragSnapshot() override;
     void didReceiveEditDragSnapshot(RefPtr<WebCore::TextIndicator>&&) override;
     void didChangeDragCaretRect(const WebCore::IntRect& previousCaretRect, const WebCore::IntRect& caretRect) override;
@@ -360,8 +364,6 @@ private:
 
     UIViewController *presentingViewController() const final;
 
-    bool isPotentialTapInProgress() const final;
-
     WebCore::FloatPoint webViewToRootView(const WebCore::FloatPoint&) const final;
     WebCore::FloatRect rootViewToWebView(const WebCore::FloatRect&) const final;
 
@@ -385,13 +387,14 @@ private:
 #endif
 
 #if ENABLE(VIDEO)
-    void showCaptionDisplaySettings(WebCore::HTMLMediaElementIdentifier, const WebCore::ResolvedCaptionDisplaySettingsOptions&, CompletionHandler<void(Expected<void, WebCore::ExceptionData>&&)>&&) final;
+    void showCaptionDisplaySettings(WebCore::HTMLMediaElementIdentifier, const WebCore::ResolvedCaptionDisplaySettingsOptions&, CompletionHandler<void(std::expected<void, WebCore::ExceptionData>&&)>&&) final;
 #endif
 
     RetainPtr<WKContentView> contentView() const { return m_contentView.get(); }
 
     WeakObjCPtr<WKContentView> m_contentView;
-    RetainPtr<WKEditorUndoTarget> m_undoTarget;
+    const RetainPtr<WKEditorUndoTarget> m_undoTarget;
+    std::optional<WebCore::ColorSpace> m_colorSpace;
 };
 } // namespace WebKit
 

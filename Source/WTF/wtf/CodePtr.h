@@ -37,17 +37,8 @@ template<PtrTag tag, typename, FunctionAttributes> class FunctionPtr;
 
 // ASSERT_VALID_CODE_POINTER checks that ptr is a non-null pointer, and that it is a valid
 // instruction address on the platform (for example, check any alignment requirements).
-#if CPU(ARM_THUMB2) && ENABLE(JIT)
-// ARM instructions must be 16-bit aligned. Thumb2 code pointers to be loaded into
-// into the processor are decorated with the bottom bit set, while traditional ARM has
-// the lower bit clear. Since we don't know what kind of pointer, we check for both
-// decorated and undecorated null.
-#define ASSERT_VALID_CODE_POINTER(ptr) \
-    ASSERT(reinterpret_cast<intptr_t>(ptr) & ~1)
-#else
 #define ASSERT_VALID_CODE_POINTER(ptr) \
     ASSERT(ptr)
-#endif
 
 struct CodePtrBase {
 public:
@@ -91,7 +82,7 @@ public:
         : m_value(encodeFunc(ptr))
     { }
 
-#if OS(WINDOWS)
+#if OS(WINDOWS) && CPU(X86_64)
     template<typename Out, typename... In>
     constexpr CodePtr(Out(SYSV_ABI *ptr)(In...))
         : m_value(encodeFunc(ptr))

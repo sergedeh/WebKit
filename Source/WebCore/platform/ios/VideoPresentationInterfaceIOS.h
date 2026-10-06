@@ -91,7 +91,7 @@ public:
     WEBCORE_EXPORT void routingContextUIDChanged(const String&) final;
 
     // PlaybackSessionModelClient
-    WEBCORE_EXPORT void externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType, const String& localizedDeviceName) override;
+    WEBCORE_EXPORT void externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType, const String& localizedDeviceName, const String& localizedRouteName) override;
 
     WEBCORE_EXPORT void setVideoPresentationModel(VideoPresentationModel*);
     PlaybackSessionInterfaceIOS& playbackSessionInterface() const { return m_playbackSessionInterface.get(); }
@@ -168,13 +168,13 @@ public:
     void willStopPictureInPicture();
     WEBCORE_EXPORT virtual void didStopPictureInPicture();
     WEBCORE_EXPORT virtual void prepareForPictureInPictureStopWithCompletionHandler(void (^)(BOOL));
-    virtual bool isPlayingVideoInEnhancedFullscreen() const = 0;
+    virtual bool isPlayingVideoInPictureInPicture() const = 0;
 
     WEBCORE_EXPORT void setMode(HTMLMediaElementEnums::VideoFullscreenMode, VideoPresentationModel::ShouldNotifyMediaElement);
     void clearMode(HTMLMediaElementEnums::VideoFullscreenMode, VideoPresentationModel::ShouldNotifyMediaElement);
     bool hasMode(HTMLMediaElementEnums::VideoFullscreenMode mode) const { return m_currentMode.hasMode(mode); }
-    WEBCORE_EXPORT UIViewController *presentingViewController();
-    UIViewController *fullscreenViewController() const { return m_viewController.get(); }
+    WEBCORE_EXPORT RetainPtr<UIViewController> presentingViewController();
+    UIViewController *fullscreenViewController() const LIFETIME_BOUND { return m_viewController.get(); }
     WEBCORE_EXPORT virtual bool pictureInPictureWasStartedWhenEnteringBackground() const = 0;
 
     WEBCORE_EXPORT std::optional<MediaPlayerIdentifier> playerIdentifier() const;
@@ -261,6 +261,7 @@ protected:
     virtual bool willRenderToLayer() const = 0;
     virtual void transferVideoViewToFullscreen() { }
     WEBCORE_EXPORT virtual void returnVideoView();
+    WEBCORE_EXPORT virtual bool shouldCreateWindow() const;
 
 #if PLATFORM(WATCHOS)
     bool m_waitingForPreparedToExit { false };
@@ -272,8 +273,8 @@ private:
 
     bool m_finalizeSetupNeedsVideoContentLayer { false };
     bool m_finalizeSetupNeedsReturnVideoContentLayer { false };
-    Ref<PlaybackSessionInterfaceIOS> m_playbackSessionInterface;
-    RetainPtr<UIView> m_pipPlacard;
+    const Ref<PlaybackSessionInterfaceIOS> m_playbackSessionInterface;
+    const RetainPtr<UIView> m_pipPlacard;
 
 #if HAVE(SPATIAL_AUDIO_EXPERIENCE)
     bool m_prefersSpatialAudioExperience { false };

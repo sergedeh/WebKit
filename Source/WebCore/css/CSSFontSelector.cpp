@@ -90,7 +90,7 @@ CSSFontSelector::CSSFontSelector(ScriptExecutionContext& context)
         });
     }
 
-    FontCache::forCurrentThread()->addClient(*this);
+    protect(FontCache::forCurrentThread())->addClient(*this);
     m_cssFontFaceSet->addFontModifiedObserver(m_fontModifiedObserver);
     LOG(Fonts, "CSSFontSelector %p ctor", this);
 }
@@ -114,7 +114,7 @@ FontFaceSet& CSSFontSelector::fontFaceSet()
 {
     if (!m_fontFaceSet) {
         ASSERT(m_context);
-        m_fontFaceSet = FontFaceSet::create(protectedScriptExecutionContext(), m_cssFontFaceSet.get());
+        lazyInitialize(m_fontFaceSet, FontFaceSet::create(protect(*scriptExecutionContext()), m_cssFontFaceSet.get()));
     }
 
     return *m_fontFaceSet;
@@ -142,7 +142,7 @@ void CSSFontSelector::buildStarted()
     for (size_t i = 0; i < m_cssFontFaceSet->faceCount(); ++i) {
         Ref face = m_cssFontFaceSet.get()[i];
         if (face->cssConnection())
-            m_cssConnectionsPossiblyToRemove.add(face.get());
+            m_cssConnectionsPossiblyToRemove.add(WTF::move(face));
     }
 
     m_paletteMap.clear();
@@ -159,8 +159,8 @@ void CSSFontSelector::buildCompleted()
     for (auto& face : m_cssConnectionsPossiblyToRemove) {
         RefPtr connection = face->cssConnection();
         ASSERT(connection);
-        if (!m_cssConnectionsEncounteredDuringBuild.contains(connection))
-            m_cssFontFaceSet->remove(*face);
+        if (!m_cssConnectionsEncounteredDuringBuild.contains(*connection))
+            m_cssFontFaceSet->remove(face);
     }
 
     for (auto& item : m_stagingArea)
@@ -173,7 +173,7 @@ void CSSFontSelector::buildCompleted()
 void CSSFontSelector::addFontFaceRule(StyleRuleFontFace& fontFaceRule, bool isInitiatingElementInUserAgentShadowTree)
 {
     if (m_buildIsUnderway) {
-        m_cssConnectionsEncounteredDuringBuild.add(&fontFaceRule);
+        m_cssConnectionsEncounteredDuringBuild.add(fontFaceRule);
         m_stagingArea.append({fontFaceRule, isInitiatingElementInUserAgentShadowTree});
         return;
     }
@@ -188,6 +188,9 @@ void CSSFontSelector::addFontFaceRule(StyleRuleFontFace& fontFaceRule, bool isIn
     RefPtr rangeList = downcast<CSSValueList>(unicodeRange.get());
     RefPtr featureSettings = style->getPropertyCSSValue(CSSPropertyFontFeatureSettings);
     RefPtr display = style->getPropertyCSSValue(CSSPropertyFontDisplay);
+    RefPtr ascentOverride = style->getPropertyCSSValue(CSSPropertyAscentOverride);
+    RefPtr descentOverride = style->getPropertyCSSValue(CSSPropertyDescentOverride);
+    RefPtr lineGapOverride = style->getPropertyCSSValue(CSSPropertyLineGapOverride);
     RefPtr sizeAdjust = style->getPropertyCSSValue(CSSPropertySizeAdjust);
     if (!fontFamily || !srcList || (unicodeRange && !rangeList))
         return;
@@ -210,11 +213,17 @@ void CSSFontSelector::addFontFaceRule(StyleRuleFontFace& fontFaceRule, bool isIn
     if (featureSettings)
         fontFace->setFeatureSettings(*featureSettings);
     if (display)
-        fontFace->setDisplay(downcast<CSSPrimitiveValue>(*display));
+        fontFace->setDisplay(*display);
+    if (ascentOverride)
+        fontFace->setAscentOverride(*ascentOverride);
+    if (descentOverride)
+        fontFace->setDescentOverride(*descentOverride);
+    if (lineGapOverride)
+        fontFace->setLineGapOverride(*lineGapOverride);
     if (sizeAdjust)
         fontFace->setSizeAdjust(*sizeAdjust);
 
-    CSSFontFace::appendSources(fontFace, *srcList, protectedScriptExecutionContext().ptr(), isInitiatingElementInUserAgentShadowTree);
+    CSSFontFace::appendSources(fontFace, *srcList, protect(scriptExecutionContext()), isInitiatingElementInUserAgentShadowTree);
 
     if (RefPtr<CSSFontFace> existingFace = m_cssFontFaceSet->lookUpByCSSConnection(fontFaceRule)) {
         // This adoption is fairly subtle. Script can trigger a purge of m_cssFontFaceSet at any time,
@@ -333,14 +342,14 @@ void CSSFontSelector::fontCacheInvalidated()
 
 std::optional<AtomString> CSSFontSelector::resolveGenericFamily(const FontDescription& fontDescription, const AtomString& familyName)
 {
-    auto platformResult = FontDescription::platformResolveGenericFamily(fontDescription.script(), fontDescription.computedLocale(), familyName);
+    auto platformResult = FontDescription::platformResolveGenericFamily(fontDescription.script(), fontDescription.usedLocale(), familyName);
     if (!platformResult.isNull())
         return platformResult;
 
     if (!m_context)
         return std::nullopt;
 
-    const auto& settings = protectedScriptExecutionContext()->settingsValues();
+    const auto& settings = protect(scriptExecutionContext())->settingsValues();
 
     UScriptCode script = fontDescription.script();
     auto familyNameIndex = m_fontFamilyNames.find(familyName);
@@ -355,12 +364,12 @@ std::optional<AtomString> CSSFontSelector::resolveGenericFamily(const FontDescri
 const FontPaletteValues& CSSFontSelector::lookupFontPaletteValues(const AtomString& familyName, const FontDescription& fontDescription) const
 {
     static NeverDestroyed<FontPaletteValues> emptyFontPaletteValues;
-    if (fontDescription.fontPalette().type != FontPalette::Type::Custom)
+
+    auto paletteName = fontDescription.fontPalette().ident();
+    if (!paletteName)
         return emptyFontPaletteValues.get();
 
-    const AtomString paletteName = fontDescription.fontPalette().identifier;
-
-    auto iterator = m_paletteMap.find(std::make_pair(familyName, paletteName));
+    auto iterator = m_paletteMap.find(std::make_pair(familyName, *paletteName));
     if (iterator == m_paletteMap.end())
         return emptyFontPaletteValues.get();
 
@@ -428,10 +437,12 @@ static const MathFontList& mathFontList()
     return list;
 }
 
-FontRanges CSSFontSelector::fontRangesForFamily(const FontDescription& fontDescription, const AtomString& familyName)
+FontRanges CSSFontSelector::fontRangesForFamily(const FontDescription& fontDescription, const FontFamily& fontFamily)
 {
     // If this ASSERT() fires, it usually means you forgot a document.updateStyleIfNeeded() somewhere.
     ASSERT(!m_buildIsUnderway || m_computingRootStyleFontCount);
+
+    const auto& familyName = fontFamily.name;
 
     // FIXME: The spec (and Firefox) says user specified generic families (sans-serif etc.) should be resolved before the @font-face lookup too.
     bool resolveGenericFamilyFirst = familyName == m_fontFamilyNames.at(FamilyNamesIndex::StandardFamily);
@@ -440,6 +451,8 @@ FontRanges CSSFontSelector::fontRangesForFamily(const FontDescription& fontDescr
     auto isGenericFontFamily = IsGenericFontFamily::No;
     const FontDescription* fontDescriptionForLookup = &fontDescription;
     auto resolveAndAssignGenericFamily = [&] {
+        if (!fontFamily.isGeneric())
+            return;
         if (auto genericFamilyOptional = resolveGenericFamily(fontDescription, familyName)) {
             familyForLookup = *genericFamilyOptional;
             isGenericFontFamily = IsGenericFontFamily::Yes;
@@ -450,19 +463,19 @@ FontRanges CSSFontSelector::fontRangesForFamily(const FontDescription& fontDescr
     auto fontFeatureValues = lookupFontFeatureValues(familyName);
 
     // Handle the generic math font family a bit differently.
-    if (familyName == m_fontFamilyNames.at(FamilyNamesIndex::MathFamily)) {
+    if (fontFamily.isGeneric() && familyName == m_fontFamilyNames.at(FamilyNamesIndex::MathFamily)) {
         // First check if the user has defined a preference.
-        const auto& settings = protectedScriptExecutionContext()->settingsValues();
+        const auto& settings = protect(scriptExecutionContext())->settingsValues();
         const String& preferredMathFamily = settings.fontGenericFamilies.mathFontFamily(fontDescription.script());
         if (!preferredMathFamily.isEmpty() && familyName != preferredMathFamily) {
-            auto ranges = fontRangesForFamily(fontDescription, AtomString(preferredMathFamily));
+            auto ranges = fontRangesForFamily(fontDescription, FontFamily { AtomString(preferredMathFamily), FontFamilyKind::Specified });
             if (!ranges.isNull())
                 return { WTF::move(ranges), IsGenericFontFamily::Yes };
         }
 
         // Otherwise, iterate through the font list to find a valid fallback.
         for (auto& family : mathFontList()) {
-            auto ranges = fontRangesForFamily(fontDescription, family);
+            auto ranges = fontRangesForFamily(fontDescription, FontFamily { family, FontFamilyKind::Specified });
             if (!ranges.isNull())
                 return { WTF::move(ranges), IsGenericFontFamily::Yes };
         }
@@ -480,7 +493,7 @@ FontRanges CSSFontSelector::fontRangesForFamily(const FontDescription& fontDescr
     if (!resolveGenericFamilyFirst)
         resolveAndAssignGenericFamily();
 
-    auto font = FontCache::forCurrentThread()->fontForFamily(*fontDescriptionForLookup, familyForLookup, { { }, { }, fontPaletteValues, fontFeatureValues, 1.0 });
+    auto font = protect(FontCache::forCurrentThread())->fontForFamily(*fontDescriptionForLookup, familyForLookup, { { }, { }, fontPaletteValues, fontFeatureValues, 1.0 });
     if (document && document->settings().webAPIStatisticsEnabled())
         ResourceLoadObserver::singleton().logFontLoad(*document, familyForLookup.string(), !!font);
     return { FontRanges { WTF::move(font) }, isGenericFontFamily };
@@ -498,7 +511,7 @@ size_t CSSFontSelector::fallbackFontCount()
     if (m_isStopped)
         return 0;
 
-    return protectedScriptExecutionContext()->settingsValues().fontFallbackPrefersPictographs ? 1 : 0;
+    return protect(scriptExecutionContext())->settingsValues().fontFallbackPrefersPictographs ? 1 : 0;
 }
 
 RefPtr<Font> CSSFontSelector::fallbackFontAt(const FontDescription& fontDescription, size_t index)
@@ -512,7 +525,7 @@ RefPtr<Font> CSSFontSelector::fallbackFontAt(const FontDescription& fontDescript
     if (!context->settingsValues().fontFallbackPrefersPictographs)
         return nullptr;
     auto& pictographFontFamily = context->settingsValues().fontGenericFamilies.pictographFontFamily();
-    RefPtr font = FontCache::forCurrentThread()->fontForFamily(fontDescription, pictographFontFamily);
+    RefPtr font = protect(FontCache::forCurrentThread())->fontForFamily(fontDescription, pictographFontFamily);
     if (RefPtr document = dynamicDowncast<Document>(context.get()); document && document->settingsValues().webAPIStatisticsEnabled)
         ResourceLoadObserver::singleton().logFontLoad(*document, pictographFontFamily, !!font);
 
@@ -526,7 +539,7 @@ bool CSSFontSelector::isSimpleFontSelectorForDescription() const
         return false;
 
     // FIXME: remove this when we fix counter style rules mutation.
-    if (RefPtr document = dynamicDowncast<Document>(m_context.get())) {
+    if (auto* document = dynamicDowncast<Document>(m_context.get())) {
         if (document->counterStyleRegistry().hasAuthorCounterStyles())
             return false;
     }

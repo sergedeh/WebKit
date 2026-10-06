@@ -33,14 +33,13 @@
 #include "Interpreter.h"
 #include "IntlDateTimeFormat.h"
 #include "JSCInlines.h"
-#include "JSInternalPromise.h"
 #include "JSModuleLoader.h"
 #include "JSPromise.h"
 #include "JSSet.h"
-#include "Lexer.h"
 #include "LiteralParser.h"
 #include "ObjectConstructorInlines.h"
 #include "ParseInt.h"
+#include "SourceCharacters.h"
 #include "SourceProfiler.h"
 #include <stdio.h>
 #include <wtf/ASCIICType.h>
@@ -54,9 +53,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
-
-const ASCIILiteral ObjectProtoCalledOnNullOrUndefinedError { "Object.prototype.__proto__ called on null or undefined"_s };
-const ASCIILiteral RestrictedPropertyAccessError { "'arguments', 'callee', and 'caller' cannot be accessed in this context."_s };
 
 template<typename CharacterType>
 static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNotEscape, std::span<const CharacterType> characters)
@@ -75,7 +71,7 @@ static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNo
     builder.reserveCapacity(characters.size());
 
     // 4. Repeat
-    auto* end = characters.data() + characters.size();
+    auto* end = std::to_address(characters.end());
     for (auto* cursor = characters.data(); cursor != end; ++cursor) {
         auto character = *cursor;
 
@@ -130,8 +126,9 @@ static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNo
             // 4-d-vi-1. Let jOctet be the value at index j within Octets.
             // 4-d-vi-2. Let S be a String containing three code units "%XY" where XY are two uppercase hexadecimal digits encoding the value of jOctet.
             // 4-d-vi-3. Let R be a new String value computed by concatenating the previous value of R and S.
-            builder.append('%');
-            builder.append(hex(utf8OctetsBuffer[index], 2));
+            auto octet = utf8OctetsBuffer[index];
+            std::array<Latin1Character, 3> escaped { '%', static_cast<Latin1Character>(upperNibbleToASCIIHexDigit(octet)), static_cast<Latin1Character>(lowerNibbleToASCIIHexDigit(octet)) };
+            builder.append(std::span<const Latin1Character> { escaped });
         }
     }
 
@@ -165,7 +162,7 @@ static JSValue decode(JSGlobalObject* globalObject, std::span<const CharType> ch
         if (c == '%') {
             size_t charLen = 0;
             if (k + 3 <= characters.size() && isASCIIHexDigit(p[1]) && isASCIIHexDigit(p[2])) {
-                const char b0 = Lexer<CharType>::convertHex(p[1], p[2]);
+                const char b0 = convertHex(p[1], p[2]);
                 const int sequenceLen = 1 + U8_COUNT_TRAIL_BYTES(b0);
                 if ((k + sequenceLen * 3) <= characters.size()) {
                     charLen = sequenceLen * 3;
@@ -174,7 +171,7 @@ static JSValue decode(JSGlobalObject* globalObject, std::span<const CharType> ch
                     for (int i = 1; i < sequenceLen; ++i) {
                         const CharType* q = p + i * 3;
                         if (q[0] == '%' && isASCIIHexDigit(q[1]) && isASCIIHexDigit(q[2]))
-                            sequence[i] = Lexer<CharType>::convertHex(q[1], q[2]);
+                            sequence[i] = convertHex(q[1], q[2]);
                         else {
                             charLen = 0;
                             break;
@@ -207,7 +204,7 @@ static JSValue decode(JSGlobalObject* globalObject, std::span<const CharType> ch
                         && isASCIIHexDigit(p[2]) && isASCIIHexDigit(p[3])
                         && isASCIIHexDigit(p[4]) && isASCIIHexDigit(p[5])) {
                     charLen = 6;
-                    u = Lexer<char16_t>::convertUnicode(p[2], p[3], p[4], p[5]);
+                    u = convertUnicode(p[2], p[3], p[4], p[5]);
                 }
             }
             if (charLen && (u >= 128 || !doNotUnescape.get(static_cast<Latin1Character>(u)))) {
@@ -236,7 +233,7 @@ static JSValue decode(JSGlobalObject* globalObject, JSValue argument, const WTF:
 static const int SizeOfInfinity = 8;
 
 template <typename CharType>
-static bool isInfinity(std::span<const CharType> data)
+static bool NODELETE isInfinity(std::span<const CharType> data)
 {
     return data.size() >= SizeOfInfinity
         && data[0] == 'I'
@@ -251,7 +248,7 @@ static bool isInfinity(std::span<const CharType> data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double jsBinaryIntegerLiteral(std::span<const CharType>& data)
+static double NODELETE jsBinaryIntegerLiteral(std::span<const CharType>& data)
 {
     // Binary number.
     skip(data, 2);
@@ -272,7 +269,7 @@ static double jsBinaryIntegerLiteral(std::span<const CharType>& data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double jsOctalIntegerLiteral(std::span<const CharType>& data)
+static double NODELETE jsOctalIntegerLiteral(std::span<const CharType>& data)
 {
     // Octal number.
     skip(data, 2);
@@ -293,7 +290,7 @@ static double jsOctalIntegerLiteral(std::span<const CharType>& data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double jsHexIntegerLiteral(std::span<const CharType>& data)
+static double NODELETE jsHexIntegerLiteral(std::span<const CharType>& data)
 {
     // Hex number.
     skip(data, 2);
@@ -362,6 +359,11 @@ static double toDouble(std::span<const CharacterType> characters)
     // Empty string.
     if (characters.empty())
         return 0.0;
+
+    // Only these characters can start a StrNumericLiteral once white space is skipped.
+    auto first = characters.front();
+    if (!isASCIIDigit(first) && first != '.' && first != '+' && first != '-' && first != 'I')
+        return PNaN;
 
     double number;
     if (characters.front() == '0' && characters.size() > 2) {
@@ -528,6 +530,9 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncParseInt, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSValue value = callFrame->argument(0);
     JSValue radixValue = callFrame->argument(1);
 
@@ -540,10 +545,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncParseInt, (JSGlobalObject* globalObject, Call
         }
     }
 
-    // If ToString throws, we shouldn't call ToInt32.
-    return toStringView(globalObject, value, [&] (StringView view) {
-        return JSValue::encode(jsNumber(parseInt(view, radixValue.toInt32(globalObject))));
-    });
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    int32_t radix = radixValue.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(parseIntString(globalObject, string, radix))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncParseFloat, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -665,12 +673,12 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, Call
                 auto c = characters.subspan(k);
                 if (c[0] == '%' && k <= length - 6 && c[1] == 'u') {
                     if (isASCIIHexDigit(c[2]) && isASCIIHexDigit(c[3]) && isASCIIHexDigit(c[4]) && isASCIIHexDigit(c[5])) {
-                        builder.append(Lexer<char16_t>::convertUnicode(c[2], c[3], c[4], c[5]));
+                        builder.append(convertUnicode(c[2], c[3], c[4], c[5]));
                         k += 6;
                         continue;
                     }
                 } else if (c[0] == '%' && k <= length - 3 && isASCIIHexDigit(c[1]) && isASCIIHexDigit(c[2])) {
-                    converted = Latin1Character(Lexer<Latin1Character>::convertHex(c[1], c[2]));
+                    converted = Latin1Character(convertHex(c[1], c[2]));
                     c = span(converted);
                     k += 2;
                 }
@@ -685,12 +693,12 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, Call
                 char16_t converted;
                 if (c[0] == '%' && k <= length - 6 && c[1] == 'u') {
                     if (isASCIIHexDigit(c[2]) && isASCIIHexDigit(c[3]) && isASCIIHexDigit(c[4]) && isASCIIHexDigit(c[5])) {
-                        converted = Lexer<char16_t>::convertUnicode(c[2], c[3], c[4], c[5]);
+                        converted = convertUnicode(c[2], c[3], c[4], c[5]);
                         c = span(converted);
                         k += 5;
                     }
                 } else if (c[0] == '%' && k <= length - 3 && isASCIIHexDigit(c[1]) && isASCIIHexDigit(c[2])) {
-                    converted = char16_t(Lexer<char16_t>::convertHex(c[1], c[2]));
+                    converted = char16_t(convertHex(c[1], c[2]));
                     c = span(converted);
                     k += 2;
                 }
@@ -744,7 +752,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncProtoSetter, (JSGlobalObject* globalObject, C
 
     JSValue value = callFrame->argument(0);
 
-    JSObject* thisObject = jsDynamicCast<JSObject*>(thisValue);
+    JSObject* thisObject = dynamicDowncast<JSObject>(thisValue);
 
     // Setting __proto__ of a primitive should have no effect.
     if (!thisObject)
@@ -803,27 +811,32 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
 {
     VM& vm = globalObject->vm();
 
-    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto rejectWithCaughtException = [&]() -> EncodedJSValue {
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        return JSValue::encode(promise->rejectWithCaughtException(vm, scope));
+    };
 
     auto sourceOrigin = callFrame->callerSourceOrigin(vm);
     RELEASE_ASSERT(callFrame->argumentCount() >= 1);
+
     auto* specifier = callFrame->uncheckedArgument(0).toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
+    if (scope.exception()) [[unlikely]]
+        return rejectWithCaughtException();
 
     // We always specify parameters as undefined. Once dynamic import() starts accepting fetching parameters,
     // we should retrieve this from the arguments.
     JSValue parameters = callFrame->argument(1);
-    auto* internalPromise = globalObject->moduleLoader()->importModule(globalObject, specifier, parameters, sourceOrigin);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
+    bool deferred = callFrame->argument(2).isTrue();
+    auto* importPromise = globalObject->moduleLoader()->importModule(globalObject, specifier, parameters, sourceOrigin, deferred);
+    if (scope.exception()) [[unlikely]]
+        return rejectWithCaughtException();
 
-    scope.release();
-    promise->resolve(globalObject, internalPromise);
-    return JSValue::encode(promise);
+    return JSValue::encode(importPromise);
 }
 
-static bool canPerformFastPropertyEnumerationForCopyDataProperties(Structure* structure)
+static bool NODELETE canPerformFastPropertyEnumerationForCopyDataProperties(Structure* structure)
 {
     if (!structure->canPerformFastPropertyEnumerationCommon())
         return false;
@@ -851,7 +864,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSFinalObject* target = jsCast<JSFinalObject*>(callFrame->thisValue());
+    JSFinalObject* target = uncheckedDowncast<JSFinalObject>(callFrame->thisValue());
     ASSERT(target->isStructureExtensible());
 
     JSValue sourceValue = callFrame->uncheckedArgument(0);
@@ -896,6 +909,9 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
 
     auto sourceStructure = source->structure();
     if (canPerformFastPropertyEnumerationForCopyDataProperties(sourceStructure)) [[likely]] {
+        if ((!excludedSet || excludedSet->isEmpty()) && objectCloneFast(vm, target, source))
+            return JSValue::encode(target);
+
         EnsureStillAliveScope sourceStructureScope(sourceStructure);
         Vector<UniquedStringImpl*, 8> properties; // sourceStructure ensures the lifetimes of these strings.
         MarkedArgumentBuffer values;

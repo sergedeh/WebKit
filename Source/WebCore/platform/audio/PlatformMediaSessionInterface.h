@@ -33,7 +33,9 @@
 #include <WebCore/Timer.h>
 #include <wtf/Logger.h>
 #include <wtf/LoggerHelper.h>
+#include <wtf/Markable.h>
 #include <wtf/MediaTime.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Platform.h>
 #include <wtf/ProcessID.h>
@@ -109,7 +111,6 @@ public:
 
 #if !RELEASE_LOG_DISABLED
     virtual const Logger& logger() const = 0;
-    Ref<const Logger> protectedLogger() const { return logger(); }
     virtual uint64_t logIdentifier() const = 0;
 #endif
 
@@ -119,7 +120,7 @@ protected:
 
 inline bool PlatformMediaSessionClient::isRemoteSessionClientProxy() const { return false; }
 
-PlatformMediaSessionClient& emptyPlatformMediaSessionClient();
+WEBCORE_EXPORT PlatformMediaSessionClient& NODELETE emptyPlatformMediaSessionClient();
 
 class WEBCORE_EXPORT PlatformMediaSessionInterface
     : public RefCountedAndCanMakeWeakPtr<PlatformMediaSessionInterface>
@@ -140,8 +141,8 @@ public:
     virtual void setActive(bool) = 0;
 
     using MediaType = PlatformMediaSessionMediaType;
-    virtual MediaType mediaType() const { return checkedClient()->mediaType(); }
-    virtual MediaType presentationType() const { return checkedClient()->presentationType(); }
+    virtual MediaType mediaType() const { return protect(client())->mediaType(); }
+    virtual MediaType presentationType() const { return protect(client())->presentationType(); }
 
     using State = PlatformMediaSessionState;
     virtual State state() const = 0;
@@ -158,7 +159,14 @@ public:
     virtual void clientCharacteristicsChanged(bool) = 0;
 
     virtual void clientWillBeginAutoplaying() = 0;
-    virtual void clientWillBeginPlayback(CompletionHandler<void(bool)>&&) = 0;
+    virtual Ref<GenericPromise> clientWillBeginPlayback() = 0;
+    // Called by the manager, inside the serialized admission region, once activation has succeeded and
+    // immediately before enforceConcurrentPlaybackRestriction(). stateAtStart is state() as captured
+    // synchronously when this admission began.
+    // Returns true if the session actually transitioned to Playing (so enforcing exclusivity on its behalf
+    // makes sense); false if it stayed paused (e.g. a pause() raced the admission), in which case the
+    // caller must not evict other sessions.
+    virtual bool commitPlaybackAdmission(State stateAtStart) = 0;
     virtual bool clientWillPausePlayback() = 0;
 
     virtual void clientWillBeDOMSuspended() = 0;
@@ -171,20 +179,20 @@ public:
 
     using RemoteCommandArgument = PlatformMediaSessionRemoteCommandArgument;
     using RemoteControlCommandType = PlatformMediaSessionRemoteControlCommandType;
-    bool canReceiveRemoteControlCommands() const { return checkedClient()->canReceiveRemoteControlCommands(); }
+    bool canReceiveRemoteControlCommands() const { return protect(client())->canReceiveRemoteControlCommands(); }
     virtual void didReceiveRemoteControlCommand(RemoteControlCommandType, const RemoteCommandArgument&) = 0;
 
     using DisplayType = PlatformMediaSessionDisplayType;
-    virtual DisplayType displayType() const { return checkedClient()->displayType(); }
+    virtual DisplayType displayType() const { return protect(client())->displayType(); }
 
-    virtual bool supportsSeeking() const { return checkedClient()->supportsSeeking(); }
-    virtual bool isSuspended() const { return checkedClient()->isSuspended(); }
-    virtual bool isPlaying() const { return checkedClient()->isPlaying(); }
-    virtual bool isAudible() const { return checkedClient()->isAudible(); }
-    virtual bool isEnded() const { return checkedClient()->isEnded(); }
-    virtual MediaTime duration() const { return checkedClient()->mediaSessionDuration(); }
+    virtual bool supportsSeeking() const { return protect(client())->supportsSeeking(); }
+    virtual bool isSuspended() const { return protect(client())->isSuspended(); }
+    virtual bool isPlaying() const { return protect(client())->isPlaying(); }
+    virtual bool isAudible() const { return protect(client())->isAudible(); }
+    virtual bool isEnded() const { return protect(client())->isEnded(); }
+    virtual MediaTime duration() const { return protect(client())->mediaSessionDuration(); }
 
-    virtual bool shouldOverrideBackgroundLoadingRestriction() const { return checkedClient()->shouldOverrideBackgroundLoadingRestriction(); }
+    virtual bool shouldOverrideBackgroundLoadingRestriction() const { return protect(client())->shouldOverrideBackgroundLoadingRestriction(); }
 
     virtual bool isPlayingToWirelessPlaybackTarget() const { return false; }
     virtual void isPlayingToWirelessPlaybackTargetChanged(bool) = 0;
@@ -203,8 +211,13 @@ public:
 
     virtual bool blockedBySystemInterruption() const = 0;
     virtual bool activeAudioSessionRequired() const = 0;
-    virtual bool canProduceAudio() const { return checkedClient()->canProduceAudio(); }
-    virtual bool hasMediaStreamSource() const { return checkedClient()->hasMediaStreamSource(); }
+
+    // Whether the client is allowed to begin playing right now. A session can be Playing and audible
+    // while its client is no longer allowed to start.
+    virtual bool playbackPermitted() const;
+
+    virtual bool canProduceAudio() const { return protect(client())->canProduceAudio(); }
+    virtual bool hasMediaStreamSource() const { return protect(client())->hasMediaStreamSource(); }
     virtual void canProduceAudioChanged() = 0;
 
     virtual void resetPlaybackSessionState() { }
@@ -214,11 +227,26 @@ public:
 
     virtual bool preparingToPlay() const = 0;
 
-    virtual bool canPlayConcurrently(const PlatformMediaSessionInterface&) const = 0;
-    virtual bool shouldOverridePauseDuringRouteChange() const { return checkedClient()->shouldOverridePauseDuringRouteChange(); }
+    // Whether a queued admission for this session, once its turn comes up in
+    // MediaSessionManagerInterface::sessionWillBeginPlayback()'s serialization chain, should still
+    // proceed. Defaults to preparingToPlay(): a local session may have had pause() called on it while
+    // queued, in which case it no longer wants to play. Overridden by RemoteMediaSessionProxy, whose
+    // preparingToPlay() mirrors a snapshot the WebContent process takes *after* it already committed the
+    // admission locally — always false for that message, which is not evidence of a race here; any real
+    // invalidation after commit arrives via a separate, later-ordered IPC message instead.
+    virtual bool admissionStillValid() const;
 
-    virtual std::optional<NowPlayingInfo> nowPlayingInfo() const { return checkedClient()->nowPlayingInfo(); }
-    virtual bool isNowPlayingEligible() const { return checkedClient()->isNowPlayingEligible(); }
+    // A session whose own admission is in flight has not reached Playing yet but intends to; treat it
+    // as playing for the purpose of not disturbing it. Do not use this in enforceConcurrentPlaybackRestriction()'s
+    // eviction predicate — that one deliberately checks state() alone, since a merely-queued or
+    // in-flight session there is not a legitimate eviction target (see MediaSessionManagerInterface.cpp).
+    bool isPlayingOrPreparingToPlay() const;
+
+    virtual bool canPlayConcurrently(const PlatformMediaSessionInterface&) const = 0;
+    virtual bool shouldOverridePauseDuringRouteChange() const { return protect(client())->shouldOverridePauseDuringRouteChange(); }
+
+    virtual std::optional<NowPlayingInfo> nowPlayingInfo() const { return protect(client())->nowPlayingInfo(); }
+    virtual bool isNowPlayingEligible() const { return protect(client())->isNowPlayingEligible(); }
 
     using PlaybackControlsPurpose = PlatformMediaSessionPlaybackControlsPurpose;
     virtual WeakPtr<PlatformMediaSessionInterface> selectBestMediaSession(const Vector<WeakPtr<PlatformMediaSessionInterface>>&, PlaybackControlsPurpose) = 0;
@@ -226,9 +254,11 @@ public:
     virtual void updateMediaUsageIfChanged() { }
 
     virtual bool isLongEnoughForMainContent() const { return false; }
+    virtual bool isLargeEnoughForMainContent() const;
+    virtual Markable<MonotonicTime> mostRecentUserInteractionTime() const;
 
     void setMediaSessionIdentifier(MediaSessionIdentifier);
-    virtual MediaSessionIdentifier mediaSessionIdentifier() const { return m_mediaSessionIdentifier; }
+    virtual MediaSessionIdentifier mediaSessionIdentifier() const;
 
     virtual bool isActiveNowPlayingSession() const = 0;
     virtual void setActiveNowPlayingSession(bool) = 0;
@@ -239,18 +269,16 @@ public:
     virtual String description() const = 0;
 #endif
 
-    virtual std::optional<MediaSessionGroupIdentifier> mediaSessionGroupIdentifier() const { return checkedClient()->mediaSessionGroupIdentifier(); }
-    virtual bool isPlayingOnSecondScreen() const { return checkedClient()->isPlayingOnSecondScreen(); }
+    virtual std::optional<MediaSessionGroupIdentifier> mediaSessionGroupIdentifier() const { return protect(client())->mediaSessionGroupIdentifier(); }
+    virtual bool isPlayingOnSecondScreen() const { return protect(client())->isPlayingOnSecondScreen(); }
 
     virtual bool isRemoteSessionProxy() const;
 
     void invalidateClient() { m_client = emptyPlatformMediaSessionClient(); }
     PlatformMediaSessionClient& client() const;
-    CheckedRef<PlatformMediaSessionClient> checkedClient() const;
 
 #if !RELEASE_LOG_DISABLED
     virtual const Logger& logger() const = 0;
-    Ref<const Logger> protectedLogger() const { return logger(); }
     virtual uint64_t logIdentifier() const = 0;
     virtual ASCIILiteral logClassName() const = 0;
     virtual WTFLogChannel& logChannel() const = 0;
@@ -263,7 +291,7 @@ protected:
     {
     }
 
-    RefPtr<MediaSessionManagerInterface> sessionManager() const { return checkedClient()->sessionManager(); }
+    RefPtr<MediaSessionManagerInterface> sessionManager() const { return protect(client())->sessionManager(); }
 
 private:
     CheckedRef<PlatformMediaSessionClient> m_client;
@@ -273,7 +301,10 @@ private:
 
 inline void PlatformMediaSessionInterface::setMediaSessionIdentifier(MediaSessionIdentifier identifier) { m_mediaSessionIdentifier = identifier; }
 inline PlatformMediaSessionClient& PlatformMediaSessionInterface::client() const { return m_client; }
-inline CheckedRef<PlatformMediaSessionClient> PlatformMediaSessionInterface::checkedClient() const { return m_client; }
 inline bool PlatformMediaSessionInterface::isRemoteSessionProxy() const { return false; }
+inline bool PlatformMediaSessionInterface::playbackPermitted() const { return true; }
+inline bool PlatformMediaSessionInterface::admissionStillValid() const { return preparingToPlay(); }
+inline bool PlatformMediaSessionInterface::isPlayingOrPreparingToPlay() const { return state() == State::Playing || preparingToPlay(); }
+inline MediaSessionIdentifier PlatformMediaSessionInterface::mediaSessionIdentifier() const { return m_mediaSessionIdentifier; }
 
 } // namespace WebCore

@@ -29,6 +29,8 @@
 
 #include "MathMLOperatorDictionary.h"
 #include "MathMLTokenElement.h"
+#include <array>
+#include <wtf/text/StringView.h>
 
 namespace WebCore {
 
@@ -38,24 +40,36 @@ class MathMLOperatorElement final : public MathMLTokenElement {
 public:
     static Ref<MathMLOperatorElement> create(const QualifiedName&, Document&);
     struct OperatorChar {
-        char32_t character { 0 };
+        // Exactly one of character or characters is valid, determined by
+        // hasTwoCharacters. For multi-character operators (e.g. "&&", "!=",
+        // "->") the two code units are stored in characters and used for
+        // multi-character dictionary lookup.
+        union {
+            char32_t character;
+            std::array<char16_t, 2> characters;
+        };
         bool isVertical { true };
+        bool hasTwoCharacters { false };
+        OperatorChar()
+            : character(0)
+            {
+            }
     };
-    static OperatorChar parseOperatorChar(const String&);
-    const OperatorChar& operatorChar();
-    void setOperatorFormDirty() { m_dictionaryProperty = std::nullopt; }
+    static OperatorChar parseOperatorChar(StringView);
+    const OperatorChar& operatorChar() LIFETIME_BOUND;
+    void setOperatorFormDirty();
     MathMLOperatorDictionary::Form form() { return dictionaryProperty().form; }
     bool hasProperty(MathMLOperatorDictionary::Flag);
     Length defaultLeadingSpace();
     Length defaultTrailingSpace();
-    const Length& leadingSpace();
-    const Length& trailingSpace();
-    const Length& minSize();
-    const Length& maxSize();
+    const Length& leadingSpace() LIFETIME_BOUND;
+    const Length& trailingSpace() LIFETIME_BOUND;
+    const Length& minSize() LIFETIME_BOUND;
+    const Length& maxSize() LIFETIME_BOUND;
 
 private:
     MathMLOperatorElement(const QualifiedName&, Document&);
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
     void childrenChanged(const ChildChange&) final;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
 
@@ -63,10 +77,10 @@ private:
 
     std::optional<MathMLOperatorDictionary::Property> m_dictionaryProperty;
     MathMLOperatorDictionary::Property computeDictionaryProperty();
-    const MathMLOperatorDictionary::Property& dictionaryProperty();
+    const MathMLOperatorDictionary::Property& dictionaryProperty() LIFETIME_BOUND;
 
     struct OperatorProperties {
-        unsigned short flags;
+        unsigned short flags { 0 };
         unsigned short dirtyFlags { MathMLOperatorDictionary::allFlags };
     };
     OperatorProperties m_properties;

@@ -62,11 +62,11 @@ private:
 
     void didUpdateState(GraphicsContextState&) final { }
 
-    void drawNativeImage(NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final { }
+    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final { }
 
     void drawSystemImage(SystemImage&, const FloatRect&) final { };
 
-    void drawPattern(NativeImage&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, ImagePaintingOptions) final { }
+    void drawPattern(const NativeImage&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, ImagePaintingOptions) final { }
 
     IntRect clipBounds() const final { return { }; }
 
@@ -118,13 +118,10 @@ private:
 
     void drawDotsForDocumentMarker(const FloatRect&, DocumentMarkerLineStyle) final { }
 
-    ImageDrawResult drawImage(Image&, const FloatRect&, const FloatRect&, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage }) final { return ImageDrawResult::DidNothing; }
+    ImageDrawResult drawImage(Image&, ConcreteObjectSize, const FloatRect&, const FloatRect&, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage }, const ImageDrawingExtras* = nullptr) final { return ImageDrawResult::DidNothing; }
 
-    ImageDrawResult drawTiledImage(Image&, const FloatRect&, const FloatPoint&, const FloatSize&, const FloatSize&, ImagePaintingOptions = { }) final { return ImageDrawResult::DidNothing; }
-    ImageDrawResult drawTiledImage(Image&, const FloatRect&, const FloatRect&, const FloatSize&, Image::TileRule, Image::TileRule, ImagePaintingOptions = { }) final { return ImageDrawResult::DidNothing; }
-
-    void drawFocusRing(const Path&, float, const Color&) final { }
-    void drawFocusRing(const Vector<FloatRect>&, float, float, const Color&) final { }
+    void drawFocusRing(const Path&, float, const Color&, float) final { }
+    void drawFocusRing(const Vector<FloatRect>&, float, const Color&, float) final { }
 
     void drawImageBuffer(ImageBuffer&, const FloatRect&, const FloatRect&, ImagePaintingOptions = { }) final { }
 
@@ -139,7 +136,7 @@ private:
     void fillRectWithRoundedHole(const FloatRect&, const FloatRoundedRect&, const Color&) final { }
 
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const VideoFrame&, const FloatRect&, ImageOrientation, bool) final { }
+    void drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, ImagePaintingOptions) final { }
 #endif
 
 private:

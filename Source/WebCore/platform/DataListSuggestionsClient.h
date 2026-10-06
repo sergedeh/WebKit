@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/FrameIdentifier.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/Forward.h>
 
@@ -39,8 +40,9 @@ class DataListSuggestionsClient : public CanMakeCheckedPtr<DataListSuggestionsCl
 public:
     virtual ~DataListSuggestionsClient() = default;
 
-    virtual IntRect elementRectInRootViewCoordinates() const = 0;
+    virtual IntRect elementRectInMainFrameViewCoordinates() const = 0;
     virtual Vector<DataListSuggestion> suggestions() = 0;
+    virtual std::optional<FrameIdentifier> rootFrameID() const = 0;
 
     virtual void didSelectDataListOption(const String&) = 0;
     virtual void didCloseSuggestions() = 0;

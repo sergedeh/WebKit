@@ -40,12 +40,10 @@ TypeInfoBlob JSWebAssemblyArray::typeInfoBlob()
     return TypeInfoBlob(0, TypeInfo(WebAssemblyGCObjectType, StructureFlags));
 }
 
-WebAssemblyGCStructure* JSWebAssemblyArray::createStructure(VM& vm, JSGlobalObject* globalObject, Ref<const Wasm::TypeDefinition>&& unexpandedType, Ref<const Wasm::RTT>&& rtt)
+WebAssemblyGCStructure* JSWebAssemblyArray::createStructure(VM& vm, Ref<const Wasm::RTT>&& rtt)
 {
-    Ref<const Wasm::TypeDefinition> type { unexpandedType->expand() };
-    RELEASE_ASSERT(type->is<Wasm::ArrayType>());
     RELEASE_ASSERT(rtt->kind() == Wasm::RTTKind::Array);
-    return WebAssemblyGCStructure::create(vm, globalObject, TypeInfo(WebAssemblyGCObjectType, StructureFlags), info(), WTF::move(unexpandedType), WTF::move(type), WTF::move(rtt));
+    return WebAssemblyGCStructure::create(vm, TypeInfo(WebAssemblyGCObjectType, StructureFlags), info(), WTF::move(rtt));
 }
 
 template<typename T>
@@ -54,9 +52,9 @@ std::span<T> JSWebAssemblyArray::span() LIFETIME_BOUND
     ASSERT(sizeof(T) == elementType().type.elementSize());
     uint8_t* data = this->data();
     if constexpr (std::is_same_v<T, v128_t>)
-        data += isPreciseAllocation() ? 0 : v128AlignmentShift;
+        data = WTF::roundUpToMultipleOf<16>(data);
     else
-        ASSERT(!needsAlignmentCheck(elementType().type));
+        data += alignmentShift(sizeof(T));
     ASSERT(data == this->bytes().data());
     return { std::bit_cast<T*>(data), size() };
 }
@@ -69,9 +67,12 @@ std::span<uint64_t> JSWebAssemblyArray::refTypeSpan() LIFETIME_BOUND
 
 std::span<uint8_t> JSWebAssemblyArray::bytes()
 {
-    if (!needsAlignmentCheck(elementType().type) || isPreciseAllocation())
-        return { data(), sizeInBytes() };
-    return { data() + v128AlignmentShift, sizeInBytes() };
+    uint8_t* start = data();
+    if (needsV128AlignmentMask(elementType().type))
+        start = WTF::roundUpToMultipleOf<16>(start);
+    else
+        start += alignmentShift(elementType().type.elementSize());
+    return { start, sizeInBytes() };
 }
 
 auto JSWebAssemblyArray::visitSpan(auto functor)
@@ -88,7 +89,7 @@ auto JSWebAssemblyArray::visitSpan(auto functor)
 
     // m_element_type must be a type, so we can get its kind
     ASSERT(type.is<Wasm::Type>());
-    switch (type.as<Wasm::Type>().kind) {
+    switch (type.as<Wasm::Type>().kind()) {
     case Wasm::TypeKind::I32:
     case Wasm::TypeKind::F32:
         return functor(span<uint32_t>());
@@ -117,7 +118,7 @@ auto JSWebAssemblyArray::visitSpanNonVector(auto functor)
 
     // m_element_type must be a type, so we can get its kind
     ASSERT(type.is<Wasm::Type>());
-    switch (type.as<Wasm::Type>().kind) {
+    switch (type.as<Wasm::Type>().kind()) {
     case Wasm::TypeKind::I32:
     case Wasm::TypeKind::F32:
         return functor(span<uint32_t>());
@@ -141,18 +142,23 @@ v128_t JSWebAssemblyArray::getVector(uint32_t index)
     return span<v128_t>()[index];
 }
 
-void JSWebAssemblyArray::set(VM& vm, uint32_t index, uint64_t value)
+void JSWebAssemblyArray::setWithoutWriteBarrier(uint32_t index, uint64_t value)
 {
     visitSpanNonVector([&]<typename T>(std::span<T> span) ALWAYS_INLINE_LAMBDA {
         span[index] = static_cast<T>(value);
-        if (elementsAreRefTypes())
-            vm.writeBarrier(this);
     });
+}
+
+void JSWebAssemblyArray::set(VM& vm, uint32_t index, uint64_t value)
+{
+    setWithoutWriteBarrier(index, value);
+    if (elementsAreRefTypes())
+        vm.writeBarrier(this);
 }
 
 void JSWebAssemblyArray::set(VM&, uint32_t index, v128_t value)
 {
-    ASSERT(elementType().type.as<Wasm::Type>().kind == Wasm::TypeKind::V128);
+    ASSERT(elementType().type.as<Wasm::Type>().kind() == Wasm::TypeKind::V128);
     span<v128_t>()[index] = value;
 }
 

@@ -33,6 +33,7 @@
 #include "WPEToplevelWaylandPrivate.h"
 #include <linux/input.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/glib/RunLoopSourcePriority.h>
 
@@ -99,6 +100,8 @@ const struct wl_pointer_listener WaylandSeat::s_pointerListener = {
     // motion
     [](void* data, struct wl_pointer*, uint32_t time, wl_fixed_t fixedX, wl_fixed_t fixedY)
     {
+        WTFEmitSignpost(wl_pointer, WaylandMotionEvent);
+
         auto& seat = *static_cast<WaylandSeat*>(data);
         if (!seat.m_pointer.toplevel)
             return;
@@ -122,6 +125,8 @@ const struct wl_pointer_listener WaylandSeat::s_pointerListener = {
     // button
     [](void* data, struct wl_pointer*, uint32_t /*serial*/, uint32_t time, uint32_t button, uint32_t state)
     {
+        WTFEmitSignpost(wl_pointer, WaylandButtonEvent);
+
         auto& seat = *static_cast<WaylandSeat*>(data);
         if (!seat.m_pointer.toplevel)
             return;
@@ -282,6 +287,10 @@ const struct wl_pointer_listener WaylandSeat::s_pointerListener = {
     [](void*, struct wl_pointer*, uint32_t, uint32_t)
     {
     },
+#endif
+#ifdef WL_POINTER_WARP_SINCE_VERSION
+    // warp
+    [](void*, struct wl_pointer*, wl_fixed_t, wl_fixed_t) { },
 #endif
 };
 
@@ -461,7 +470,7 @@ const struct wl_touch_listener WaylandSeat::s_touchListener = {
         if (!seat.m_touch.toplevel)
             return;
 
-        if (GRefPtr<WPEView> view = wpeToplevelWaylandGetVisibleFocusedView(seat.m_touch.toplevel.get())) {
+        if (GRefPtr<WPEView> view = wpeToplevelWaylandGetVisibleViewUnderTouch(seat.m_touch.toplevel.get())) {
             for (const auto& iter : seat.m_touch.points) {
                 GRefPtr<WPEEvent> event = adoptGRef(wpe_event_touch_new(WPE_EVENT_TOUCH_CANCEL, view.get(), seat.m_touch.source, 0, seat.modifiers(),
                     iter.key, iter.value.first, iter.value.second));
@@ -516,6 +525,16 @@ const struct wl_seat_listener WaylandSeat::s_listener = {
             seat.m_touch.source = WPE_INPUT_SOURCE_TOUCHSCREEN;
             wl_touch_add_listener(seat.m_touch.object, &s_touchListener, data);
         } else if (!hasTouch && seat.m_touch.object) {
+            if (seat.m_touch.toplevel) {
+                if (GRefPtr<WPEView> view = wpeToplevelWaylandGetVisibleViewUnderTouch(seat.m_touch.toplevel.get())) {
+                    for (const auto& iter : seat.m_touch.points) {
+                        GRefPtr<WPEEvent> event = adoptGRef(wpe_event_touch_new(WPE_EVENT_TOUCH_CANCEL, view.get(), seat.m_touch.source, 0, seat.modifiers(),
+                            iter.key, iter.value.first, iter.value.second));
+                        wpe_view_event(view.get(), event.get());
+                    }
+                }
+            }
+
             wl_touch_release(seat.m_touch.object);
             seat.m_touch = { };
         }

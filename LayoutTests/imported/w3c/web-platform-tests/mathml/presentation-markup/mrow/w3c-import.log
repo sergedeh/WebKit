@@ -10,8 +10,6 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/mathml/presentation-markup/mrow/dynamic-mrow-like-001-expected.html
@@ -51,5 +49,6 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/mathml/presentation-markup/mrow/semantics-005-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/mathml/presentation-markup/mrow/semantics-005-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/mathml/presentation-markup/mrow/semantics-005.html
+/LayoutTests/imported/w3c/web-platform-tests/mathml/presentation-markup/mrow/spacing-002.html
 /LayoutTests/imported/w3c/web-platform-tests/mathml/presentation-markup/mrow/spacing.html
 /LayoutTests/imported/w3c/web-platform-tests/mathml/presentation-markup/mrow/stretch-along-block-axis-001.html

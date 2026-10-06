@@ -10,8 +10,6 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/AddEventListenerOptions-once.any.js
@@ -81,6 +79,8 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/EventTarget-removeEventListener.any.js
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/EventTarget-this-of-listener.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/KeyEvent-initKeyEvent.html
+/LayoutTests/imported/w3c/web-platform-tests/dom/events/WEB_FEATURES.yml
+/LayoutTests/imported/w3c/web-platform-tests/dom/events/click-on-absolute-pseudo.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/event-disabled-dynamic.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/event-global-extra.window.js
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/event-global-is-still-set-when-coercing-beforeunload-result.html
@@ -88,9 +88,12 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/event-global-set-before-handleEvent-lookup.window.js
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/event-global.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/event-global.worker.js
+/LayoutTests/imported/w3c/web-platform-tests/dom/events/event-handler-attribute-replace-preserves-passive.html
+/LayoutTests/imported/w3c/web-platform-tests/dom/events/event-src-element-nullable.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/focus-event-document-move.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/handler-count.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/keypress-dispatch-crash.html
+/LayoutTests/imported/w3c/web-platform-tests/dom/events/label-default-action.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/legacy-pre-activation-behavior.window.js
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/mouse-event-retarget.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/no-focus-events-at-clicking-editable-content-in-link.html
@@ -106,3 +109,4 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/webkit-animation-start-event.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/webkit-transition-end-event.html
 /LayoutTests/imported/w3c/web-platform-tests/dom/events/window-composed-path.html
+/LayoutTests/imported/w3c/web-platform-tests/dom/events/window-event-restored-after-throwing-onerror.html

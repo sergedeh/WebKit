@@ -28,9 +28,15 @@
 
 #include "ArgumentCoders.h"
 #include "Decoder.h"
+#include "EditingRange.h"
 #include "Encoder.h"
+#include "GeneratedSerializers.h"
+#include "SecurityFlags.h"
 #include "StreamConnectionEncoder.h"
-#include "Test.h"
+#include "Helpers/Test.h"
+#include <WebCore/ShareableResource.h>
+#include <WebCore/TransformationMatrix.h>
+#include <limits>
 #include <wtf/StdLibExtras.h>
 
 namespace TestWebKitAPI {
@@ -106,7 +112,7 @@ private:
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Impl);
 
         Impl()
-            : buffer(1024, static_cast<uint8_t>(0))
+            : buffer(FillWith { }, 1024, static_cast<uint8_t>(0))
             , encoder(EncoderDecoderTest::name(), buffer.mutableSpan())
         { }
 
@@ -719,5 +725,168 @@ TYPED_TEST_P(ArgumentCoderVectorTest, VectorTooBig)
 REGISTER_TYPED_TEST_SUITE_P(ArgumentCoderVectorTest,
     VectorTooBig);
 INSTANTIATE_TYPED_TEST_SUITE_P(ArgumentCoderTest, ArgumentCoderVectorTest, EncoderTypes, EncoderTypeNames);
+
+TEST(ArgumentCoderEditingRange, OverflowingRangeIsRejectedNotCrashed)
+{
+    IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
+    encoder << WebKit::EditingRange { std::numeric_limits<uint64_t>::max(), 1 };
+
+    auto decoder = IPC::Decoder::create(encoder.span(), { });
+    ASSERT_TRUE(decoder);
+
+    auto editingRange = decoder->decode<WebKit::EditingRange>();
+    EXPECT_FALSE(editingRange.has_value());
+    EXPECT_FALSE(decoder->isValid());
+}
+
+TEST(EditingRangeFirstLineClamp, NeverProducesOverflowingRange)
+{
+    constexpr auto max = std::numeric_limits<uint64_t>::max();
+
+    EXPECT_TRUE(WebKit::EditingRange::clampedFirstLineRange({ 0, 5 }, { max, 0 }).isValid());
+    EXPECT_TRUE(WebKit::EditingRange::clampedFirstLineRange({ 100, 10 }, { max - 2, 0 }).isValid());
+    EXPECT_TRUE(WebKit::EditingRange::clampedFirstLineRange({ max, max }, { max, max }).isValid());
+    EXPECT_TRUE(WebKit::EditingRange::clampedFirstLineRange({ max - 3, 10 }, { 5, max }).isValid());
+
+    auto unchanged = WebKit::EditingRange::clampedFirstLineRange({ 5, 3 }, { 2, 20 });
+    EXPECT_EQ(unchanged.location, 5u);
+    EXPECT_EQ(unchanged.length, 3u);
+
+    auto trimmed = WebKit::EditingRange::clampedFirstLineRange({ 5, 100 }, { 2, 10 });
+    EXPECT_TRUE(trimmed.isValid());
+    EXPECT_EQ(trimmed.location, 5u);
+    EXPECT_EQ(trimmed.location + trimmed.length, 12u);
+}
+
+#if ENABLE(SHAREABLE_RESOURCE)
+TEST(ArgumentCoderShareableResourceHandle, OverflowingOffsetAndSizeIsRejectedNotCrashed)
+{
+    auto sharedMemory = WebCore::SharedMemory::allocate(4096);
+    ASSERT_TRUE(sharedMemory);
+    auto memoryHandle = sharedMemory->createHandle(WebCore::SharedMemory::Protection::ReadOnly);
+    ASSERT_TRUE(memoryHandle);
+
+    WebCore::ShareableResourceHandle handle { WTF::move(*memoryHandle), std::numeric_limits<unsigned>::max(), 1 };
+
+    IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
+    encoder << WTF::move(handle);
+
+    auto decoder = IPC::Decoder::create(encoder.span(), encoder.releaseAttachments());
+    ASSERT_TRUE(decoder);
+
+    auto result = decoder->decode<WebCore::ShareableResourceHandle>();
+    EXPECT_FALSE(result.has_value());
+}
+#endif // ENABLE(SHAREABLE_RESOURCE)
+
+TEST(ArgumentCoderSecurityFlags, SecureDefaultRoundTrips)
+{
+    IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
+    encoder << WebKit::SecurityFlags { };
+
+    auto decoder = IPC::Decoder::create(encoder.span(), { });
+    ASSERT_TRUE(decoder);
+
+    auto flags = decoder->decode<WebKit::SecurityFlags>();
+    ASSERT_TRUE(flags.has_value());
+    EXPECT_TRUE(*flags == WebKit::SecurityFlags { });
+}
+
+TEST(ArgumentCoderSecurityFlags, DisabledFlagRoundTrips)
+{
+    std::array<uint64_t, WebKit::SecurityFlags::ipcWordCount> words { };
+    words[0] |= 1ULL;
+    auto original = WebKit::SecurityFlags::fromDisabledFlagsForIPC(words);
+    ASSERT_TRUE(original.has_value());
+    EXPECT_FALSE(*original == WebKit::SecurityFlags { });
+
+    IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
+    encoder << *original;
+
+    auto decoder = IPC::Decoder::create(encoder.span(), { });
+    ASSERT_TRUE(decoder);
+
+    auto flags = decoder->decode<WebKit::SecurityFlags>();
+    ASSERT_TRUE(flags.has_value());
+    EXPECT_TRUE(*flags == *original);
+    EXPECT_EQ(flags->disabledFlagsForIPC(), words);
+}
+
+TEST(ArgumentCoderSecurityFlags, BitBelongingToNoFlagIsRejectedNotCrashed)
+{
+    // A flag count that fills the last word leaves no bit for this test to set, and flagCount / 64 would then
+    // index one past the end.
+    if constexpr (!(WebKit::SecurityFlags::flagCount % 64))
+        GTEST_SKIP() << "every bit belongs to a flag at this flag count";
+    else {
+        std::array<uint64_t, WebKit::SecurityFlags::ipcWordCount> words { };
+        words[WebKit::SecurityFlags::flagCount / 64] |= 1ULL << (WebKit::SecurityFlags::flagCount % 64);
+
+        IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
+        encoder << words;
+
+        auto decoder = IPC::Decoder::create(encoder.span(), { });
+        ASSERT_TRUE(decoder);
+
+        auto flags = decoder->decode<WebKit::SecurityFlags>();
+        EXPECT_FALSE(flags.has_value());
+    }
+}
+
+template<size_t expectedDoubleCount>
+static void testTransformationMatrixCoding(const WebCore::TransformationMatrix& matrix)
+{
+    IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
+    encoder << matrix;
+
+    constexpr size_t messageHeaderSize = 16;
+    size_t expectedSize = calculateEncodedSize(messageHeaderSize, EncodedValue<uint8_t, 1> { });
+    if constexpr (expectedDoubleCount)
+        expectedSize = calculateEncodedSize(expectedSize, EncodedValue<double, expectedDoubleCount> { });
+    EXPECT_EQ(expectedSize, encoder.span().size());
+
+    auto decoder = IPC::Decoder::create(encoder.span(), { });
+    ASSERT_TRUE(decoder);
+    auto decoded = decoder->decode<WebCore::TransformationMatrix>();
+    ASSERT_TRUE(decoded.has_value());
+
+    EXPECT_TRUE(matrix == *decoded);
+}
+
+TEST(ArgumentCoderTransformationMatrix, IdentityCostsOnlyTheVariantTag)
+{
+    testTransformationMatrixCoding<0>(WebCore::TransformationMatrix { });
+}
+
+TEST(ArgumentCoderTransformationMatrix, Translation2DCostsTwoDoubles)
+{
+    testTransformationMatrixCoding<2>(WebCore::TransformationMatrix { 10.5, -20.25 });
+
+    WebCore::TransformationMatrix zeroZ;
+    zeroZ.translate3d(1.0, 2.0, 0.0);
+    testTransformationMatrixCoding<2>(zeroZ);
+}
+
+TEST(ArgumentCoderTransformationMatrix, Translation3DCostsThreeDoubles)
+{
+    WebCore::TransformationMatrix translated3D;
+    translated3D.translate3d(1.0, 2.0, 3.0);
+    testTransformationMatrixCoding<3>(translated3D);
+}
+
+TEST(ArgumentCoderTransformationMatrix, AffineCostsSixDoubles)
+{
+    testTransformationMatrixCoding<6>(WebCore::TransformationMatrix { 6.0, 5.0, 4.0, 3.0, 2.0, 1.0 });
+}
+
+TEST(ArgumentCoderTransformationMatrix, NonAffineCostsSixteenDoubles)
+{
+    testTransformationMatrixCoding<16>(WebCore::TransformationMatrix {
+        16.0, 15.0, 14.0, 13.0,
+        12.0, 11.0, 10.0, 9.0,
+        8.0, 7.0, 6.0, 5.0,
+        4.0, 3.0, 2.0, 1.0
+    });
+}
 
 } // namespace TestWebKitAPI

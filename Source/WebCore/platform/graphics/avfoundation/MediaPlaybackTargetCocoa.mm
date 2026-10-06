@@ -38,7 +38,9 @@ MediaPlaybackTargetCocoa::MediaPlaybackTargetCocoa(RetainPtr<AVOutputContext>&& 
     : MediaPlaybackTarget { Type::AVOutputContext }
     , m_outputContext { WTF::move(outputContext) }
 {
+#if PLATFORM(IOS_FAMILY) && !PLATFORM(IOS_FAMILY_SIMULATOR) && !PLATFORM(MACCATALYST)
     ASSERT(m_outputContext);
+#endif
 }
 
 MediaPlaybackTargetCocoa::~MediaPlaybackTargetCocoa() = default;
@@ -53,6 +55,11 @@ String MediaPlaybackTargetCocoa::deviceName() const
         [outputDeviceNames addObject:retainPtr([outputDevice deviceName]).get()];
 
     return [outputDeviceNames componentsJoinedByString:@" + "];
+}
+
+String MediaPlaybackTargetCocoa::routeName() const
+{
+    return { };
 }
 
 bool MediaPlaybackTargetCocoa::hasActiveRoute() const
@@ -84,14 +91,15 @@ Ref<MediaPlaybackTargetCocoa> MediaPlaybackTargetCocoa::create(RetainPtr<AVOutpu
     return adoptRef(*new MediaPlaybackTargetCocoa(WTF::move(outputContext)));
 }
 
-#if PLATFORM(IOS_FAMILY) && !PLATFORM(IOS_FAMILY_SIMULATOR) && !PLATFORM(MACCATALYST)
 Ref<MediaPlaybackTargetCocoa> MediaPlaybackTargetCocoa::create()
 {
+#if PLATFORM(IOS_FAMILY) && !PLATFORM(IOS_FAMILY_SIMULATOR) && !PLATFORM(MACCATALYST)
     NSString *routingContextUID = [[PAL::getAVAudioSessionClassSingleton() sharedInstance] routingContextUID];
     return create([PAL::getAVOutputContextClassSingleton() outputContextForID:routingContextUID]);
-}
-
+#else
+    return create(nil);
 #endif
+}
 
 } // namespace WebCore
 

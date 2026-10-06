@@ -25,30 +25,54 @@
 
 #pragma once
 
+#include "RenderBlock.h"
 #include "RenderReplaced.h"
+#include <wtf/HashMap.h>
+#include <wtf/WeakRef.h>
 
 namespace WebCore {
 
 class HTMLCanvasElement;
+struct CanvasElementSnapshot;
+
+namespace DisplayList {
+class RecorderImpl;
+}
 
 class RenderHTMLCanvas final : public RenderReplaced {
     WTF_MAKE_TZONE_ALLOCATED(RenderHTMLCanvas);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderHTMLCanvas);
 public:
-    RenderHTMLCanvas(HTMLCanvasElement&, RenderStyle&&);
+    RenderHTMLCanvas(HTMLCanvasElement&, Style::ComputedStyle&&);
     virtual ~RenderHTMLCanvas();
 
-    HTMLCanvasElement& canvasElement() const;
+    HTMLCanvasElement& NODELETE canvasElement() const;
 
     void canvasSizeChanged();
 
+    RenderBlock* innerRenderer() const { return m_innerRenderer.get(); }
+    void setInnerRenderer(RenderBlock*);
+
+    bool hasDrawableContent() const;
+
+    std::optional<CanvasElementSnapshot> drawableRendererSnapshot(RenderElement&) const;
+
 private:
     void element() const = delete;
+
     bool requiresLayer() const override;
     ASCIILiteral renderName() const override { return "RenderHTMLCanvas"_s; }
+    bool canHaveChildren() const override;
+
+    void layout() override;
     void paintReplaced(PaintInfo&, const LayoutPoint&) override;
+    bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
+
     void intrinsicSizeChanged() override { canvasSizeChanged(); }
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
+
+    SingleThreadWeakPtr<RenderBlock> m_innerRenderer;
+    HashMap<SingleThreadWeakRef<RenderElement>, UniqueRef<DisplayList::RecorderImpl>> m_drawableRendererSnapshotRecorderMap;
 };
 
 } // namespace WebCore

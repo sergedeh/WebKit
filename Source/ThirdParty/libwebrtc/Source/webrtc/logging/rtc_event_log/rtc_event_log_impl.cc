@@ -20,7 +20,6 @@
 
 #include "absl/strings/string_view.h"
 #include "api/environment/environment.h"
-#include "api/field_trials_view.h"
 #include "api/rtc_event_log/rtc_event.h"
 #include "api/rtc_event_log/rtc_event_log.h"
 #include "api/rtc_event_log_output.h"
@@ -28,9 +27,7 @@
 #include "api/task_queue/task_queue_base.h"
 #include "api/task_queue/task_queue_factory.h"
 #include "api/units/time_delta.h"
-#include "api/units/timestamp.h"
 #include "logging/rtc_event_log/encoder/rtc_event_log_encoder.h"
-#include "logging/rtc_event_log/encoder/rtc_event_log_encoder_legacy.h"
 #include "logging/rtc_event_log/encoder/rtc_event_log_encoder_new_format.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/event.h"
@@ -43,13 +40,8 @@ namespace webrtc {
 namespace {
 
 std::unique_ptr<RtcEventLogEncoder> CreateEncoder(const Environment& env) {
-  if (env.field_trials().IsDisabled("WebRTC-RtcEventLogNewFormat")) {
-    RTC_DLOG(LS_INFO) << "Creating legacy encoder for RTC event log.";
-    return std::make_unique<RtcEventLogEncoderLegacy>();
-  } else {
-    RTC_DLOG(LS_INFO) << "Creating new format encoder for RTC event log.";
-    return std::make_unique<RtcEventLogEncoderNewFormat>(env.field_trials());
-  }
+  RTC_DLOG(LS_INFO) << "Creating new format encoder for RTC event log.";
+  return std::make_unique<RtcEventLogEncoderNewFormat>(env.field_trials());
 }
 
 }  // namespace
@@ -68,7 +60,7 @@ RtcEventLogImpl::RtcEventLogImpl(const Environment& env,
       last_output_ms_(env_.clock().TimeInMilliseconds()),
       task_queue_(env_.task_queue_factory().CreateTaskQueue(
           "rtc_event_log",
-          TaskQueueFactory::Priority::NORMAL)) {}
+          TaskQueueFactory::Priority::kNormal)) {}
 
 RtcEventLogImpl::~RtcEventLogImpl() {
   // If we're logging to the output, this will stop that. Blocking function.
@@ -182,14 +174,7 @@ RtcEventLogImpl::EventHistories RtcEventLogImpl::ExtractRecentHistories() {
 void RtcEventLogImpl::Log(std::unique_ptr<RtcEvent> event) {
   RTC_CHECK(event);
   MutexLock lock(&mutex_);
-  // Precision is lowered to minimize the change and behave same way as
-  // constructor does using `TimeMillis`, in particular postpone updating all
-  // the unit tests that expects timestamp would be exactly as set in the
-  // default constructor.
-  // TODO: bugs.webrtc.org/439515766 - Simplify by removing rounding letting
-  // rtc event log encoders decide how to better quantize time.
-  event->SetTimestamp(
-      Timestamp::Millis(env_.clock().TimeInMicroseconds() / 1000));
+  event->SetTimestamp(env_.clock().CurrentTime());
 
   LogToMemory(std::move(event));
   if (logging_state_started_) {

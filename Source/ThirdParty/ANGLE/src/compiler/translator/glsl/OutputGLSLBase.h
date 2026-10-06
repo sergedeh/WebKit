@@ -24,7 +24,8 @@ class TOutputGLSLBase : public TIntermTraverser
   public:
     TOutputGLSLBase(TCompiler *compiler,
                     TInfoSinkBase &objSink,
-                    const ShCompileOptions &compileOptions);
+                    const ShCompileOptions &compileOptions,
+                    bool removeInvariant);
 
     ShShaderOutput getShaderOutput() const { return mOutput; }
 
@@ -32,6 +33,7 @@ class TOutputGLSLBase : public TIntermTraverser
     // otherwise return the hashed name. Has special handling for internal names and built-ins,
     // which are not hashed.
     ImmutableString hashName(const TSymbol *symbol);
+    ImmutableString hashBlockName(const TSymbol *symbol);
 
   protected:
     TInfoSinkBase &objSink() { return mObjSink; }
@@ -90,7 +92,7 @@ class TOutputGLSLBase : public TIntermTraverser
     const char *mapQualifierToString(TQualifier qualifier);
 
     sh::GLenum getShaderType() const { return mShaderType; }
-    bool isHighPrecisionSupported() const { return mHighPrecisionSupported; }
+    int getShaderVersion() const { return mShaderVersion; }
     const char *getIndentPrefix(int extraIndentDepth = 0);
 
     bool needsToWriteLayoutQualifier(const TType &type);
@@ -109,20 +111,19 @@ class TOutputGLSLBase : public TIntermTraverser
 
     // name hashing.
     ShHashFunction64 mHashFunction;
-    char mUserVariablePrefix;
     NameMap &mNameMap;
 
     sh::GLenum mShaderType;
     const int mShaderVersion;
     ShShaderOutput mOutput;
 
-    bool mHighPrecisionSupported;
-
     // Emit "layout(locaton = 0)" for fragment outputs whose location is unspecified. This is for
     // transformations like pixel local storage, where new outputs are introduced to the shader, and
     // previously valid fragment outputs with an implicit location of 0 are now required to specify
     // their location.
     bool mAlwaysSpecifyFragOutLocation;
+    // Whether `invariant` should be removed everywhere
+    bool mRemoveInvariant;
 
     const ShCompileOptions &mCompileOptions;
 };

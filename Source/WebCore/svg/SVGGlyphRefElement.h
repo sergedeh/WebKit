@@ -32,8 +32,6 @@ class SVGGlyphRefElement final : public SVGElement, public SVGURIReference {
 public:
     static Ref<SVGGlyphRefElement> create(const QualifiedName&, Document&);
 
-    bool hasValidGlyphElement(String& glyphName) const;
-
     float x() const { return m_x; }
     void setX(float);
     float y() const { return m_y; }
@@ -49,7 +47,7 @@ private:
     SVGGlyphRefElement(const QualifiedName&, Document&);
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) final { return false; }
 
     float m_x { 0 };
     float m_y { 0 };

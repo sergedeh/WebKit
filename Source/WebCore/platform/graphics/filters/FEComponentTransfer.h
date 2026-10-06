@@ -66,7 +66,7 @@ class FEComponentTransfer final : public FilterEffect {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEComponentTransfer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEComponentTransfer);
 public:
-    WEBCORE_EXPORT static Ref<FEComponentTransfer> create(const ComponentTransferFunction& redFunc, const ComponentTransferFunction& greenFunc, const ComponentTransferFunction& blueFunc, const ComponentTransferFunction& alphaFunc, DestinationColorSpace = DestinationColorSpace::SRGB());
+    WEBCORE_EXPORT static Ref<FEComponentTransfer> create(const ComponentTransferFunction& redFunc, const ComponentTransferFunction& greenFunc, const ComponentTransferFunction& blueFunc, const ComponentTransferFunction& alphaFunc, ColorSpace = ColorSpace::SRGB());
     static Ref<FEComponentTransfer> create(ComponentTransferFunctions&&);
 
     using LookupTable = std::array<uint8_t, 256>;
@@ -79,16 +79,16 @@ public:
     ComponentTransferFunction blueFunction() const { return m_functions[ComponentTransferChannel::Blue]; }
     ComponentTransferFunction alphaFunction() const { return m_functions[ComponentTransferChannel::Alpha]; }
 
-    bool setType(ComponentTransferChannel, ComponentTransferType);
-    bool setSlope(ComponentTransferChannel, float);
-    bool setIntercept(ComponentTransferChannel, float);
-    bool setAmplitude(ComponentTransferChannel, float);
-    bool setExponent(ComponentTransferChannel, float);
-    bool setOffset(ComponentTransferChannel, float);
+    bool NODELETE setType(ComponentTransferChannel, ComponentTransferType);
+    bool NODELETE setSlope(ComponentTransferChannel, float);
+    bool NODELETE setIntercept(ComponentTransferChannel, float);
+    bool NODELETE setAmplitude(ComponentTransferChannel, float);
+    bool NODELETE setExponent(ComponentTransferChannel, float);
+    bool NODELETE setOffset(ComponentTransferChannel, float);
     bool setTableValues(ComponentTransferChannel, Vector<float>&&);
 
 private:
-    FEComponentTransfer(const ComponentTransferFunction& redFunc, const ComponentTransferFunction& greenFunc, const ComponentTransferFunction& blueFunc, const ComponentTransferFunction& alphaFunc, DestinationColorSpace);
+    FEComponentTransfer(const ComponentTransferFunction& redFunc, const ComponentTransferFunction& greenFunc, const ComponentTransferFunction& blueFunc, const ComponentTransferFunction& alphaFunc, ColorSpace);
     FEComponentTransfer(ComponentTransferFunctions&&);
 
     bool operator==(const FilterEffect& other) const override { return areEqual<FEComponentTransfer>(*this, other); }

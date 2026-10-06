@@ -37,6 +37,10 @@
 #include <functional>
 #include <sstream>
 
+#if defined(ANGLE_USE_PERFETTO)
+#    include <perfetto/tracing/track.h>
+#endif
+
 // When --minimize-gpu-work is specified, we want to reduce GPU work to minimum and lift up the CPU
 // overhead to surface so that we can see how much CPU overhead each driver has for each app trace.
 // On some driver(s) the bufferSubData/texSubImage calls end up dominating the frame time when the
@@ -65,6 +69,8 @@ class TracePerfTest : public ANGLERenderTest
     void initializeBenchmark() override;
     void destroyBenchmark() override;
     void drawBenchmark() override;
+    void startGpuTimer() override;
+    void stopGpuTimer(bool mayNeedFlush = true) override;
 
     // TODO(http://anglebug.com/42264418): Add support for creating EGLSurface:
     // - eglCreatePbufferSurface()
@@ -95,6 +101,7 @@ class TracePerfTest : public ANGLERenderTest
     EGLint onEglClientWaitSyncKHR(EGLDisplay dpy, EGLSync sync, EGLint flags, EGLTimeKHR timeout);
     EGLint onEglGetError();
     EGLDisplay onEglGetCurrentDisplay();
+    EGLSurface onEglGetCurrentSurface(EGLint readdraw);
 
     void onReplayFramebufferChange(GLenum target, GLuint framebuffer);
     void onReplayInvalidateFramebuffer(GLenum target,
@@ -165,6 +172,9 @@ class TracePerfTest : public ANGLERenderTest
     };
     void saveScreenshotIfEnabled(ScreenshotType screenshotType);
     void saveScreenshot(const std::string &screenshotName);
+
+    void MaybeSwitchToMainContext(EGLContext currentEglContext);
+    void MaybeSwitchToTraceContext(EGLContext currentEglContext);
 
     std::unique_ptr<const TracePerfParams> mParams;
 
@@ -822,8 +832,6 @@ GPUTestConfig::API getTestConfigAPIFromRenderer(angle::GLESDriverType driverType
     {
         case EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE:
             return GPUTestConfig::kAPID3D11;
-        case EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE:
-            return GPUTestConfig::kAPID3D9;
         case EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE:
             return GPUTestConfig::kAPIGLDesktop;
         case EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE:
@@ -874,6 +882,7 @@ void TracePerfTest::initializeConfigParams(GPUTestConfig::API api)
     configParams.alphaBits         = mParams->traceInfo.configAlphaBits;
     configParams.depthBits         = mParams->traceInfo.configDepthBits;
     configParams.stencilBits       = mParams->traceInfo.configStencilBits;
+    configParams.robustAccess      = mParams->traceInfo.isRobustAccessEnabled;
     configParams.colorSpace        = mParams->traceInfo.drawSurfaceColorSpace;
 
     // TODO (b/423680521): App traces shouldn't be relying on these extensions anyway, since they
@@ -883,6 +892,7 @@ void TracePerfTest::initializeConfigParams(GPUTestConfig::API api)
     configParams.robustResourceInit    = mParams->traceInfo.isRobustResourceInitEnabled;
     configParams.bindGeneratesResource = mParams->traceInfo.isBindGeneratesResourcesEnabled;
     configParams.clientArraysEnabled   = mParams->traceInfo.areClientArraysEnabled;
+    configParams.extensionsEnabled     = mParams->traceInfo.areExtensionsEnabled;
 }
 
 TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
@@ -1023,11 +1033,6 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
     }
 
-    if (traceNameIs("saint_seiya_awakening"))
-    {
-        addExtensionPrerequisite("GL_EXT_shadow_samplers");
-    }
-
     if (traceNameIs("magic_tiles_3"))
     {
         // Linux+NVIDIA doesn't support GL_KHR_texture_compression_astc_ldr (possibly others also)
@@ -1111,20 +1116,9 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
     }
 
-    if (traceNameIs("pokemon_go"))
-    {
-        addExtensionPrerequisite("GL_EXT_texture_cube_map_array");
-        addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
-    }
-
     if (traceNameIs("cookie_run_kingdom"))
     {
         addExtensionPrerequisite("GL_OES_EGL_image_external");
-    }
-
-    if (traceNameIs("pubg_mobile_skydive") || traceNameIs("pubg_mobile_battle_royale"))
-    {
-        addExtensionPrerequisite("GL_EXT_texture_buffer");
     }
 
     if (traceNameIs("scrabble_go"))
@@ -1162,20 +1156,10 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_EXT_shader_framebuffer_fetch");
     }
 
-    if (traceNameIs("war_planet_online"))
-    {
-        addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
-    }
-
     if (traceNameIs("lords_mobile"))
     {
         // http://anglebug.com/42265475 - glTexStorage2DEXT is not exposed on Pixel 4 native
         addExtensionPrerequisite("GL_EXT_texture_storage");
-    }
-
-    if (traceNameIs("real_racing3"))
-    {
-        addExtensionPrerequisite("GL_EXT_shader_framebuffer_fetch");
     }
 
     if (traceNameIs("blade_and_soul_revolution"))
@@ -1251,6 +1235,7 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("life_is_strange"))
     {
+        addExtensionPrerequisite("GL_EXT_sRGB_write_control");
         addExtensionPrerequisite("GL_EXT_texture_buffer");
         addExtensionPrerequisite("GL_EXT_texture_cube_map_array");
     }
@@ -1320,6 +1305,24 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("minecraft_vibrant_visuals"))
     {
+        addExtensionPrerequisite("GL_EXT_sRGB_write_control");
+        addIntegerPrerequisite(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, 1024);
+    }
+
+    if (traceNameIs("love_and_deepspace"))
+    {
+        addIntegerPrerequisite(GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS, 6);
+    }
+
+    if (traceNameIs("dota_underlords") || traceNameIs("minecraft_bedrock") ||
+        traceNameIs("my_talking_angela_2") || traceNameIs("my_talking_tom_friends") ||
+        traceNameIs("my_talking_tom2") || traceNameIs("tower_of_fantasy"))
+    {
+        addExtensionPrerequisite("GL_EXT_sRGB_write_control");
+    }
+
+    if (traceNameIs("tiles_hop"))
+    {
         addIntegerPrerequisite(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, 1024);
     }
 
@@ -1336,6 +1339,12 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (gTraceTestValidation)
     {
+        mStepsToRun = frameCount();
+    }
+
+    if (gCapturedFrameCountOnly)
+    {
+        // Run exactly the number of frames that were captured
         mStepsToRun = frameCount();
     }
 
@@ -1358,8 +1367,17 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
 void TracePerfTest::startTest()
 {
-    // runTrial() must align to frameCount()
-    ASSERT(mCurrentFrame == mStartFrame);
+    // If the previous run didn't align with the frame count (e.g., due to gRunToKeyFrame
+    // or unaligned warmup iterations), reset the replay state to ensure a clean start.
+    if (mCurrentFrame != mStartFrame)
+    {
+        mTraceReplay->resetReplay();
+        mCurrentFrame = mStartFrame;
+
+        // Flush to avoid potential GPU time tracking issues on some platforms if the previous
+        // unaligned run left pending work.
+        glFlush();
+    }
 
     ANGLERenderTest::startTest();
 }
@@ -1456,6 +1474,10 @@ void TracePerfTest::initializeBenchmark()
         getWindow()->setOrientation(mTestParams.windowWidth, mTestParams.windowHeight);
     }
 
+    // Track the context we're using to run this test so we can switch to it for queries and
+    // offscreen rendering.
+    mEglContext = getGLWindow()->getCurrentContext();
+
     // If we're rendering offscreen we set up a default back buffer.
     if (mParams->surfaceType == SurfaceType::Offscreen)
     {
@@ -1481,8 +1503,6 @@ void TracePerfTest::initializeBenchmark()
         bindRenderbuffer(GL_RENDERBUFFER, mOffscreenDepthStencil);
         renderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, mWindowWidth, mWindowHeight);
         bindRenderbuffer(GL_RENDERBUFFER, 0);
-
-        mEglContext = eglGetCurrentContext();
 
         genFramebuffers(mMaxOffscreenBufferCount, mOffscreenFramebuffers.data());
         glGenTextures(mMaxOffscreenBufferCount, mOffscreenTextures.data());
@@ -1563,7 +1583,25 @@ void TracePerfTest::sampleTime()
         {
             glGetInteger64v(GL_TIMESTAMP_EXT, &glTime);
         }
-        mTimeline.push_back({glTime, angle::GetHostTimeSeconds()});
+        mTimeline.push_back({glTime, angle::GetCurrentSystemTime()});
+    }
+}
+
+void TracePerfTest::MaybeSwitchToMainContext(EGLContext currentEglContext)
+{
+    if (currentEglContext != mEglContext)
+    {
+        onEglMakeCurrent(onEglGetCurrentDisplay(), onEglGetCurrentSurface(EGL_DRAW),
+                         onEglGetCurrentSurface(EGL_READ), mEglContext);
+    }
+}
+
+void TracePerfTest::MaybeSwitchToTraceContext(EGLContext currentEglContext)
+{
+    if (currentEglContext != mEglContext)
+    {
+        onEglMakeCurrent(onEglGetCurrentDisplay(), onEglGetCurrentSurface(EGL_DRAW),
+                         onEglGetCurrentSurface(EGL_READ), currentEglContext);
     }
 }
 
@@ -1608,40 +1646,48 @@ void TracePerfTest::drawBenchmark()
             buffer = 0;  // gles1: a single frame is rendered to buffer 0
         }
         bindFramebuffer(GL_FRAMEBUFFER, buffer);
-
-        GLsync sync = mOffscreenSyncs[offscreenBufferIndex];
-        if (sync)
-        {
-            constexpr GLuint64 kTimeout = 2'000'000'000;  // 2 seconds
-            GLenum result = glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, kTimeout);
-            if (result != GL_CONDITION_SATISFIED && result != GL_ALREADY_SIGNALED)
-            {
-                failTest(std::string("glClientWaitSync unexpected result: ") +
-                         std::to_string(result));
-            }
-            glDeleteSync(sync);
-        }
     }
 
     char frameName[32];
     snprintf(frameName, sizeof(frameName), "Frame %u", mCurrentFrame);
-    beginInternalTraceEvent(frameName);
+    ANGLE_TRACE_EVENT_BEGIN("gpu.angle", perfetto::DynamicString(frameName));
 
-    startGpuTimer();
+    // Only insert gpu-timer calls for when requested
+    if (mParams->trackGpuTime)
+    {
+        startGpuTimer();
+    }
     atraceCounter("TraceFrameIndex", mCurrentFrame);
 
+    startVulkanApiTimer();
+    const double beginReplayFrameTimeSec =
+        gTrackFrameWallTime ? mTrialTimer.getElapsedWallClockTime() : 0.0;
     mTraceReplay->replayFrame(mCurrentFrame);
+    if (gTrackFrameWallTime)
+    {
+        mFrameWallTimeSec += mTrialTimer.getElapsedWallClockTime() - beginReplayFrameTimeSec;
+    }
+    stopVulkanApiTimer();
 
-    if (!gAddSwapIntoGPUTime)
+    if (!gAddSwapIntoGPUTime && mParams->trackGpuTime)
     {
         stopGpuTimer();
     }
 
     updatePerfCounters();
 
+    // Need to exclude potentially expensive calls above from the Frame Time.
+    ASSERT(!gAddSwapIntoFrameWallTime || gTrackFrameWallTime);
+    const double beginSwapTimeSec =
+        gAddSwapIntoFrameWallTime ? mTrialTimer.getElapsedWallClockTime() : 0.0;
+    if (gAddSwapIntoFrameWallTime)
+    {
+        startVulkanApiTimer();
+    }
+
     if (mParams->surfaceType == SurfaceType::Offscreen)
     {
-        if (gMinimizeGPUWork)
+        if (gMinimizeGPUWork || gSkipBlitInOffscreen)
         {
             // To keep GPU work minimum, we skip the blit.
             glFlush();
@@ -1651,12 +1697,8 @@ void TracePerfTest::drawBenchmark()
         {
             GLuint offscreenBuffer = mOffscreenFramebuffers[offscreenBufferIndex];
 
-            EGLContext currentEglContext = eglGetCurrentContext();
-            if (currentEglContext != mEglContext)
-            {
-                eglMakeCurrent(eglGetCurrentDisplay(), eglGetCurrentSurface(EGL_DRAW),
-                               eglGetCurrentSurface(EGL_READ), mEglContext);
-            }
+            EGLContext currentEglContext = getGLWindow()->getCurrentContext();
+            MaybeSwitchToMainContext(currentEglContext);
 
             GLint currentDrawFBO, currentReadFBO;
             if (gles1)
@@ -1709,7 +1751,6 @@ void TracePerfTest::drawBenchmark()
                     saveScreenshotIfEnabled(ScreenshotType::kGrid);
                 }
                 getGLWindow()->swap();
-                glClear(GL_COLOR_BUFFER_BIT);
                 mOffscreenFrameCount = 0;
             }
             else
@@ -1733,29 +1774,52 @@ void TracePerfTest::drawBenchmark()
                 bindFramebuffer(GL_READ_FRAMEBUFFER, currentReadFBO);
             }
 
-            if (currentEglContext != mEglContext)
+            // Wait for the next frame here to simulate the behaviour of the swap buffers call
+            GLsync sync = mOffscreenSyncs[(offscreenBufferIndex + 1) % mMaxOffscreenBufferCount];
+            if (sync)
             {
-                eglMakeCurrent(eglGetCurrentDisplay(), eglGetCurrentSurface(EGL_DRAW),
-                               eglGetCurrentSurface(EGL_READ), currentEglContext);
+                constexpr GLuint64 kTimeout = 2'000'000'000;  // 2 seconds
+                GLenum result = glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, kTimeout);
+                if (result != GL_CONDITION_SATISFIED && result != GL_ALREADY_SIGNALED)
+                {
+                    failTest(std::string("glClientWaitSync unexpected result: ") +
+                             std::to_string(result));
+                }
+                glDeleteSync(sync);
             }
+
+            MaybeSwitchToTraceContext(currentEglContext);
         }
     }
     else
     {
-        bindFramebuffer(GL_FRAMEBUFFER, 0);
-        saveScreenshotIfEnabled(ScreenshotType::kFrame);
+        // Skip setup and screenshot if upgrading trace
+        if (!gRetraceMode)
+        {
+            bindFramebuffer(GL_FRAMEBUFFER, 0);
+            saveScreenshotIfEnabled(ScreenshotType::kFrame);
+        }
         getGLWindow()->swap();
     }
 
-    if (gAddSwapIntoGPUTime)
+    if (gAddSwapIntoFrameWallTime)
     {
-        stopGpuTimer();
+        const double endSwapTimeSec = mTrialTimer.getElapsedWallClockTime();
+        mFrameWallTimeSec += endSwapTimeSec - beginSwapTimeSec;
+        stopVulkanApiTimer();
+    }
+
+    if (gAddSwapIntoGPUTime && mParams->trackGpuTime)
+    {
+        // No need flush here since swap already performs it implicitly and we already call flush
+        // in case of the offscreen test.
+        stopGpuTimer(false);
         // Need this flush to submit the timestamp query to the GPU right now, instead of delaying
         // it until some time later in the next frame.
         glFlush();
     }
 
-    endInternalTraceEvent(frameName);
+    ANGLE_TRACE_EVENT_END("gpu.angle");
 
     mTotalFrameCount++;
 
@@ -1763,6 +1827,8 @@ void TracePerfTest::drawBenchmark()
     {
         mTraceReplay->resetReplay();
         mCurrentFrame = mStartFrame;
+        // Flush to avoid gpu_time tracking issues on some platforms (Native GLES Qualcomm).
+        glFlush();
     }
     else
     {
@@ -1789,14 +1855,24 @@ void TracePerfTest::drawBenchmark()
             GLint64 beginTimestamp = 0;
             glGetQueryObjecti64vEXT(query.beginTimestampQuery, GL_QUERY_RESULT, &beginTimestamp);
             glDeleteQueriesEXT(1, &query.beginTimestampQuery);
+#if defined(ANGLE_USE_PERFETTO)
             double beginHostTime = getHostTimeFromGLTime(beginTimestamp);
-            beginGLTraceEvent(fboName, beginHostTime);
+            uint64_t beginTimestampNs = static_cast<uint64_t>(beginHostTime * 1e9);
+            ANGLE_TRACE_EVENT_BEGIN("gpu.angle.gpu", perfetto::DynamicString(fboName),
+                                    perfetto::NamedTrack::FromPointer("GPU Work", this),
+                                    beginTimestampNs);
+#endif
 
             GLint64 endTimestamp = 0;
             glGetQueryObjecti64vEXT(query.endTimestampQuery, GL_QUERY_RESULT, &endTimestamp);
             glDeleteQueriesEXT(1, &query.endTimestampQuery);
+#if defined(ANGLE_USE_PERFETTO)
             double endHostTime = getHostTimeFromGLTime(endTimestamp);
-            endGLTraceEvent(fboName, endHostTime);
+            uint64_t endTimestampNs = static_cast<uint64_t>(endHostTime * 1e9);
+            ANGLE_TRACE_EVENT_END("gpu.angle.gpu",
+                                  perfetto::NamedTrack::FromPointer("GPU Work", this),
+                                  endTimestampNs);
+#endif
 
             mRunningQueries.erase(mRunningQueries.begin() + queryIndex);
         }
@@ -1805,6 +1881,26 @@ void TracePerfTest::drawBenchmark()
             queryIndex++;
         }
     }
+}
+
+void TracePerfTest::startGpuTimer()
+{
+    // Some traces will switch contexts mid-frame and not switch back.  Since our
+    // queries are per context, we need to switch back before gathering data.
+    EGLContext currentEglContext = getGLWindow()->getCurrentContext();
+    MaybeSwitchToMainContext(currentEglContext);
+    // Call the base class to start timer on the correct context.
+    ANGLERenderTest::startGpuTimer();
+    MaybeSwitchToTraceContext(currentEglContext);
+}
+
+void TracePerfTest::stopGpuTimer(bool mayNeedFlush)
+{
+    EGLContext currentEglContext = getGLWindow()->getCurrentContext();
+    MaybeSwitchToMainContext(currentEglContext);
+    // Call the base class to stop timer on the correct context.
+    ANGLERenderTest::stopGpuTimer(mayNeedFlush);
+    MaybeSwitchToTraceContext(currentEglContext);
 }
 
 // Converts a GL timestamp into a host-side CPU time aligned with "GetHostTimeSeconds".
@@ -1947,6 +2043,11 @@ EGLint TracePerfTest::onEglGetError()
 EGLDisplay TracePerfTest::onEglGetCurrentDisplay()
 {
     return getGLWindow()->getCurrentDisplay();
+}
+
+EGLSurface TracePerfTest::onEglGetCurrentSurface(EGLint readdraw)
+{
+    return getGLWindow()->getCurrentSurface(readdraw);
 }
 
 // Triggered when the replay calls glBindFramebuffer.

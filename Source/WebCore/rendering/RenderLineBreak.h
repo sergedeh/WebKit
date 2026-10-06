@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include <WebCore/RenderBoxModelObject.h>
+#include "RenderBoxModelObject.h"
 #include <wtf/Platform.h>
 
 namespace WebCore {
@@ -33,7 +33,7 @@ class RenderLineBreak final : public RenderBoxModelObject {
     WTF_MAKE_TZONE_ALLOCATED(RenderLineBreak);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderLineBreak);
 public:
-    RenderLineBreak(HTMLElement&, RenderStyle&&);
+    RenderLineBreak(HTMLElement&, Style::ComputedStyle&&);
     virtual ~RenderLineBreak();
 
     // FIXME: The lies here keep render tree dump based test results unchanged.
@@ -41,11 +41,9 @@ public:
 
     IntRect linesBoundingBox() const;
 
-    void boundingRects(Vector<LayoutRect>&, const LayoutPoint& accumulatedOffset) const final;
-    void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed = nullptr) const final;
-#if PLATFORM(IOS_FAMILY)
+    Vector<FloatRect> localBorderBoxRects() const final;
+
     void collectSelectionGeometries(Vector<SelectionGeometry>&, unsigned startOffset = 0, unsigned endOffset = std::numeric_limits<unsigned>::max()) final;
-#endif
 
     bool isBR() const { return !hasWBRLineBreakFlag(); }
     bool isWBR() const { return hasWBRLineBreakFlag(); }
@@ -59,8 +57,8 @@ private:
 
     PositionWithAffinity positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*) final;
     int caretMinOffset() const final;
-    int caretMaxOffset() const final;
-    bool canBeSelectionLeaf() const final;
+    int NODELETE caretMaxOffset() const final;
+    bool NODELETE canBeSelectionLeaf() const final;
 
     LayoutUnit marginTop() const final { return 0; }
     LayoutUnit marginBottom() const final { return 0; }
@@ -70,13 +68,12 @@ private:
     LayoutUnit marginAfter(const WritingMode) const final { return 0; }
     LayoutUnit marginStart(const WritingMode) const final { return 0; }
     LayoutUnit marginEnd(const WritingMode) const final { return 0; }
-    LayoutUnit offsetWidth() const final { return linesBoundingBox().width(); }
-    LayoutUnit offsetHeight() const final { return linesBoundingBox().height(); }
-    LayoutRect borderBoundingBox() const final { return LayoutRect(LayoutPoint(), linesBoundingBox().size()); }
-    LayoutRect frameRectForStickyPositioning() const final { ASSERT_NOT_REACHED(); return { }; }
+    LayoutRect firstFragmentBorderBoxRect() const final { return linesBoundingBox(); }
+    LayoutRect borderBoxRectInContainer() const final { return linesBoundingBox(); }
+    LayoutRect visualOverflowRect() const final { return linesBoundingBox(); }
     RepaintRects localRectsForRepaint(RepaintOutlineBounds) const final { return { }; }
 
-    void updateFromStyle() final;
+    void NODELETE updateFromStyle() final;
     bool requiresLayer() const final { return false; }
 };
 

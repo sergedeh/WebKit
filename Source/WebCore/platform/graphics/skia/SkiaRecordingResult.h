@@ -26,39 +26,76 @@
 #pragma once
 
 #if USE(SKIA)
-#include "GraphicsContextSkia.h"
+#include "GLFence.h"
+#include "IntRect.h"
+#include "RenderingMode.h"
+#include "SkiaGPUAtlas.h"
+#include "SkiaImageAtlasLayout.h"
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkImage.h>
 #include <skia/core/SkPicture.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
-class SkImage;
-
 namespace WebCore {
+
+#if USE(TEXTURE_MAPPER)
+using SkiaImageToFenceMap = HashMap<const SkImage*, std::unique_ptr<GLFence>>;
+#endif
+
+struct SkiaRecordingData {
+#if USE(TEXTURE_MAPPER)
+    SkiaImageToFenceMap imageToFenceMap;
+#endif
+    Vector<Ref<SkiaImageAtlasLayout>> atlasLayouts;
+    unsigned imageSetFingerprint { 0 };
+};
 
 class SkiaRecordingResult final : public ThreadSafeRefCounted<SkiaRecordingResult, WTF::DestructionThread::Main> {
 public:
     ~SkiaRecordingResult();
-    static Ref<SkiaRecordingResult> create(sk_sp<SkPicture>&&, SkiaImageToFenceMap&&, const IntRect& recordRect, RenderingMode, bool contentsOpaque, float contentsScale);
+    static Ref<SkiaRecordingResult> create(sk_sp<SkPicture>&&, SkiaRecordingData&&, const IntRect& recordRect, RenderingMode, bool contentsOpaque, float contentsScale);
 
+#if USE(TEXTURE_MAPPER)
     void waitForFenceIfNeeded(const SkImage&);
     bool hasFences();
+#endif
 
-    const sk_sp<SkPicture>& picture() const { return m_picture; }
-    const IntRect& recordRect() const { return m_recordRect; }
+    const sk_sp<SkPicture>& picture() const LIFETIME_BOUND { return m_picture; }
+    const IntRect& recordRect() const LIFETIME_BOUND { return m_recordRect; }
     RenderingMode renderingMode() const { return m_renderingMode; }
     bool contentsOpaque() const { return m_contentsOpaque; }
     float contentsScale() const { return m_contentsScale; }
 
+    // Atlas layouts for batched raster image uploads.
+    bool hasAtlasLayouts() const { return !m_atlasLayouts.isEmpty(); }
+    const Vector<Ref<SkiaImageAtlasLayout>>& atlasLayouts() const LIFETIME_BOUND { return m_atlasLayouts; }
+    unsigned imageSetFingerprint() const { return m_imageSetFingerprint; }
+
+    // GPU atlases prepared on main thread for worker threads to rewrap.
+    void setGPUAtlases(Vector<Ref<SkiaGPUAtlas>>&& atlases) { m_gpuAtlases = WTF::move(atlases); }
+
+    // Check if GPU atlases are ready.
+    bool hasGPUAtlases() const { return !m_gpuAtlases.isEmpty(); }
+
+    // Get prepared GPU atlases (for worker threads to rewrap).
+    const Vector<Ref<SkiaGPUAtlas>>& gpuAtlases() const LIFETIME_BOUND { return m_gpuAtlases; }
+
 private:
-    SkiaRecordingResult(sk_sp<SkPicture>&&, SkiaImageToFenceMap&&, const IntRect& recordRect, RenderingMode, bool contentsOpaque, float contentsScale);
+    SkiaRecordingResult(sk_sp<SkPicture>&&, SkiaRecordingData&&, const IntRect& recordRect, RenderingMode, bool contentsOpaque, float contentsScale);
 
     sk_sp<SkPicture> m_picture;
+#if USE(TEXTURE_MAPPER)
     SkiaImageToFenceMap m_imageToFenceMap WTF_GUARDED_BY_LOCK(m_imageToFenceMapLock);
     Lock m_imageToFenceMapLock;
+#endif
+    Vector<Ref<SkiaImageAtlasLayout>> m_atlasLayouts;
+    unsigned m_imageSetFingerprint { 0 };
+    Vector<Ref<SkiaGPUAtlas>> m_gpuAtlases;
     IntRect m_recordRect;
     RenderingMode m_renderingMode { RenderingMode::Unaccelerated };
     bool m_contentsOpaque : 1 { true };

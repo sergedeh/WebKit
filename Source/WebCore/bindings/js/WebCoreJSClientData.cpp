@@ -33,18 +33,23 @@
 #include "JSAudioWorkletGlobalScope.h"
 #include "JSDOMBinding.h"
 #include "JSDOMBuiltinConstructorBase.h"
+#include "JSDOMException.h"
 #include "JSDOMWindow.h"
 #include "JSDOMWindowProperties.h"
 #include "JSDedicatedWorkerGlobalScope.h"
+#include "JSGPUPipelineError.h"
 #include "JSIDBSerializationGlobalObject.h"
 #include "JSObservableArray.h"
 #include "JSPaintWorkletGlobalScope.h"
+#include "JSQuotaExceededError.h"
 #include "JSServiceWorkerGlobalScope.h"
 #include "JSShadowRealmGlobalScope.h"
 #include "JSSharedWorkerGlobalScope.h"
+#include "JSWebTransportError.h"
 #include "JSWindowProxy.h"
 #include "JSWorkerGlobalScope.h"
 #include "JSWorkletGlobalScope.h"
+#include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IsoHeapCellType.h>
@@ -52,15 +57,23 @@
 #include <JavaScriptCore/MarkingConstraint.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/WeakGCMapInlines.h>
 #include "runtime_array.h"
 #include "runtime_method.h"
 #include "runtime_object.h"
 #include <mutex>
 #include <wtf/MainThread.h>
-#include <wtf/NeverDestroyed.h>
 
 #if PLATFORM(COCOA)
 #include "objc_runtime.h"
+#endif
+
+#if ENABLE(MEDIA_STREAM)
+#include "JSOverconstrainedError.h"
+#endif
+
+#if ENABLE(WEB_RTC)
+#include "JSRTCError.h"
 #endif
 
 namespace WebCore {
@@ -88,6 +101,16 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_heapCellTypeForJSAudioWorkletGlobalScope(JSC::IsoHeapCellType::Args<JSAudioWorkletGlobalScope>())
 #endif
     , m_heapCellTypeForJSIDBSerializationGlobalObject(JSC::IsoHeapCellType::Args<JSIDBSerializationGlobalObject>())
+    , m_heapCellTypeForJSDOMException(JSC::IsoHeapCellType::Args<JSDOMException>())
+    , m_heapCellTypeForJSQuotaExceededError(JSC::IsoHeapCellType::Args<JSQuotaExceededError>())
+#if ENABLE(WEB_RTC)
+    , m_heapCellTypeForJSRTCError(JSC::IsoHeapCellType::Args<JSRTCError>())
+#endif
+#if ENABLE(MEDIA_STREAM)
+    , m_heapCellTypeForJSOverconstrainedError(JSC::IsoHeapCellType::Args<JSOverconstrainedError>())
+#endif
+    , m_heapCellTypeForJSGPUPipelineError(JSC::IsoHeapCellType::Args<JSGPUPipelineError>())
+    , m_heapCellTypeForJSWebTransportError(JSC::IsoHeapCellType::Args<JSWebTransportError>())
     , m_domBuiltinConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMBuiltinConstructorBase)
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
@@ -105,13 +128,15 @@ JSHeapData::JSHeapData(Heap& heap)
 {
 }
 
-JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
+void JSHeapData::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectionScope)
 {
-    if (!Options::useGlobalGC())
-        return new JSHeapData(heap);
-
-    static NeverDestroyed<UniqueRef<JSHeapData>> singleton = makeUniqueRef<JSHeapData>(heap);
-    return singleton.get().ptr();
+    for (auto& [space, reconcileCell] : m_weakReconciliationSpaces) {
+        space->forEachMarkedCell(
+            [&] (HeapCell* cell, HeapCell::Kind kind) {
+                RELEASE_ASSERT(kind == HeapCell::Kind::JSCell);
+                reconcileCell(cell, vm, collectionScope);
+            });
+    }
 }
 
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
@@ -121,7 +146,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 JSVMClientData::JSVMClientData(VM& vm)
     : m_builtinFunctions(vm)
     , m_builtinNames(vm)
-    , m_heapData(JSHeapData::ensureHeapData(vm.heap))
+    , m_heapData(makeUniqueRef<JSHeapData>(vm.heap))
     , CLIENT_ISO_SUBSPACE_INIT(m_domBuiltinConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
@@ -136,6 +161,7 @@ JSVMClientData::JSVMClientData(VM& vm)
     , CLIENT_ISO_SUBSPACE_INIT(m_windowProxySpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_idbSerializationSpace)
     , m_clientSubspaces(makeUniqueRef<ExtendedDOMClientIsoSubspaces>())
+    , m_jsHandleGlobalObjects(vm)
 {
 }
 
@@ -199,19 +225,33 @@ void JSVMClientData::initNormalWorld(VM* vm, WorkerThreadType type)
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(type == WorkerThreadType::DedicatedWorker || type == WorkerThreadType::Worklet));
 }
 
+String unmaskedSourceURLFromException(const JSC::Exception& exception, JSC::VM& vm)
+{
+    for (auto& frame : exception.stack()) {
+        String url = frame.sourceURL(vm, JSC::AllowURLOverride::No);
+        if (!url.isEmpty() && url != "[native code]"_s)
+            return url;
+    }
+
+    return emptyString();
+}
+
 String JSVMClientData::overrideSourceURL(const JSC::StackFrame& frame, const String& originalSourceURL) const
 {
     if (originalSourceURL.isEmpty())
         return nullString();
 
-    auto* codeBlock = frame.codeBlock();
-    RELEASE_ASSERT(codeBlock);
+    JSGlobalObject* globalObject = nullptr;
+    if (auto* codeBlock = frame.codeBlock())
+        globalObject = codeBlock->globalObject();
+    else if (auto* callee = dynamicDowncast<JSObject>(frame.callee()))
+        globalObject = callee->realm();
+    RELEASE_ASSERT(globalObject);
 
-    auto* globalObject = codeBlock->globalObject();
     if (!globalObject->inherits<JSDOMWindowBase>())
         return nullString();
 
-    RefPtr document = jsCast<const JSDOMWindowBase*>(globalObject)->wrapped().documentIfLocal();
+    RefPtr document = downcast<JSDOMWindowBase>(globalObject)->wrapped().documentIfLocal();
     if (!document)
         return nullString();
 

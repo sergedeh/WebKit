@@ -42,15 +42,15 @@ ErrorConstructor::ErrorConstructor(VM& vm, Structure* structure)
 
 void ErrorConstructor::finishCreation(VM& vm, ErrorPrototype* errorPrototype)
 {
-    JSGlobalObject* globalObject = errorPrototype->globalObject();
+    JSGlobalObject* globalObject = errorPrototype->realm();
 
     Base::finishCreation(vm, 1, vm.propertyNames->Error.string(), PropertyAdditionMode::WithoutStructureTransition);
     // ECMA 15.11.3.1 Error.prototype
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, errorPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectWithoutTransition(vm, vm.propertyNames->stackTraceLimit, jsNumber(globalObject->stackTraceLimit().value_or(Options::defaultErrorStackTraceLimit())), static_cast<unsigned>(PropertyAttribute::None));
+    putDirectWithoutTransition(vm, vm.propertyNames->stackTraceLimit, jsNumber(Options::defaultErrorStackTraceLimit()), static_cast<unsigned>(PropertyAttribute::None));
 
     JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->captureStackTrace, errorConstructorCaptureStackTrace, static_cast<unsigned>(PropertyAttribute::DontEnum), 0, ImplementationVisibility::Public);
-    JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("isError"_s, errorConstructorIsError, static_cast<unsigned>(PropertyAttribute::DontEnum), 1, ImplementationVisibility::Public);
+    JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION("isError"_s, errorConstructorIsError, static_cast<unsigned>(PropertyAttribute::DontEnum), 1, ImplementationVisibility::Public, ErrorIsErrorIntrinsic);
 }
 
 // ECMA 15.9.3
@@ -79,35 +79,6 @@ JSC_DEFINE_HOST_FUNCTION(callErrorConstructor, (JSGlobalObject* globalObject, Ca
     return JSValue::encode(ErrorInstance::create(globalObject, errorStructure, message, options, nullptr, TypeNothing, ErrorType::Error, false));
 }
 
-bool ErrorConstructor::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
-{
-    VM& vm = globalObject->vm();
-    ErrorConstructor* thisObject = jsCast<ErrorConstructor*>(cell);
-
-    if (propertyName == vm.propertyNames->stackTraceLimit) {
-        if (value.isNumber()) {
-            double effectiveLimit = value.asNumber();
-            effectiveLimit = std::max(0., effectiveLimit);
-            effectiveLimit = std::min(effectiveLimit, static_cast<double>(std::numeric_limits<unsigned>::max()));
-            thisObject->globalObject()->setStackTraceLimit(static_cast<unsigned>(effectiveLimit));
-        } else
-            thisObject->globalObject()->setStackTraceLimit(std::nullopt);
-    }
-
-    return Base::put(thisObject, globalObject, propertyName, value, slot);
-}
-
-bool ErrorConstructor::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
-{
-    VM& vm = globalObject->vm();
-    ErrorConstructor* thisObject = jsCast<ErrorConstructor*>(cell);
-
-    if (propertyName == vm.propertyNames->stackTraceLimit)
-        thisObject->globalObject()->setStackTraceLimit(std::nullopt);
-
-    return Base::deleteProperty(thisObject, globalObject, propertyName, slot);
-}
-
 JSC_DEFINE_HOST_FUNCTION(errorConstructorCaptureStackTrace, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -128,13 +99,20 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorCaptureStackTrace, (JSGlobalObject* glo
 
     vm.interpreter.getStackTrace(object, stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), caller);
 
+    if (auto* errorInstance = dynamicDowncast<ErrorInstance>(object)) {
+        errorInstance->setStackPropertyProvidedByCapturedStackTrace();
+        if (errorInstance->trySaveCapturedStackTraceForLazyMaterialization(vm, stackTrace))
+            return encodedJSUndefined();
+    }
+
     object->putDirect(vm, vm.propertyNames->stack, jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+
     return encodedJSUndefined();
 }
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorIsError, (JSGlobalObject*, CallFrame* callFrame))
 {
-    JSObject* object = jsDynamicCast<JSObject*>(callFrame->argument(0));
+    JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0));
     return JSValue::encode(jsBoolean(object && object->isErrorInstance()));
 }
 

@@ -23,8 +23,9 @@
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/strings/string_view.h"
 #include "api/create_modular_peer_connection_factory.h"
-#include "api/environment/environment_factory.h"
+#include "api/environment/environment.h"
 #include "api/jsep.h"
 #include "api/media_types.h"
 #include "api/peer_connection_interface.h"
@@ -44,7 +45,6 @@
 #include "p2p/base/p2p_constants.h"
 #include "p2p/base/transport_info.h"
 #include "p2p/test/fake_port_allocator.h"
-#include "pc/channel_interface.h"
 #include "pc/media_session.h"
 #include "pc/peer_connection_wrapper.h"
 #include "pc/rtp_media_utils.h"
@@ -55,7 +55,9 @@
 #include "rtc_base/checks.h"
 #include "rtc_base/ref_counted_object.h"
 #include "rtc_base/thread.h"
+#include "test/create_test_environment.h"
 #include "test/gtest.h"
+#include "test/run_loop.h"
 #ifdef WEBRTC_ANDROID
 #include "pc/test/android_test_initializer.h"
 #endif
@@ -73,6 +75,7 @@ using ::testing::ElementsAre;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::NotNull;
+using ::testing::UnorderedElementsAreArray;
 using ::testing::Values;
 
 RtpTransceiver* RtpTransceiverInternal(
@@ -88,13 +91,13 @@ RtpTransceiver* RtpTransceiverInternal(
 MediaSendChannelInterface* SendChannelInternal(
     scoped_refptr<RtpTransceiverInterface> transceiver) {
   auto transceiver_internal = RtpTransceiverInternal(transceiver);
-  return transceiver_internal->channel()->media_send_channel();
+  return transceiver_internal->media_send_channel();
 }
 
 MediaReceiveChannelInterface* ReceiveChannelInternal(
     scoped_refptr<RtpTransceiverInterface> transceiver) {
   auto transceiver_internal = RtpTransceiverInternal(transceiver);
-  return transceiver_internal->channel()->media_receive_channel();
+  return transceiver_internal->media_receive_channel();
 }
 
 FakeVideoMediaSendChannel* VideoMediaSendChannel(
@@ -163,6 +166,8 @@ class PeerConnectionMediaBaseTest : public ::testing::Test {
       std::unique_ptr<FakeMediaEngine> media_engine) {
     auto* media_engine_ptr = media_engine.get();
 
+    Environment env = CreateTestEnvironment();
+
     PeerConnectionFactoryDependencies factory_dependencies;
 
     factory_dependencies.network_thread = Thread::Current();
@@ -171,11 +176,12 @@ class PeerConnectionMediaBaseTest : public ::testing::Test {
     EnableFakeMedia(factory_dependencies, std::move(media_engine));
     factory_dependencies.event_log_factory =
         std::make_unique<RtcEventLogFactory>();
+    factory_dependencies.env = env;
     auto pc_factory =
         CreateModularPeerConnectionFactory(std::move(factory_dependencies));
 
     auto fake_port_allocator =
-        std::make_unique<FakePortAllocator>(CreateEnvironment(), vss_.get());
+        std::make_unique<FakePortAllocator>(env, vss_.get());
     auto observer = std::make_unique<MockPeerConnectionObserver>();
     auto modified_config = config;
     modified_config.sdp_semantics = sdp_semantics_;
@@ -246,7 +252,7 @@ class PeerConnectionMediaBaseTest : public ::testing::Test {
   }
 
   std::unique_ptr<VirtualSocketServer> vss_;
-  AutoSocketServerThread main_;
+  test::RunLoop main_;
   const SdpSemantics sdp_semantics_;
 };
 
@@ -1045,7 +1051,7 @@ TEST_P(PeerConnectionMediaInvalidMediaTest, FailToSetLocalAnswer) {
 void RemoveVideoContentAndUnbundle(SessionDescription* desc) {
   // Removing BUNDLE is easier than removing the content in there.
   desc->RemoveGroupByName("BUNDLE");
-  auto content_name = GetFirstVideoContent(desc)->mid();
+  std::string content_name = GetFirstVideoContent(desc)->mid();
   desc->RemoveContentByName(content_name);
   desc->RemoveTransportInfoByName(content_name);
 }
@@ -1065,7 +1071,7 @@ void ReverseMediaContent(SessionDescription* desc) {
 }
 
 void ChangeMediaTypeAudioToVideo(SessionDescription* desc) {
-  auto audio_mid = GetFirstAudioContent(desc)->mid();
+  std::string audio_mid = GetFirstAudioContent(desc)->mid();
   desc->RemoveContentByName(audio_mid);
   auto* video_content = GetFirstVideoContent(desc);
   desc->AddContent(audio_mid, video_content->type,
@@ -1377,10 +1383,10 @@ TEST_P(PeerConnectionMediaTest, RedFmtpPayloadTypeMustMatchBaseCodecs) {
       CreateAudioCodec(120, "foo", kDefaultAudioClockRateHz, 1));
   callee_fake_codecs.push_back(
       CreateAudioCodec(121, kRedCodecName, kDefaultAudioClockRateHz, 1));
-  callee_fake_codecs.push_back(
-      CreateAudioCodec(122, "bar", kDefaultAudioClockRateHz, 1));
   callee_fake_codecs.back().SetParam(kCodecParamNotInNameValueFormat,
                                      "122/122");
+  callee_fake_codecs.push_back(
+      CreateAudioCodec(122, "bar", kDefaultAudioClockRateHz, 1));
   auto callee_fake_engine = std::make_unique<FakeMediaEngine>();
   callee_fake_engine->SetAudioCodecs(callee_fake_codecs);
   auto callee = CreatePeerConnectionWithAudio(std::move(callee_fake_engine));
@@ -1577,11 +1583,10 @@ TEST_F(PeerConnectionMediaTestUnifiedPlan,
   auto codecs =
       caller->pc_factory()->GetRtpSenderCapabilities(MediaType::AUDIO).codecs;
   auto codecs_only_rtx_red_fec = codecs;
-  std::erase_if(
-      codecs_only_rtx_red_fec, [](const RtpCodecCapability& codec) {
-        return !(codec.name == kRtxCodecName || codec.name == kRedCodecName ||
-                 codec.name == kUlpfecCodecName);
-      });
+  std::erase_if(codecs_only_rtx_red_fec, [](const RtpCodecCapability& codec) {
+    return !(codec.name == kRtxCodecName || codec.name == kRedCodecName ||
+             codec.name == kUlpfecCodecName);
+  });
   ASSERT_THAT(codecs_only_rtx_red_fec.size(), Gt(0));
   auto result = transceiver->SetCodecPreferences(codecs_only_rtx_red_fec);
   EXPECT_EQ(RTCErrorType::INVALID_MODIFICATION, result.type());
@@ -1622,6 +1627,111 @@ TEST_F(PeerConnectionMediaTestUnifiedPlan,
 }
 
 TEST_F(PeerConnectionMediaTestUnifiedPlan,
+       SetCodecPreferencesAudioRemovingOpusDropsRed) {
+  auto fake_engine = std::make_unique<FakeMediaEngine>();
+  std::vector<Codec> audio_codecs = {
+      CreateAudioCodec(111, kOpusCodecName, 48000, 2),
+      CreateAudioCodec(63, kRedCodecName, 48000, 2),
+      CreateAudioCodec(0, kPcmuCodecName, 8000, 1),
+      CreateAudioCodec(8, kPcmaCodecName, 8000, 1),
+  };
+  audio_codecs[1].params[std::string(kCodecParamNotInNameValueFormat)] =
+      "111/111";
+  fake_engine->SetAudioCodecs(audio_codecs);
+
+  auto caller = CreatePeerConnectionWithAudio(std::move(fake_engine));
+
+  auto transceiver = caller->pc()->GetTransceivers().front();
+  auto caps =
+      caller->pc_factory()->GetRtpSenderCapabilities(MediaType::AUDIO).codecs;
+
+  // Prefer RED, filter opus.
+  std::vector<RtpCodecCapability> preferred;
+  for (const auto& codec : caps) {
+    if (codec.name == kRedCodecName) {
+      preferred.push_back(codec);
+    }
+  }
+  for (const auto& codec : caps) {
+    if (codec.name != kRedCodecName && codec.name != kOpusCodecName) {
+      preferred.push_back(codec);
+    }
+  }
+  EXPECT_THAT(transceiver->SetCodecPreferences(preferred), IsRtcOk());
+
+  auto offer = caller->CreateOffer();
+  const std::vector<Codec>& offered_codecs =
+      offer->description()->contents()[0].media_description()->codecs();
+
+  auto has_codec = [&](absl::string_view name) {
+    return absl::c_any_of(
+        offered_codecs, [&](const Codec& codec) { return codec.name == name; });
+  };
+
+  EXPECT_TRUE(has_codec(kPcmuCodecName));
+  EXPECT_TRUE(has_codec(kPcmaCodecName));
+  // RED was not removed via sCP but depends on opus which was removed
+  // so neither is part of the generated offer.
+  EXPECT_FALSE(has_codec(kOpusCodecName));
+  EXPECT_FALSE(has_codec(kRedCodecName));
+}
+
+TEST_F(PeerConnectionMediaTestUnifiedPlan,
+       SetCodecPreferencesAudioRemovingOpusDropsRedInAnswer) {
+  auto make_engine = [] {
+    auto fake_engine = std::make_unique<FakeMediaEngine>();
+    std::vector<Codec> audio_codecs = {
+        CreateAudioCodec(111, kOpusCodecName, 48000, 2),
+        CreateAudioCodec(63, kRedCodecName, 48000, 2),
+        CreateAudioCodec(0, kPcmuCodecName, 8000, 1),
+        CreateAudioCodec(8, kPcmaCodecName, 8000, 1),
+    };
+    audio_codecs[1].params[std::string(kCodecParamNotInNameValueFormat)] =
+        "111/111";
+    fake_engine->SetAudioCodecs(audio_codecs);
+    return fake_engine;
+  };
+  auto caller = CreatePeerConnectionWithAudio(make_engine());
+  auto callee = CreatePeerConnectionWithAudio(make_engine());
+
+  ASSERT_TRUE(callee->SetRemoteDescription(caller->CreateOfferAndSetAsLocal()));
+
+  auto transceiver = callee->pc()->GetTransceivers().front();
+  auto caps =
+      callee->pc_factory()->GetRtpSenderCapabilities(MediaType::AUDIO).codecs;
+
+  // Prefer RED, filter opus.
+  std::vector<RtpCodecCapability> preferred;
+  for (const auto& codec : caps) {
+    if (codec.name == kRedCodecName) {
+      preferred.push_back(codec);
+    }
+  }
+  for (const auto& codec : caps) {
+    if (codec.name != kRedCodecName && codec.name != kOpusCodecName) {
+      preferred.push_back(codec);
+    }
+  }
+  EXPECT_THAT(transceiver->SetCodecPreferences(preferred), IsRtcOk());
+
+  auto answer = callee->CreateAnswer();
+  const std::vector<Codec>& answer_codecs =
+      answer->description()->contents()[0].media_description()->codecs();
+
+  auto has_codec = [&](absl::string_view name) {
+    return absl::c_any_of(
+        answer_codecs, [&](const Codec& codec) { return codec.name == name; });
+  };
+
+  EXPECT_TRUE(has_codec(kPcmuCodecName));
+  EXPECT_TRUE(has_codec(kPcmaCodecName));
+  // RED was not removed via sCP but depends on opus which was removed
+  // so neither is part of the generated answer.
+  EXPECT_FALSE(has_codec(kOpusCodecName));
+  EXPECT_FALSE(has_codec(kRedCodecName));
+}
+
+TEST_F(PeerConnectionMediaTestUnifiedPlan,
        SetCodecPreferencesVideoRejectsAudioCodec) {
   auto caller = CreatePeerConnectionWithVideo();
 
@@ -1653,11 +1763,10 @@ TEST_F(PeerConnectionMediaTestUnifiedPlan,
   auto codecs =
       caller->pc_factory()->GetRtpSenderCapabilities(MediaType::VIDEO).codecs;
   auto codecs_only_rtx_red_fec = codecs;
-  std::erase_if(
-      codecs_only_rtx_red_fec, [](const RtpCodecCapability& codec) {
-        return !(codec.name == kRtxCodecName || codec.name == kRedCodecName ||
-                 codec.name == kUlpfecCodecName);
-      });
+  std::erase_if(codecs_only_rtx_red_fec, [](const RtpCodecCapability& codec) {
+    return !(codec.name == kRtxCodecName || codec.name == kRedCodecName ||
+             codec.name == kUlpfecCodecName);
+  });
 
   auto result = transceiver->SetCodecPreferences(codecs_only_rtx_red_fec);
   EXPECT_EQ(RTCErrorType::INVALID_MODIFICATION, result.type());

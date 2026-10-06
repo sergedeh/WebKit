@@ -34,9 +34,7 @@
 #include <WebCore/CharacterRange.h>
 #include <WebCore/TextCheckingRequestIdentifier.h>
 #include <wtf/CrossThreadCopier.h>
-#include <wtf/ObjectIdentifier.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Platform.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -56,7 +54,7 @@ enum class TextCheckingType : uint8_t {
 
 #if PLATFORM(MAC)
 typedef uint64_t NSTextCheckingTypes;
-WEBCORE_EXPORT NSTextCheckingTypes nsTextCheckingTypes(OptionSet<TextCheckingType>);
+WEBCORE_EXPORT NSTextCheckingTypes NODELETE nsTextCheckingTypes(OptionSet<TextCheckingType>);
 #endif
 
 enum class TextCheckingProcessType : bool {
@@ -68,12 +66,14 @@ struct GrammarDetail {
     CharacterRange range;
     Vector<String> guesses;
     String userDescription;
+    String uuid;
 
     GrammarDetail isolatedCopy() && {
         return {
             range,
             crossThreadCopy(WTF::move(guesses)),
-            WTF::move(userDescription).isolatedCopy()
+            WTF::move(userDescription).isolatedCopy(),
+            WTF::move(uuid).isolatedCopy()
         };
     }
 };
@@ -114,7 +114,7 @@ public:
     }
 
     std::optional<TextCheckingRequestIdentifier> identifier() const { return m_identifier; }
-    const String& text() const { return m_text; }
+    const String& text() const LIFETIME_BOUND { return m_text; }
     OptionSet<TextCheckingType> checkingTypes() const { return m_checkingTypes; }
     TextCheckingProcessType processType() const { return m_processType; }
 

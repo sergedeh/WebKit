@@ -69,10 +69,10 @@ public:
     void resumeParsingAfterYield();
 
     // For HTMLTreeBuilder.
-    HTMLTokenizer& tokenizer();
+    HTMLTokenizer& tokenizer() LIFETIME_BOUND;
     TextPosition textPosition() const final;
 
-    bool isOnStackOfOpenElements(Element&) const;
+    bool NODELETE isOnStackOfOpenElements(Element&) const;
 
 protected:
     explicit HTMLDocumentParser(HTMLDocument&, OptionSet<ParserContentPolicy> = DefaultParserContentPolicy);
@@ -82,7 +82,7 @@ protected:
     void appendSynchronously(RefPtr<StringImpl>&&) override;
     void finish() override;
 
-    HTMLTreeBuilder& treeBuilder() { return m_treeBuilder; }
+    HTMLTreeBuilder& treeBuilder() LIFETIME_BOUND { return m_treeBuilder; }
 
 private:
     HTMLDocumentParser(DocumentFragment&, Element& contextElement, OptionSet<ParserContentPolicy>, CustomElementRegistry*);
@@ -94,7 +94,7 @@ private:
     bool processingData() const final;
     void prepareToStopParsing() final;
     void stopParsing() final;
-    bool isWaitingForScripts() const;
+    bool NODELETE isWaitingForScripts() const;
     bool isExecutingScript() const final;
     bool hasScriptsWaitingForStylesheets() const final;
     void executeScriptsWaitingForStylesheets() final;
@@ -106,14 +106,14 @@ private:
     // HTMLScriptRunnerHost
     void watchForLoad(PendingScript&) final;
     void stopWatchingForLoad(PendingScript&) final;
-    HTMLInputStream& inputStream() final;
+    HTMLInputStream& inputStream() LIFETIME_BOUND final;
     bool hasPreloadScanner() const final;
     void appendCurrentInputStreamToPreloadScannerAndScan() final;
 
     // PendingScriptClient
     void notifyFinished(PendingScript&) final;
 
-    Document* contextForParsingSession();
+    Document* NODELETE contextForParsingSession();
 
     enum class SynchronousMode : bool { AllowYield, ForceSynchronous };
     void append(RefPtr<StringImpl>&&, SynchronousMode);
@@ -131,9 +131,9 @@ private:
     void attemptToRunDeferredScriptsAndEnd();
     void end();
 
-    bool isParsingFragment() const;
-    bool isScheduledForResume() const;
-    bool inPumpSession() const;
+    bool NODELETE isParsingFragment() const;
+    bool NODELETE isScheduledForResume() const;
+    bool NODELETE inPumpSession() const;
     bool shouldDelayEnd() const;
 
     void didBeginYieldingParser() final;
@@ -143,7 +143,7 @@ private:
     HTMLInputStream m_input;
 
     HTMLTokenizer m_tokenizer;
-    std::unique_ptr<HTMLScriptRunner> m_scriptRunner;
+    const std::unique_ptr<HTMLScriptRunner> m_scriptRunner;
     const UniqueRef<HTMLTreeBuilder> m_treeBuilder;
     std::unique_ptr<HTMLPreloadScanner> m_preloadScanner;
     std::unique_ptr<HTMLPreloadScanner> m_insertionPreloadScanner;

@@ -43,19 +43,7 @@
 
 #import <pal/cf/CoreMediaSoftLink.h>
 #import <pal/cocoa/AVFoundationSoftLink.h>
-
-using namespace WebCore;
-
-SOFTLINK_AVKIT_FRAMEWORK()
-SOFT_LINK_CLASS_OPTIONAL(AVKit, __AVPlayerLayerView)
-
-#if !RELEASE_LOG_DISABLED
-@interface WebAVPlayerLayer (Logging)
-@property (readonly, nonatomic) uint64_t logIdentifier;
-@property (readonly, nonatomic) const Logger* loggerPtr;
-@property (readonly, nonatomic) WTFLogChannel* logChannel;
-@end
-#endif
+#import <pal/cocoa/AVKitSoftLink.h>
 
 namespace WebCore {
 class WebAVPlayerLayerPresentationModelClient final : public VideoPresentationModelClient, public CanMakeCheckedPtr<WebAVPlayerLayerPresentationModelClient> {
@@ -66,7 +54,7 @@ public:
         : m_playerLayer(playerLayer)
     {
     }
-private:
+
     // CheckedPtr interface
     uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
@@ -74,6 +62,7 @@ private:
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
     void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
+private:
     void videoDimensionsChanged(const FloatSize& videoDimensions)
     {
         [m_playerLayer.get() setVideoDimensions:videoDimensions];
@@ -84,15 +73,16 @@ private:
 }
 
 @implementation WebAVPlayerLayer {
-    ThreadSafeWeakPtr<VideoPresentationModel> _presentationModel;
+    ThreadSafeWeakPtr<WebCore::VideoPresentationModel> _presentationModel;
     RetainPtr<WebAVPlayerController> _playerController;
     RetainPtr<CALayer> _videoSublayer;
     RetainPtr<CALayer> _captionsLayer;
-    FloatRect _targetVideoFrame;
+    WebCore::FloatRect _targetVideoFrame;
     CGSize _videoDimensions;
     RetainPtr<NSString> _videoGravity;
     RetainPtr<NSString> _previousVideoGravity;
-    std::unique_ptr<WebAVPlayerLayerPresentationModelClient> _presentationModelClient;
+    RetainPtr<NSDictionary> _pixelBufferAttributes;
+    std::unique_ptr<WebCore::WebAVPlayerLayerPresentationModelClient> _presentationModelClient;
     NSEdgeInsets _legibleContentInsets;
     BOOL _showingCaptionPreview;
 #if !RELEASE_LOG_DISABLED
@@ -109,7 +99,7 @@ private:
         _videoGravity = AVLayerVideoGravityResizeAspect;
         _previousVideoGravity = AVLayerVideoGravityResizeAspect;
         self.name = @"WebAVPlayerLayer";
-        _presentationModelClient = WTF::makeUnique<WebAVPlayerLayerPresentationModelClient>(self);
+        _presentationModelClient = WTF::makeUnique<WebCore::WebAVPlayerLayerPresentationModelClient>(self);
         _showingCaptionPreview = NO;
     }
     return self;
@@ -118,25 +108,24 @@ private:
 - (void)dealloc
 {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(resolveBounds) object:nil];
-    [_pixelBufferAttributes release];
     if (auto model = _presentationModel.get())
-        model->removeClient(*_presentationModelClient);
+        model->removeClient(protect(*_presentationModelClient));
     [super dealloc];
 }
 
-- (RefPtr<VideoPresentationModel>)presentationModel
+- (RefPtr<WebCore::VideoPresentationModel>)presentationModel
 {
     return _presentationModel.get();
 }
 
-- (void)setPresentationModel:(RefPtr<VideoPresentationModel>)presentationModel
+- (void)setPresentationModel:(RefPtr<WebCore::VideoPresentationModel>)presentationModel
 {
     auto model = _presentationModel.get();
     if (model == presentationModel)
         return;
 
     if (model)
-        model->removeClient(*_presentationModelClient);
+        model->removeClient(protect(*_presentationModelClient));
 
     _presentationModel = presentationModel;
 #if !RELEASE_LOG_DISABLED
@@ -144,7 +133,7 @@ private:
 #endif
 
     if (presentationModel)
-        presentationModel->addClient(*_presentationModelClient);
+        presentationModel->addClient(protect(*_presentationModelClient));
 
     self.videoDimensions = presentationModel ? presentationModel->videoDimensions() : CGSizeZero;
 }
@@ -156,11 +145,11 @@ private:
 
 - (void)setPlayerController:(AVPlayerController *)playerController
 {
-    ASSERT(!playerController || [playerController isKindOfClass:webAVPlayerControllerClassSingleton()]);
+    ASSERT(!playerController || [playerController isKindOfClass:WebCore::webAVPlayerControllerClassSingleton()]);
     _playerController = (WebAVPlayerController *)playerController;
 }
 
-- (void)setVideoSublayer:(CALayer *)videoSublayer
+- (void)setVideoSublayer:(nullable CALayer *)videoSublayer
 {
     _videoSublayer = videoSublayer;
 }
@@ -188,6 +177,16 @@ private:
     return _captionsLayer.get();
 }
 
+- (NSDictionary *)pixelBufferAttributes
+{
+    return _pixelBufferAttributes.get();
+}
+
+- (void)setPixelBufferAttributes:(NSDictionary *)pixelBufferAttributes
+{
+    _pixelBufferAttributes = adoptNS([pixelBufferAttributes copy]);
+}
+
 - (CGSize)videoDimensions
 {
     return _videoDimensions;
@@ -198,26 +197,26 @@ private:
     if (CGSizeEqualToSize(_videoDimensions, videoDimensions))
         return;
 
-    OBJC_ALWAYS_LOG(OBJC_LOGIDENTIFIER, FloatSize { videoDimensions });
+    OBJC_ALWAYS_LOG(OBJC_LOGIDENTIFIER, WebCore::FloatSize { videoDimensions });
     _videoDimensions = videoDimensions;
     [self setNeedsLayout];
 }
 
-- (FloatRect)calculateTargetVideoFrame
+- (WebCore::FloatRect)calculateTargetVideoFrame
 {
-    FloatRect targetVideoFrame;
+    WebCore::FloatRect targetVideoFrame;
     float videoAspectRatio = self.videoDimensions.width / self.videoDimensions.height;
 
     if ([AVLayerVideoGravityResize isEqualToString:self.videoGravity])
         targetVideoFrame = self.bounds;
     else if ([AVLayerVideoGravityResizeAspect isEqualToString:self.videoGravity])
-        targetVideoFrame = largestRectWithAspectRatioInsideRect(videoAspectRatio, self.bounds);
+        targetVideoFrame = WebCore::largestRectWithAspectRatioInsideRect(videoAspectRatio, self.bounds);
     else if ([AVLayerVideoGravityResizeAspectFill isEqualToString:self.videoGravity])
-        targetVideoFrame = smallestRectWithAspectRatioAroundRect(videoAspectRatio, self.bounds);
+        targetVideoFrame = WebCore::smallestRectWithAspectRatioAroundRect(videoAspectRatio, self.bounds);
     else
         ASSERT_NOT_REACHED();
 
-    return snappedIntRect(LayoutRect(targetVideoFrame));
+    return snappedIntRect(WebCore::LayoutRect(targetVideoFrame));
 }
 
 // Sometimes the `frame` returned by CA will differ from the value assigned
@@ -228,10 +227,10 @@ private:
 // constant value to use for a custom `areEssentiallyEqual` where we will
 // bail out of -resolveBounds if the _targetVideoFrame is essentially equal
 // to the current video frame.
-static bool areFramesEssentiallyEqualWithTolerance(const FloatRect& a, const FloatRect& b)
+static bool NODELETE areFramesEssentiallyEqualWithTolerance(const WebCore::FloatRect& a, const WebCore::FloatRect& b)
 {
     static constexpr double frameValueDeltaTolerance { 0.01 };
-    FloatRect delta { FloatPoint { a.location() - b.location() }, a.size() - b.size() };
+    WebCore::FloatRect delta { WebCore::FloatPoint { a.location() - b.location() }, a.size() - b.size() };
     return abs(delta.x()) < frameValueDeltaTolerance
         && abs(delta.y()) < frameValueDeltaTolerance
         && abs(delta.width()) < frameValueDeltaTolerance
@@ -250,13 +249,13 @@ static bool areFramesEssentiallyEqualWithTolerance(const FloatRect& a, const Flo
         return;
     }
 
-    FloatRect sourceVideoFrame = self.videoSublayer.bounds;
+    WebCore::FloatRect sourceVideoFrame = self.videoSublayer.bounds;
     _targetVideoFrame = [self calculateTargetVideoFrame];
 
     if (_captionsLayer) {
         // Captions should be placed atop video content, but if the video content overflows
         // the WebAVPlayerLayer bounds, restrict the caption area to only what is visible.
-        FloatRect captionsFrame = _targetVideoFrame;
+        WebCore::FloatRect captionsFrame = _targetVideoFrame;
         captionsFrame.intersect(self.bounds);
         [_captionsLayer setFrame:captionsFrame];
         if (auto model = _presentationModel.get())
@@ -301,7 +300,7 @@ static bool areFramesEssentiallyEqualWithTolerance(const FloatRect& a, const Flo
     [_videoSublayer setPosition:CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds))];
     [CATransaction commit];
 
-    OBJC_DEBUG_LOG(OBJC_LOGIDENTIFIER, "self.bounds: ", FloatRect(self.bounds), ", targetVideoFrame: ", _targetVideoFrame, ", transform: [", transform.a, ", ", transform.d, "]");
+    OBJC_DEBUG_LOG(OBJC_LOGIDENTIFIER, "self.bounds: ", WebCore::FloatRect(self.bounds), ", targetVideoFrame: ", _targetVideoFrame, ", transform: [", transform.a, ", ", transform.d, "]");
 
     NSTimeInterval animationDuration = [CATransaction animationDuration];
     RunLoop::mainSingleton().dispatch([self, strongSelf = retainPtr(self), animationDuration] {
@@ -331,7 +330,7 @@ static bool areFramesEssentiallyEqualWithTolerance(const FloatRect& a, const Flo
     OBJC_DEBUG_LOG(OBJC_LOGIDENTIFIER, _targetVideoFrame);
 
     if (auto model = _presentationModel.get()) {
-        FloatRect targetVideoBounds { { }, _targetVideoFrame.size() };
+        WebCore::FloatRect targetVideoBounds { { }, _targetVideoFrame.size() };
         model->setVideoLayerFrame(targetVideoBounds);
     }
 
@@ -358,13 +357,13 @@ static bool areFramesEssentiallyEqualWithTolerance(const FloatRect& a, const Flo
     _previousVideoGravity = _videoGravity;
     _videoGravity = videoGravity;
 
-    MediaPlayerEnums::VideoGravity gravity = MediaPlayerEnums::VideoGravity::ResizeAspect;
+    WebCore::MediaPlayerEnums::VideoGravity gravity = WebCore::MediaPlayerEnums::VideoGravity::ResizeAspect;
     if ([videoGravity isEqualToString:AVLayerVideoGravityResize])
-        gravity = MediaPlayerEnums::VideoGravity::Resize;
+        gravity = WebCore::MediaPlayerEnums::VideoGravity::Resize;
     else if ([videoGravity isEqualToString:AVLayerVideoGravityResizeAspect])
-        gravity = MediaPlayerEnums::VideoGravity::ResizeAspect;
+        gravity = WebCore::MediaPlayerEnums::VideoGravity::ResizeAspect;
     else if ([videoGravity isEqualToString:AVLayerVideoGravityResizeAspectFill])
-        gravity = MediaPlayerEnums::VideoGravity::ResizeAspectFill;
+        gravity = WebCore::MediaPlayerEnums::VideoGravity::ResizeAspectFill;
     else
         ASSERT_NOT_REACHED();
 
@@ -389,9 +388,9 @@ static bool areFramesEssentiallyEqualWithTolerance(const FloatRect& a, const Flo
     float videoAspectRatio = self.videoDimensions.width / self.videoDimensions.height;
 
     if ([AVLayerVideoGravityResizeAspect isEqualToString:self.videoGravity])
-        return largestRectWithAspectRatioInsideRect(videoAspectRatio, self.bounds);
+        return WebCore::largestRectWithAspectRatioInsideRect(videoAspectRatio, self.bounds);
     if ([AVLayerVideoGravityResizeAspectFill isEqualToString:self.videoGravity])
-        return smallestRectWithAspectRatioAroundRect(videoAspectRatio, self.bounds);
+        return WebCore::smallestRectWithAspectRatioAroundRect(videoAspectRatio, self.bounds);
 
     return self.bounds;
 }
@@ -420,11 +419,9 @@ static bool areFramesEssentiallyEqualWithTolerance(const FloatRect& a, const Flo
 
 - (void)setCaptionPreviewProfileID:(NSString * _Nonnull)profileID position:(CGPoint)position text:(nullable NSString *)text
 {
-    CaptionUserPreferencesMediaAF::setActiveProfileID(profileID);
-
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
     if (RefPtr model = _presentationModel.get())
-        model->requestShowCaptionDisplaySettingsPreview();
+        model->requestShowCaptionDisplaySettingsPreview(profileID);
 #endif
 
     _showingCaptionPreview = YES;
@@ -472,7 +469,7 @@ static bool areFramesEssentiallyEqualWithTolerance(const FloatRect& a, const Flo
 
 - (WTFLogChannel*)logChannel
 {
-    return &LogFullscreen;
+    return &WebCore::LogFullscreen;
 }
 @end
 #endif

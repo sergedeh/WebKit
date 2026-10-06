@@ -29,6 +29,7 @@
 #include "config.h"
 #include "JSHistory.h"
 
+#include "JSValueInWrappedObjectInlines.h"
 #include "SerializedScriptValue.h"
 #include <JavaScriptCore/JSCInlines.h>
 
@@ -44,17 +45,17 @@ JSValue JSHistory::state(JSGlobalObject& lexicalGlobalObject) const
             propagateException(lexicalGlobalObject, throwScope, wrapped().state().releaseException());
             return jsNull();
         }
-        auto* serialized = wrapped().state().releaseReturnValue();
-        return serialized ? serialized->deserialize(lexicalGlobalObject, globalObject()) : jsNull();
+        RefPtr serialized = wrapped().state().releaseReturnValue();
+        return serialized ? serialized->deserialize(lexicalGlobalObject, realm()) : jsNull();
     });
 }
 
 template<typename Visitor>
-void JSHistory::visitAdditionalChildren(Visitor& visitor)
+void JSHistory::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().cachedStateForGC().visit(visitor);
+    wrapped().cachedStateForGC().visitInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSHistory);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSHistory);
 
 } // namespace WebCore

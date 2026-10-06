@@ -31,6 +31,7 @@
 
 #include <JavaScriptCore/ExecutableAllocator.h>
 #include <JavaScriptCore/JITCompilationEffort.h>
+#include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/SecureARM64EHashPinsInlines.h>
 #include <stdint.h>
 #include <string.h>
@@ -185,6 +186,11 @@ namespace JSC {
 
         ~AssemblerDataImpl()
         {
+            if (Options::useCachedAssemblerDataCapacityLimit() && m_capacity > Options::maximumCachedAssemblerDataCapacity()) {
+                clear();
+                return;
+            }
+
             if constexpr (type == AssemblerDataType::Code)
                 threadSpecificAssemblerData()->takeBufferIfLarger(*this);
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
@@ -211,7 +217,8 @@ namespace JSC {
 
         void grow(unsigned extraCapacity = 0)
         {
-            m_capacity = m_capacity + m_capacity / 2 + extraCapacity;
+            auto capacity = Checked<unsigned>(m_capacity) + m_capacity / 2 + extraCapacity;
+            m_capacity = capacity.value();
             if (isInlineBuffer()) {
                 m_buffer = static_cast<char*>(AssemblerDataMalloc::malloc(m_capacity));
                 memcpy(m_buffer, m_inlineBuffer, InlineCapacity);
@@ -325,7 +332,6 @@ namespace JSC {
     public:
         AssemblerBuffer()
             : m_storage()
-            , m_index(0)
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
             , m_hash()
             , m_hashes()
@@ -345,7 +351,7 @@ namespace JSC {
 
         bool isAvailable(unsigned space)
         {
-            return m_index + space <= m_storage.capacity();
+            return static_cast<uint64_t>(m_index) + space <= m_storage.capacity();
         }
 
         void ensureSpace(unsigned space)
@@ -444,7 +450,7 @@ namespace JSC {
             void putIntegralUnchecked(IntegralType value)
             {
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-                ASSERT(m_index + sizeof(IntegralType) <= m_buffer.m_storage.capacity());
+                ASSERT(static_cast<uint64_t>(m_index) + sizeof(IntegralType) <= m_buffer.m_storage.capacity());
                 WTF::unalignedStore<IntegralType>(m_storageBuffer + m_index, value);
                 m_index += sizeof(IntegralType);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -460,19 +466,19 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // !CPU(ARM64)
 
 #if !CPU(ARM64) // If we were to define this on arm64e, we'd need a way to update the hash as we write directly into the buffer.
-        void* data() const { return m_storage.buffer(); }
+        void* data() const LIFETIME_BOUND { return m_storage.buffer(); }
 #endif
 
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
-        ARM64EHash<ShouldSign::Yes>& arm64eHash() { return m_hash; }
+        ARM64EHash<ShouldSign::Yes>& arm64eHash() LIFETIME_BOUND { return m_hash; }
 #endif
 
     protected:
         template<typename IntegralType>
         void putIntegral(IntegralType value)
         {
-            unsigned nextIndex = m_index + sizeof(IntegralType);
-            if (nextIndex > m_storage.capacity()) [[unlikely]]
+            auto nextIndex = Checked<unsigned>(m_index) + sizeof(IntegralType);
+            if (nextIndex.value() > m_storage.capacity()) [[unlikely]]
                 outOfLineGrow();
             putIntegralUnchecked<IntegralType>(value);
         }
@@ -517,7 +523,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         friend LinkBuffer;
 
         AssemblerData m_storage;
-        unsigned m_index;
+        unsigned m_index { 0 };
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
         ARM64EHash<ShouldSign::Yes> m_hash;
         AssemblerHashes m_hashes;

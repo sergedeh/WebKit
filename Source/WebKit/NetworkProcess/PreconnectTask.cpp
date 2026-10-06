@@ -41,6 +41,10 @@ using namespace WebCore;
 
 Ref<PreconnectTask> PreconnectTask::create(NetworkSession& networkSession, NetworkLoadParameters&& parameters)
 {
+    ASSERT(parameters.shouldPreconnectOnly == PreconnectOnly::Yes);
+    ASSERT(!parameters.request.httpBody());
+    parameters.shouldPreconnectOnly = PreconnectOnly::Yes;
+    parameters.request.setHTTPBody(nullptr);
     return adoptRef(*new PreconnectTask(networkSession, WTF::move(parameters)));
 }
 
@@ -49,10 +53,10 @@ PreconnectTask::PreconnectTask(NetworkSession& networkSession, NetworkLoadParame
 {
     RELEASE_LOG(Network, "%p - PreconnectTask::PreconnectTask()", this);
 
-    ASSERT(m_networkLoad->parameters().shouldPreconnectOnly == PreconnectOnly::Yes);
+    RELEASE_ASSERT(m_networkLoad->parameters().shouldPreconnectOnly == PreconnectOnly::Yes);
 }
 
-void PreconnectTask::setH2PingCallback(const URL& url, CompletionHandler<void(Expected<WTF::Seconds, WebCore::ResourceError>&&)>&& completionHandler)
+void PreconnectTask::setH2PingCallback(const URL& url, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&& completionHandler)
 {
     m_networkLoad->setH2PingCallback(url, WTF::move(completionHandler));
 }
@@ -65,7 +69,7 @@ void PreconnectTask::start(CompletionHandler<void(const WebCore::ResourceError&,
         if (completionHandler)
             completionHandler(error, metrics);
     };
-    m_timeoutTimer = makeUnique<WebCore::Timer>(*this, &PreconnectTask::didTimeout);
+    lazyInitialize(m_timeoutTimer, makeUnique<WebCore::Timer>(*this, &PreconnectTask::didTimeout));
     m_timeoutTimer->startOneShot(timeout);
     m_networkLoad->start();
 }
@@ -115,6 +119,7 @@ void PreconnectTask::didFailLoading(const ResourceError& error)
 void PreconnectTask::didTimeout()
 {
     RELEASE_LOG_ERROR(Network, "%p - PreconnectTask::didTimeout", this);
+    m_networkLoad->cancel();
     m_completionHandler(ResourceError { String(), 0, m_networkLoad->parameters().request.url(), "Preconnection timed out"_s, ResourceError::Type::Timeout }, { }); // Deletes this.
 }
 

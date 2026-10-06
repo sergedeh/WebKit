@@ -92,7 +92,26 @@ enum class ImageDrawResult {
     DidDraw
 };
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+enum class InvertContent : uint8_t {
+    FromResource,
+    No,
+    Yes
+};
+
+enum class ImagePaintTimeTransformation : uint8_t {
+    Unchanged,
+    SimpleInvert,
+    ColorPreservingInvert
+};
+#endif
+
 enum class ShowDebugBackground : bool {
+    No,
+    Yes
+};
+
+enum class DrawLuminanceMask : bool {
     No,
     Yes
 };
@@ -103,6 +122,11 @@ enum class AllowImageSubsampling : bool {
 };
 
 enum class DrawsHDRContent : uint8_t {
+    No,
+    Yes
+};
+
+enum class AllowAcceleratedApplyGainMap : bool {
     No,
     Yes
 };

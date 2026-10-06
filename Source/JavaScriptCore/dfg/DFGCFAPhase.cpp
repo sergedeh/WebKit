@@ -59,8 +59,8 @@ public:
         
         m_count = 0;
 
-        dataLogIf((m_verbose && !shouldDumpGraphAtEachPhase(m_graph.m_plan.mode())), "Graph before CFA:\n", m_graph);
-        
+        dataLogIf((m_verbose && !shouldDumpGraphAtEachPhase(m_graph)), "Graph before CFA:\n", m_graph);
+
         // This implements a pseudo-worklist-based forward CFA, except that the visit order
         // of blocks is the bytecode program order (which is nearly topological), and
         // instead of a worklist we just walk all basic blocks checking if cfaShouldRevisit
@@ -138,14 +138,19 @@ public:
                     continue;
                 
                 block->intersectionOfCFAHasVisited &= block->cfaHasVisited;
-                for (unsigned i = block->intersectionOfPastValuesAtHead.size(); i--;) {
+
+                if (!block->isOSRTarget || !block->intersectionOfCFAHasVisited)
+                    continue;
+
+                Operands<AbstractValue>& intersection = block->ensureIntersectionOfPastValuesAtHead();
+                for (unsigned i = intersection.size(); i--;) {
                     AbstractValue value = block->valuesAtHead[i];
                     // We need to guarantee that when we do an OSR entry, we validate the incoming
                     // value as if it could be live past an invalidation point. Otherwise, we may
                     // OSR enter with a value with the wrong structure, and an InvalidationPoint's
                     // promise of filtering the structure set of certain values is no longer upheld.
                     value.m_structure.observeInvalidationPoint();
-                    block->intersectionOfPastValuesAtHead[i].filter(value);
+                    intersection[i].filter(value);
                 }
             }
         }
@@ -226,7 +231,7 @@ private:
             
             if (ASSERT_ENABLED
                 && m_state.didClobberOrFolded() != writesOverlap(m_graph, node, JSCell_structureID))
-                DFG_CRASH(m_graph, node, toCString("AI-clobberize disagreement; AI says ", m_state.clobberState(), " while clobberize says ", writeSet(m_graph, node)).data());
+                DFG_CRASH(m_graph, node, toUTF8CString("AI-clobberize disagreement; AI says ", m_state.clobberState(), " while clobberize says ", writeSet(m_graph, node)));
         }
         if (m_verbose) {
             WTF::dataFile().atomically([&](auto&) {

@@ -12,7 +12,7 @@
 #include "include/core/SkPathBuilder.h"  // IWYU pragma: keep
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
-#include "include/private/base/SkTDArray.h"
+#include "include/private/SkTDArray.h"
 #include "src/core/SkPathMeasurePriv.h"
 
 #include <cstddef>
@@ -59,18 +59,6 @@ bool SkPathMeasure::nextContour() {
     fContour = fIter.next();
     return !!fContour;
 }
-
-#ifdef SK_SUPPORT_MUTABLE_PATHEFFECT
-bool SkPathMeasure::getSegment(SkScalar startD, SkScalar stopD, SkPath* dst,
-                               bool startWithMoveTo) {
-    SkPathBuilder builder(*dst);
-    if (this->getSegment(startD, stopD, &builder, startWithMoveTo)) {
-        *dst = builder.detach();
-        return true;
-    }
-    return false;
-}
-#endif
 
 #ifdef SK_DEBUG
 void SkPathMeasure::dump() {}

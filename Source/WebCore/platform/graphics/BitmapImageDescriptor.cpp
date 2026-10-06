@@ -130,12 +130,17 @@ IntSize BitmapImageDescriptor::sourceSize(ImageOrientation orientation) const
         size = decoder->size();
     else
 #endif
-        size = primaryImageFrameMetadata(m_size, CachedFlag::Size, &ImageFrame::size, SubsamplingLevel::Default);
+        size = primaryImageFrameMetadata(m_naturalSize, CachedFlag::NaturalSize, &ImageFrame::naturalSize, SubsamplingLevel::Default);
 
     if (orientation == ImageOrientation::Orientation::FromImage)
         orientation = this->orientation();
 
     return orientation.usesWidthAsHeight() ? size.transposedSize() : size;
+}
+
+FloatSize BitmapImageDescriptor::density() const
+{
+    return primaryImageFrameMetadata(m_density, CachedFlag::Density, &ImageFrame::density);
 }
 
 std::optional<IntSize> BitmapImageDescriptor::densityCorrectedSize() const
@@ -163,9 +168,9 @@ RepetitionCount BitmapImageDescriptor::repetitionCount() const
     return imageMetadata(m_repetitionCount, static_cast<RepetitionCount>(RepetitionCountNone), CachedFlag::RepetitionCount, &ImageDecoder::repetitionCount);
 }
 
-DestinationColorSpace BitmapImageDescriptor::colorSpace() const
+ColorSpace BitmapImageDescriptor::colorSpace() const
 {
-    return primaryNativeImageMetadata(m_colorSpace, DestinationColorSpace::SRGB(), CachedFlag::ColorSpace, &NativeImage::colorSpace);
+    return primaryNativeImageMetadata(m_colorSpace, ColorSpace::SRGB(), CachedFlag::ColorSpace, &NativeImage::colorSpace);
 }
 
 std::optional<Color> BitmapImageDescriptor::singlePixelSolidColor() const
@@ -257,7 +262,7 @@ SubsamplingLevel BitmapImageDescriptor::subsamplingLevelForScaleFactor(GraphicsC
         return SubsamplingLevel::Default;
 
     // Never use subsampled images for drawing into PDF contexts.
-    if (context.hasPlatformContext() && CGContextGetType(context.platformContext()) == kCGContextTypePDF)
+    if (context.hasPlatformContext() && CGContextGetType(protect(context.platformContext())) == kCGContextTypePDF)
         return SubsamplingLevel::Default;
 
     float scale = std::min(float(1), std::max(scaleFactor.width(), scaleFactor.height()));
@@ -275,10 +280,10 @@ SubsamplingLevel BitmapImageDescriptor::subsamplingLevelForScaleFactor(GraphicsC
 }
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
-bool BitmapImageDescriptor::shouldUseQuickLookForFullscreen() const
+bool BitmapImageDescriptor::isPanorama() const
 {
-    if (auto decoder = m_source->decoderIfExists())
-        return decoder->shouldUseQuickLookForFullscreen();
+    if (RefPtr decoder = m_source->decoderIfExists())
+        return decoder->isPanorama();
     return false;
 }
 #endif

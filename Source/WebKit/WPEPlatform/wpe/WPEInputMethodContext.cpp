@@ -47,7 +47,7 @@ struct _WPEInputMethodUnderline {
 /**
  * WPEInputMethodUnderline:
  *
- * Range of text in an preedit string to be shown underlined.
+ * Range of text in a preedit string to be shown underlined.
  */
 
 G_DEFINE_BOXED_TYPE(WPEInputMethodUnderline, wpe_input_method_underline, wpe_input_method_underline_copy, wpe_input_method_underline_free)
@@ -231,7 +231,7 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
     /**
      * WPEInputMethodContext:view:
      *
-     * The #WPEView associated to the #WPEInputMethodContext
+     * The #WPEView associated with the #WPEInputMethodContext
      */
     sObjProperties[PROP_VIEW] =
         g_param_spec_object(
@@ -246,7 +246,7 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
      * The purpose of the text field that the #WPEInputMethodContext is connected to.
      *
      * This property can be used by on-screen keyboards and other input
-     * methods to adjust their behaviour.
+     * methods to adjust their behavior.
      */
     sObjProperties[PROP_INPUT_PURPOSE] =
         g_param_spec_enum(
@@ -260,7 +260,7 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
      * WPEInputMethodContext:input-hints:
      *
      * Additional hints that allow input methods to fine-tune
-     * their behaviour.
+     * their behavior.
      */
     sObjProperties[PROP_INPUT_HINTS] =
         g_param_spec_flags(
@@ -273,8 +273,8 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
     g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
 
      /**
-     * WPEInputMethodContextClass::preedit-started:
-     * @context: the #WPEInputMethodContextClass on which the signal is emitted
+     * WPEInputMethodContext::preedit-started:
+     * @context: the #WPEInputMethodContext on which the signal is emitted
      *
      * Emitted when a new preediting sequence starts.
      */
@@ -292,7 +292,7 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
      *
      * Emitted whenever the preedit sequence currently being entered has changed.
      * It is also emitted at the end of a preedit sequence, in which case
-     * wpe_input_method_context_get_preedit() returns the empty string.
+     * wpe_input_method_context_get_preedit_string() returns the empty string.
      */
     signals[PREEDIT_CHANGED] = g_signal_new(
         "preedit-changed",
@@ -437,7 +437,7 @@ void wpe_input_method_context_set_input_purpose(WPEInputMethodContext* context, 
  * wpe_input_method_context_get_input_hints:
  * @context: a #WPEInputMethodContext
  *
- * Get hints of @context that allow input methods to fine-tune their behaviour.
+ * Get hints of @context that allow input methods to fine-tune their behavior.
  *
  * Returns: a #WPEInputHints
  */
@@ -453,7 +453,7 @@ WPEInputHints wpe_input_method_context_get_input_hints(WPEInputMethodContext* co
  * @context: a #WPEInputMethodContext
  * @hints: a #WPEInputHints
  *
- * Set hints of @context that allow input methods to fine-tune their behaviour.
+ * Set hints of @context that allow input methods to fine-tune their behavior.
  */
 void wpe_input_method_context_set_input_hints(WPEInputMethodContext* context, WPEInputHints hints)
 {
@@ -512,7 +512,7 @@ gboolean wpe_input_method_context_filter_key_event(WPEInputMethodContext* contex
  * wpe_input_method_context_focus_in:
  * @context: a #WPEInputMethodContext
  *
- * Notify @context that input associated has gained focus.
+ * Notify @context that the associated input has gained focus.
  */
 void wpe_input_method_context_focus_in(WPEInputMethodContext* context)
 {
@@ -527,7 +527,7 @@ void wpe_input_method_context_focus_in(WPEInputMethodContext* context)
  * wpe_input_method_context_focus_out:
  * @context: a #WPEInputMethodContext
  *
- * Notify @context that input associated has lost focus.
+ * Notify @context that the associated input has lost focus.
  */
 void wpe_input_method_context_focus_out(WPEInputMethodContext* context)
 {
@@ -546,7 +546,7 @@ void wpe_input_method_context_focus_out(WPEInputMethodContext* context)
  * @width: the width of cursor area
  * @height: the height of cursor area
  *
- * Notify @context that cursor area changed in input associated.
+ * Notify @context that the cursor area changed in the associated input.
  */
 void wpe_input_method_context_set_cursor_area(WPEInputMethodContext* context, int x, int y, int width, int height)
 {

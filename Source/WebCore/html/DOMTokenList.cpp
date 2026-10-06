@@ -28,7 +28,6 @@
 
 #include "ExceptionOr.h"
 #include "NodeDocument.h"
-#include "NodeInlines.h"
 #include "SpaceSplitString.h"
 #include <wtf/HashSet.h>
 #include <wtf/SetForScope.h>
@@ -211,7 +210,7 @@ ExceptionOr<bool> DOMTokenList::supports(StringView token)
 {
     if (!m_isSupportedToken)
         return Exception { ExceptionCode::TypeError };
-    return m_isSupportedToken(m_element->protectedDocument(), token);
+    return m_isSupportedToken(protect(m_element->document()), token);
 }
 
 // https://dom.spec.whatwg.org/#dom-domtokenlist-value

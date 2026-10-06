@@ -28,6 +28,7 @@
 #if HAVE(CORE_MATERIAL)
 
 #include <WebCore/FloatRoundedRect.h>
+#include <wtf/Assertions.h>
 
 namespace WTF {
 class TextStream;
@@ -59,10 +60,41 @@ enum class AppleVisualEffect : uint8_t {
     VibrancySeparator,
 };
 
-WEBCORE_EXPORT bool appleVisualEffectNeedsBackdrop(AppleVisualEffect);
-WEBCORE_EXPORT bool appleVisualEffectAppliesFilter(AppleVisualEffect);
+inline bool NODELETE appleVisualEffectNeedsBackdrop(AppleVisualEffect effect)
+{
+    switch (effect) {
+    case AppleVisualEffect::BlurUltraThinMaterial:
+    case AppleVisualEffect::BlurThinMaterial:
+    case AppleVisualEffect::BlurMaterial:
+    case AppleVisualEffect::BlurThickMaterial:
+    case AppleVisualEffect::BlurChromeMaterial:
+        return true;
+    case AppleVisualEffect::None:
 #if HAVE(MATERIAL_HOSTING)
-WEBCORE_EXPORT bool appleVisualEffectIsHostedMaterial(AppleVisualEffect);
+    case AppleVisualEffect::GlassMaterial:
+    case AppleVisualEffect::GlassClearMaterial:
+    case AppleVisualEffect::GlassSubduedMaterial:
+    case AppleVisualEffect::GlassMediaControlsMaterial:
+    case AppleVisualEffect::GlassSubduedMediaControlsMaterial:
+#endif
+    case AppleVisualEffect::VibrancyLabel:
+    case AppleVisualEffect::VibrancySecondaryLabel:
+    case AppleVisualEffect::VibrancyTertiaryLabel:
+    case AppleVisualEffect::VibrancyQuaternaryLabel:
+    case AppleVisualEffect::VibrancyFill:
+    case AppleVisualEffect::VibrancySecondaryFill:
+    case AppleVisualEffect::VibrancyTertiaryFill:
+    case AppleVisualEffect::VibrancySeparator:
+        return false;
+    }
+
+    ASSERT_NOT_REACHED();
+    return false;
+}
+
+WEBCORE_EXPORT bool NODELETE appleVisualEffectAppliesFilter(AppleVisualEffect);
+#if HAVE(MATERIAL_HOSTING)
+WEBCORE_EXPORT bool NODELETE appleVisualEffectIsHostedMaterial(AppleVisualEffect);
 #endif
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, AppleVisualEffect);

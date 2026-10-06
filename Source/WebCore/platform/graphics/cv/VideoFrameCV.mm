@@ -27,6 +27,7 @@
 #include "VideoFrameCV.h"
 
 #if ENABLE(VIDEO) && USE(AVFOUNDATION)
+#include "CMUtilities.h"
 #include "CVUtilities.h"
 #include "GraphicsContext.h"
 #include "ImageTransferSessionVT.h"
@@ -76,7 +77,7 @@ static std::span<const uint8_t> copyToCVPixelBufferPlane(CVPixelBufferRef pixelB
     return source;
 }
 
-static vImage_Buffer makeVImageBuffer8888(std::span<uint8_t> data, size_t width, size_t height, size_t rowBytes)
+static vImage_Buffer NODELETE makeVImageBuffer8888(std::span<uint8_t> data, size_t width, size_t height, size_t rowBytes)
 {
     constexpr size_t bytesPerPixel = 4;
     size_t minRowBytes = 0;
@@ -107,7 +108,7 @@ RefPtr<VideoFrame> VideoFrame::createNV12(std::span<const uint8_t> span, size_t 
 {
     CVPixelBufferRef rawPixelBuffer = nullptr;
 
-    auto status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nullptr, &rawPixelBuffer);
+    auto status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, colorSpace.fullRange.value_or(false) ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nullptr, &rawPixelBuffer);
     if (status != noErr || !rawPixelBuffer)
         return nullptr;
     RetainPtr pixelBuffer = adoptCF(rawPixelBuffer);
@@ -125,6 +126,9 @@ RefPtr<VideoFrame> VideoFrame::createNV12(std::span<const uint8_t> span, size_t 
 
     auto data = span;
     data = copyToCVPixelBufferPlane(pixelBuffer.get(), 0, data, height, planeY.sourceWidthBytes);
+    // Source height may be bigger than destination height in case of a cropped frame, skip the cropped lines.
+    if (planeY.sourceHeight > height)
+        data = data.subspan((planeY.sourceHeight - height) * planeY.sourceWidthBytes);
     if (CVPixelBufferGetPlaneCount(pixelBuffer.get()) == 2) {
         const auto heightUV = height / 2;
         ASSERT(std::to_address(span.end()) >= data.subspan(heightUV * planeUV.sourceWidthBytes).data());
@@ -195,14 +199,17 @@ RefPtr<VideoFrame> VideoFrame::createBGRA(std::span<const uint8_t> span, size_t 
 RefPtr<VideoFrame> VideoFrame::createI420(std::span<const uint8_t> buffer, size_t width, size_t height, const ComputedPlaneLayout& layoutY, const ComputedPlaneLayout& layoutU, const ComputedPlaneLayout& layoutV, PlatformVideoColorSpace&& colorSpace)
 {
 #if USE(LIBWEBRTC)
-    size_t offsetLayoutU = layoutY.sourceLeftBytes + layoutY.sourceWidthBytes * height;
-    size_t offsetLayoutV = offsetLayoutU + layoutU.sourceLeftBytes + layoutU.sourceWidthBytes * ((height + 1) / 2);
+    // Plane offsets must step over the full coded plane heights (layout*.sourceHeight), not the
+    // visible output height, otherwise a frame whose codedHeight exceeds visibleRect.height (e.g.
+    // a 1920x1088 frame cropped to 1920x1080) reads the chroma planes from the wrong offset.
+    size_t offsetLayoutU = layoutY.sourceLeftBytes + layoutY.sourceWidthBytes * layoutY.sourceHeight;
+    size_t offsetLayoutV = offsetLayoutU + layoutU.sourceLeftBytes + layoutU.sourceWidthBytes * layoutU.sourceHeight;
     webrtc::I420BufferLayout layout {
         layoutY.sourceLeftBytes, layoutY.sourceWidthBytes,
         offsetLayoutU, layoutU.sourceWidthBytes,
         offsetLayoutV, layoutV.sourceWidthBytes
     };
-    auto pixelBuffer = adoptCF(webrtc::createPixelBufferFromI420Buffer(buffer.data(), buffer.size(), width, height, layout));
+    auto pixelBuffer = adoptCF(webrtc::createPixelBufferFromI420Buffer(buffer.data(), buffer.size(), width, height, layout, colorSpace.fullRange.value_or(false)));
 
     if (!pixelBuffer)
         return nullptr;
@@ -223,9 +230,9 @@ RefPtr<VideoFrame> VideoFrame::createI420(std::span<const uint8_t> buffer, size_
 RefPtr<VideoFrame> VideoFrame::createI420A(std::span<const uint8_t> buffer, size_t width, size_t height, const ComputedPlaneLayout& layoutY, const ComputedPlaneLayout& layoutU, const ComputedPlaneLayout& layoutV, const ComputedPlaneLayout& layoutA, PlatformVideoColorSpace&& colorSpace)
 {
 #if USE(LIBWEBRTC)
-    size_t offsetLayoutU = layoutY.sourceLeftBytes + layoutY.sourceWidthBytes * height;
-    size_t offsetLayoutV = offsetLayoutU + layoutU.sourceLeftBytes + layoutU.sourceWidthBytes * ((height + 1) / 2);
-    size_t offsetLayoutA = offsetLayoutV + layoutV.sourceLeftBytes + layoutV.sourceWidthBytes * ((height + 1) / 2);
+    size_t offsetLayoutU = layoutY.sourceLeftBytes + layoutY.sourceWidthBytes * layoutY.sourceHeight;
+    size_t offsetLayoutV = offsetLayoutU + layoutU.sourceLeftBytes + layoutU.sourceWidthBytes * layoutU.sourceHeight;
+    size_t offsetLayoutA = offsetLayoutV + layoutV.sourceLeftBytes + layoutV.sourceWidthBytes * layoutV.sourceHeight;
     webrtc::I420ABufferLayout layout {
         {
             layoutY.sourceLeftBytes, layoutY.sourceWidthBytes,
@@ -431,17 +438,17 @@ void VideoFrame::copyTo(std::span<uint8_t> span, VideoPixelFormat format, Vector
 {
     // FIXME: We should get the pixel buffer and copy the bytes asynchronously.
     if (format == VideoPixelFormat::NV12) {
-        callback(copyNV12(span, computedPlaneLayout[0], computedPlaneLayout[1], this->protectedPixelBuffer().get()));
+        callback(copyNV12(span, computedPlaneLayout[0], computedPlaneLayout[1], protect(this->pixelBuffer()).get()));
         return;
     }
 
     if (format == VideoPixelFormat::I420) {
-        callback(copyI420OrI420A(span, computedPlaneLayout[0], computedPlaneLayout[1], computedPlaneLayout[2], nullptr, this->protectedPixelBuffer().get()));
+        callback(copyI420OrI420A(span, computedPlaneLayout[0], computedPlaneLayout[1], computedPlaneLayout[2], nullptr, protect(this->pixelBuffer()).get()));
         return;
     }
 
     if (format == VideoPixelFormat::I420A) {
-        callback(copyI420OrI420A(span, computedPlaneLayout[0], computedPlaneLayout[1], computedPlaneLayout[2], &computedPlaneLayout[3], this->protectedPixelBuffer().get()));
+        callback(copyI420OrI420A(span, computedPlaneLayout[0], computedPlaneLayout[1], computedPlaneLayout[2], &computedPlaneLayout[3], protect(this->pixelBuffer()).get()));
         return;
     }
 
@@ -449,7 +456,7 @@ void VideoFrame::copyTo(std::span<uint8_t> span, VideoPixelFormat format, Vector
         ComputedPlaneLayout planeLayout;
         if (!computedPlaneLayout.isEmpty())
             planeLayout = computedPlaneLayout[0];
-        auto planeLayouts = copyRGBData(span, planeLayout, this->protectedPixelBuffer().get(), [](std::span<uint8_t> destination, std::span<const uint8_t> source) {
+        auto planeLayouts = copyRGBData(span, planeLayout, protect(this->pixelBuffer()).get(), [](std::span<uint8_t> destination, std::span<const uint8_t> source) {
             ASSERT(!(source.size() % 4));
             auto pixelCount = source.size() / 4;
             size_t i = 0;
@@ -471,7 +478,7 @@ void VideoFrame::copyTo(std::span<uint8_t> span, VideoPixelFormat format, Vector
         if (!computedPlaneLayout.isEmpty())
             planeLayout = computedPlaneLayout[0];
 
-        auto planeLayouts = copyRGBData(span, planeLayout, this->protectedPixelBuffer().get(), [](std::span<uint8_t> destination, std::span<const uint8_t> source) {
+        auto planeLayouts = copyRGBData(span, planeLayout, protect(this->pixelBuffer()).get(), [](std::span<uint8_t> destination, std::span<const uint8_t> source) {
             memcpySpan(destination, source);
         });
         callback(WTF::move(planeLayouts));
@@ -483,8 +490,21 @@ void VideoFrame::copyTo(std::span<uint8_t> span, VideoPixelFormat format, Vector
 
 RefPtr<NativeImage> VideoFrame::copyNativeImage() const
 {
-    auto conformer = makeUnique<PixelBufferConformerCV>(kCVPixelFormatType_32BGRA);
-    return NativeImage::create(conformer->createImageFromPixelBuffer(protectedPixelBuffer().get()));
+    RetainPtr source = pixelBuffer();
+    RetainPtr bgraSource = ImageTransferSessionVT::convertPixelBuffer(source.get(), kCVPixelFormatType_32BGRA);
+    if (!bgraSource)
+        return nullptr;
+
+    // Prefer the frame's own color space (if fully described), to avoid falling back to SDR sRGB.
+    RetainPtr<CGColorSpaceRef> cgColorSpace;
+    const auto& frameColorSpace = colorSpace();
+    if (frameColorSpace.primaries && frameColorSpace.transfer) {
+        attachColorSpaceToPixelBuffer(frameColorSpace, bgraSource.get());
+        cgColorSpace = createCGColorSpaceForCVPixelBuffer(bgraSource.get());
+    } else
+        cgColorSpace = createCGColorSpaceForCVPixelBuffer(source.get());
+
+    return NativeImage::create(WTF::move(bgraSource), kCGImageAlphaFirst, cgColorSpace.get());
 }
 
 Ref<VideoFrameCV> VideoFrameCV::create(CMSampleBufferRef sampleBuffer, bool isMirrored, Rotation rotation)
@@ -497,10 +517,17 @@ Ref<VideoFrameCV> VideoFrameCV::create(CMSampleBufferRef sampleBuffer, bool isMi
     return VideoFrameCV::create(PAL::toMediaTime(timeStamp), isMirrored, rotation, pixelBuffer.get());
 }
 
-Ref<VideoFrameCV> VideoFrameCV::create(MediaTime presentationTime, bool isMirrored, Rotation rotation, RetainPtr<CVPixelBufferRef>&& pixelBuffer, std::optional<PlatformVideoColorSpace>&& colorSpace)
+Ref<VideoFrameCV> VideoFrameCV::create(MediaTime presentationTime, bool isMirrored, Rotation rotation, RetainPtr<CVPixelBufferRef>&& pixelBuffer, PlatformVideoColorSpace&& colorSpace)
 {
     ASSERT(pixelBuffer);
+    attachColorSpaceToPixelBuffer(colorSpace, pixelBuffer.get());
     return adoptRef(*new VideoFrameCV(presentationTime, isMirrored, rotation, WTF::move(pixelBuffer), WTF::move(colorSpace)));
+}
+
+Ref<VideoFrameCV> VideoFrameCV::create(MediaTime presentationTime, bool isMirrored, Rotation rotation, RetainPtr<CVPixelBufferRef>&& pixelBuffer)
+{
+    ASSERT(pixelBuffer);
+    return adoptRef(*new VideoFrameCV(presentationTime, isMirrored, rotation, WTF::move(pixelBuffer), computeVideoFrameColorSpace(pixelBuffer.get())));
 }
 
 RefPtr<VideoFrame> VideoFrame::createFromPixelBuffer(Ref<PixelBuffer>&& pixelBuffer, PlatformVideoColorSpace&& colorSpace)
@@ -527,62 +554,6 @@ RefPtr<VideoFrame> VideoFrame::createFromPixelBuffer(Ref<PixelBuffer>&& pixelBuf
 
     ASSERT_UNUSED(status, !status);
     return RefPtr { VideoFrameCV::create({ }, false, Rotation::None, WTF::move(cvPixelBuffer), WTF::move(colorSpace)) };
-}
-
-static PlatformVideoColorSpace computeVideoFrameColorSpace(CVPixelBufferRef pixelBuffer)
-{
-    if (!pixelBuffer)
-        return { };
-
-    std::optional<PlatformVideoColorPrimaries> primaries;
-    auto pixelPrimaries = CVBufferGetAttachment(pixelBuffer, kCVImageBufferColorPrimariesKey, nil);
-    if (safeCFEqual(pixelPrimaries, kCVImageBufferColorPrimaries_ITU_R_709_2))
-        primaries = PlatformVideoColorPrimaries::Bt709;
-    else if (safeCFEqual(pixelPrimaries, kCVImageBufferColorPrimaries_EBU_3213))
-        primaries = PlatformVideoColorPrimaries::JedecP22Phosphors;
-    else if (safeCFEqual(pixelPrimaries, PAL::kCMFormatDescriptionColorPrimaries_DCI_P3))
-        primaries = PlatformVideoColorPrimaries::SmpteRp431;
-    else if (safeCFEqual(pixelPrimaries, PAL::kCMFormatDescriptionColorPrimaries_P3_D65))
-        primaries = PlatformVideoColorPrimaries::SmpteEg432;
-    else if (safeCFEqual(pixelPrimaries, PAL::kCMFormatDescriptionColorPrimaries_ITU_R_2020))
-        primaries = PlatformVideoColorPrimaries::Bt2020;
-
-    std::optional<PlatformVideoTransferCharacteristics> transfer;
-    auto pixelTransfer = CVBufferGetAttachment(pixelBuffer, kCVImageBufferTransferFunctionKey, nil);
-    if (safeCFEqual(pixelTransfer, kCVImageBufferTransferFunction_ITU_R_709_2))
-        transfer = PlatformVideoTransferCharacteristics::Bt709;
-    else if (safeCFEqual(pixelTransfer, kCVImageBufferTransferFunction_SMPTE_240M_1995))
-        transfer = PlatformVideoTransferCharacteristics::Smpte240m;
-    else if (safeCFEqual(pixelTransfer, PAL::kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ))
-        transfer = PlatformVideoTransferCharacteristics::SmpteSt2084;
-    else if (safeCFEqual(pixelTransfer, PAL::kCMFormatDescriptionTransferFunction_SMPTE_ST_428_1))
-        transfer = PlatformVideoTransferCharacteristics::SmpteSt4281;
-    else if (safeCFEqual(pixelTransfer, PAL::kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG))
-        transfer = PlatformVideoTransferCharacteristics::AribStdB67Hlg;
-    else if (safeCFEqual(pixelTransfer, PAL::kCMFormatDescriptionTransferFunction_Linear))
-        transfer = PlatformVideoTransferCharacteristics::Linear;
-    else if (PAL::canLoad_CoreMedia_kCMFormatDescriptionTransferFunction_sRGB() && safeCFEqual(pixelTransfer, PAL::kCMFormatDescriptionTransferFunction_sRGB))
-        transfer = PlatformVideoTransferCharacteristics::Iec6196621;
-
-    std::optional<PlatformVideoMatrixCoefficients> matrix;
-    auto pixelMatrix = CVBufferGetAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey, nil);
-    if (safeCFEqual(pixelMatrix, PAL::kCMFormatDescriptionYCbCrMatrix_ITU_R_2020))
-        matrix = PlatformVideoMatrixCoefficients::Bt2020NonconstantLuminance;
-    else if (safeCFEqual(pixelMatrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2))
-        matrix = PlatformVideoMatrixCoefficients::Bt709;
-    else if (safeCFEqual(pixelMatrix, kCVImageBufferYCbCrMatrix_SMPTE_240M_1995))
-        matrix = PlatformVideoMatrixCoefficients::Smpte240m;
-
-    auto pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
-    bool isFullRange = pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-
-    return { primaries, transfer, matrix, isFullRange };
-}
-
-VideoFrameCV::VideoFrameCV(MediaTime presentationTime, bool isMirrored, Rotation rotation, RetainPtr<CVPixelBufferRef>&& pixelBuffer, std::optional<PlatformVideoColorSpace>&& colorSpace)
-    : VideoFrame(presentationTime, isMirrored, rotation, WTF::move(colorSpace).value_or(computeVideoFrameColorSpace(pixelBuffer.get())))
-    , m_pixelBuffer(WTF::move(pixelBuffer))
-{
 }
 
 VideoFrameCV::VideoFrameCV(MediaTime presentationTime, bool isMirrored, Rotation rotation, RetainPtr<CVPixelBufferRef>&& pixelBuffer, PlatformVideoColorSpace&& colorSpace)

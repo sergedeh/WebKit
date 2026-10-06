@@ -106,7 +106,7 @@ public:
     bool add(CachedResource&);
     void remove(CachedResource&);
 
-    static bool shouldRemoveFragmentIdentifier(const URL&);
+    static bool NODELETE shouldRemoveFragmentIdentifier(const URL&);
     WEBCORE_EXPORT static URL removeFragmentIdentifierIfNeeded(const URL&);
 
     void revalidationSucceeded(CachedResource& revalidatingResource, const ResourceResponse&);
@@ -143,7 +143,7 @@ public:
     void removeFromLRUList(CachedResource&);
 
     // Called to adjust the cache totals when a resource changes size.
-    void adjustSize(bool live, long long delta);
+    void NODELETE adjustSize(bool live, long long delta);
 
     // Track decoded resources that are in the cache and referenced by a Web page.
     void insertInLiveDecodedResourcesList(CachedResource&);
@@ -159,15 +159,15 @@ public:
     WEBCORE_EXPORT Statistics getStatistics();
     
     void resourceAccessed(CachedResource&);
-    bool inLiveDecodedResourcesList(CachedResource&) const;
+    bool NODELETE inLiveDecodedResourcesList(CachedResource&) const;
 
-    using SecurityOriginSet = HashSet<RefPtr<SecurityOrigin>>;
+    using SecurityOriginSet = HashSet<Ref<SecurityOrigin>>;
     WEBCORE_EXPORT void removeResourcesWithOrigin(const SecurityOrigin&);
     void removeResourcesWithOrigin(const SecurityOrigin&, const String& cachePartition);
     WEBCORE_EXPORT void removeResourcesWithOrigin(const ClientOrigin&);
-    WEBCORE_EXPORT void removeResourcesWithOrigins(PAL::SessionID, const HashSet<RefPtr<SecurityOrigin>>&);
+    WEBCORE_EXPORT void removeResourcesWithOrigins(PAL::SessionID, const HashSet<Ref<SecurityOrigin>>&);
     WEBCORE_EXPORT void getOriginsWithCache(SecurityOriginSet& origins);
-    WEBCORE_EXPORT HashSet<RefPtr<SecurityOrigin>> originsWithCache(PAL::SessionID) const;
+    WEBCORE_EXPORT HashSet<Ref<SecurityOrigin>> originsWithCache(PAL::SessionID) const;
 
     // pruneDead*() - Flush decoded and encoded data from resources not referenced by Web pages.
     // pruneLive*() - Flush decoded data from resources still referenced by Web pages.
@@ -178,7 +178,7 @@ public:
     WEBCORE_EXPORT void pruneLiveResourcesToSize(unsigned targetSize, bool shouldDestroyDecodedDataForAllLiveResources = false);
 
 private:
-    using CachedResourceMap = HashMap<std::pair<URL, String /* partitionName */>, WeakPtr<CachedResource>>;
+    using CachedResourceMap = HashMap<std::pair<URL, String /* partitionName */>, RefPtr<CachedResource>>;
     using LRUList = WeakListHashSet<CachedResource>;
 
     MemoryCache();
@@ -191,12 +191,12 @@ private:
 
     unsigned liveCapacity() const;
     unsigned deadCapacity() const;
-    bool needsPruning() const;
+    bool NODELETE needsPruning() const;
 
     CachedResource* resourceForRequestImpl(const ResourceRequest&, CachedResourceMap&);
 
     CachedResourceMap& ensureSessionResourceMap(PAL::SessionID);
-    CachedResourceMap* sessionResourceMap(PAL::SessionID) const;
+    CachedResourceMap* NODELETE sessionResourceMap(PAL::SessionID) const;
 
     bool m_disabled { false };
     bool m_inPruneResources { false };
@@ -219,7 +219,7 @@ private:
     
     // A URL-based map of all resources that are in the cache (including the freshest version of objects that are currently being 
     // referenced by a Web page).
-    typedef HashMap<PAL::SessionID, std::unique_ptr<CachedResourceMap>> SessionCachedResourceMap;
+    using SessionCachedResourceMap = HashMap<PAL::SessionID, std::unique_ptr<CachedResourceMap>>;
     SessionCachedResourceMap m_sessionResources;
 
     Timer m_pruneTimer;

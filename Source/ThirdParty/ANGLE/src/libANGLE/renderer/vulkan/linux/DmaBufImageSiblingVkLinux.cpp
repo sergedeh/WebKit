@@ -6,11 +6,8 @@
 
 // DmaBufImageSiblingVkLinux.cpp: Implements DmaBufImageSiblingVkLinux.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/vulkan/linux/DmaBufImageSiblingVkLinux.h"
+#include "common/unsafe_buffers.h"
 
 #include "common/linux/dma_buf_utils.h"
 #include "common/system_utils.h"
@@ -125,22 +122,22 @@ bool GetFormatModifierProperties(DisplayVk *displayVk,
     formatProperties.sType               = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
     formatProperties.pNext               = &formatModifierPropertiesList;
 
-    vkGetPhysicalDeviceFormatProperties2(renderer->getPhysicalDevice(), vkFormat,
-                                         &formatProperties);
+    VK_CALL(vkGetPhysicalDeviceFormatProperties2, renderer->getPhysicalDevice(), vkFormat,
+            &formatProperties);
 
     std::vector<VkDrmFormatModifierPropertiesEXT> formatModifierProperties(
         formatModifierPropertiesList.drmFormatModifierCount);
     formatModifierPropertiesList.pDrmFormatModifierProperties = formatModifierProperties.data();
 
-    vkGetPhysicalDeviceFormatProperties2(renderer->getPhysicalDevice(), vkFormat,
-                                         &formatProperties);
+    VK_CALL(vkGetPhysicalDeviceFormatProperties2, renderer->getPhysicalDevice(), vkFormat,
+            &formatProperties);
 
     // Find the requested DRM modifiers.
     uint32_t propertiesIndex = formatModifierPropertiesList.drmFormatModifierCount;
     for (uint32_t index = 0; index < formatModifierPropertiesList.drmFormatModifierCount; ++index)
     {
-        if (formatModifierPropertiesList.pDrmFormatModifierProperties[index].drmFormatModifier ==
-            drmModifier)
+        if (ANGLE_UNSAFE_TODO(formatModifierPropertiesList.pDrmFormatModifierProperties[index])
+                .drmFormatModifier == drmModifier)
         {
             propertiesIndex = index;
             break;
@@ -153,8 +150,8 @@ bool GetFormatModifierProperties(DisplayVk *displayVk,
         return false;
     }
 
-    *modifierPropertiesOut =
-        formatModifierPropertiesList.pDrmFormatModifierProperties[propertiesIndex];
+    *modifierPropertiesOut = ANGLE_UNSAFE_TODO(
+        formatModifierPropertiesList.pDrmFormatModifierProperties[propertiesIndex]);
     return true;
 }
 
@@ -226,9 +223,8 @@ bool IsFormatSupported(vk::Renderer *renderer,
     drmFormatModifierInfo.sharingMode       = VK_SHARING_MODE_EXCLUSIVE;
     externalImageFormatInfo.pNext           = &drmFormatModifierInfo;
 
-    return vkGetPhysicalDeviceImageFormatProperties2(renderer->getPhysicalDevice(),
-                                                     &imageFormatInfo, imageFormatPropertiesOut) !=
-           VK_ERROR_FORMAT_NOT_SUPPORTED;
+    return VK_CALL(vkGetPhysicalDeviceImageFormatProperties2, renderer->getPhysicalDevice(),
+                   &imageFormatInfo, imageFormatPropertiesOut) != VK_ERROR_FORMAT_NOT_SUPPORTED;
 }
 
 VkChromaLocation GetChromaLocation(const egl::AttributeMap &attribs, EGLenum hint)
@@ -477,19 +473,21 @@ angle::Result DmaBufImageSiblingVkLinux::initWithFormat(DisplayVk *displayVk,
     externalMemoryImageCreateInfo.pNext       = &imageDrmModifierCreateInfo;
     externalMemoryImageCreateInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
 
-    VkImageFormatListCreateInfoKHR imageFormatListCreateInfo;
-    vk::ImageHelper::ImageListFormats imageListFormatsStorage;
-    const void *imageCreateInfoPNext = vk::ImageHelper::DeriveCreateInfoPNext(
-        displayVk, usageFlags, actualImageFormatID, &externalMemoryImageCreateInfo,
-        &imageFormatListCreateInfo, &imageListFormatsStorage, &createFlags);
-
+    vk::ImageFormatReinterpretability formatReinterpretability =
+        (usageFlags & VK_IMAGE_USAGE_STORAGE_BIT) == 0
+            ? vk::ImageFormatReinterpretability::ColorspaceOverrides
+            : vk::ImageFormatReinterpretability::Full;
     if (mutableFormat == MutableFormat::NotAllowed)
     {
         createFlags &= ~VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
-        // When mutable format bit is not set, viewFormatCount must be 0 or 1.
-        imageFormatListCreateInfo.viewFormatCount =
-            std::min(imageFormatListCreateInfo.viewFormatCount, 1u);
+        formatReinterpretability = vk::ImageFormatReinterpretability::None;
     }
+
+    VkImageFormatListCreateInfoKHR imageFormatListCreateInfo;
+    vk::ImageHelper::ImageFormats imageFormats;
+    const void *imageCreateInfoPNext = vk::ImageHelper::DeriveCreateInfoPNext(
+        displayVk, intendedFormatID, actualImageFormatID, &externalMemoryImageCreateInfo,
+        &imageFormatListCreateInfo, &imageFormats, formatReinterpretability, &createFlags);
 
     if (!FindSupportedFlagsForFormat(renderer, vulkanFormat, plane0Modifier,
                                      imageFormatListCreateInfo, &usageFlags, createFlags,
@@ -557,11 +555,11 @@ angle::Result DmaBufImageSiblingVkLinux::initWithFormat(DisplayVk *displayVk,
                               linearFilterSupported);
     }
 
-    ANGLE_TRY(mImage->initExternal(displayVk, gl::TextureType::_2D, vkExtents, intendedFormatID,
-                                   actualImageFormatID, 1, usageFlags, createFlags,
-                                   vk::ImageAccess::ExternalPreInitialized, imageCreateInfoPNext,
-                                   gl::LevelIndex(0), 1, 1, kIsRobustInitEnabled,
-                                   hasProtectedContent(), conversionDesc, nullptr));
+    ANGLE_TRY(mImage->initExternal(
+        displayVk, gl::TextureType::_2D, vkExtents, intendedFormatID, actualImageFormatID, 1,
+        usageFlags, createFlags, vk::ImageAccess::ExternalPreInitialized, imageCreateInfoPNext,
+        gl::OwnerLevel(0), 1, 1, kIsRobustInitEnabled, hasProtectedContent(),
+        vk::TileMemory::Prohibited, conversionDesc, nullptr, formatReinterpretability));
 
     VkMemoryRequirements externalMemoryRequirements;
     mImage->getImage().getMemoryRequirements(renderer->getDevice(), &externalMemoryRequirements);

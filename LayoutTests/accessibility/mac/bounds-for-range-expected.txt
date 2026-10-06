@@ -30,7 +30,7 @@ AXHighestEditableAncestor: (null)
 AXVisibleCharacterRange: NSRange: {0, 162}
 AXElementBusy: 0
 AXIntersectionWithSelectionRange: (null)
-AXPath: (null)
+AXPath: <AXStaticText>
 
 ----------------------
 AXUIElementForTextMarker
@@ -71,6 +71,11 @@ AXLineTextMarkerRangeForTextMarker
 AXSelectTextWithCriteria
 AXSearchTextWithCriteria
 AXTextOperation
+AXTextMarkerForIndex
+AXTextMarkerIsValid
+AXIndexForTextMarker
+AXRelativeIndexForTextMarker
+AXIntersectTextMarkerRanges
 
 ----------------------
 PASS: textChild.boundsForRange(6, 10) was equal or approximately equal to (x: -1, y: -1, w: 60, h: 18).

@@ -35,9 +35,9 @@
 #import "NetworkResourceLoader.h"
 #import "NetworkSessionCocoa.h"
 #import "NetworkStorageManager.h"
+#import "NetworkStorageSession.h"
 #import "SandboxExtension.h"
 #import "WebCookieManager.h"
-#import <WebCore/NetworkStorageSession.h>
 #import <WebCore/PublicSuffixStore.h>
 #import <WebCore/ResourceRequestCFNet.h>
 #import <WebCore/SecurityOrigin.h>
@@ -87,10 +87,45 @@ static void initializeNetworkSettings()
     }
 }
 
+#if ENABLE(INHERITANCE_OF_NETWORK_ACCESS_FROM_UI_PROCESS)
+static void blockNetworkAccessIfNeeded(IPC::Connection* parentProcessConnection)
+{
+#if PLATFORM(MAC)
+    if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::NetworkProcessInheritsNetworkAccessFromUIProcess)) {
+        RELEASE_LOG(Process, "Not blocking network access due to linked-on-or-after check");
+        return;
+    }
+#endif
+
+    OSObjectPtr xpcConnection = protect(parentProcessConnection)->xpcConnection();
+    auto [signingIdentifier, isPlatformBinary] = codeSigningIdentifierAndPlatformBinaryStatus(xpcConnection.get());
+    if (isPlatformBinary && signingIdentifier != "com.apple.textkit.nsattributedstringagent"_s) {
+        RELEASE_LOG(Process, "Not blocking network access since parent process %s is a platform binary", signingIdentifier.utf8());
+        return;
+    }
+
+    if (auto auditToken = protect(parentProcessConnection)->getAuditToken()) {
+        bool isNetworkAccessBlockedInUIProcess = (1 == sandbox_check_by_audit_token(*auditToken, "network-outbound", SANDBOX_FILTER_PATH, "/private/var/run/mDNSResponder"));
+
+        if (isNetworkAccessBlockedInUIProcess) {
+            RELEASE_LOG(Process, "Setting sandbox state flag to block network access");
+            if (auto auditTokenForSelf = WTF::auditTokenForSelf()) {
+                if (!sandbox_enable_state_flag("BlockNetworkAccess", *auditTokenForSelf))
+                    RELEASE_LOG_ERROR(Process, "Unable to set sandbox state flag to block network access");
+            } else
+                RELEASE_LOG_FAULT(Process, "Unable to get audit token to block network access");
+        }
+    } else
+        RELEASE_LOG_FAULT(Process, "Unable to get audit token for UI process to block network access");
+}
+#endif // ENABLE(INHERITANCE_OF_NETWORK_ACCESS_FROM_UI_PROCESS)
+
 void NetworkProcess::platformInitializeNetworkProcessCocoa(const NetworkProcessCreationParameters& parameters)
 {
     m_isParentProcessFullWebBrowserOrRunningTest = parameters.isParentProcessFullWebBrowserOrRunningTest;
-
+#if PLATFORM(IOS_FAMILY)
+    m_containerTemporaryDirectory = parameters.containerTemporaryDirectory;
+#endif
     _CFNetworkSetATSContext(parameters.networkATSContext.get());
 
     m_uiProcessBundleIdentifier = parameters.uiProcessBundleIdentifier;
@@ -116,7 +151,7 @@ void NetworkProcess::platformInitializeNetworkProcessCocoa(const NetworkProcessC
     [NSURLCache setSharedURLCache:urlCache.get()];
 
 #if ENABLE(CONTENT_FILTERING)
-    auto auditToken = protectedParentProcessConnection()->getAuditToken();
+    auto auditToken = protect(parentProcessConnection())->getAuditToken();
     ASSERT(auditToken);
     if (auditToken && [NEFilterSource respondsToSelector:@selector(setDelegation:)])
         [NEFilterSource setDelegation:&auditToken.value()];
@@ -139,21 +174,7 @@ void NetworkProcess::platformInitializeNetworkProcessCocoa(const NetworkProcessC
 #endif // ENABLE(DNS_SERVER_FOR_TESTING_IN_NETWORKING_PROCESS)
 
 #if ENABLE(INHERITANCE_OF_NETWORK_ACCESS_FROM_UI_PROCESS)
-    if (auto auditToken = protectedParentProcessConnection()->getAuditToken()) {
-        bool isNetworkAccessBlockedInUIProcess = (1 == sandbox_check_by_audit_token(*auditToken, "network-outbound", SANDBOX_FILTER_PATH, "/private/var/run/mDNSResponder"));
-
-        auto xpcConnection = protectedParentProcessConnection()->xpcConnection();
-        auto [signingIdentifier, isPlatformBinary] = codeSigningIdentifierAndPlatformBinaryStatus(xpcConnection);
-        if (!isPlatformBinary && isNetworkAccessBlockedInUIProcess) {
-            RELEASE_LOG(Process, "Setting sandbox state flag to block network access");
-            if (auto auditTokenForSelf = WTF::auditTokenForSelf()) {
-                if (!sandbox_enable_state_flag("BlockNetworkAccess", *auditTokenForSelf))
-                    RELEASE_LOG_ERROR(Process, "Unable to set sandbox state flag to block network access");
-            } else
-                RELEASE_LOG_FAULT(Process, "Unable to get audit token to block network access");
-        }
-    } else
-        RELEASE_LOG_FAULT(Process, "Unable to get audit token for UI process to block network access");
+    blockNetworkAccessIfNeeded(parentProcessConnection());
 #endif
 
     increaseFileDescriptorLimit();
@@ -175,7 +196,7 @@ std::optional<audit_token_t> NetworkProcess::sourceApplicationAuditToken() const
     ASSERT(parentProcessConnection());
     if (!parentProcessConnection())
         return { };
-    return parentProcessConnection()->getAuditToken();
+    return protect(parentProcessConnection())->getAuditToken();
 #else
     return { };
 #endif
@@ -185,7 +206,7 @@ HashSet<String> NetworkProcess::hostNamesWithHSTSCache(PAL::SessionID sessionID)
 {
     HashSet<String> hostNames;
     if (CheckedPtr networkSession = downcast<NetworkSessionCocoa>(this->networkSession(sessionID))) {
-        for (NSString *host in networkSession->protectedHSTSStorage().get().nonPreloadedHosts)
+        for (NSString *host in protect(networkSession->hstsStorage()).get().nonPreloadedHosts)
             hostNames.add(host);
     }
     return hostNames;
@@ -195,7 +216,7 @@ void NetworkProcess::deleteHSTSCacheForHostNames(PAL::SessionID sessionID, const
 {
     if (CheckedPtr networkSession = downcast<NetworkSessionCocoa>(this->networkSession(sessionID))) {
         for (auto& hostName : hostNames)
-            [networkSession->protectedHSTSStorage() resetHSTSForHost:hostName.createNSString().get()];
+            [protect(networkSession->hstsStorage()).get() resetHSTSForHost:hostName.createNSString().get()];
     }
 }
 
@@ -204,7 +225,7 @@ void NetworkProcess::clearHSTSCache(PAL::SessionID sessionID, WallTime modifiedS
     NSTimeInterval timeInterval = modifiedSince.secondsSinceEpoch().seconds();
     RetainPtr date = [NSDate dateWithTimeIntervalSince1970:timeInterval];
     if (CheckedPtr networkSession = downcast<NetworkSessionCocoa>(this->networkSession(sessionID)))
-        [networkSession->protectedHSTSStorage() resetHSTSHostsSinceDate:date.get()];
+        [protect(networkSession->hstsStorage()).get() resetHSTSHostsSinceDate:date.get()];
 }
 
 void NetworkProcess::clearDiskCache(WallTime modifiedSince, CompletionHandler<void()>&& completionHandler)

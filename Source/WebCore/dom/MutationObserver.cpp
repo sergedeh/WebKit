@@ -34,10 +34,13 @@
 #include "MutationObserver.h"
 
 #include "ContextDestructionObserverInlines.h"
+#include "DOMWrapperWorld.h"
 #include "Document.h"
 #include "GCReachableRef.h"
 #include "HTMLSlotElement.h"
 #include "InspectorInstrumentation.h"
+#include "JSDOMGlobalObject.h"
+#include "JSMutationCallback.h"
 #include "MutationCallback.h"
 #include "MutationObserverRegistration.h"
 #include "MutationRecord.h"
@@ -46,6 +49,7 @@
 #include <ranges>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/NoTailCalls.h>
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -64,7 +68,16 @@ Ref<MutationObserver> MutationObserver::create(Ref<MutationCallback>&& callback)
 MutationObserver::MutationObserver(Ref<MutationCallback>&& callback)
     : m_callback(WTF::move(callback))
     , m_priority(s_observerPriority++)
+    , m_isInNonNormalWorld(false)
+    , m_isAutoFillWorld(false)
 {
+    if (auto* jsCallback = dynamicDowncast<JSMutationCallback>(m_callback.get())) {
+        if (auto* globalObject = jsCallback->callbackData()->globalObject()) {
+            auto& world = globalObject->world();
+            m_isInNonNormalWorld = !world.isNormal();
+            m_isAutoFillWorld = world.allowAutofill();
+        }
+    }
 }
 
 MutationObserver::~MutationObserver()
@@ -100,10 +113,10 @@ ExceptionOr<void> MutationObserver::observe(Node& node, const Init& init)
         options.add(OptionType::AttributeFilter);
     }
 
-    if (init.attributes ? init.attributes.value() : options.containsAny({ OptionType::AttributeFilter, OptionType::AttributeOldValue }))
+    if (init.attributes ? init.attributes.value() : (init.attributeOldValue.has_value() || init.attributeFilter.has_value()))
         options.add(OptionType::Attributes);
 
-    if (init.characterData ? init.characterData.value() : options.contains(OptionType::CharacterDataOldValue))
+    if (init.characterData ? init.characterData.value() : init.characterDataOldValue.has_value())
         options.add(OptionType::CharacterData);
 
     if (!validateOptions(options))
@@ -125,7 +138,7 @@ void MutationObserver::disconnect()
     m_records.clear();
     WeakHashSet registrations { m_registrations };
     for (Ref registration : registrations)
-        registration->protectedNode()->unregisterMutationObserver(registration.get());
+        protect(registration->node())->unregisterMutationObserver(registration.get());
 }
 
 void MutationObserver::observationStarted(MutationObserverRegistration& registration)
@@ -164,17 +177,6 @@ void MutationObserver::enqueueSlotChangeEvent(HTMLSlotElement& slot)
     eventLoop->queueMutationObserverCompoundMicrotask();
 }
 
-void MutationObserver::enqueueShadowRootAttachedEvent(Element& element)
-{
-    ASSERT(isMainThread());
-    Ref eventLoop = element.document().windowEventLoop();
-    auto& list = eventLoop->shadowRootAttachedElements();
-    ASSERT(list.findIf([&element](auto& entry) { return entry.ptr() == &element; }) == notFound);
-    list.append(element);
-
-    eventLoop->queueMutationObserverCompoundMicrotask();
-}
-
 void MutationObserver::setHasTransientRegistration(Document& document)
 {
     Ref eventLoop = document.windowEventLoop();
@@ -184,7 +186,7 @@ void MutationObserver::setHasTransientRegistration(Document& document)
 
 bool MutationObserver::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor) const
 {
-    // We cannot use Ref here since this gets called on the GC thread.
+    // We cannot use Ref here since this gets called on a GC thread.
     SUPPRESS_UNCOUNTED_LOCAL for (auto& registration : m_registrations) {
         if (registration.isReachableFromOpaqueRoots(visitor))
             return true;
@@ -201,6 +203,11 @@ void MutationObserver::deliver()
 {
     ASSERT(canDeliver());
 
+    // takeTransientRegistrations() below drops each registration's only strong reference to its
+    // observed node. Keep those nodes alive, declared first so they outlive the registrations.
+    // GCReachableRef keeps their JS wrappers alive too.
+    Vector<GCReachableRef<Node>, 1> observedNodesToKeepAlive;
+
     // Calling takeTransientRegistrations() can modify m_registrations, so it's necessary
     // to make a copy of the transient registrations before operating on them.
     Vector<Ref<MutationObserverRegistration>, 1> transientRegistrations;
@@ -211,8 +218,10 @@ void MutationObserver::deliver()
         if (registration->hasTransientRegistrations())
             transientRegistrations.append(WTF::move(registration));
     }
-    for (auto& registration : transientRegistrations)
+    for (auto& registration : transientRegistrations) {
+        observedNodesToKeepAlive.append(registration->node());
         nodesToKeepAlive.append(registration->takeTransientRegistrations());
+    }
 
     if (m_records.isEmpty()) {
         ASSERT(m_pendingTargets.isEmpty());
@@ -229,7 +238,12 @@ void MutationObserver::deliver()
             return;
 
         InspectorInstrumentation::willFireObserverCallback(*context, "MutationObserver"_s);
-        m_callback->invoke(*this, records, *this);
+        if (!m_isInNonNormalWorld) [[likely]]
+            m_callback->invoke(*this, records, *this);
+        else if (m_isAutoFillWorld)
+            m_callback->invokeInAutoFillWorld(*this, records, *this);
+        else
+            m_callback->invokeInNonNormalWorld(*this, records, *this);
         InspectorInstrumentation::didFireObserverCallback(*context);
     }
 }
@@ -247,7 +261,7 @@ void MutationObserver::notifyMutationObservers(WindowEventLoop& eventLoop)
         }
     }
 
-    while (!eventLoop.activeMutationObservers().isEmpty() || !eventLoop.signalSlotList().isEmpty() || !eventLoop.shadowRootAttachedElements().isEmpty()) {
+    while (!eventLoop.activeMutationObservers().isEmpty() || !eventLoop.signalSlotList().isEmpty()) {
         // 2. Let notify list be a copy of unit of related similar-origin browsing contexts' list of MutationObserver objects.
         auto notifyList = copyToVector(eventLoop.activeMutationObservers());
         eventLoop.activeMutationObservers().clear();
@@ -264,10 +278,6 @@ void MutationObserver::notifyMutationObservers(WindowEventLoop& eventLoop)
                 slot->didRemoveFromSignalSlotList();
         }
 
-        Vector<GCReachableRef<Element>> shadowRootAttachedElements = std::exchange(eventLoop.shadowRootAttachedElements(), { });
-        for (auto& element : shadowRootAttachedElements)
-            element->didDispatchShadowRootAttachedEvent();
-
         // 5. For each MutationObserver object mo in notify list, execute a compound microtask subtask
         for (auto& observer : notifyList) {
             if (observer->canDeliver())
@@ -279,10 +289,19 @@ void MutationObserver::notifyMutationObservers(WindowEventLoop& eventLoop)
         // 6. For each slot slot in signalList, in order, fire an event named slotchange, with its bubbles attribute set to true, at slot.
         for (auto& slot : slotList)
             slot->dispatchSlotChangeEvent();
-
-        for (auto& element : shadowRootAttachedElements)
-            element->dispatchShadowRootAttachedEvent();
     }
+}
+
+NEVER_INLINE CallbackResult<void> MutationCallback::invokeInNonNormalWorld(MutationObserver& thisObject, const Vector<Ref<MutationRecord>>& records, MutationObserver& observer)
+{
+    NO_TAIL_CALLS();
+    return invoke(thisObject, records, observer);
+}
+
+NEVER_INLINE CallbackResult<void> MutationCallback::invokeInAutoFillWorld(MutationObserver& thisObject, const Vector<Ref<MutationRecord>>& records, MutationObserver& observer)
+{
+    NO_TAIL_CALLS();
+    return invoke(thisObject, records, observer);
 }
 
 } // namespace WebCore

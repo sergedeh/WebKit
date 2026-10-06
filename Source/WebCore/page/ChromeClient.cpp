@@ -26,12 +26,16 @@
 #include "config.h"
 #include "ChromeClient.h"
 
+#include "AXObjectCache.h"
+#include "AXSearchManager.h"
 #include "BarcodeDetectorInterface.h"
 #include "BarcodeDetectorOptionsInterface.h"
 #include "BarcodeFormatInterface.h"
 #include "FaceDetectorInterface.h"
 #include "FaceDetectorOptionsInterface.h"
+#include "ImageUtilities.h"
 #include "PointerLockController.h"
+#include "ScrollableArea.h"
 #include "ScrollbarsController.h"
 #include "ScrollingCoordinator.h"
 #include "TextDetectorInterface.h"
@@ -46,6 +50,18 @@ namespace WebCore {
 ChromeClient::ChromeClient() = default;
 
 ChromeClient::~ChromeClient() = default;
+
+void ChromeClient::transcodeChosenFiles(Vector<String>&& transcodingPaths, String&& destinationUTI, String&& destinationExtension, CompletionHandler<void(Vector<String>&&)>&& completion)
+{
+#if PLATFORM(MAC)
+    transcodeImagesInBackgroundQueue(WTF::move(transcodingPaths), WTF::move(destinationUTI), WTF::move(destinationExtension), WTF::move(completion));
+#else
+    UNUSED_PARAM(transcodingPaths);
+    UNUSED_PARAM(destinationUTI);
+    UNUSED_PARAM(destinationExtension);
+    completion({ });
+#endif
+}
 
 std::unique_ptr<WorkerClient> ChromeClient::createWorkerClient(SerialFunctionDispatcher&)
 {
@@ -133,5 +149,17 @@ void ChromeClient::showCaptionDisplaySettings(HTMLMediaElement&, const ResolvedC
     completionHandler(Exception { ExceptionCode::NotSupportedError, "Caption Display Settings are not supported."_s });
 }
 #endif
+
+#if PLATFORM(MAC)
+void ChromeClient::performAccessibilitySearchInRemoteFrame(FrameIdentifier, const AccessibilitySearchCriteriaIPC&, CompletionHandler<void(Vector<AccessibilityRemoteToken>&&)>&& completionHandler)
+{
+    completionHandler({ });
+}
+
+void ChromeClient::continueAccessibilitySearchFromChildFrame(FrameIdentifier, const AccessibilitySearchCriteriaIPC&, CompletionHandler<void(Vector<AccessibilityRemoteToken>&&)>&& completionHandler)
+{
+    completionHandler({ });
+}
+#endif // PLATFORM(MAC)
 
 } // namespace WebCore

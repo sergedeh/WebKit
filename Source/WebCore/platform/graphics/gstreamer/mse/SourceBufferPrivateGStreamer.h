@@ -56,10 +56,11 @@ typedef MediaSourcePrivateGStreamer::RegisteredTrack RegisteredTrack;
 class AppendPipeline;
 class MediaSourcePrivateGStreamer;
 
-class SourceBufferPrivateGStreamer final : public SourceBufferPrivate, public CanMakeWeakPtr<SourceBufferPrivateGStreamer> {
+class SourceBufferPrivateGStreamer final : public SourceBufferPrivate, public CanMakeWeakPtr<SourceBufferPrivateGStreamer>
+{
 public:
     static bool isContentTypeSupported(const ContentType&);
-    static Ref<SourceBufferPrivateGStreamer> create(MediaSourcePrivateGStreamer&, const ContentType&);
+    static Ref<SourceBufferPrivateGStreamer> create(MediaSourcePrivateGStreamer&, const ContentType&, bool textTracksEnabled);
     ~SourceBufferPrivateGStreamer();
 
     constexpr MediaPlatformType platformType() const final { return MediaPlatformType::GStreamer; }
@@ -67,6 +68,9 @@ public:
     Ref<MediaPromise> appendInternal(Ref<SharedBuffer>&&) final;
     void resetParserStateInternal() final;
     void removedFromMediaSource() final;
+
+    bool canSwitchToType(const ContentType &) final;
+    void startChangingType() final;
 
     void flush(TrackID) final;
     void enqueueSample(Ref<MediaSample>&&, TrackID) final;
@@ -79,7 +83,7 @@ public:
     void didReceiveAllPendingSamples();
     void appendParsingFailed();
 
-    auto& tracks() const { return m_tracks; }
+    auto& tracks() const LIFETIME_BOUND { return m_tracks; }
 
     ContentType type() const { return m_type; }
 
@@ -98,14 +102,12 @@ public:
     size_t platformMaximumBufferSize() const override;
     size_t platformEvictionThreshold() const final;
 
-    void willSeek();
-    bool isSeeking() const final;
-    void seekToTime(const MediaTime&) final;
+    bool textTracksEnabled() const { return m_textTracksEnabled; }
 
 private:
     friend class AppendPipeline;
 
-    SourceBufferPrivateGStreamer(MediaSourcePrivateGStreamer&, const ContentType&);
+    SourceBufferPrivateGStreamer(MediaSourcePrivateGStreamer&, const ContentType&, bool textTracksEnabled);
     RefPtr<MediaPlayerPrivateGStreamerMSE> player() const;
 
     void notifyClientWhenReadyForMoreSamples(TrackID) override;
@@ -114,13 +116,12 @@ private:
 
     bool m_hasBeenRemovedFromMediaSource { false };
     ContentType m_type;
+    bool m_textTracksEnabled { false };
     std::unique_ptr<AppendPipeline> m_appendPipeline;
     StdUnorderedMap<TrackID, RefPtr<MediaSourceTrackGStreamer>> m_tracks;
     std::optional<MediaPromise::Producer> m_appendPromise;
 
-    // Set while waiting for samples from the multiplatform layer after a seek has initiated.
-    // Unset once the samples are ready for the platform-specific layer.
-    bool m_seeking { false };
+    bool m_pendingInitializationSegmentForChangeType { false };
 
 #if !RELEASE_LOG_DISABLED
     const Ref<const Logger> m_logger;

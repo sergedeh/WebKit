@@ -263,12 +263,23 @@ public:
         }
 
         if (m_max) {
-            value = m_max.value();
-            ASSERT(validForRange(capabilityMin, value));
-            if (value < max)
-                max = value;
-            if (value > max)
-                value = max;
+            auto constraintMax = m_max.value();
+            ASSERT(validForRange(capabilityMin, constraintMax));
+            if (constraintMax < max)
+                max = constraintMax;
+
+            if (m_min) {
+                if (value > max)
+                    value = max;
+            } else {
+                value = constraintMax;
+                if (value > max)
+                    value = max;
+
+                // If there is no ideal, don't change if maximum is larger than current, as long as current is a valid value for this capability.
+                if (!m_ideal && current >= min && current < value)
+                    value = current;
+            }
         }
 
         if (m_ideal)
@@ -378,7 +389,7 @@ public:
     {
     }
 
-    void merge(const IntConstraint& other)
+    void NODELETE merge(const IntConstraint& other)
     {
         NumericConstraint::innerMerge(other);
     }
@@ -613,7 +624,7 @@ public:
     {
     }
 
-    WEBCORE_EXPORT void forEach(NOESCAPE Function<void(MediaConstraintType, const MediaConstraint&)>&&) const;
+    WEBCORE_EXPORT void forEach(NOESCAPE const Function<void(MediaConstraintType, const MediaConstraint&)>&) const;
     void filter(NOESCAPE const Function<bool(MediaConstraintType, const MediaConstraint&)>&) const;
     bool isEmpty() const;
     WEBCORE_EXPORT bool isValid() const;
@@ -633,28 +644,28 @@ public:
 
     void clearDeviceId() { m_deviceId = { }; }
 
-    const std::optional<IntConstraint>& width() const { return m_width; }
-    const std::optional<IntConstraint>& height() const { return m_height; }
-    const std::optional<IntConstraint>& sampleRate() const { return m_sampleRate; }
-    const std::optional<IntConstraint>& sampleSize() const { return m_sampleSize; }
+    const std::optional<IntConstraint>& width() const LIFETIME_BOUND { return m_width; }
+    const std::optional<IntConstraint>& height() const LIFETIME_BOUND { return m_height; }
+    const std::optional<IntConstraint>& sampleRate() const LIFETIME_BOUND { return m_sampleRate; }
+    const std::optional<IntConstraint>& sampleSize() const LIFETIME_BOUND { return m_sampleSize; }
 
-    const std::optional<DoubleConstraint>& aspectRatio() const { return m_aspectRatio; }
-    const std::optional<DoubleConstraint>& frameRate() const { return m_frameRate; }
-    const std::optional<DoubleConstraint>& volume() const { return m_volume; }
+    const std::optional<DoubleConstraint>& aspectRatio() const LIFETIME_BOUND { return m_aspectRatio; }
+    const std::optional<DoubleConstraint>& frameRate() const LIFETIME_BOUND { return m_frameRate; }
+    const std::optional<DoubleConstraint>& volume() const LIFETIME_BOUND { return m_volume; }
 
-    const std::optional<BooleanConstraint>& echoCancellation() const { return m_echoCancellation; }
-    const std::optional<BooleanConstraint>& displaySurface() const { return m_displaySurface; }
-    const std::optional<BooleanConstraint>& logicalSurface() const { return m_logicalSurface; }
+    const std::optional<BooleanConstraint>& echoCancellation() const LIFETIME_BOUND { return m_echoCancellation; }
+    const std::optional<BooleanConstraint>& displaySurface() const LIFETIME_BOUND { return m_displaySurface; }
+    const std::optional<BooleanConstraint>& logicalSurface() const LIFETIME_BOUND { return m_logicalSurface; }
 
-    const std::optional<StringConstraint>& facingMode() const { return m_facingMode; }
-    const std::optional<StringConstraint>& deviceId() const { return m_deviceId; }
-    const std::optional<StringConstraint>& groupId() const { return m_groupId; }
+    const std::optional<StringConstraint>& facingMode() const LIFETIME_BOUND { return m_facingMode; }
+    const std::optional<StringConstraint>& deviceId() const LIFETIME_BOUND { return m_deviceId; }
+    const std::optional<StringConstraint>& groupId() const LIFETIME_BOUND { return m_groupId; }
 
-    const std::optional<StringConstraint>& whiteBalanceMode() const { return m_whiteBalanceMode; }
-    const std::optional<DoubleConstraint>& zoom() const { return m_zoom; }
-    const std::optional<BooleanConstraint>& torch() const { return m_torch; }
-    const std::optional<BooleanConstraint>& backgroundBlur() const { return m_backgroundBlur; }
-    const std::optional<BooleanConstraint>& powerEfficient() const { return m_powerEfficient; }
+    const std::optional<StringConstraint>& whiteBalanceMode() const LIFETIME_BOUND { return m_whiteBalanceMode; }
+    const std::optional<DoubleConstraint>& zoom() const LIFETIME_BOUND { return m_zoom; }
+    const std::optional<BooleanConstraint>& torch() const LIFETIME_BOUND { return m_torch; }
+    const std::optional<BooleanConstraint>& backgroundBlur() const LIFETIME_BOUND { return m_backgroundBlur; }
+    const std::optional<BooleanConstraint>& powerEfficient() const LIFETIME_BOUND { return m_powerEfficient; }
 
     MediaTrackConstraintSetMap isolatedCopy() const;
 
@@ -698,6 +709,8 @@ struct MediaConstraints {
 
     enum class DeviceType : bool { Camera, Microphone };
     bool hasDisallowedRequiredConstraintForDeviceSelection(DeviceType) const;
+
+    WEBCORE_EXPORT bool willUseEchoCancellation() const;
 };
 
 } // namespace WebCore

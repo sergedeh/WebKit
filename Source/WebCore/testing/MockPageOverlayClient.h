@@ -38,7 +38,7 @@ enum class LayerTreeAsTextOptions : uint16_t;
 class MockPageOverlayClient final : public PageOverlayClient {
     friend class NeverDestroyed<MockPageOverlayClient>;
 public:
-    static MockPageOverlayClient& singleton();
+    static MockPageOverlayClient& NODELETE singleton();
 
     explicit MockPageOverlayClient();
 
@@ -58,9 +58,9 @@ private:
 
     bool copyAccessibilityAttributeStringValueForPoint(PageOverlay&, String /* attribute */, FloatPoint, String&) override;
     bool copyAccessibilityAttributeBoolValueForPoint(PageOverlay&, String /* attribute */, FloatPoint, bool&) override;
-    Vector<String> copyAccessibilityAttributeNames(PageOverlay&, bool /* parameterizedNames */) override;
+    Vector<String> NODELETE copyAccessibilityAttributeNames(PageOverlay&, bool /* parameterizedNames */) override;
 
-    HashSet<RefPtr<MockPageOverlay>> m_overlays;
+    HashSet<Ref<MockPageOverlay>> m_overlays;
 };
 
 } // namespace WebCore

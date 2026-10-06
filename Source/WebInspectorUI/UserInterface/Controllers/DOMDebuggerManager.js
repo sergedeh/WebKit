@@ -70,16 +70,8 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
         WI.Frame.addEventListener(WI.Frame.Event.ChildFrameWasRemoved, this._childFrameWasRemoved, this);
         WI.Frame.addEventListener(WI.Frame.Event.MainResourceDidChange, this._mainResourceDidChange, this);
 
-        let loadBreakpoints = (constructor, objectStore, oldSettings, callback) => {
+        let loadBreakpoints = (constructor, objectStore, callback) => {
             WI.Target.registerInitializationPromise((async () => {
-                for (let key of oldSettings) {
-                    let existingSerializedBreakpoints = WI.Setting.migrateValue(key);
-                    if (existingSerializedBreakpoints) {
-                        for (let existingSerializedBreakpoint of existingSerializedBreakpoints)
-                            await objectStore.putObject(constructor.fromJSON(existingSerializedBreakpoint));
-                    }
-                }
-
                 let serializedBreakpoints = await objectStore.getAll();
 
                 this._restoringBreakpoints = true;
@@ -95,33 +87,17 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
             })());
         };
 
-        function loadLegacySpecialBreakpoint(shownSettingsKey, enabledSettingsKey, callback) {
-            if (!WI.Setting.migrateValue(shownSettingsKey))
-                return;
-
-            return callback({
-                disabled: !WI.Setting.migrateValue(enabledSettingsKey),
-            });
-        }
-
-        loadBreakpoints(WI.DOMBreakpoint, WI.objectStores.domBreakpoints, ["dom-breakpoints"], (breakpoint) => {
+        loadBreakpoints(WI.DOMBreakpoint, WI.objectStores.domBreakpoints, (breakpoint) => {
             this.addDOMBreakpoint(breakpoint);
         });
 
-        loadBreakpoints(WI.EventBreakpoint, WI.objectStores.eventBreakpoints, ["event-breakpoints"], (breakpoint) => {
+        loadBreakpoints(WI.EventBreakpoint, WI.objectStores.eventBreakpoints, (breakpoint) => {
             this.addEventBreakpoint(breakpoint);
         });
 
-        this._allAnimationFramesBreakpoint ??= loadLegacySpecialBreakpoint("show-all-animation-frames-breakpoint", "break-on-all-animation-frames", (options) => new WI.EventBreakpoint(WI.EventBreakpoint.Type.AnimationFrame, options));
-        this._allIntervalsBreakpoint ??= loadLegacySpecialBreakpoint("show-all-inteverals-breakpoint", "break-on-all-intervals", (options) => new WI.EventBreakpoint(WI.EventBreakpoint.Type.Interval, options));
-        this._allListenersBreakpoint ??= loadLegacySpecialBreakpoint("show-all-listeners-breakpoint", "break-on-all-listeners", (options) => new WI.EventBreakpoint(WI.EventBreakpoint.Type.Listener, options));
-        this._allTimeoutsBreakpoint ??= loadLegacySpecialBreakpoint("show-all-timeouts-breakpoint", "break-on-all-timeouts", (options) => new WI.EventBreakpoint(WI.EventBreakpoint.Type.Timeout, options));
-
-        loadBreakpoints(WI.URLBreakpoint, WI.objectStores.urlBreakpoints, ["xhr-breakpoints", "url-breakpoints"], (breakpoint) => {
+        loadBreakpoints(WI.URLBreakpoint, WI.objectStores.urlBreakpoints, (breakpoint) => {
             this.addURLBreakpoint(breakpoint);
         });
-
-        this._allRequestsBreakpoint ??= loadLegacySpecialBreakpoint("show-all-requests-breakpoint", "break-on-all-requests", (options) => new WI.URLBreakpoint(WI.URLBreakpoint.Type.Text, "", options));
     }
 
     // Target
@@ -287,7 +263,7 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
         breakpoint.disabled = true;
         breakpoint.clearActions();
 
-        this._domBreakpointURLMap.delete(breakpoint.url);
+        this._domBreakpointURLMap.delete(breakpoint.url, breakpoint);
 
         if (breakpoint.domNode) {
             if (breakpoint.domNode.frame) {
@@ -921,7 +897,10 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
 
     _mainFrameDidChange(event)
     {
-        this._speculativelyResolveDOMBreakpointsForURL(WI.networkManager.mainFrame.url);
+        // The main frame can be transiently null (e.g. while frame events from multiple
+        // Site Isolation processes are being reconciled). webkit.org/b/308896
+        if (WI.networkManager.mainFrame)
+            this._speculativelyResolveDOMBreakpointsForURL(WI.networkManager.mainFrame.url);
     }
 
     _mainResourceDidChange(event)
@@ -994,7 +973,7 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
             return;
 
         for (let [breakpointOwner, breakpoints] of domBreakpointNodeIdentifierMap.sets()) {
-            if (breakpointOwner == node || node.isAncestor(breakpointOwner)) {
+            if (breakpointOwner === node || node.isAncestor(breakpointOwner)) {
                 this._clearingDOMBreakpointsForRemovedDOMNode = true;
                 for (let breakpoint of breakpoints)
                     breakpoint.domNode = null;

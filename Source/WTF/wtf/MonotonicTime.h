@@ -42,6 +42,10 @@ class PrintStream;
 class MonotonicTime final : public GenericTimeMixin<MonotonicTime> {
 public:
     static constexpr ClockType clockType = ClockType::Monotonic;
+
+    // Declared here, not inherited: Swift's C++ interop importer mishandles
+    // an `operator bool` inherited from a template base (rdar://181622867).
+    explicit constexpr operator bool() const { return !!m_value; }
     
     // This is the epoch. So, x.secondsSinceEpoch() should be the same as x - MonotonicTime().
     constexpr MonotonicTime() = default;
@@ -53,10 +57,6 @@ public:
 
     WTF_EXPORT_PRIVATE static MonotonicTime now();
     
-    MonotonicTime approximateMonotonicTime() const { return *this; }
-    WTF_EXPORT_PRIVATE WallTime approximateWallTime() const;
-    WTF_EXPORT_PRIVATE ContinuousTime approximateContinuousTime() const;
-
     WTF_EXPORT_PRIVATE void dump(PrintStream&) const;
 
     friend struct MarkableTraits<MonotonicTime>;

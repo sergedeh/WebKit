@@ -31,24 +31,24 @@ class LegacyRenderSVGTransformableContainer final : public LegacyRenderSVGContai
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGTransformableContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGTransformableContainer);
 public:
-    LegacyRenderSVGTransformableContainer(SVGGraphicsElement&, RenderStyle&&);
+    LegacyRenderSVGTransformableContainer(SVGGraphicsElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGTransformableContainer();
 
-    const AffineTransform& localToParentTransform() const override { return m_localTransform; }
+    const AffineTransform& localToParentTransform() const LIFETIME_BOUND override { return m_localTransform; }
     void setNeedsTransformUpdate() override { m_needsTransformUpdate = true; }
     bool didTransformToRootUpdate() override { return m_didTransformToRootUpdate; }
 
-    const FloatSize& additionalTranslation() const { return m_additionalTranslation; }
+    const FloatSize& additionalTranslation() const LIFETIME_BOUND { return m_additionalTranslation; }
 
 private:
-    SVGGraphicsElement& graphicsElement();
+    SVGGraphicsElement& NODELETE graphicsElement();
 
     void element() const = delete;
     bool calculateLocalTransform() override;
     AffineTransform localTransform() const override { return m_localTransform; }
 
-    bool m_needsTransformUpdate : 1;
-    bool m_didTransformToRootUpdate : 1;
+    bool m_needsTransformUpdate : 1 { true };
+    bool m_didTransformToRootUpdate : 1 { false };
     AffineTransform m_localTransform;
     FloatSize m_additionalTranslation;
     FloatRect m_lastTransformReferenceBoxRect;

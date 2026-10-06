@@ -36,6 +36,7 @@
 #include "CDMInstance.h"
 #include "Document.h"
 #include "EventLoop.h"
+#include "JSDOMConvertBoolean.h"
 #include "JSDOMPromiseDeferred.h"
 #include "Logging.h"
 #include "MediaKeySession.h"
@@ -47,7 +48,7 @@
 namespace WebCore {
 
 #if !RELEASE_LOG_DISABLED
-static WTFLogChannel& logChannel() { return LogEME; }
+static WTFLogChannel& NODELETE logChannel() { return LogEME; }
 static ASCIILiteral logClassName() { return "MediaKeys"_s; }
 #endif
 
@@ -122,7 +123,7 @@ void MediaKeys::setServerCertificate(const BufferSource& serverCertificate, Ref<
     }
 
     // 2. If serverCertificate is an empty array, return a promise rejected with a new a newly created TypeError.
-    if (!serverCertificate.length()) {
+    if (!serverCertificate.byteLength()) {
         ERROR_LOG(identifier, "Rejected: empty serverCertificate");
         promise->reject(ExceptionCode::TypeError);
         return;
@@ -178,6 +179,15 @@ bool MediaKeys::hasOpenSessions() const
     return std::ranges::any_of(m_sessions,
         [](auto& session) {
             return !session->isClosed();
+        });
+}
+
+bool MediaKeys::hasOpenSessionWithIdForOrigin(const String& sessionId, const String& origin) const
+{
+    return std::any_of(m_sessions.begin(), m_sessions.end(),
+        [&sessionId, &origin](auto& session) {
+            return session->sessionId() == sessionId && !session->isClosed()
+                && session->hasSecurityOrigin(origin);
         });
 }
 

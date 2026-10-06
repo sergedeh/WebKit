@@ -31,19 +31,13 @@
 #include <wtf/Platform.h>
 #if OS(DARWIN) && !PLATFORM(GTK)
 #include <WebCore/CommonCryptoUtilities.h>
-#if !defined(CLANG_WEBKIT_BRANCH)
-namespace pal {
-class ECKey;
-}
+
+#include <pal/crypto/CryptoTypes.h>
+#include <pal/crypto/PlatformECKey.h>
 
 namespace WebCore {
-using PlatformECKeyContainer = UniqueRef<pal::ECKey>;
+using PlatformECKeyContainer = PAL::Crypto::PlatformECKey;
 }
-#else
-namespace WebCore {
-using PlatformECKeyContainer = std::unique_ptr<std::monostate>;
-}
-#endif
 #endif
 
 #if USE(GCRYPT)
@@ -67,11 +61,7 @@ template<typename> class ExceptionOr;
 
 class CryptoKeyEC final : public CryptoKey {
 public:
-    enum class NamedCurve : uint8_t {
-        P256,
-        P384,
-        P521,
-    };
+    using NamedCurve = PAL::Crypto::ECNamedCurve;
 
     static Ref<CryptoKeyEC> create(CryptoAlgorithmIdentifier identifier, NamedCurve curve, CryptoKeyType type, PlatformECKeyContainer&& platformKey, bool extractable, CryptoKeyUsageBitmap usages)
     {
@@ -90,13 +80,13 @@ public:
     ExceptionOr<Vector<uint8_t>> exportSpki() const;
     ExceptionOr<Vector<uint8_t>> exportPkcs8() const;
 
-    size_t keySizeInBits() const;
+    size_t NODELETE keySizeInBits() const;
     size_t keySizeInBytes() const { return std::ceil(keySizeInBits() / 8.); }
     NamedCurve namedCurve() const { return m_curve; }
     String namedCurveString() const;
-    const PlatformECKeyContainer& platformKey() const { return m_platformKey; }
+    const PlatformECKeyContainer& platformKey() const LIFETIME_BOUND { return m_platformKey; }
 
-    static bool isValidECAlgorithm(CryptoAlgorithmIdentifier);
+    static bool NODELETE isValidECAlgorithm(CryptoAlgorithmIdentifier);
 
 private:
     CryptoKeyEC(CryptoAlgorithmIdentifier, NamedCurve, CryptoKeyType, PlatformECKeyContainer&&, bool extractable, CryptoKeyUsageBitmap);
@@ -105,7 +95,7 @@ private:
     KeyAlgorithm algorithm() const final;
     CryptoKey::Data data() const final;
 
-    static bool platformSupportedCurve(NamedCurve);
+    static bool NODELETE platformSupportedCurve(NamedCurve);
     static std::optional<CryptoKeyPair> platformGeneratePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyEC> platformImportRaw(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyEC> platformImportJWKPublic(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& x, Vector<uint8_t>&& y, bool extractable, CryptoKeyUsageBitmap);

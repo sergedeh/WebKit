@@ -30,8 +30,17 @@
 
 #include "Logging.h"
 #include "MediaDeviceRoute.h"
+#include "MediaDeviceRouteController.h"
 #include "MediaPlaybackTargetWirelessPlayback.h"
+#include "MediaSelectionOption.h"
+#include "MediaStrategy.h"
+#include "PlatformStrategies.h"
+#include <pal/avfoundation/MediaTimeAVFoundation.h>
+#include <wtf/BlockPtr.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/darwin/DispatchExtras.h>
+
+#include <pal/cf/CoreMediaSoftLink.h>
 
 namespace WebCore {
 
@@ -65,6 +74,10 @@ private:
 
 void MediaPlayerPrivateWirelessPlayback::registerMediaEngine(MediaEngineRegistrar registrar)
 {
+    if (hasPlatformStrategies() && !platformStrategies()->mediaStrategy()->wirelessPlaybackMediaPlayerEnabled())
+        return;
+    if (!mockMediaDeviceRouteControllerEnabled() && RemoteMediaPlayerSupport::registerRemoteEngineIfAvailable(registrar, MediaPlayerEnums::MediaEngineIdentifier::WirelessPlayback, PlatformMediaDecodingType::FileOrHLS))
+        return;
     registrar(makeUnique<MediaPlayerFactoryWirelessPlayback>());
 }
 
@@ -77,16 +90,42 @@ MediaPlayerPrivateWirelessPlayback::MediaPlayerPrivateWirelessPlayback(MediaPlay
 {
 }
 
-MediaPlayerPrivateWirelessPlayback::~MediaPlayerPrivateWirelessPlayback() = default;
-
-void MediaPlayerPrivateWirelessPlayback::load(const String& urlString)
+MediaPlayerPrivateWirelessPlayback::~MediaPlayerPrivateWirelessPlayback()
 {
-    m_urlString = urlString;
-    ALWAYS_LOG(LOGIDENTIFIER, urlString);
-    updateURLStringIfNeeded();
+    ALWAYS_LOG(LOGIDENTIFIER);
+    destroyTimebase();
+    if (RefPtr route = this->route())
+        route->disconnectFromSession();
 }
 
-#if ENABLE(WIRELESS_PLAYBACK_TARGET)
+static bool supportsURL(const URL& url)
+{
+#if PLATFORM(IOS_FAMILY_SIMULATOR)
+    if (url.protocolIsFile())
+        return true;
+#endif
+    return url.protocolIsInHTTPFamily();
+}
+
+void MediaPlayerPrivateWirelessPlayback::load(const URL& url, const LoadOptions&)
+{
+    ALWAYS_LOG(LOGIDENTIFIER);
+
+    if (!supportsURL(url)) {
+        setNetworkState(MediaPlayer::NetworkState::FormatError);
+        return;
+    }
+
+    m_url = url;
+    updateURLIfNeeded();
+}
+
+void MediaPlayerPrivateWirelessPlayback::cancelLoad()
+{
+    ALWAYS_LOG(LOGIDENTIFIER);
+    if (RefPtr route = this->route())
+        route->disconnectFromSession();
+}
 
 OptionSet<MediaPlaybackTargetType> MediaPlayerPrivateWirelessPlayback::playbackTargetTypes()
 {
@@ -97,6 +136,13 @@ String MediaPlayerPrivateWirelessPlayback::wirelessPlaybackTargetName() const
 {
     if (RefPtr playbackTarget = m_playbackTarget)
         return playbackTarget->deviceName();
+    return { };
+}
+
+String MediaPlayerPrivateWirelessPlayback::wirelessPlaybackRouteName() const
+{
+    if (RefPtr playbackTarget = m_playbackTarget)
+        return playbackTarget->routeName();
     return { };
 }
 
@@ -128,37 +174,515 @@ OptionSet<MediaPlaybackTargetType> MediaPlayerPrivateWirelessPlayback::supported
 bool MediaPlayerPrivateWirelessPlayback::isCurrentPlaybackTargetWireless() const
 {
     if (RefPtr playbackTarget = m_playbackTarget)
-        return m_shouldPlayToTarget && playbackTarget->hasActiveRoute();
+        return m_shouldPlayToTarget == ShouldPlayToTarget::Yes && playbackTarget->hasActiveRoute();
     return false;
 }
 
 void MediaPlayerPrivateWirelessPlayback::setWirelessPlaybackTarget(Ref<MediaPlaybackTarget>&& playbackTarget)
 {
+    if (m_playbackTarget && *m_playbackTarget == playbackTarget.get())
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, playbackTarget->type());
+
+    bool hadRoute = hasRoute();
+
+    if (RefPtr route = this->route()) {
+        route->disconnectFromSession();
+        route->setClient(nullptr);
+    }
+
     m_playbackTarget = WTF::move(playbackTarget);
-    updateURLStringIfNeeded();
+
+    if (RefPtr route = this->route()) {
+        route->setClient(this);
+        updateURLIfNeeded();
+        return;
+    }
+
+    if (hadRoute)
+        notifyRateAndPlaybackStateChanged();
+
+    if (wirelessPlaybackTarget())
+        setNetworkState(MediaPlayer::NetworkState::FormatError);
 }
 
-void MediaPlayerPrivateWirelessPlayback::setShouldPlayToPlaybackTarget(bool shouldPlayToTarget)
+void MediaPlayerPrivateWirelessPlayback::setShouldPlayToPlaybackTarget(bool shouldPlay)
 {
+    auto shouldPlayToTarget = shouldPlay ? ShouldPlayToTarget::Yes : ShouldPlayToTarget::No;
     if (shouldPlayToTarget == m_shouldPlayToTarget)
         return;
 
+    ALWAYS_LOG(LOGIDENTIFIER, shouldPlayToTarget);
     m_shouldPlayToTarget = shouldPlayToTarget;
 
+    if (!isCurrentPlaybackTargetWireless()) {
+        notifyRateAndPlaybackStateChanged();
+        setNetworkState(MediaPlayer::NetworkState::FormatError);
+        return;
+    }
+
+    updateURLIfNeeded();
+
     if (RefPtr player = m_player.get())
-        player->currentPlaybackTargetIsWirelessChanged(isCurrentPlaybackTargetWireless());
+        player->currentPlaybackTargetIsWirelessChanged(true);
 }
 
-void MediaPlayerPrivateWirelessPlayback::updateURLStringIfNeeded()
+void MediaPlayerPrivateWirelessPlayback::notifyRateAndPlaybackStateChanged()
 {
-    RefPtr playbackTarget = dynamicDowncast<MediaPlaybackTargetWirelessPlayback>(m_playbackTarget);
-    if (!playbackTarget)
+    RefPtr player = m_player.get();
+    if (!player)
         return;
 
-    // FIXME: pass the URL to the route
+    ALWAYS_LOG(LOGIDENTIFIER, "effectiveRate = ", effectiveRate(), ", paused = ", paused());
+    player->rateChanged();
+    player->playbackStateChanged();
 }
 
-#endif // ENABLE(WIRELESS_PLAYBACK_TARGET)
+MediaPlaybackTargetWirelessPlayback* MediaPlayerPrivateWirelessPlayback::wirelessPlaybackTarget() const
+{
+    return dynamicDowncast<MediaPlaybackTargetWirelessPlayback>(m_playbackTarget.get());
+}
+
+MediaDeviceRoute* MediaPlayerPrivateWirelessPlayback::route() const
+{
+    if (RefPtr wirelessPlaybackTarget = this->wirelessPlaybackTarget())
+        return wirelessPlaybackTarget->route();
+    return nullptr;
+}
+
+bool MediaPlayerPrivateWirelessPlayback::hasRoute() const
+{
+    return !!route();
+}
+
+void MediaPlayerPrivateWirelessPlayback::updateURLIfNeeded()
+{
+    RefPtr route = this->route();
+    if (!route || m_shouldPlayToTarget != ShouldPlayToTarget::Yes || networkState() >= MediaPlayer::NetworkState::Loading)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER);
+
+    setNetworkState(MediaPlayer::NetworkState::Loading);
+
+    route->loadURL(m_url, [weakThis = ThreadSafeWeakPtr { *this }](const MediaDeviceRouteLoadURLResult& result) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
+
+        if (!result) {
+            protectedThis->setNetworkState(MediaPlayer::NetworkState::FormatError);
+            return;
+        }
+
+        protectedThis->setNetworkState(MediaPlayer::NetworkState::Idle);
+    });
+}
+
+void MediaPlayerPrivateWirelessPlayback::play()
+{
+    RefPtr route = this->route();
+    if (!route)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER);
+    route->setPlaying(true);
+
+    if (RetainPtr timebase = ensureTimebase()) {
+        PAL::CMTimebaseSetRate(timebase.get(), route->playbackSpeed());
+        scheduleTimebaseTimer();
+    }
+}
+
+void MediaPlayerPrivateWirelessPlayback::pause()
+{
+    RefPtr route = this->route();
+    if (!route)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER);
+    route->setPlaying(false);
+
+    if (RetainPtr timebase = ensureTimebase())
+        PAL::CMTimebaseSetRate(timebase.get(), 0);
+}
+
+bool MediaPlayerPrivateWirelessPlayback::hasAudio() const
+{
+    if (RefPtr route = this->route())
+        return !route->audioOptions().isEmpty();
+    return false;
+}
+
+static MediaDeviceRoute::SeekTolerance seekTolerance(const SeekTarget& seekTarget)
+{
+    if (!seekTarget.negativeThreshold && !seekTarget.positiveThreshold)
+        return MediaDeviceRoute::SeekTolerance::Precise;
+    return MediaDeviceRoute::SeekTolerance::Approximate;
+}
+
+Ref<MediaTimePromise> MediaPlayerPrivateWirelessPlayback::seekToTarget(const SeekTarget& seekTarget)
+{
+    RefPtr route = this->route();
+    if (!route)
+        return MediaTimePromise::createAndReject(PlatformMediaError::Cancelled);
+
+    ALWAYS_LOG(LOGIDENTIFIER, seekTarget);
+    m_seekPromise.emplace(PlatformMediaError::Cancelled);
+
+    route->seekToPosition(seekTarget.time, seekTolerance(seekTarget));
+    return *m_seekPromise;
+}
+
+bool MediaPlayerPrivateWirelessPlayback::paused() const
+{
+    RefPtr route = this->route();
+    return !route || !route->playing();
+}
+
+MediaTime MediaPlayerPrivateWirelessPlayback::startTime() const
+{
+    if (RefPtr route = this->route())
+        return route->timeRange().start ?: MediaTime::zeroTime();
+    return MediaTime::zeroTime();
+}
+
+MediaTime MediaPlayerPrivateWirelessPlayback::duration() const
+{
+    RefPtr route = this->route();
+    if (!route)
+        return MediaTime::zeroTime();
+
+    auto endTime = route->timeRange().end;
+    if (!endTime)
+        return MediaTime::zeroTime();
+
+    return std::max(MediaTime::zeroTime(), endTime - startTime());
+}
+
+MediaTime MediaPlayerPrivateWirelessPlayback::currentTime() const
+{
+    if (m_timebase)
+        return PAL::toMediaTime(PAL::CMTimebaseGetTime(m_timebase.get()));
+    return MediaTime::zeroTime();
+}
+
+MediaTime MediaPlayerPrivateWirelessPlayback::maxTimeSeekable() const
+{
+    return startTime() + duration();
+}
+
+MediaTime MediaPlayerPrivateWirelessPlayback::minTimeSeekable() const
+{
+    return startTime();
+}
+
+bool MediaPlayerPrivateWirelessPlayback::setCurrentTimeDidChangeCallback(MediaPlayer::CurrentTimeDidChangeCallback&& currentTimeDidChangeCallback)
+{
+    m_currentTimeDidChangeCallback = WTF::move(currentTimeDidChangeCallback);
+    return true;
+}
+
+void MediaPlayerPrivateWirelessPlayback::setRate(float rate)
+{
+    RefPtr route = this->route();
+    if (!route)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, rate);
+    route->setPlaybackSpeed(rate);
+
+    if (RetainPtr timebase = ensureTimebase()) {
+        PAL::CMTimebaseSetRate(timebase, route->playing() ? rate : 0);
+        scheduleTimebaseTimer();
+    }
+}
+
+double MediaPlayerPrivateWirelessPlayback::rate() const
+{
+    if (RefPtr route = this->route())
+        return route->playbackSpeed();
+    return 0;
+}
+
+double MediaPlayerPrivateWirelessPlayback::effectiveRate() const
+{
+    RefPtr route = this->route();
+    if (!route || !route->playing())
+        return 0;
+    return route->playbackSpeed();
+}
+
+void MediaPlayerPrivateWirelessPlayback::setVolumeLocked(bool volumeLocked)
+{
+    if (m_volumeLocked == volumeLocked)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, volumeLocked);
+    m_volumeLocked = volumeLocked;
+}
+
+void MediaPlayerPrivateWirelessPlayback::setVolume(float volume)
+{
+    if (m_volumeLocked)
+        return;
+
+    RefPtr route = this->route();
+    if (!route || route->volume() == volume)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, volume);
+    route->setVolume(volume);
+}
+
+float MediaPlayerPrivateWirelessPlayback::volume() const
+{
+    if (RefPtr route = this->route())
+        return route->volume();
+    return 1;
+}
+
+void MediaPlayerPrivateWirelessPlayback::setMuted(bool muted)
+{
+    RefPtr route = this->route();
+    if (!route || route->muted() == muted)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, muted);
+    route->setMuted(muted);
+}
+
+void MediaPlayerPrivateWirelessPlayback::setNetworkState(MediaPlayer::NetworkState networkState)
+{
+    if (networkState == m_networkState)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, networkState);
+    m_networkState = networkState;
+    if (RefPtr player = m_player.get())
+        player->networkStateChanged();
+}
+
+void MediaPlayerPrivateWirelessPlayback::setReadyState(MediaPlayer::ReadyState readyState)
+{
+    if (readyState == m_readyState)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, readyState);
+    m_readyState = readyState;
+    if (RefPtr player = m_player.get())
+        player->readyStateChanged();
+}
+
+void MediaPlayerPrivateWirelessPlayback::updateReadyState()
+{
+    RefPtr route = this->route();
+    if (!route || !route->ready() || !maxTimeSeekable())
+        return;
+
+    setReadyState(MediaPlayerReadyState::HaveEnoughData);
+}
+
+String MediaPlayerPrivateWirelessPlayback::engineDescription() const
+{
+    static NeverDestroyed<String> description(MAKE_STATIC_STRING_IMPL("Cocoa Wireless Playback Engine"));
+    return description;
+}
+
+void MediaPlayerPrivateWirelessPlayback::timeRangeDidChange(MediaDeviceRoute& route)
+{
+    ASSERT(&route == this->route());
+    ALWAYS_LOG(LOGIDENTIFIER, route.timeRange());
+
+    if (RefPtr player = m_player.get())
+        player->durationChanged();
+
+    updateReadyState();
+}
+
+void MediaPlayerPrivateWirelessPlayback::readyDidChange(MediaDeviceRoute& route)
+{
+    ASSERT(&route == this->route());
+    ALWAYS_LOG(LOGIDENTIFIER, route.ready());
+
+    updateReadyState();
+}
+
+void MediaPlayerPrivateWirelessPlayback::errorDidChange(MediaDeviceRoute& route)
+{
+    ASSERT(&route == this->route());
+    ALWAYS_LOG(LOGIDENTIFIER, !!route.error());
+
+    if (route.error())
+        setNetworkState(route.ready() ? MediaPlayer::NetworkState::DecodeError : MediaPlayer::NetworkState::FormatError);
+}
+
+void MediaPlayerPrivateWirelessPlayback::audioOptionsDidChange(MediaDeviceRoute& route)
+{
+    ASSERT(&route == this->route());
+    ALWAYS_LOG(LOGIDENTIFIER, route.audioOptions().size());
+
+    if (RefPtr player = m_player.get())
+        player->characteristicChanged();
+}
+
+void MediaPlayerPrivateWirelessPlayback::playbackPositionDidChange(MediaDeviceRoute& route)
+{
+    ASSERT(&route == this->route());
+
+    auto playbackPosition = route.playbackPosition();
+
+    updateTimebaseTimeAndRate(playbackPosition, route.playing() ? route.playbackSpeed() : 0);
+
+    auto currentTime = this->currentTime();
+
+    if (auto seekPromise = std::exchange(m_seekPromise, std::nullopt)) {
+        ALWAYS_LOG(LOGIDENTIFIER, playbackPosition);
+        seekPromise->resolve(currentTime);
+    }
+
+    if (RefPtr player = m_player.get())
+        player->timeChanged();
+
+    if (m_currentTimeDidChangeCallback)
+        m_currentTimeDidChangeCallback(currentTime);
+}
+
+void MediaPlayerPrivateWirelessPlayback::playingDidChange(MediaDeviceRoute& route)
+{
+    ASSERT(&route == this->route());
+
+    auto playing = route.playing();
+    ALWAYS_LOG(LOGIDENTIFIER, playing);
+
+    updateTimebaseTimeAndRate(route.playbackPosition(), playing ? route.playbackSpeed() : 0);
+
+    if (RefPtr player = m_player.get()) {
+        player->rateChanged();
+        player->playbackStateChanged();
+    }
+}
+
+void MediaPlayerPrivateWirelessPlayback::playbackSpeedDidChange(MediaDeviceRoute& route)
+{
+    ASSERT(&route == this->route());
+
+    auto playbackSpeed = route.playbackSpeed();
+    ALWAYS_LOG(LOGIDENTIFIER, playbackSpeed);
+
+    if (RetainPtr timebase = ensureTimebase()) {
+        PAL::CMTimebaseSetRate(timebase, route.playing() ? playbackSpeed : 0);
+        scheduleTimebaseTimer();
+    }
+
+    if (RefPtr player = m_player.get())
+        player->rateChanged();
+}
+
+void MediaPlayerPrivateWirelessPlayback::mutedDidChange(MediaDeviceRoute& route)
+{
+    ASSERT(&route == this->route());
+
+    auto muted = route.muted();
+    ALWAYS_LOG(LOGIDENTIFIER, muted);
+
+    if (RefPtr player = m_player.get())
+        player->muteChanged(muted);
+}
+
+void MediaPlayerPrivateWirelessPlayback::volumeDidChange(MediaDeviceRoute& route)
+{
+    ASSERT(&route == this->route());
+
+    if (m_volumeLocked)
+        return;
+
+    auto volume = route.volume();
+    ALWAYS_LOG(LOGIDENTIFIER, volume);
+
+    if (RefPtr player = m_player.get())
+        player->volumeChanged(volume);
+}
+
+CMTimebaseRef MediaPlayerPrivateWirelessPlayback::ensureTimebase()
+{
+    if (m_timebase)
+        return m_timebase.get();
+
+    CMTimebaseRef rawTimebase = nullptr;
+    OSStatus result = PAL::CMTimebaseCreateWithSourceClock(kCFAllocatorDefault, PAL::CMClockGetHostTimeClock(), &rawTimebase);
+    if (result != noErr) {
+        ERROR_LOG(LOGIDENTIFIER, "failed to create timebase with error ", result);
+        return nullptr;
+    }
+
+    m_timebase = adoptCF(rawTimebase);
+    m_timerSource = adoptOSObject(dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, mainDispatchQueueSingleton()));
+
+    dispatch_source_set_event_handler(m_timerSource.get(), makeBlockPtr([weakThis = ThreadSafeWeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->timebaseTimerFired();
+    }).get());
+
+    PAL::CMTimebaseAddTimerDispatchSource(m_timebase.get(), m_timerSource.get());
+    dispatch_activate(m_timerSource.get());
+
+    if (RefPtr route = this->route())
+        updateTimebaseTimeAndRate(route->playbackPosition() ?: MediaTime::zeroTime(), route->playing() ? route->playbackSpeed() : 0);
+
+    return m_timebase.get();
+}
+
+void MediaPlayerPrivateWirelessPlayback::destroyTimebase()
+{
+    if (!m_timebase)
+        return;
+
+    PAL::CMTimebaseSetRate(m_timebase.get(), 0);
+    PAL::CMTimebaseRemoveTimerDispatchSource(m_timebase.get(), m_timerSource.get());
+    dispatch_source_cancel(m_timerSource.get());
+
+    m_timerSource = nullptr;
+    m_timebase = nullptr;
+}
+
+void MediaPlayerPrivateWirelessPlayback::updateTimebaseTimeAndRate(MediaTime currentPosition, float rate)
+{
+    RetainPtr timebase = ensureTimebase();
+    if (!timebase)
+        return;
+
+    PAL::CMTimebaseSetTime(timebase, PAL::toCMTime(currentPosition));
+    PAL::CMTimebaseSetRate(timebase, rate);
+    scheduleTimebaseTimer();
+}
+
+void MediaPlayerPrivateWirelessPlayback::scheduleTimebaseTimer()
+{
+    RetainPtr timebase = ensureTimebase();
+    if (!timebase)
+        return;
+
+    if (PAL::CMTimebaseGetEffectiveRate(timebase) <= 0)
+        return;
+
+    auto nextFireTime = PAL::CMTimeAdd(PAL::CMTimebaseGetTime(timebase), PAL::CMTimeMake(1, 10));
+    PAL::CMTimebaseSetTimerDispatchSourceNextFireTime(timebase, m_timerSource.get(), nextFireTime, 0);
+}
+
+void MediaPlayerPrivateWirelessPlayback::timebaseTimerFired()
+{
+    if (!m_currentTimeDidChangeCallback)
+        return;
+
+    auto timebase = ensureTimebase();
+    if (!timebase)
+        return;
+
+    m_currentTimeDidChangeCallback(PAL::toMediaTime(PAL::CMTimebaseGetTime(timebase)));
+    scheduleTimebaseTimer();
+}
 
 #if !RELEASE_LOG_DISABLED
 WTFLogChannel& MediaPlayerPrivateWirelessPlayback::logChannel() const

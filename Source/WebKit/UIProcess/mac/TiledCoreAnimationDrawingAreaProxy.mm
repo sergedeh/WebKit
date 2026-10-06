@@ -156,12 +156,12 @@ void TiledCoreAnimationDrawingAreaProxy::waitForDidUpdateActivityState(ActivityS
         return;
 
     Seconds activityStateUpdateTimeout = Seconds::fromMilliseconds(250);
-    webProcessProxy().protectedConnection()->waitForAndDispatchImmediately<Messages::WebPageProxy::DidUpdateActivityState>(page->webPageIDInMainFrameProcess(), activityStateUpdateTimeout, IPC::WaitForOption::InterruptWaitingIfSyncMessageArrives);
+    protect(webProcessProxy().connection())->waitForAndDispatchImmediately<Messages::WebPageProxy::DidUpdateActivityState>(page->webPageIDInMainFrameProcess(), activityStateUpdateTimeout, IPC::WaitForOption::InterruptWaitingIfSyncMessageArrives);
 }
 
 void TiledCoreAnimationDrawingAreaProxy::willSendUpdateGeometry()
 {
-    RefPtr page = this->page();
+    auto* page = this->page();
     if (!page)
         return;
 
@@ -215,9 +215,8 @@ void TiledCoreAnimationDrawingAreaProxy::sendUpdateGeometry()
 
     willSendUpdateGeometry();
     sendWithAsyncReply(Messages::DrawingArea::UpdateGeometry(size(), true /* flushSynchronously */, createFence()), [weakThis = WeakPtr { *this }] {
-        if (!weakThis)
-            return;
-        weakThis->didUpdateGeometry();
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->didUpdateGeometry();
     });
 }
 
@@ -226,7 +225,7 @@ void TiledCoreAnimationDrawingAreaProxy::adjustTransientZoom(double scale, Float
     send(Messages::DrawingArea::AdjustTransientZoom(scale, originInLayerForPageScale));
 }
 
-void TiledCoreAnimationDrawingAreaProxy::commitTransientZoom(double scale, FloatPoint origin)
+void TiledCoreAnimationDrawingAreaProxy::commitTransientZoom(double scale, FloatPoint origin, std::optional<FloatPoint>)
 {
     sendWithAsyncReply(Messages::DrawingArea::CommitTransientZoom(scale, origin), [] { });
 }

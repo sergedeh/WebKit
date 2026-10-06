@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2013 Google Inc. All rights reserved.
- * Copyright (C) 2013-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -31,6 +31,8 @@
 
 #include "config.h"
 #include "SourceBuffer.h"
+
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(MEDIA_SOURCE)
 
@@ -185,7 +187,7 @@ SourceBuffer::SourceBuffer(Ref<SourceBufferPrivate>&& sourceBufferPrivate, Media
     , m_appendState(WaitingForSegment)
     , m_buffered(TimeRanges::create())
 #if !RELEASE_LOG_DISABLED
-    , m_logger(source.protectedScriptExecutionContext()->isWorkerGlobalScope() ? source.logger() : m_private->sourceBufferLogger())
+    , m_logger(protect(source.scriptExecutionContext())->isWorkerGlobalScope() ? source.logger() : m_private->sourceBufferLogger())
     , m_logIdentifier(m_private->sourceBufferLogIdentifier())
 #endif
 {
@@ -214,7 +216,7 @@ ExceptionOr<Ref<TimeRanges>> SourceBuffer::buffered()
     // Handled by sourceBufferPrivateBufferedChanged().
 
     // 6. Return the current value of this attribute.
-    return Ref { m_buffered };
+    return protect(m_buffered);
 }
 
 double SourceBuffer::timestampOffset() const
@@ -236,7 +238,7 @@ ExceptionOr<void> SourceBuffer::setTimestampOffset(double offset)
     // 4. If the readyState attribute of the parent media source is in the "ended" state then run the following steps:
     // 4.1 Set the readyState attribute of the parent media source to "open"
     // 4.2 Queue a task to fire a simple event named sourceopen at the parent media source.
-    protectedSource()->openIfInEndedState();
+    protect(m_source)->openIfInEndedState();
 
     // 5. If the append state equals PARSING_MEDIA_SEGMENT, then throw an InvalidStateError and abort these steps.
     if (m_appendState == ParsingMediaSegment)
@@ -254,26 +256,6 @@ ExceptionOr<void> SourceBuffer::setTimestampOffset(double offset)
     m_private->resetTimestampOffsetInTrackBuffers();
 
     return { };
-}
-
-RefPtr<MediaSource> SourceBuffer::protectedSource() const
-{
-    return m_source.get();
-}
-
-RefPtr<VideoTrackList> SourceBuffer::protectedVideoTracks() const
-{
-    return m_videoTracks;
-}
-
-RefPtr<AudioTrackList> SourceBuffer::protectedAudioTracks() const
-{
-    return m_audioTracks;
-}
-
-RefPtr<TextTrackList> SourceBuffer::protectedTextTracks() const
-{
-    return m_textTracks;
 }
 
 double SourceBuffer::appendWindowStart() const
@@ -369,7 +351,7 @@ ExceptionOr<void> SourceBuffer::abort()
     //    then throw an InvalidStateError exception and abort these steps.
     // 2. If the readyState attribute of the parent media source is not in the "open" state
     //    then throw an InvalidStateError exception and abort these steps.
-    if (isRemoved() || !Ref { *m_source }->isOpen())
+    if (isRemoved() || !protect(*m_source)->isOpen())
         return Exception { ExceptionCode::InvalidStateError };
 
     // 3. If the range removal algorithm is running, then throw an InvalidStateError exception and abort these steps.
@@ -454,7 +436,7 @@ void SourceBuffer::rangeRemoval(const MediaTime& start, const MediaTime& end)
     m_removeCodedFramesPending = true;
 
     MediaPromise::AutoRejectProducer producer(PlatformMediaError::BufferRemoved);
-    protectedScriptExecutionContext()->enqueueTaskWhenSettled(producer.promise(), TaskSource::MediaElement, [weakThis = WeakPtr { *this }](auto&&) {
+    protect(scriptExecutionContext())->enqueueTaskWhenSettled(producer.promise(), TaskSource::MediaElement, [weakThis = WeakPtr { *this }](auto&&) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis || protectedThis->isRemoved())
             return;
@@ -470,7 +452,7 @@ void SourceBuffer::rangeRemoval(const MediaTime& start, const MediaTime& end)
         // 9. Queue a task to fire a simple event named updateend at this SourceBuffer object.
         protectedThis->scheduleEvent(eventNames().updateendEvent);
 
-        protectedThis->protectedSource()->monitorSourceBuffers();
+        protect(protectedThis->m_source)->monitorSourceBuffers();
     });
 
     // 5. Return control to the caller and run the rest of the steps asynchronously.
@@ -479,7 +461,7 @@ void SourceBuffer::rangeRemoval(const MediaTime& start, const MediaTime& end)
         if (!protectedThis)
             return;
         // 6. Run the coded frame removal algorithm with start and end as the start and end of the removal range.
-        protectedThis->m_private->removeCodedFrames(start, end, protectedThis->protectedSource()->currentTime())->chainTo(WTF::move(producer));
+        protectedThis->m_private->removeCodedFrames(start, end, protect(protectedThis->m_source)->currentTime())->chainTo(WTF::move(producer));
     }, true);
 }
 
@@ -515,7 +497,7 @@ ExceptionOr<void> SourceBuffer::changeType(const String& type)
     // steps:
     // 5.1. Set the readyState attribute of the parent media source to "open"
     // 5.2. Queue a task to fire a simple event named sourceopen at the parent media source.
-    protectedSource()->openIfInEndedState();
+    protect(m_source)->openIfInEndedState();
 
     // 6. Run the reset parser state algorithm.
     resetParserState();
@@ -586,12 +568,6 @@ void SourceBuffer::removedFromMediaSource()
     m_extraMemoryCost = 0;
 }
 
-Ref<SourceBuffer::ComputeSeekPromise> SourceBuffer::computeSeekTime(const SeekTarget& target)
-{
-    ALWAYS_LOG(LOGIDENTIFIER, target);
-    return m_private->computeSeekTime(target);
-}
-
 bool SourceBuffer::virtualHasPendingActivity() const
 {
     return !!m_source;
@@ -622,7 +598,7 @@ ExceptionOr<void> SourceBuffer::appendBufferInternal(std::span<const uint8_t> da
     if (isRemoved() || m_updating)
         return Exception { ExceptionCode::InvalidStateError };
 
-    ALWAYS_LOG(LOGIDENTIFIER, "size = ", data.size(), " maximumBufferSize = ", maximumBufferSize(), " buffered = ", Ref { m_buffered }->ranges(), " streaming = ", protectedSource()->streaming());
+    ALWAYS_LOG(LOGIDENTIFIER, "size = ", data.size(), " maximumBufferSize = ", maximumBufferSize(), " buffered = ", m_buffered->ranges(), " streaming = ", protect(m_source)->streaming());
 
     // 3. If the readyState attribute of the parent media source is in the "ended" state then run the following steps:
     // 3.1. Set the readyState attribute of the parent media source to "open"
@@ -653,7 +629,7 @@ ExceptionOr<void> SourceBuffer::appendBufferInternal(std::span<const uint8_t> da
     m_appendBufferPending = true;
     // 6. Asynchronously run the buffer append algorithm.
     MediaPromise::AutoRejectProducer producer(PlatformMediaError::BufferRemoved);
-    protectedScriptExecutionContext()->enqueueTaskWhenSettled(producer.promise(), TaskSource::MediaElement, [weakThis = WeakPtr { *this }, id = ++m_appendBufferOperationId](MediaPromise::Result&& result) {
+    protect(scriptExecutionContext())->enqueueTaskWhenSettled(producer.promise(), TaskSource::MediaElement, [weakThis = WeakPtr { *this }, id = ++m_appendBufferOperationId](MediaPromise::Result&& result) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -737,7 +713,7 @@ uint64_t SourceBuffer::maximumBufferSize() const
     const float bufferBudgetPercentageForVideo = .95;
     const float bufferBudgetPercentageForAudio = .05;
 
-    size_t maximum = protectedScriptExecutionContext()->settingsValues().maximumSourceBufferSize;
+    size_t maximum = protect(scriptExecutionContext())->settingsValues().maximumSourceBufferSize;
 
     // Allow a SourceBuffer to buffer as though it is audio-only even if it doesn't have any active tracks (yet).
     size_t bufferSize = static_cast<size_t>(maximum * bufferBudgetPercentageForAudio);
@@ -756,8 +732,8 @@ uint64_t SourceBuffer::maximumBufferSize() const
 VideoTrackList& SourceBuffer::videoTracks()
 {
     if (!m_videoTracks) {
-        Ref videoTracks = VideoTrackList::create(protectedScriptExecutionContext().get());
-        m_videoTracks = videoTracks.copyRef();
+        Ref videoTracks = VideoTrackList::create(protect(scriptExecutionContext()).get());
+        lazyInitialize(m_videoTracks, videoTracks.copyRef());
         videoTracks->setOpaqueRootObserver(m_opaqueRootProvider);
     }
     return *m_videoTracks;
@@ -766,8 +742,8 @@ VideoTrackList& SourceBuffer::videoTracks()
 AudioTrackList& SourceBuffer::audioTracks()
 {
     if (!m_audioTracks) {
-        Ref audioTracks = AudioTrackList::create(protectedScriptExecutionContext().get());
-        m_audioTracks = audioTracks.copyRef();
+        Ref audioTracks = AudioTrackList::create(protect(scriptExecutionContext()).get());
+        lazyInitialize(m_audioTracks, audioTracks.copyRef());
         audioTracks->setOpaqueRootObserver(m_opaqueRootProvider);
     }
     return *m_audioTracks;
@@ -776,8 +752,8 @@ AudioTrackList& SourceBuffer::audioTracks()
 TextTrackList& SourceBuffer::textTracks()
 {
     if (!m_textTracks) {
-        Ref textTracks = TextTrackList::create(protectedScriptExecutionContext().get());
-        m_textTracks = textTracks.copyRef();
+        Ref textTracks = TextTrackList::create(protect(scriptExecutionContext()).get());
+        lazyInitialize(m_textTracks, textTracks.copyRef());
         textTracks->setOpaqueRootObserver(m_opaqueRootProvider);
     }
     return *m_textTracks;
@@ -791,7 +767,7 @@ void SourceBuffer::setActive(bool active)
     m_active = active;
     m_private->setActive(active);
     if (!isRemoved())
-        protectedSource()->sourceBufferDidChangeActiveState(*this, active);
+        protect(m_source)->sourceBufferDidChangeActiveState(*this, active);
 }
 
 Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidReceiveInitializationSegment(SourceBufferPrivateClient::InitializationSegment&& segment)
@@ -841,53 +817,56 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidReceiveInitializationSegme
         // 3.2 Add the appropriate track descriptions from this initialization segment to each of the track buffers.
         ASSERT(segment.audioTracks.size() == audioTracks->length());
         for (auto& audioTrackInfo : segment.audioTracks) {
+            Ref audioTrackPrivate { *audioTrackInfo.track };
             if (audioTracks->length() == 1) {
                 RefPtr track = audioTracks->item(0);
                 auto oldId = track->trackId();
-                auto newId = RefPtr { audioTrackInfo.track }->id();
-                track->setPrivate(Ref { *audioTrackInfo.track });
+                auto newId = audioTrackPrivate->id();
+                track->setPrivate(audioTrackPrivate);
                 if (newId != oldId)
                     trackIdPairs.append(std::make_pair(oldId, newId));
                 break;
             }
 
-            auto audioTrack = audioTracks->getTrackById(RefPtr { audioTrackInfo.track }->id());
+            auto audioTrack = audioTracks->getTrackById(audioTrackPrivate->id());
             ASSERT(audioTrack);
-            audioTrack->setPrivate(Ref { *audioTrackInfo.track });
+            audioTrack->setPrivate(audioTrackPrivate);
         }
 
         ASSERT(segment.videoTracks.size() == videoTracks->length());
         for (auto& videoTrackInfo : segment.videoTracks) {
+            Ref videoTrackPrivate { *videoTrackInfo.track };
             if (videoTracks->length() == 1) {
                 RefPtr track = videoTracks->item(0);
                 auto oldId = track->trackId();
-                auto newId = RefPtr { videoTrackInfo.track }->id();
-                track->setPrivate(Ref { *videoTrackInfo.track });
+                auto newId = videoTrackPrivate->id();
+                track->setPrivate(videoTrackPrivate);
                 if (newId != oldId)
                     trackIdPairs.append(std::make_pair(oldId, newId));
                 break;
             }
 
-            auto videoTrack = videoTracks->getTrackById(RefPtr { videoTrackInfo.track }->id());
+            auto videoTrack = videoTracks->getTrackById(videoTrackPrivate->id());
             ASSERT(videoTrack);
-            videoTrack->setPrivate(Ref { *videoTrackInfo.track });
+            videoTrack->setPrivate(videoTrackPrivate);
         }
 
         ASSERT(segment.textTracks.size() == textTracks->length());
         for (auto& textTrackInfo : segment.textTracks) {
+            Ref textTrackPrivate { *textTrackInfo.track };
             if (textTracks->length() == 1) {
                 RefPtr track = downcast<InbandTextTrack>(textTracks->item(0));
                 auto oldId = track->trackId();
-                auto newId = RefPtr { textTrackInfo.track }->id();
-                track->setPrivate(Ref { *textTrackInfo.track });
+                auto newId = textTrackPrivate->id();
+                track->setPrivate(textTrackPrivate);
                 if (newId != oldId)
                     trackIdPairs.append(std::make_pair(oldId, newId));
                 break;
             }
 
-            auto textTrack = textTracks->getTrackById(RefPtr { textTrackInfo.track }->id());
+            auto textTrack = textTracks->getTrackById(textTrackPrivate->id());
             ASSERT(textTrack);
-            downcast<InbandTextTrack>(*textTrack).setPrivate(Ref { *textTrackInfo.track });
+            downcast<InbandTextTrack>(*textTrack).setPrivate(textTrackPrivate);
         }
 
         if (!trackIdPairs.isEmpty())
@@ -909,7 +888,7 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidReceiveInitializationSegme
         if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext())) {
             if (auto& allowedMediaAudioCodecIDs = document->settings().allowedMediaAudioCodecIDs()) {
                 for (auto& audioTrackInfo : segment.audioTracks) {
-                    if (audioTrackInfo.description && allowedMediaAudioCodecIDs->contains(FourCC::fromString(RefPtr { audioTrackInfo.description }->codec())))
+                    if (audioTrackInfo.description && allowedMediaAudioCodecIDs->contains(FourCC::fromString(audioTrackInfo.description->codec())))
                         continue;
                     return MediaPromise::createAndReject(PlatformMediaError::AppendError);
                 }
@@ -917,7 +896,7 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidReceiveInitializationSegme
 
             if (auto& allowedMediaVideoCodecIDs = document->settings().allowedMediaVideoCodecIDs()) {
                 for (auto& videoTrackInfo : segment.videoTracks) {
-                    if (videoTrackInfo.description && allowedMediaVideoCodecIDs->contains(FourCC::fromString(RefPtr { videoTrackInfo.description }->codec())))
+                    if (videoTrackInfo.description && allowedMediaVideoCodecIDs->contains(FourCC::fromString(videoTrackInfo.description->codec())))
                         continue;
                     return MediaPromise::createAndReject(PlatformMediaError::AppendError);
                 }
@@ -926,10 +905,12 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidReceiveInitializationSegme
 
         // 5.2 For each audio track in the initialization segment, run following steps:
         for (auto& audioTrackInfo : segment.audioTracks) {
+            Ref audioTrackPrivate { *audioTrackInfo.track };
+
             // FIXME: Implement steps 5.2.1-5.2.8.1 as per Editor's Draft 09 January 2015, and reorder this
             // 5.2.1 Let new audio track be a new AudioTrack object.
             // 5.2.2 Generate a unique ID and assign it to the id property on new video track.
-            Ref newAudioTrack = AudioTrack::create(protectedScriptExecutionContext().get(), Ref { *audioTrackInfo.track });
+            Ref newAudioTrack = AudioTrack::create(protect(scriptExecutionContext()).get(), audioTrackPrivate);
             newAudioTrack->addClient(*this);
             newAudioTrack->setSourceBuffer(this);
 
@@ -962,21 +943,23 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidReceiveInitializationSegme
                 // Let mirrored audio track be a new AudioTrack object.
                 // Assign the same property values to mirrored audio track as were determined for new audio track.
                 // Add mirrored audio track to the audioTracks attribute on the HTMLMediaElement.
-                source->addAudioTrackMirrorToElement(*audioTrackInfo.track, enabled);
+                source->addAudioTrackMirrorToElement(audioTrackPrivate.get(), enabled);
             }
 
-            m_audioCodecs.append(RefPtr { audioTrackInfo.description }->codec().toAtomString());
+            m_audioCodecs.append(audioTrackInfo.description->codec().toAtomString());
 
             // 5.2.8 Create a new track buffer to store coded frames for this track.
-            m_private->addTrackBuffer(RefPtr { audioTrackInfo.track }->id(), WTF::move(audioTrackInfo.description));
+            m_private->addTrackBuffer(audioTrackPrivate->id(), WTF::move(audioTrackInfo.description));
         }
 
         // 5.3 For each video track in the initialization segment, run following steps:
         for (auto& videoTrackInfo : segment.videoTracks) {
+            Ref videoTrackPrivate { *videoTrackInfo.track };
+
             // FIXME: Implement steps 5.3.1-5.3.8.1 as per Editor's Draft 09 January 2015, and reorder this
             // 5.3.1 Let new video track be a new VideoTrack object.
             // 5.3.2 Generate a unique ID and assign it to the id property on new video track.
-            Ref newVideoTrack = VideoTrack::create(protectedScriptExecutionContext().get(), Ref { *videoTrackInfo.track });
+            Ref newVideoTrack = VideoTrack::create(protect(scriptExecutionContext()).get(), videoTrackPrivate);
             newVideoTrack->addClient(*this);
             newVideoTrack->setSourceBuffer(this);
 
@@ -1009,13 +992,13 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidReceiveInitializationSegme
                 // Let mirrored audio track be a new VideoTrack object.
                 // Assign the same property values to mirrored video track as were determined for new video track.
                 // Add mirrored video track to the videoTracks attribute on the HTMLMediaElement.
-                source->addVideoTrackMirrorToElement(*videoTrackInfo.track, selected);
+                source->addVideoTrackMirrorToElement(videoTrackPrivate.get(), selected);
             }
 
-            m_videoCodecs.append(RefPtr { videoTrackInfo.description }->codec().toAtomString());
+            m_videoCodecs.append(videoTrackInfo.description->codec().toAtomString());
 
             // 5.3.8 Create a new track buffer to store coded frames for this track.
-            m_private->addTrackBuffer(RefPtr { videoTrackInfo.track }->id(), WTF::move(videoTrackInfo.description));
+            m_private->addTrackBuffer(videoTrackPrivate->id(), WTF::move(videoTrackInfo.description));
         }
 
         // 5.4 For each text track in the initialization segment, run following steps:
@@ -1025,7 +1008,7 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidReceiveInitializationSegme
             // FIXME: Implement steps 5.4.1-5.4.8.1 as per Editor's Draft 09 January 2015, and reorder this
             // 5.4.1 Let new text track be a new TextTrack object with its properties populated with the
             // appropriate information from the initialization segment.
-            Ref newTextTrack = InbandTextTrack::create(*protectedScriptExecutionContext(), textTrackPrivate);
+            Ref newTextTrack = InbandTextTrack::create(*protect(scriptExecutionContext()), textTrackPrivate);
             newTextTrack->addClient(*this);
 
             // 5.4.2 If the mode property on new text track equals "showing" or "hidden", then set active
@@ -1054,7 +1037,7 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidReceiveInitializationSegme
                 source->addTextTrackMirrorToElement(textTrackPrivate.get());
             }
 
-            m_textCodecs.append(RefPtr { textTrackInfo.description }->codec().toAtomString());
+            m_textCodecs.append(textTrackInfo.description->codec().toAtomString());
 
             // 5.4.7 Create a new track buffer to store coded frames for this track.
             m_private->addTrackBuffer(textTrackPrivate->id(), WTF::move(textTrackInfo.description));
@@ -1099,9 +1082,9 @@ bool SourceBuffer::validateInitializationSegment(const SourceBufferPrivateClient
 
     // Note: those are checks from step 3.1
     //   * The number of audio, video, and text tracks match what was in the first initialization segment.
-    return segment.audioTracks.size() == protectedAudioTracks()->length()
-        && segment.videoTracks.size() == protectedVideoTracks()->length()
-        && segment.textTracks.size() == protectedTextTracks()->length();
+    return segment.audioTracks.size() == audioTracksIfExists()->length()
+        && segment.videoTracks.size() == videoTracksIfExists()->length()
+        && segment.textTracks.size() == textTracksIfExists()->length();
 }
 
 void SourceBuffer::appendError(bool decodeError)
@@ -1124,17 +1107,17 @@ void SourceBuffer::appendError(bool decodeError)
 
     // 5. If decode error is true, then run the end of stream algorithm with the error parameter set to "decode".
     if (decodeError && !isRemoved())
-        protectedSource()->streamEndedWithError(MediaSource::EndOfStreamError::Decode);
+        protect(m_source)->streamEndedWithError(MediaSource::EndOfStreamError::Decode);
 }
 
 bool SourceBuffer::hasAudio() const
 {
-    return m_audioTracks && protectedAudioTracks()->length();
+    return m_audioTracks && audioTracksIfExists()->length();
 }
 
 bool SourceBuffer::hasVideo() const
 {
-    return m_videoTracks && protectedVideoTracks()->length();
+    return m_videoTracks && videoTracksIfExists()->length();
 }
 
 ScriptExecutionContext* SourceBuffer::scriptExecutionContext() const
@@ -1149,9 +1132,9 @@ void SourceBuffer::videoTrackSelectedChanged(VideoTrack& track)
     // 1. If the SourceBuffer associated with the previously selected video track is not associated with
     // any other enabled tracks, run the following steps:
     if (!track.selected()
-        && (!m_videoTracks || !protectedVideoTracks()->isAnyTrackEnabled())
-        && (!m_audioTracks || !protectedAudioTracks()->isAnyTrackEnabled())
-        && (!m_textTracks || !protectedTextTracks()->isAnyTrackEnabled())) {
+        && (!m_videoTracks || !protect(videoTracksIfExists())->isAnyTrackEnabled())
+        && (!m_audioTracks || !protect(audioTracksIfExists())->isAnyTrackEnabled())
+        && (!m_textTracks || !protect(textTracksIfExists())->isAnyTrackEnabled())) {
         // 1.1 Remove the SourceBuffer from activeSourceBuffers.
         // 1.2 Queue a task to fire a simple event named removesourcebuffer at activeSourceBuffers
         setActive(false);
@@ -1191,9 +1174,9 @@ void SourceBuffer::audioTrackEnabledChanged(AudioTrack& track)
     // If an audio track becomes disabled and the SourceBuffer associated with this track is not
     // associated with any other enabled or selected track, then run the following steps:
     if (!track.enabled()
-        && (!m_videoTracks || !protectedVideoTracks()->isAnyTrackEnabled())
-        && (!m_audioTracks || !protectedAudioTracks()->isAnyTrackEnabled())
-        && (!m_textTracks || !protectedTextTracks()->isAnyTrackEnabled())) {
+        && (!m_videoTracks || !protect(videoTracksIfExists())->isAnyTrackEnabled())
+        && (!m_audioTracks || !protect(audioTracksIfExists())->isAnyTrackEnabled())
+        && (!m_textTracks || !protect(textTracksIfExists())->isAnyTrackEnabled())) {
         // 1. Remove the SourceBuffer associated with the audio track from activeSourceBuffers
         // 2. Queue a task to fire a simple event named removesourcebuffer at activeSourceBuffers
         setActive(false);
@@ -1227,15 +1210,15 @@ void SourceBuffer::audioTrackLanguageChanged(AudioTrack& track)
         audioTracks->scheduleChangeEvent();
 }
 
-void SourceBuffer::textTrackModeChanged(TextTrack& track)
+void SourceBuffer::textTrackModeChanged(TextTrack& track, TextTrack::ModeChangeType)
 {
     // 2.4.5 Changes to selected/enabled track state
     // If a text track mode becomes "disabled" and the SourceBuffer associated with this track is not
     // associated with any other enabled or selected track, then run the following steps:
     if (track.mode() == TextTrack::Mode::Disabled
-        && (!m_videoTracks || !protectedVideoTracks()->isAnyTrackEnabled())
-        && (!m_audioTracks || !protectedAudioTracks()->isAnyTrackEnabled())
-        && (!m_textTracks || !protectedTextTracks()->isAnyTrackEnabled())) {
+        && (!m_videoTracks || !protect(videoTracksIfExists())->isAnyTrackEnabled())
+        && (!m_audioTracks || !protect(audioTracksIfExists())->isAnyTrackEnabled())
+        && (!m_textTracks || !protect(textTracksIfExists())->isAnyTrackEnabled())) {
         // 1. Remove the SourceBuffer associated with the audio track from activeSourceBuffers
         // 2. Queue a task to fire a simple event named removesourcebuffer at activeSourceBuffers
         setActive(false);
@@ -1266,8 +1249,8 @@ void SourceBuffer::textTrackLanguageChanged(TextTrack& track)
 Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDurationChanged(const MediaTime& duration)
 {
     if (!isRemoved())
-        protectedSource()->setDurationInternal(duration);
-    if (RefPtr textTracks = m_textTracks)
+        protect(m_source)->setDurationInternal(duration);
+    if (auto* textTracks = m_textTracks.get())
         textTracks->setDuration(duration);
     return MediaPromise::createAndResolve();
 }
@@ -1280,7 +1263,7 @@ void SourceBuffer::sourceBufferPrivateHighestPresentationTimestampChanged(const 
 void SourceBuffer::sourceBufferPrivateDidDropSample()
 {
     if (!isRemoved())
-        protectedSource()->incrementDroppedFrameCount();
+        protect(m_source)->incrementDroppedFrameCount();
 }
 
 void SourceBuffer::reportExtraMemoryAllocated(uint64_t extraMemory)
@@ -1297,11 +1280,9 @@ void SourceBuffer::reportExtraMemoryAllocated(uint64_t extraMemory)
     uint64_t extraMemoryCostDelta = extraMemoryCost - m_reportedExtraMemoryCost;
     m_reportedExtraMemoryCost = extraMemoryCost;
 
-    Ref vm = protectedScriptExecutionContext()->vm();
+    Ref vm = protect(scriptExecutionContext())->vm();
     JSC::JSLockHolder lock(vm);
-    // FIXME: Adopt reportExtraMemoryVisited, and switch to reportExtraMemoryAllocated.
-    // https://bugs.webkit.org/show_bug.cgi?id=142595
-    vm->heap.deprecatedReportExtraMemory(extraMemoryCostDelta);
+    vm->heap.reportExtraMemoryAllocated(nullptr, extraMemoryCostDelta);
 }
 
 Ref<SourceBuffer::SamplesPromise> SourceBuffer::bufferedSamplesForTrackId(TrackID trackID)
@@ -1414,50 +1395,19 @@ void SourceBuffer::updateBuffered()
             queueTaskToDispatchEvent(*this, TaskSource::MediaElement, BufferedChangeEvent::create(WTF::move(addedTimeRanges), WTF::move(removedTimeRanges)));
         }
         if (!isRemoved())
-            protectedSource()->monitorSourceBuffers();
+            protect(m_source)->monitorSourceBuffers();
     });
 
-    // 3.1 Attributes, buffered
-    // https://rawgit.com/w3c/media-source/45627646344eea0170dd1cbc5a3d508ca751abb8/media-source-respec.html#dom-sourcebuffer-buffered
-    // 2. Let highest end time be the largest track buffer ranges end time across all the track buffers managed by this SourceBuffer object.
-    MediaTime highestEndTime = MediaTime::negativeInfiniteTime();
-    for (auto& trackBuffer : m_trackBuffers) {
-        if (!trackBuffer.length())
-            continue;
-        highestEndTime = std::max(highestEndTime, trackBuffer.maximumBufferedTime());
-    }
+    // 5.1 Attributes - buffered
+    // https://w3c.github.io/media-source/#dom-sourcebuffer-buffered
+    auto intersectionRanges = SourceBufferPrivate::computeBufferedRanges(m_trackBuffers, m_mediaSourceEnded);
 
-    // NOTE: Short circuit the following if none of the TrackBuffers have buffered ranges to avoid generating
-    // a single range of {0, 0}.
-    if (highestEndTime.isNegativeInfinite()) {
-        m_buffered = TimeRanges::create();
-        return;
-    }
-
-    // 3. Let intersection ranges equal a TimeRange object containing a single range from 0 to highest end time.
-    PlatformTimeRanges intersectionRanges { MediaTime::zeroTime(), highestEndTime };
-
-    // 4. For each audio and video track buffer managed by this SourceBuffer, run the following steps:
-    for (auto& trackBuffer : m_trackBuffers) {
-        if (!trackBuffer.length())
-            continue;
-
-        // 4.1 Let track ranges equal the track buffer ranges for the current track buffer.
-        auto trackRanges = trackBuffer;
-
-        // 4.2 If readyState is "ended", then set the end time on the last range in track ranges to highest end time.
-        if (m_mediaSourceEnded)
-            trackRanges.add(trackRanges.maximumBufferedTime(), highestEndTime);
-
-        // 4.3 Let new intersection ranges equal the intersection between the intersection ranges and the track ranges.
-        // 4.4 Replace the ranges in intersection ranges with the new intersection ranges.
-        intersectionRanges.intersectWith(trackRanges);
-    }
-    // 5. If intersection ranges does not contain the exact same range information as the current value of this attribute,
-    //    then update the current value of this attribute to intersection ranges.
+    // 5. If intersection ranges does not contain the exact same range information
+    //    as the current value of this attribute, then update the current value
+    //    of this attribute to intersection ranges.
     if (oldRanges != intersectionRanges) {
         m_buffered = TimeRanges::create(intersectionRanges);
-        LOG(Media, "SourceBuffer::updateBuffered(%p) - buffered = %s", this, toString(intersectionRanges).utf8().data());
+        LOG_WITH_STREAM(Media, stream << "SourceBuffer::updateBuffered("_s << this << ") - buffered = "_s << toString(intersectionRanges));
     }
 }
 
@@ -1474,7 +1424,7 @@ void SourceBuffer::setBufferedDirty(bool flag)
     m_bufferedDirty = flag;
 
     if (!isRemoved() && flag)
-        protectedSource()->sourceBufferBufferedChanged();
+        protect(m_source)->sourceBufferBufferedChanged();
 }
 
 void SourceBuffer::setMediaSourceEnded(bool isEnded)
@@ -1489,9 +1439,9 @@ size_t SourceBuffer::memoryCost() const
     return sizeof(SourceBuffer) + m_extraMemoryCost;
 }
 
-WebCoreOpaqueRoot SourceBuffer::opaqueRoot()
+WebCoreOpaqueRoot SourceBuffer::opaqueRoot() const
 {
-    return WebCoreOpaqueRoot { this };
+    return WebCoreOpaqueRoot { const_cast<SourceBuffer*>(this) };
 }
 
 void SourceBuffer::memoryPressure()
@@ -1500,7 +1450,7 @@ void SourceBuffer::memoryPressure()
         return;
 
     if (!isRemoved())
-        m_private->memoryPressure(protectedSource()->currentTime());
+        m_private->memoryPressure(protect(m_source)->currentTime());
 }
 
 #if !RELEASE_LOG_DISABLED
@@ -1549,11 +1499,12 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidAttach(SourceBufferPrivate
 
     RefPtr source = m_source.get();
     // 3.2 Add the appropriate track descriptions from this initialization segment to each of the track buffers.
-    ASSERT(segment.audioTracks.size() == protectedAudioTracks()->length());
+    ASSERT(segment.audioTracks.size() == protect(audioTracksIfExists())->length());
     for (auto& audioTrackInfo : segment.audioTracks) {
-        auto audioTrack = protectedAudioTracks()->getTrackById(RefPtr { audioTrackInfo.track }->id());
+        Ref audioTrackPrivate { *audioTrackInfo.track };
+        auto audioTrack = protect(audioTracksIfExists())->getTrackById(audioTrackPrivate->id());
         ASSERT(audioTrack);
-        audioTrack->setPrivate(Ref { *audioTrackInfo.track });
+        audioTrack->setPrivate(audioTrackPrivate);
         if (isMainThread())
             source->addAudioTrackToElement(*audioTrack);
         else {
@@ -1562,16 +1513,17 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidAttach(SourceBufferPrivate
             // Let mirrored audio track be a new AudioTrack object.
             // Assign the same property values to mirrored audio track as were determined for new audio track.
             // Add mirrored audio track to the audioTracks attribute on the HTMLMediaElement.
-            source->addAudioTrackMirrorToElement(*audioTrackInfo.track, audioTrack->enabled());
+            source->addAudioTrackMirrorToElement(audioTrackPrivate.get(), audioTrack->enabled());
         }
     }
 
     Ref videoTracks = this->videoTracks();
     ASSERT(segment.videoTracks.size() == videoTracks->length());
     for (auto& videoTrackInfo : segment.videoTracks) {
-        auto videoTrack = videoTracks->getTrackById(RefPtr { videoTrackInfo.track }->id());
+        Ref videoTrackPrivate { *videoTrackInfo.track };
+        auto videoTrack = videoTracks->getTrackById(videoTrackPrivate->id());
         ASSERT(videoTrack);
-        videoTrack->setPrivate(Ref { *videoTrackInfo.track });
+        videoTrack->setPrivate(videoTrackPrivate);
         // 5.3.6 Add new video track to the videoTracks attribute on the HTMLMediaElement.
         // 5.3.7 Queue a task to fire a trusted event named addtrack, that does not bubble and is
         // not cancelable, and that uses the TrackEvent interface, at the VideoTrackList object
@@ -1584,16 +1536,17 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidAttach(SourceBufferPrivate
             // Let mirrored audio track be a new VideoTrack object.
             // Assign the same property values to mirrored video track as were determined for new video track.
             // Add mirrored video track to the videoTracks attribute on the HTMLMediaElement.
-            source->addVideoTrackMirrorToElement(*videoTrackInfo.track, videoTrack->selected());
+            source->addVideoTrackMirrorToElement(videoTrackPrivate.get(), videoTrack->selected());
         }
     }
 
     Ref textTracks = this->textTracks();
     ASSERT(segment.textTracks.size() == textTracks->length());
     for (auto& textTrackInfo : segment.textTracks) {
-        auto textTrack = textTracks->getTrackById(RefPtr { textTrackInfo.track }->id());
+        Ref textTrackPrivate { *textTrackInfo.track };
+        auto textTrack = textTracks->getTrackById(textTrackPrivate->id());
         ASSERT(textTrack);
-        downcast<InbandTextTrack>(*textTrack).setPrivate(Ref { *textTrackInfo.track });
+        downcast<InbandTextTrack>(*textTrack).setPrivate(textTrackPrivate);
         // 5.4.5 Add new text track to the textTracks attribute on the HTMLMediaElement.
         // 5.4.6 Queue a task to fire a trusted event named addtrack, that does not bubble and is
         // not cancelable, and that uses the TrackEvent interface, at the TextTrackList object
@@ -1606,7 +1559,7 @@ Ref<MediaPromise> SourceBuffer::sourceBufferPrivateDidAttach(SourceBufferPrivate
             // Let mirrored text track be a new TextTrack object.
             // Assign the same property values to mirrored text track as were determined for new text track.
             // Add mirrored text track to the textTracks attribute on the HTMLMediaElement.
-            source->addTextTrackMirrorToElement(*textTrackInfo.track);
+            source->addTextTrackMirrorToElement(textTrackPrivate.get());
         }
     }
 

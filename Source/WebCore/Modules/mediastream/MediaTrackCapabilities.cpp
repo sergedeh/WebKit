@@ -32,7 +32,7 @@
 
 namespace WebCore {
 
-static DoubleRange capabilityDoubleRange(const DoubleCapabilityRange& value)
+static DoubleRange NODELETE capabilityDoubleRange(const DoubleCapabilityRange& value)
 {
     auto min = value.min();
     auto max = value.max();
@@ -48,7 +48,7 @@ static DoubleRange capabilityDoubleRange(const DoubleCapabilityRange& value)
     return range;
 }
 
-static LongRange capabilityLongRange(const LongCapabilityRange& value)
+static LongRange NODELETE capabilityLongRange(const LongCapabilityRange& value)
 {
     return { value.max(), value.min() };
 }

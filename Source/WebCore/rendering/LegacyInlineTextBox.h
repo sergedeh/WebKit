@@ -41,15 +41,15 @@ public:
     explicit LegacyInlineTextBox(RenderSVGInlineText&);
     virtual ~LegacyInlineTextBox();
 
-    RenderSVGInlineText& renderer() const;
-    const RenderStyle& lineStyle() const;
+    RenderSVGInlineText& NODELETE renderer() const;
+    const Style::ComputedStyle& lineStyle() const LIFETIME_BOUND;
 
-    LegacyInlineTextBox* prevTextBox() const { return m_prevTextBox; }
-    LegacyInlineTextBox* nextTextBox() const { return m_nextTextBox; }
+    LegacyInlineTextBox* prevTextBox() const LIFETIME_BOUND { return m_prevTextBox; }
+    LegacyInlineTextBox* nextTextBox() const LIFETIME_BOUND { return m_nextTextBox; }
     void setNextTextBox(LegacyInlineTextBox* n) { m_nextTextBox = n; }
     void setPreviousTextBox(LegacyInlineTextBox* p) { m_prevTextBox = p; }
 
-    bool hasTextContent() const;
+    bool hasTextContent() const { return m_len; }
 
     unsigned start() const { return m_start; }
     unsigned end() const { return m_start + m_len; }
@@ -60,7 +60,7 @@ public:
 
     void offsetRun(int d) { ASSERT(!isDirty()); ASSERT(d > 0 || m_start >= static_cast<unsigned>(-d)); m_start += d; }
 
-    TextBoxSelectableRange selectableRange() const;
+    TextBoxSelectableRange NODELETE selectableRange() const;
 
     void markDirty(bool dirty = true) final;
 
@@ -78,8 +78,8 @@ public:
 #endif
 
 private:
-    LayoutUnit selectionTop() const;
-    LayoutUnit selectionBottom() const;
+    LayoutUnit NODELETE selectionTop() const;
+    LayoutUnit NODELETE selectionBottom() const;
     LayoutUnit selectionHeight() const;
 
 public:
@@ -93,17 +93,17 @@ public:
     RenderObject::HighlightState selectionState() const final;
 
 public:
-    bool isLineBreak() const final;
+    bool NODELETE isLineBreak() const final;
 
 private:
     bool isInlineTextBox() const final { return true; }
 
 public:
-    int caretMinOffset() const final;
-    int caretMaxOffset() const final;
+    int caretMinOffset() const final { return m_start; }
+    int NODELETE caretMaxOffset() const final;
 
 private:
-    float textPos() const; // returns the x position relative to the left start of the text line.
+    float NODELETE textPos() const; // returns the x position relative to the left start of the text line.
 
 public:
     bool hasMarkers() const;
@@ -131,7 +131,7 @@ inline void LegacyInlineTextBox::removeFromGlyphDisplayListCache()
     }
 }
 
-LayoutRect snappedSelectionRect(const LayoutRect&, float logicalRight, WritingMode);
+LayoutRect NODELETE snappedSelectionRect(const LayoutRect&, float logicalRight, WritingMode);
 
 } // namespace WebCore
 

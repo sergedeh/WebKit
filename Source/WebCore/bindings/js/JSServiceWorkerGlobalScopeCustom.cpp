@@ -30,18 +30,20 @@
 #include "ServiceWorkerClients.h"
 #include "ServiceWorkerGlobalScope.h"
 #include "WebCoreOpaqueRootInlines.h"
+#include <JavaScriptCore/SlotVisitorInlines.h>
+#include <JavaScriptCore/StructureInlines.h>
 
 namespace WebCore {
 
 using namespace JSC;
 
 template<typename Visitor>
-void JSServiceWorkerGlobalScope::visitAdditionalChildren(Visitor& visitor)
+void JSServiceWorkerGlobalScope::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     addWebCoreOpaqueRoot(visitor, wrapped().clients());
     addWebCoreOpaqueRoot(visitor, wrapped().registration());
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSServiceWorkerGlobalScope);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSServiceWorkerGlobalScope);
 
 } // namespace WebCore

@@ -64,8 +64,8 @@
 #import <JavaScriptCore/JSCConfig.h>
 #import <JavaScriptCore/Options.h>
 #import <JavaScriptCore/TestRunnerUtils.h>
+#import <WebCore/CookieStorageSession.h>
 #import <WebCore/LogInitialization.h>
-#import <WebCore/NetworkStorageSession.h>
 #import <WebCore/WebCoreMainThread.h>
 #import <WebKit/DOMElement.h>
 #import <WebKit/DOMExtensions.h>
@@ -81,6 +81,7 @@
 #import <WebKit/WebDocumentPrivate.h>
 #import <WebKit/WebEditingDelegate.h>
 #import <WebKit/WebFeature.h>
+#import <WebKit/WebFramePrivate.h>
 #import <WebKit/WebFrameView.h>
 #import <WebKit/WebHistory.h>
 #import <WebKit/WebHistoryItemPrivate.h>
@@ -1010,6 +1011,7 @@ static void initializeGlobalsFromCommandLineOptions(int argc, const char *argv[]
         {"world-leaks", no_argument, &checkForWorldLeaks, NO},
         {"webcore-logging", required_argument, nullptr, 'w'},
         {"localhost-alias", required_argument, nullptr, 'l'},
+        { "ip-address-space-overrides", required_argument, nullptr, 'i' },
         {nullptr, 0, nullptr, 0}
     };
 
@@ -1060,7 +1062,7 @@ static bool handleControlCommand(std::span<const char> command)
         unsigned resultLength = result.length();
         printf("Content-Type: text/plain\n");
         printf("Content-Length: %u\n", resultLength);
-        fwrite(result.utf8().data(), 1, resultLength, stdout);
+        fwrite(result.utf8().legacyCStringPointer(), 1, resultLength, stdout);
         printf("#EOF\n");
         fprintf(stderr, "#EOF\n");
         fflush(stdout);
@@ -1303,7 +1305,7 @@ int DumpRenderTreeMain(int argc, const char *argv[])
     atexit(atexitFunction);
 
     WTF::setProcessPrivileges(allPrivileges());
-    WebCore::NetworkStorageSession::permitProcessToUseCookieAPI(true);
+    WebCore::CookieStorageSession::permitProcessToUseCookieAPI(true);
     WebCoreTestSupport::setLinkedOnOrAfterEverythingForTesting();
 
 #if PLATFORM(IOS_FAMILY)
@@ -1413,7 +1415,7 @@ static RetainPtr<NSString> dumpFramesAsText(WebFrame *frame)
     else
         result = adoptNS([[NSMutableString alloc] init]);
 
-    NSString *innerText = [documentElement innerText];
+    NSString *innerText = [frame _plainTextForTesting];
 
     // We use WTF::String::tryGetUTF8 to convert innerText to a UTF8 buffer since
     // it can handle dangling surrogates and the NSString
@@ -1672,6 +1674,9 @@ void dump()
         } else
             printf("ERROR: nil result from %s", methodNameStringForFailedTest());
 
+        if (gTestRunner->shouldDumpResourceLoadCallbacks())
+            gTestRunner->dumpResourceLoadCallbacks();
+
         // Stop the watchdog thread before we leave this test to make sure it doesn't
         // fire in between tests causing the next test to fail.
         // This is a speculative fix for: https://bugs.webkit.org/show_bug.cgi?id=32339
@@ -1723,9 +1728,18 @@ static void setJSCOptions(const WTR::TestOptions& options)
         savedOptions.clear();
     }
 
-    if (options.jscOptions().length()) {
+    bool hasTestJSCOptions = options.jscOptions().length();
+    if (enableAllExperimentalFeatures || hasTestJSCOptions) {
         JSC::Options::dumpAllOptionsInALine(savedOptions);
-        JSC::Options::setOptions(options.jscOptions().c_str());
+        if (enableAllExperimentalFeatures) {
+            JSC::Options::AllowUnfinalizedAccessScope scope;
+#define WEBKIT_ENABLE_JSC_EXPERIMENTAL_OPTION(type, jscOption, defaultValue, status, description) JSC::Options::jscOption() = true;
+            FOR_EACH_JSC_WEB_PREFERENCE_OPTION(WEBKIT_ENABLE_JSC_EXPERIMENTAL_OPTION)
+#undef WEBKIT_ENABLE_JSC_EXPERIMENTAL_OPTION
+            JSC::Options::notifyOptionsChanged();
+        }
+        if (hasTestJSCOptions)
+            JSC::Options::setOptions(options.jscOptions().c_str());
     }
 }
 
@@ -1925,7 +1939,7 @@ static void runTest(const std::string& inputLine)
         testPath = [url.get() absoluteString];
 
     auto message = makeString("CRASHING TEST: "_s, testPath);
-    WTF::setCrashLogMessage(message.utf8().data());
+    WTF::setCrashLogMessage(message.utf8());
 
     auto options = testOptionsForTest(command);
 
@@ -1941,6 +1955,9 @@ static void runTest(const std::string& inputLine)
     gTestRunner->setLocalhostAliases(localhostAliases);
     gTestRunner->setCustomTimeout(command.timeout.milliseconds());
     gTestRunner->setDumpJSConsoleLogInStdErr(command.dumpJSConsoleLogInStdErr || options.dumpJSConsoleLogInStdErr());
+    if (options.shouldDumpResourceLoadCallbacks())
+        gTestRunner->setDumpResourceLoadCallbacks(true);
+    gTestRunner->dumpResourceResponseMIMETypes(options.resourceResponseMIMETypesToDump());
 
 #if ENABLE(DNS_SERVER_FOR_TESTING)
     gTestRunner->initializeDNS();

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StyleAlignItems.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 
@@ -48,7 +49,7 @@ StyleSelfAlignmentData AlignItems::resolve() const
 
     switch (primary()) {
     case PrimaryKind::Normal:
-        return { ItemPosition::Normal };
+        return resolveOverflowPosition(ItemPosition::Normal);
     case PrimaryKind::Stretch:
         return { ItemPosition::Stretch };
     case PrimaryKind::Baseline:
@@ -79,8 +80,8 @@ StyleSelfAlignmentData AlignItems::resolve() const
 
 auto CSSValueConversion<AlignItems>::operator()(BuilderState& state, const CSSValue& value) -> AlignItems
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
+    if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
         // normal
         case CSSValueNormal:
             return CSS::Keyword::Normal { };
@@ -113,7 +114,7 @@ auto CSSValueConversion<AlignItems>::operator()(BuilderState& state, const CSSVa
         }
     }
 
-    auto pair = requiredPairDowncast<CSSPrimitiveValue>(state, value);
+    auto pair = requiredPairDowncast<CSSKeywordValue>(state, value);
     if (!pair)
         return CSS::Keyword::Normal { };
 
@@ -129,6 +130,8 @@ auto CSSValueConversion<AlignItems>::operator()(BuilderState& state, const CSSVa
 
     auto consumeAfterOverflowPosition = [&](auto overflowPosition, auto secondValueID) -> AlignItems {
         switch (secondValueID) {
+        case CSSValueNormal:
+            return { CSS::Keyword::Normal { }, overflowPosition };
         case CSSValueStart:
             return { CSS::Keyword::Start { }, overflowPosition };
         case CSSValueEnd:

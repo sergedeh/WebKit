@@ -29,6 +29,7 @@
 #if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE))
 
 #include <WebCore/EventListener.h>
+#include <WebCore/HTMLMediaElement.h>
 #include <WebCore/HTMLMediaElementEnums.h>
 #include <WebCore/ImmersiveVideoMetadata.h>
 #include <WebCore/PlaybackSessionModel.h>
@@ -43,12 +44,13 @@
 namespace WebCore {
 
 class AudioTrack;
-class HTMLMediaElement;
+class MediaSession;
 class TextTrack;
 
 class PlaybackSessionModelMediaElement final
     : public PlaybackSessionModel
     , public EventListener
+    , public HTMLMediaElementClient
     , public CanMakeCheckedPtr<PlaybackSessionModelMediaElement> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(PlaybackSessionModelMediaElement, WEBCORE_EXPORT);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PlaybackSessionModelMediaElement);
@@ -60,6 +62,9 @@ public:
     WEBCORE_EXPORT virtual ~PlaybackSessionModelMediaElement();
 
     USING_CAN_MAKE_WEAKPTR(PlaybackSessionModel);
+
+    void ref() const final { EventListener::ref(); }
+    void deref() const final { EventListener::deref(); }
 
     // CheckedPtr interface
     uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
@@ -130,6 +135,7 @@ public:
     bool externalPlaybackEnabled() const final;
     ExternalPlaybackTargetType externalPlaybackTargetType() const final;
     String externalPlaybackLocalizedDeviceName() const final;
+    String externalPlaybackLocalizedRouteName() const final;
     bool wirelessVideoPlaybackDisabled() const final;
     bool isMuted() const final;
     double volume() const final;
@@ -153,12 +159,17 @@ private:
     void updateRate();
 
     void videoTrackConfigurationChanged();
+    void captionTracksChanged() final;
+    void captionsEnabledChanged() final;
+    void seekableRangesChanged() final;
+
+    void updateSeekableRanges();
 
 #if !RELEASE_LOG_DISABLED
     uint64_t logIdentifier() const final;
     const Logger* loggerPtr() const final;
     ASCIILiteral logClassName() const { return "PlaybackSessionModelMediaElement"_s; }
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& NODELETE logChannel() const;
 #endif
 
     RefPtr<HTMLMediaElement> m_mediaElement;
@@ -168,6 +179,9 @@ private:
     Vector<Ref<AudioTrack>> m_audioTracksForMenu;
     AudioSessionSoundStageSize m_soundStageSize;
     std::optional<ImmersiveVideoMetadata> m_immersiveVideoMetadata;
+    std::optional<PlatformTimeRanges> m_lastSeekableRanges;
+    double m_lastSeekableTimeRangesLastModifiedTime { 0 };
+    double m_lastLiveUpdateInterval { 0 };
 
     const Ref<Observer<void()>> m_videoTrackConfigurationObserver;
 };

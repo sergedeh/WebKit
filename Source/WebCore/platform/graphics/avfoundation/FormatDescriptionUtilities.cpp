@@ -37,6 +37,7 @@
 #include <wtf/cf/TypeCastsCF.h>
 #include <wtf/cf/VectorCF.h>
 
+#include "CoreVideoSoftLink.h"
 #include <pal/cf/CoreMediaSoftLink.h>
 #include <pal/cf/VideoToolboxSoftLink.h>
 
@@ -84,9 +85,9 @@ std::optional<PlatformVideoColorSpace> colorSpaceFromFormatDescription(CMFormatD
         return std::nullopt;
 
     PlatformVideoColorSpace colorSpace;
-    RetainPtr primaries = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::get_CoreMedia_kCMFormatDescriptionExtension_ColorPrimariesSingleton()));
-    RetainPtr transfer = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::get_CoreMedia_kCMFormatDescriptionExtension_TransferFunctionSingleton()));
-    RetainPtr matrix = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::get_CoreMedia_kCMFormatDescriptionExtension_YCbCrMatrixSingleton()));
+    RetainPtr primaries = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, kCVImageBufferColorPrimariesKey));
+    RetainPtr transfer = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, kCVImageBufferTransferFunctionKey));
+    RetainPtr matrix = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, kCVImageBufferYCbCrMatrixKey));
 
     if (!primaries || !transfer || !matrix) {
         auto size = presentationSizeFromFormatDescription(formatDescription);
@@ -106,34 +107,132 @@ std::optional<PlatformVideoColorSpace> colorSpaceFromFormatDescription(CMFormatD
     }
 
     if (primaries) {
-        if (safeCFEqual(primaries.get(), PAL::get_CoreMedia_kCMFormatDescriptionColorPrimaries_ITU_R_709_2Singleton()))
+        if (safeCFEqual(primaries.get(), kCVImageBufferColorPrimaries_ITU_R_709_2))
             colorSpace.primaries = PlatformVideoColorPrimaries::Bt709;
-        else if (safeCFEqual(primaries.get(), PAL::get_CoreMedia_kCMFormatDescriptionColorPrimaries_EBU_3213Singleton()))
-            colorSpace.primaries = PlatformVideoColorPrimaries::Bt470bg;
-        else if (safeCFEqual(primaries.get(), PAL::get_CoreMedia_kCMFormatDescriptionColorPrimaries_SMPTE_CSingleton()))
+        else if (safeCFEqual(primaries.get(), kCVImageBufferColorPrimaries_EBU_3213))
+            colorSpace.primaries = PlatformVideoColorPrimaries::JedecP22Phosphors;
+        else if (safeCFEqual(primaries.get(), kCVImageBufferColorPrimaries_P22))
+            colorSpace.primaries = PlatformVideoColorPrimaries::JedecP22Phosphors;
+        else if (safeCFEqual(primaries.get(), kCVImageBufferColorPrimaries_SMPTE_C))
             colorSpace.primaries = PlatformVideoColorPrimaries::Smpte170m;
+        else if (safeCFEqual(primaries.get(), kCVImageBufferColorPrimaries_DCI_P3))
+            colorSpace.primaries = PlatformVideoColorPrimaries::SmpteRp431;
+        else if (safeCFEqual(primaries.get(), kCVImageBufferColorPrimaries_P3_D65))
+            colorSpace.primaries = PlatformVideoColorPrimaries::SmpteEg432;
+        else if (safeCFEqual(primaries.get(), kCVImageBufferColorPrimaries_ITU_R_2020))
+            colorSpace.primaries = PlatformVideoColorPrimaries::Bt2020;
     }
 
     if (transfer) {
-        if (safeCFEqual(transfer.get(), PAL::get_CoreMedia_kCMFormatDescriptionTransferFunction_ITU_R_709_2Singleton()))
+        if (safeCFEqual(transfer.get(), kCVImageBufferTransferFunction_ITU_R_709_2))
             colorSpace.transfer = PlatformVideoTransferCharacteristics::Bt709;
+        else if (safeCFEqual(transfer.get(), kCVImageBufferTransferFunction_SMPTE_240M_1995))
+            colorSpace.transfer = PlatformVideoTransferCharacteristics::Smpte240m;
+        else if (safeCFEqual(transfer.get(), kCVImageBufferTransferFunction_UseGamma)) {
+            if (RetainPtr gammaLevel = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, kCVImageBufferGammaLevelKey))) {
+                double gamma = 0;
+                CFNumberGetValue(gammaLevel.get(), kCFNumberFloat64Type, &gamma);
+                if (gamma < 2.5)
+                    colorSpace.transfer = PlatformVideoTransferCharacteristics::Gamma22curve;
+                else
+                    colorSpace.transfer = PlatformVideoTransferCharacteristics::Gamma28curve;
+            }
+        } else if (safeCFEqual(transfer.get(), PAL::kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ))
+            colorSpace.transfer = PlatformVideoTransferCharacteristics::SmpteSt2084;
+        else if (safeCFEqual(transfer.get(), PAL::kCMFormatDescriptionTransferFunction_ITU_R_2020))
+            colorSpace.transfer = PlatformVideoTransferCharacteristics::Bt2020_10bit;
+        else if (safeCFEqual(transfer.get(), PAL::kCMFormatDescriptionTransferFunction_SMPTE_ST_428_1))
+            colorSpace.transfer = PlatformVideoTransferCharacteristics::SmpteSt4281;
+        else if (safeCFEqual(transfer.get(), PAL::kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG))
+            colorSpace.transfer = PlatformVideoTransferCharacteristics::AribStdB67Hlg;
         else if (safeCFEqual(transfer.get(), PAL::kCMFormatDescriptionTransferFunction_sRGB))
             colorSpace.transfer = PlatformVideoTransferCharacteristics::Iec6196621;
+        else if (safeCFEqual(transfer.get(), PAL::kCMFormatDescriptionTransferFunction_Linear))
+            colorSpace.transfer = PlatformVideoTransferCharacteristics::Linear;
     }
 
     if (matrix) {
-        if (safeCFEqual(matrix.get(), PAL::get_CoreMedia_kCVImageBufferYCbCrMatrix_ITU_R_709_2Singleton()))
-            colorSpace.matrix = PlatformVideoMatrixCoefficients::Bt709;
-        else if (safeCFEqual(matrix.get(), PAL::get_CoreMedia_kCVImageBufferYCbCrMatrix_ITU_R_601_4Singleton()))
+        if (safeCFEqual(matrix.get(), kCVImageBufferYCbCrMatrix_ITU_R_2020))
+            colorSpace.matrix = PlatformVideoMatrixCoefficients::Bt2020NonconstantLuminance;
+        else if (safeCFEqual(matrix.get(), kCVImageBufferYCbCrMatrix_ITU_R_601_4))
             colorSpace.matrix = PlatformVideoMatrixCoefficients::Bt470bg;
-        else if (safeCFEqual(matrix.get(), PAL::get_CoreMedia_kCMFormatDescriptionYCbCrMatrix_SMPTE_240M_1995Singleton()))
-            colorSpace.matrix = PlatformVideoMatrixCoefficients::Smpte170m;
+        else if (safeCFEqual(matrix.get(), kCVImageBufferYCbCrMatrix_ITU_R_709_2))
+            colorSpace.matrix = PlatformVideoMatrixCoefficients::Bt709;
+        else if (safeCFEqual(matrix.get(), kCVImageBufferYCbCrMatrix_SMPTE_240M_1995))
+            colorSpace.matrix = PlatformVideoMatrixCoefficients::Smpte240m;
     }
 
-    if (RetainPtr fullRange = static_cast<CFBooleanRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_FullRangeVideo)))
+    if (RetainPtr fullRange = dynamic_cf_cast<CFBooleanRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_FullRangeVideo)))
         colorSpace.fullRange = CFBooleanGetValue(fullRange.get());
 
+    // Progressive content carries the same location in both fields. There is no default to fall
+    // back on: an absent key means the decoder picks its own siting.
+    RetainPtr chromaLocation = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, kCVImageBufferChromaLocationTopFieldKey));
+    if (!chromaLocation)
+        chromaLocation = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, kCVImageBufferChromaLocationBottomFieldKey));
+
+    if (chromaLocation) {
+        if (safeCFEqual(chromaLocation.get(), kCVImageBufferChromaLocation_Left))
+            colorSpace.chromaLocation = PlatformVideoChromaLocation::Left;
+        else if (safeCFEqual(chromaLocation.get(), kCVImageBufferChromaLocation_Center))
+            colorSpace.chromaLocation = PlatformVideoChromaLocation::Center;
+        else if (safeCFEqual(chromaLocation.get(), kCVImageBufferChromaLocation_TopLeft))
+            colorSpace.chromaLocation = PlatformVideoChromaLocation::TopLeft;
+        else if (safeCFEqual(chromaLocation.get(), kCVImageBufferChromaLocation_Top))
+            colorSpace.chromaLocation = PlatformVideoChromaLocation::Top;
+        else if (safeCFEqual(chromaLocation.get(), kCVImageBufferChromaLocation_BottomLeft))
+            colorSpace.chromaLocation = PlatformVideoChromaLocation::BottomLeft;
+        else if (safeCFEqual(chromaLocation.get(), kCVImageBufferChromaLocation_Bottom))
+            colorSpace.chromaLocation = PlatformVideoChromaLocation::Bottom;
+        else if (safeCFEqual(chromaLocation.get(), kCVImageBufferChromaLocation_DV420))
+            colorSpace.chromaLocation = PlatformVideoChromaLocation::Dv420;
+    }
+
     return colorSpace;
+}
+
+std::optional<PlatformVideoFieldCount> fieldCountFromFormatDescription(CMFormatDescriptionRef formatDescription)
+{
+    if (!formatDescription)
+        return { };
+
+    RetainPtr fieldCount = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, kCVImageBufferFieldCountKey));
+    if (!fieldCount)
+        return { };
+
+    int value = 0;
+    if (!CFNumberGetValue(fieldCount.get(), kCFNumberIntType, &value))
+        return { };
+
+    switch (value) {
+    case 1:
+        return PlatformVideoFieldCount::Progressive;
+    case 2:
+        return PlatformVideoFieldCount::Interlaced;
+    }
+
+    return { };
+}
+
+std::optional<PlatformVideoFieldDetail> fieldDetailFromFormatDescription(CMFormatDescriptionRef formatDescription)
+{
+    if (!formatDescription)
+        return { };
+
+    RetainPtr fieldDetail = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, kCVImageBufferFieldDetailKey));
+    if (!fieldDetail)
+        return { };
+
+    if (safeCFEqual(fieldDetail.get(), kCVImageBufferFieldDetailTemporalTopFirst))
+        return PlatformVideoFieldDetail::TemporalTopFirst;
+    if (safeCFEqual(fieldDetail.get(), kCVImageBufferFieldDetailTemporalBottomFirst))
+        return PlatformVideoFieldDetail::TemporalBottomFirst;
+    if (safeCFEqual(fieldDetail.get(), kCVImageBufferFieldDetailSpatialFirstLineEarly))
+        return PlatformVideoFieldDetail::SpatialFirstLineEarly;
+    if (safeCFEqual(fieldDetail.get(), kCVImageBufferFieldDetailSpatialFirstLineLate))
+        return PlatformVideoFieldDetail::SpatialFirstLineLate;
+
+    return { };
 }
 
 String codecFromFormatDescription(CMFormatDescriptionRef formatDescription)
@@ -244,7 +343,7 @@ bool formatDescriptionIsProtected(CMFormatDescriptionRef formatDescription)
     CFStringRef originalFormatKey = PAL::canLoad_CoreMedia_kCMFormatDescriptionExtension_ProtectedContentOriginalFormat() ? PAL::kCMFormatDescriptionExtension_ProtectedContentOriginalFormat : CFSTR("CommonEncryptionOriginalFormat");
 
     // Note: this assumes only-and-all content which is protected will have the ProtectedContentOriginalFormat key.
-    if (auto originalFormat = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, originalFormatKey))) {
+    if (RetainPtr originalFormat = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, originalFormatKey))) {
         UNUSED_PARAM(originalFormat);
         return true;
     }
@@ -327,19 +426,19 @@ static Vector<CameraCalibration> toCameraCalibrationDataLensCollection(CFArrayRe
     collection.reserveInitialCapacity(CFArrayGetCount(array));
 
     for (RetainPtr dictionary : makeVector<RetainPtr<CFDictionaryRef>, CFDictionaryRef>(array)) {
-        auto lensAlgorithmKind = dynamic_cf_cast<CFStringRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensAlgorithmKind));
-        auto lensDomain = dynamic_cf_cast<CFStringRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensDomain));
-        auto lensIdentifier = dynamic_cf_cast<CFNumberRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensIdentifier));
-        auto lensRole = dynamic_cf_cast<CFStringRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensRole));
-        auto lensDistortions = dynamic_cf_cast<CFArrayRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensDistortions));
-        auto intrinsicMatrix = dynamic_cf_cast<CFDataRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_IntrinsicMatrix));
-        auto lensFrameAdjustmentsPolynomialX = dynamic_cf_cast<CFArrayRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensFrameAdjustmentsPolynomialX));
-        auto lensFrameAdjustmentsPolynomialY = dynamic_cf_cast<CFArrayRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensFrameAdjustmentsPolynomialY));
-        auto radialAngleLimit = dynamic_cf_cast<CFNumberRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_RadialAngleLimit));
-        auto intrinsicMatrixProjectionOffset = dynamic_cf_cast<CFNumberRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_IntrinsicMatrixProjectionOffset));
-        auto intrinsicMatrixReferenceDimensions = dynamic_cf_cast<CFDictionaryRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_IntrinsicMatrixReferenceDimensions));
-        auto extrinsicOriginSource = dynamic_cf_cast<CFStringRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_ExtrinsicOriginSource));
-        auto extrinsicOrientationQuaternion = dynamic_cf_cast<CFArrayRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_ExtrinsicOrientationQuaternion));
+        RetainPtr lensAlgorithmKind = dynamic_cf_cast<CFStringRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensAlgorithmKind));
+        RetainPtr lensDomain = dynamic_cf_cast<CFStringRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensDomain));
+        RetainPtr lensIdentifier = dynamic_cf_cast<CFNumberRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensIdentifier));
+        RetainPtr lensRole = dynamic_cf_cast<CFStringRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensRole));
+        RetainPtr lensDistortions = dynamic_cf_cast<CFArrayRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensDistortions));
+        RetainPtr intrinsicMatrix = dynamic_cf_cast<CFDataRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_IntrinsicMatrix));
+        RetainPtr lensFrameAdjustmentsPolynomialX = dynamic_cf_cast<CFArrayRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensFrameAdjustmentsPolynomialX));
+        RetainPtr lensFrameAdjustmentsPolynomialY = dynamic_cf_cast<CFArrayRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensFrameAdjustmentsPolynomialY));
+        RetainPtr radialAngleLimit = dynamic_cf_cast<CFNumberRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_RadialAngleLimit));
+        RetainPtr intrinsicMatrixProjectionOffset = dynamic_cf_cast<CFNumberRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_IntrinsicMatrixProjectionOffset));
+        RetainPtr intrinsicMatrixReferenceDimensions = dynamic_cf_cast<CFDictionaryRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_IntrinsicMatrixReferenceDimensions));
+        RetainPtr extrinsicOriginSource = dynamic_cf_cast<CFStringRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_ExtrinsicOriginSource));
+        RetainPtr extrinsicOrientationQuaternion = dynamic_cf_cast<CFArrayRef>(CFDictionaryGetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_ExtrinsicOrientationQuaternion));
 
         if (!lensAlgorithmKind || !lensDomain || !lensIdentifier || !lensDistortions || !intrinsicMatrix || !intrinsicMatrixProjectionOffset || !intrinsicMatrixReferenceDimensions || !extrinsicOriginSource || !extrinsicOrientationQuaternion) {
             RELEASE_LOG_ERROR(Media, "Invalid CameraCalibrationDataLens, compulsory fields missing");
@@ -428,23 +527,23 @@ std::optional<ImmersiveVideoMetadata> immersiveVideoMetadataFromFormatDescriptio
     if (PAL::CMFormatDescriptionGetMediaType(formatDescription) != kCMMediaType_Video)
         return { };
 
-    auto projectionKind = toVideoProjectionMetadataKind(dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_ProjectionKind)));
+    auto projectionKind = toVideoProjectionMetadataKind(protect(dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_ProjectionKind))));
     if (!projectionKind)
         return { };
 
     ImmersiveVideoMetadata metadata;
     metadata.kind = *projectionKind;
 
-    if (auto horizontalFieldOfView = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HorizontalFieldOfView))) {
+    if (RetainPtr horizontalFieldOfView = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HorizontalFieldOfView))) {
         metadata.horizontalFieldOfView.emplace(0);
         CFNumberGetValue(horizontalFieldOfView, kCFNumberSInt32Type, &*metadata.horizontalFieldOfView);
     }
-    if (auto baselineField = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_StereoCameraBaseline))) {
+    if (RetainPtr baselineField = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_StereoCameraBaseline))) {
         metadata.stereoCameraBaseline.emplace(0);
         CFNumberGetValue(baselineField, kCFNumberSInt32Type, &*metadata.stereoCameraBaseline);
     }
 
-    if (auto disparityAdjustmentField = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HorizontalDisparityAdjustment))) {
+    if (RetainPtr disparityAdjustmentField = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HorizontalDisparityAdjustment))) {
         metadata.horizontalDisparityAdjustment.emplace(0);
         CFNumberGetValue(disparityAdjustmentField, kCFNumberSInt32Type, &*metadata.horizontalDisparityAdjustment);
     }
@@ -452,16 +551,16 @@ std::optional<ImmersiveVideoMetadata> immersiveVideoMetadataFromFormatDescriptio
     CMVideoDimensions dimensions = PAL::CMVideoFormatDescriptionGetDimensions(formatDescription);
     metadata.size = { dimensions.width, dimensions.height };
 
-    if (auto hasLeftStereoEyeView = dynamic_cf_cast<CFBooleanRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HasLeftStereoEyeView)))
+    if (RetainPtr hasLeftStereoEyeView = dynamic_cf_cast<CFBooleanRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HasLeftStereoEyeView)))
         metadata.hasLeftStereoEyeView = CFBooleanGetValue(hasLeftStereoEyeView);
-    if (auto hasRightStereoEyeView = dynamic_cf_cast<CFBooleanRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HasRightStereoEyeView)))
+    if (RetainPtr hasRightStereoEyeView = dynamic_cf_cast<CFBooleanRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HasRightStereoEyeView)))
         metadata.hasRightStereoEyeView = CFBooleanGetValue(hasRightStereoEyeView);
-    if (auto heroEye = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HeroEye)))
+    if (RetainPtr heroEye = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_HeroEye)))
         metadata.heroEye = toHeroEye(heroEye);
-    if (auto viewPackingKind = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_ViewPackingKind)))
+    if (RetainPtr viewPackingKind = dynamic_cf_cast<CFStringRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_ViewPackingKind)))
         metadata.viewPackingKind = toViewPackingKind(viewPackingKind);
 
-    if (auto collection = dynamic_cf_cast<CFArrayRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_CameraCalibrationDataLensCollection)))
+    if (RetainPtr collection = dynamic_cf_cast<CFArrayRef>(PAL::CMFormatDescriptionGetExtension(formatDescription, PAL::kCMFormatDescriptionExtension_CameraCalibrationDataLensCollection)))
         metadata.cameraCalibrationDataLensCollection = toCameraCalibrationDataLensCollection(collection);
 
     return metadata;
@@ -511,7 +610,7 @@ RetainPtr<CFDictionaryRef> extractImmersiveVideoMetadata(CMFormatDescriptionRef 
 RetainPtr<CFDictionaryRef> formatDescriptionDictionaryFromImmersiveVideoMetadata(const ImmersiveVideoMetadata& metadata)
 {
     RetainPtr<CFMutableDictionaryRef> extensions = adoptCF(CFDictionaryCreateMutable(kCFAllocatorDefault, 9, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
-    auto kind = [](auto kind) -> CFStringRef {
+    RetainPtr kind = [](auto kind) -> CFStringRef {
         switch (kind) {
         case ImmersiveVideoMetadata::Kind::Rectilinear:
             return PAL::kCMFormatDescriptionProjectionKind_Rectilinear;
@@ -543,7 +642,7 @@ RetainPtr<CFDictionaryRef> formatDescriptionDictionaryFromImmersiveVideoMetadata
         CFDictionaryAddValue(extensions.get(), PAL::kCMFormatDescriptionExtension_HasRightStereoEyeView, *metadata.hasRightStereoEyeView ? kCFBooleanTrue : kCFBooleanFalse);
 
     if (metadata.heroEye) {
-        CFStringRef heroEye = [](auto eye) {
+        RetainPtr heroEye = [](auto eye) {
             switch (eye) {
             case HeroEye::Left:
                 return PAL::kCMFormatDescriptionHeroEye_Left;
@@ -555,7 +654,7 @@ RetainPtr<CFDictionaryRef> formatDescriptionDictionaryFromImmersiveVideoMetadata
     }
 
     if (metadata.viewPackingKind) {
-        CFStringRef viewPackingKind = [](auto viewPackingKind) {
+        RetainPtr viewPackingKind = [](auto viewPackingKind) {
             switch (viewPackingKind) {
             case ViewPackingKind::SideBySide:
                 return PAL::kCMFormatDescriptionViewPackingKind_SideBySide;
@@ -570,7 +669,7 @@ RetainPtr<CFDictionaryRef> formatDescriptionDictionaryFromImmersiveVideoMetadata
     for (auto& cameraCalibration : metadata.cameraCalibrationDataLensCollection) {
         RetainPtr dictionary = adoptCF(CFDictionaryCreateMutable(nullptr, 13, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
 
-        auto lensAlgorithmKind = [](auto lensAlgorithmKind) {
+        RetainPtr lensAlgorithmKind = [](auto lensAlgorithmKind) {
             switch (lensAlgorithmKind) {
             case LensAlgorithmKind::ParametricLens:
                 return PAL::kCMFormatDescriptionCameraCalibrationLensAlgorithmKind_ParametricLens;
@@ -578,7 +677,7 @@ RetainPtr<CFDictionaryRef> formatDescriptionDictionaryFromImmersiveVideoMetadata
         }(cameraCalibration.lensAlgorithmKind);
         CFDictionarySetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensAlgorithmKind, lensAlgorithmKind);
 
-        auto lensDomain = [](auto lensDomain) {
+        RetainPtr lensDomain = [](auto lensDomain) {
             switch (lensDomain) {
             case LensDomain::Color:
                 return PAL::kCMFormatDescriptionCameraCalibrationLensDomain_Color;
@@ -589,7 +688,7 @@ RetainPtr<CFDictionaryRef> formatDescriptionDictionaryFromImmersiveVideoMetadata
         RetainPtr lensIdentifier = adoptCF(CFNumberCreate(nullptr, kCFNumberSInt32Type, &cameraCalibration.lensIdentifier));
         CFDictionarySetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_LensIdentifier, lensIdentifier.get());
 
-        auto lensRole = [](auto lensRole) {
+        RetainPtr lensRole = [](auto lensRole) {
             switch (lensRole) {
             case LensRole::Mono:
                 return PAL::kCMFormatDescriptionCameraCalibrationLensRole_Mono;
@@ -625,7 +724,7 @@ RetainPtr<CFDictionaryRef> formatDescriptionDictionaryFromImmersiveVideoMetadata
         }));
         CFDictionarySetValue(dictionary.get(), PAL::kCMFormatDescriptionCameraCalibration_IntrinsicMatrixReferenceDimensions, intrinsicMatrixReferenceDimensions.get());
 
-        auto extrinsicOriginSource = [](auto extrinsicOriginSource) {
+        RetainPtr extrinsicOriginSource = [](auto extrinsicOriginSource) {
             switch (extrinsicOriginSource) {
             case ExtrinsicOriginSource::StereoCameraSystemBaseline:
                 return PAL::kCMFormatDescriptionCameraCalibrationExtrinsicOriginSource_StereoCameraSystemBaseline;

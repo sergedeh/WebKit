@@ -28,7 +28,6 @@
 #include <wtf/Forward.h>
 #include <wtf/text/CharacterProperties.h>
 #include <wtf/text/TextStream.h>
-#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 
@@ -85,7 +84,7 @@ public:
 
     bool isAuto() const { return m_trim == TrimType::Auto; }
     bool isSpaceAll() const { return m_trim == TrimType::SpaceAll; }
-    bool shouldTrimSpacing(const TextSpacing::CharactersData&) const;
+    bool NODELETE shouldTrimSpacing(const TextSpacing::CharactersData&) const;
     friend bool operator==(const TextSpacingTrim&, const TextSpacingTrim&) = default;
     constexpr TrimType type() const { return m_trim; }
 private:
@@ -112,7 +111,8 @@ public:
         Auto = 1 << 0,
         IdeographAlpha = 1 << 1,
         IdeographNumeric = 1 << 2,
-        Normal = 1 << 3
+        Normal = 1 << 3,
+        Insert = 1 << 4
     };
 
     using Options = OptionSet<Type>;
@@ -128,13 +128,14 @@ public:
     constexpr bool isNormal() const { return m_options.contains(Type::Normal); }
     constexpr bool hasIdeographAlpha() const { return m_options.containsAny({ Type::IdeographAlpha, Type::Normal }); }
     constexpr bool hasIdeographNumeric() const { return m_options.containsAny({ Type::IdeographNumeric, Type::Normal }); }
+    constexpr bool hasInsert() const { return m_options.contains(Type::Insert); }
     constexpr Options options() { return m_options; }
 
     bool operator==(const TextAutospace&) const = default;
 
     bool shouldApplySpacing(TextSpacing::CharacterClass firstCharacterClass, TextSpacing::CharacterClass secondCharacterClass) const;
     bool shouldApplySpacing(char32_t firstCharacter, char32_t secondCharacter) const;
-    static float textAutospaceSize(const Font&);
+    static float NODELETE textAutospaceSize(const Font&);
 
 private:
     Options m_options { };
@@ -153,6 +154,8 @@ inline WTF::TextStream& operator<<(WTF::TextStream& ts, const TextAutospace& val
         ts << "ideograph-alpha"_s;
     if (value.hasIdeographNumeric())
         ts << "ideograph-numeric"_s;
+    if (value.hasInsert())
+        ts << "insert"_s;
     return ts;
 }
 

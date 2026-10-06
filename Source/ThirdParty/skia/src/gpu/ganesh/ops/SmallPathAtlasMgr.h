@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Google Inc.
+ * Copyright 2020 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -12,9 +12,9 @@
 
 #if !defined(SK_ENABLE_OPTIMIZE_SIZE)
 
-#include "src/base/SkTInternalLList.h"
 #include "src/core/SkTDynamicHash.h"
-#include "src/gpu/AtlasTypes.h"
+#include "src/core/SkTInternalLList.h"
+#include "src/gpu/ganesh/GrAtlasTypes.h"
 #include "src/gpu/ganesh/GrDrawOpAtlas.h"
 #include "src/gpu/ganesh/GrOnFlushResourceProvider.h"
 #include "src/gpu/ganesh/ops/SmallPathShapeData.h"
@@ -40,8 +40,8 @@ namespace skgpu::ganesh {
  * TODO: investigate fusing this class and the GrAtlasManager.
  */
 class SmallPathAtlasMgr final : public GrOnFlushCallbackObject,
-                                public skgpu::PlotEvictionCallback,
-                                public skgpu::AtlasGenerationCounter {
+                                public GrPlotEvictionCallback,
+                                public GrAtlasGenerationCounter {
 public:
     SmallPathAtlasMgr();
     ~SmallPathAtlasMgr() override;
@@ -55,8 +55,9 @@ public:
 
     GrDrawOpAtlas::ErrorCode addToAtlas(GrResourceProvider*,
                                         GrDeferredUploadTarget*,
-                                        int width, int height, const void* image,
-                                        skgpu::AtlasLocator*);
+                                        int width, int height,
+                                        const void* image,
+                                        GrAtlasLocator*);
 
     void setUseToken(SmallPathShapeData*, skgpu::Token);
 
@@ -92,9 +93,9 @@ public:
     void deleteCacheEntry(SmallPathShapeData*);
 
 private:
-    SmallPathShapeData* findOrCreate(const SmallPathShapeDataKey&);
+    SmallPathShapeData* findOrCreate(const SmallPathShapeDataKey&, const GrStyledShape&);
 
-    void evict(skgpu::PlotLocator) override;
+    void evict(GrPlotLocator) override;
 
     using ShapeCache = SkTDynamicHash<SmallPathShapeData, SmallPathShapeDataKey>;
     typedef SkTInternalLList<SmallPathShapeData> ShapeDataList;

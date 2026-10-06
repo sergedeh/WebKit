@@ -15,7 +15,6 @@ namespace gl
 {
 
 void CaptureClipPlanef_eqn(const State &glState,
-                           bool isCallValid,
                            GLenum p,
                            const GLfloat *eqn,
                            ParamCapture *paramCapture)
@@ -24,7 +23,6 @@ void CaptureClipPlanef_eqn(const State &glState,
 }
 
 void CaptureClipPlanex_equation(const State &glState,
-                                bool isCallValid,
                                 GLenum plane,
                                 const GLfixed *equation,
                                 ParamCapture *paramCapture)
@@ -33,7 +31,6 @@ void CaptureClipPlanex_equation(const State &glState,
 }
 
 void CaptureColorPointer_pointer(const State &glState,
-                                 bool isCallValid,
                                  GLint size,
                                  VertexAttribType typePacked,
                                  GLsizei stride,
@@ -44,7 +41,6 @@ void CaptureColorPointer_pointer(const State &glState,
 }
 
 void CaptureFogfv_params(const State &glState,
-                         bool isCallValid,
                          GLenum pname,
                          const GLfloat *params,
                          ParamCapture *paramCapture)
@@ -54,7 +50,6 @@ void CaptureFogfv_params(const State &glState,
 }
 
 void CaptureFogxv_param(const State &glState,
-                        bool isCallValid,
                         GLenum pname,
                         const GLfixed *param,
                         ParamCapture *paramCapture)
@@ -63,7 +58,6 @@ void CaptureFogxv_param(const State &glState,
 }
 
 void CaptureGetClipPlanef_equation(const State &glState,
-                                   bool isCallValid,
                                    GLenum plane,
                                    GLfloat *equation,
                                    ParamCapture *paramCapture)
@@ -72,7 +66,6 @@ void CaptureGetClipPlanef_equation(const State &glState,
 }
 
 void CaptureGetClipPlanex_equation(const State &glState,
-                                   bool isCallValid,
                                    GLenum plane,
                                    GLfixed *equation,
                                    ParamCapture *paramCapture)
@@ -80,17 +73,15 @@ void CaptureGetClipPlanex_equation(const State &glState,
     UNIMPLEMENTED();
 }
 
-void CaptureGetFixedv_params(const State &glState,
-                             bool isCallValid,
-                             GLenum pname,
-                             GLfixed *params,
-                             ParamCapture *paramCapture)
+void CaptureGetFixedv_data(const State &glState,
+                           GLenum pname,
+                           GLfixed *data,
+                           ParamCapture *paramCapture)
 {
     CaptureGetParameter(glState, pname, sizeof(GLfixed), paramCapture);
 }
 
 void CaptureGetLightfv_params(const State &glState,
-                              bool isCallValid,
                               GLenum light,
                               LightParameter pnamePacked,
                               GLfloat *params,
@@ -101,7 +92,6 @@ void CaptureGetLightfv_params(const State &glState,
 }
 
 void CaptureGetLightxv_params(const State &glState,
-                              bool isCallValid,
                               GLenum light,
                               LightParameter pnamePacked,
                               GLfixed *params,
@@ -111,7 +101,6 @@ void CaptureGetLightxv_params(const State &glState,
 }
 
 void CaptureGetMaterialfv_params(const State &glState,
-                                 bool isCallValid,
                                  GLenum face,
                                  MaterialParameter pnamePacked,
                                  GLfloat *params,
@@ -122,7 +111,6 @@ void CaptureGetMaterialfv_params(const State &glState,
 }
 
 void CaptureGetMaterialxv_params(const State &glState,
-                                 bool isCallValid,
                                  GLenum face,
                                  MaterialParameter pnamePacked,
                                  GLfixed *params,
@@ -132,7 +120,6 @@ void CaptureGetMaterialxv_params(const State &glState,
 }
 
 void CaptureGetTexEnvfv_params(const State &glState,
-                               bool isCallValid,
                                TextureEnvTarget targetPacked,
                                TextureEnvParameter pnamePacked,
                                GLfloat *params,
@@ -143,38 +130,35 @@ void CaptureGetTexEnvfv_params(const State &glState,
 }
 
 void CaptureGetTexEnviv_params(const State &glState,
-                               bool isCallValid,
                                TextureEnvTarget targetPacked,
                                TextureEnvParameter pnamePacked,
                                GLint *params,
                                ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    int count = GetTextureEnvParameterCount(pnamePacked);
+    CaptureMemory(params, count * sizeof(GLint), paramCapture);
 }
 
 void CaptureGetTexEnvxv_params(const State &glState,
-                               bool isCallValid,
                                TextureEnvTarget targetPacked,
                                TextureEnvParameter pnamePacked,
                                GLfixed *params,
                                ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    int count = GetTextureEnvParameterCount(pnamePacked);
+    CaptureMemory(params, count * sizeof(GLfixed), paramCapture);
 }
 
 void CaptureGetTexParameterxv_params(const State &glState,
-                                     bool isCallValid,
                                      TextureType targetPacked,
                                      GLenum pname,
                                      GLfixed *params,
                                      ParamCapture *paramCapture)
 {
-    unsigned int size = GetTexParameterCount(pname);
-    CaptureMemory(params, sizeof(GLfloat) * size, paramCapture);
+    paramCapture->readBufferSizeBytes = sizeof(GLfixed) * 4;
 }
 
 void CaptureLightModelfv_params(const State &glState,
-                                bool isCallValid,
                                 GLenum pname,
                                 const GLfloat *params,
                                 ParamCapture *paramCapture)
@@ -184,7 +168,6 @@ void CaptureLightModelfv_params(const State &glState,
 }
 
 void CaptureLightModelxv_param(const State &glState,
-                               bool isCallValid,
                                GLenum pname,
                                const GLfixed *param,
                                ParamCapture *paramCapture)
@@ -194,7 +177,6 @@ void CaptureLightModelxv_param(const State &glState,
 }
 
 void CaptureLightfv_params(const State &glState,
-                           bool isCallValid,
                            GLenum light,
                            LightParameter pnamePacked,
                            const GLfloat *params,
@@ -205,7 +187,6 @@ void CaptureLightfv_params(const State &glState,
 }
 
 void CaptureLightxv_params(const State &glState,
-                           bool isCallValid,
                            GLenum light,
                            LightParameter pnamePacked,
                            const GLfixed *params,
@@ -215,24 +196,17 @@ void CaptureLightxv_params(const State &glState,
     CaptureMemory(params, sizeof(GLfixed) * size, paramCapture);
 }
 
-void CaptureLoadMatrixf_m(const State &glState,
-                          bool isCallValid,
-                          const GLfloat *m,
-                          ParamCapture *paramCapture)
+void CaptureLoadMatrixf_m(const State &glState, const GLfloat *m, ParamCapture *paramCapture)
 {
     CaptureMemory(m, sizeof(GLfloat) * 16, paramCapture);
 }
 
-void CaptureLoadMatrixx_m(const State &glState,
-                          bool isCallValid,
-                          const GLfixed *m,
-                          ParamCapture *paramCapture)
+void CaptureLoadMatrixx_m(const State &glState, const GLfixed *m, ParamCapture *paramCapture)
 {
     UNIMPLEMENTED();
 }
 
 void CaptureMaterialfv_params(const State &glState,
-                              bool isCallValid,
                               GLenum face,
                               MaterialParameter pnamePacked,
                               const GLfloat *params,
@@ -243,7 +217,6 @@ void CaptureMaterialfv_params(const State &glState,
 }
 
 void CaptureMaterialxv_param(const State &glState,
-                             bool isCallValid,
                              GLenum face,
                              MaterialParameter pnamePacked,
                              const GLfixed *param,
@@ -253,24 +226,17 @@ void CaptureMaterialxv_param(const State &glState,
     CaptureMemory(param, sizeof(GLfixed) * size, paramCapture);
 }
 
-void CaptureMultMatrixf_m(const State &glState,
-                          bool isCallValid,
-                          const GLfloat *m,
-                          ParamCapture *paramCapture)
+void CaptureMultMatrixf_m(const State &glState, const GLfloat *m, ParamCapture *paramCapture)
 {
     CaptureMemory(m, sizeof(GLfloat) * 16, paramCapture);
 }
 
-void CaptureMultMatrixx_m(const State &glState,
-                          bool isCallValid,
-                          const GLfixed *m,
-                          ParamCapture *paramCapture)
+void CaptureMultMatrixx_m(const State &glState, const GLfixed *m, ParamCapture *paramCapture)
 {
     UNIMPLEMENTED();
 }
 
 void CaptureNormalPointer_pointer(const State &glState,
-                                  bool isCallValid,
                                   VertexAttribType typePacked,
                                   GLsizei stride,
                                   const void *pointer,
@@ -280,7 +246,6 @@ void CaptureNormalPointer_pointer(const State &glState,
 }
 
 void CapturePointParameterfv_params(const State &glState,
-                                    bool isCallValid,
                                     PointParameter pnamePacked,
                                     const GLfloat *params,
                                     ParamCapture *paramCapture)
@@ -289,7 +254,6 @@ void CapturePointParameterfv_params(const State &glState,
 }
 
 void CapturePointParameterxv_params(const State &glState,
-                                    bool isCallValid,
                                     PointParameter pnamePacked,
                                     const GLfixed *params,
                                     ParamCapture *paramCapture)
@@ -298,7 +262,6 @@ void CapturePointParameterxv_params(const State &glState,
 }
 
 void CaptureTexCoordPointer_pointer(const State &glState,
-                                    bool isCallValid,
                                     GLint size,
                                     VertexAttribType typePacked,
                                     GLsizei stride,
@@ -309,7 +272,6 @@ void CaptureTexCoordPointer_pointer(const State &glState,
 }
 
 void CaptureTexEnvfv_params(const State &glState,
-                            bool isCallValid,
                             TextureEnvTarget targetPacked,
                             TextureEnvParameter pnamePacked,
                             const GLfloat *params,
@@ -320,38 +282,35 @@ void CaptureTexEnvfv_params(const State &glState,
 }
 
 void CaptureTexEnviv_params(const State &glState,
-                            bool isCallValid,
                             TextureEnvTarget targetPacked,
                             TextureEnvParameter pnamePacked,
                             const GLint *params,
                             ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    int count = GetTextureEnvParameterCount(pnamePacked);
+    CaptureMemory(params, count * sizeof(GLint), paramCapture);
 }
 
 void CaptureTexEnvxv_params(const State &glState,
-                            bool isCallValid,
                             TextureEnvTarget targetPacked,
                             TextureEnvParameter pnamePacked,
                             const GLfixed *params,
                             ParamCapture *paramCapture)
 {
-    CaptureMemory(params, sizeof(GLfixed), paramCapture);
+    int count = GetTextureEnvParameterCount(pnamePacked);
+    CaptureMemory(params, count * sizeof(GLfixed), paramCapture);
 }
 
 void CaptureTexParameterxv_params(const State &glState,
-                                  bool isCallValid,
                                   TextureType targetPacked,
                                   GLenum pname,
                                   const GLfixed *params,
                                   ParamCapture *paramCapture)
 {
-    unsigned int size = GetTexParameterCount(pname);
-    CaptureMemory(params, sizeof(GLfloat) * size, paramCapture);
+    CaptureTextureAndSamplerParameter_params<GLfixed>(pname, params, paramCapture);
 }
 
 void CaptureVertexPointer_pointer(const State &glState,
-                                  bool isCallValid,
                                   GLint size,
                                   VertexAttribType typePacked,
                                   GLsizei stride,

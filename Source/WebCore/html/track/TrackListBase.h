@@ -50,7 +50,7 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    virtual unsigned length() const;
+    virtual unsigned NODELETE length() const;
     virtual bool contains(TrackBase&) const;
     virtual bool contains(TrackID) const;
     virtual void remove(TrackBase&, bool scheduleEvent = true);
@@ -60,10 +60,9 @@ public:
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const override = 0;
     ScriptExecutionContext* scriptExecutionContext() const final;
+    WebCoreOpaqueRoot NODELETE opaqueRoot() const final;
 
     void didMoveToNewDocument(Document&);
-
-    WebCoreOpaqueRoot opaqueRoot();
 
     using OpaqueRootObserver = WTF::Observer<WebCoreOpaqueRoot()>;
     void setOpaqueRootObserver(const OpaqueRootObserver& observer) { m_opaqueRootObserver = observer; };

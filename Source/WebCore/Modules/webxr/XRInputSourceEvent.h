@@ -39,8 +39,8 @@ class XRInputSourceEvent final : public Event {
     WTF_MAKE_TZONE_ALLOCATED(XRInputSourceEvent);
 public:
     struct Init : EventInit {
-        RefPtr<WebXRFrame> frame;
-        RefPtr<WebXRInputSource> inputSource;
+        Ref<WebXRFrame> frame;
+        Ref<WebXRInputSource> inputSource;
     };
 
     static Ref<XRInputSourceEvent> create(const AtomString&, Init&&, IsTrusted = IsTrusted::No);
@@ -55,7 +55,6 @@ private:
 
     const Ref<WebXRFrame> m_frame;
     const Ref<WebXRInputSource> m_inputSource;
-    std::optional<int> m_buttonIndex;
 };
 
 } // namespace WebCore

@@ -91,8 +91,6 @@ class ShaderTranslateTaskD3D final : public ShaderTranslateTask
             translatedSource.find("GL_USES_SAMPLE_MASK_IN") != std::string::npos;
         state->usesSampleMask =
             translatedSource.find("GL_USES_SAMPLE_MASK_OUT") != std::string::npos;
-        state->usesHelperInvocation =
-            translatedSource.find("GL_USES_HELPER_INVOCATION") != std::string::npos;
         state->usesPointSize  = translatedSource.find("GL_USES_POINT_SIZE") != std::string::npos;
         state->usesPointCoord = translatedSource.find("GL_USES_POINT_COORD") != std::string::npos;
         state->usesDepthRange = translatedSource.find("GL_USES_DEPTH_RANGE") != std::string::npos;
@@ -147,19 +145,6 @@ class ShaderTranslateTaskD3D final : public ShaderTranslateTask
         state->slowCompilingUniformBlockSet =
             GetSlowCompilingUniformBlockSet(sh::GetSlowCompilingUniformBlockSet(compiler));
 
-        for (const sh::InterfaceBlock &interfaceBlock : compiledState.shaderStorageBlocks)
-        {
-            if (interfaceBlock.active)
-            {
-                unsigned int index = static_cast<unsigned int>(-1);
-                bool blockRegisterResult =
-                    sh::GetShaderStorageBlockRegister(compiler, interfaceBlock.name, &index);
-                ASSERT(blockRegisterResult);
-
-                state->shaderStorageBlockRegisterMap[interfaceBlock.name] = index;
-            }
-        }
-
         state->debugInfo +=
             "// INITIAL HLSL BEGIN\n\n" + translatedSource + "\n// INITIAL HLSL END\n\n\n";
     }
@@ -178,7 +163,6 @@ CompiledShaderStateD3D::CompiledShaderStateD3D()
       usesSecondaryColor(false),
       usesFragCoord(false),
       usesFrontFacing(false),
-      usesHelperInvocation(false),
       usesPointSize(false),
       usesPointCoord(false),
       usesDepthRange(false),
@@ -263,13 +247,6 @@ bool CompiledShaderStateD3D::shouldUniformBlockUseStructuredBuffer(
     return uniformBlockUseStructuredBufferMap.find(blockName)->second;
 }
 
-unsigned int CompiledShaderStateD3D::getShaderStorageBlockRegister(
-    const std::string &blockName) const
-{
-    ASSERT(shaderStorageBlockRegisterMap.count(blockName) > 0);
-    return shaderStorageBlockRegisterMap.find(blockName)->second;
-}
-
 bool CompiledShaderStateD3D::useImage2DFunction(const std::string &functionName) const
 {
     if (usedImage2DFunctionNames.empty())
@@ -299,6 +276,8 @@ std::shared_ptr<ShaderTranslateTask> ShaderD3D::compile(const gl::Context *conte
 
     const std::string &source = mState.getSource();
 
+    options->removeInactiveVariables = true;
+
 #if !defined(ANGLE_ENABLE_WINDOWS_UWP)
     if (gl::DebugAnnotationsActive(context))
     {
@@ -308,6 +287,11 @@ std::shared_ptr<ShaderTranslateTask> ShaderD3D::compile(const gl::Context *conte
         options->sourcePath     = true;
     }
 #endif
+
+    if (context->isHardenedContext())
+    {
+        options->clampIndirectArrayBounds = true;
+    }
 
     if (features.expandIntegerPowExpressions.enabled)
     {
@@ -336,10 +320,6 @@ std::shared_ptr<ShaderTranslateTask> ShaderD3D::compile(const gl::Context *conte
     {
         options->skipD3DConstantRegisterZero = true;
     }
-    if (features.forceAtomicValueResolution.enabled)
-    {
-        options->forceAtomicValueResolution = true;
-    }
     if (features.allowTranslateUniformBlockToStructuredBuffer.enabled)
     {
         options->allowTranslateUniformBlockToStructuredBuffer = true;
@@ -351,14 +331,6 @@ std::shared_ptr<ShaderTranslateTask> ShaderD3D::compile(const gl::Context *conte
     if (extensions.shaderPixelLocalStorageANGLE)
     {
         options->pls = mRenderer->getNativePixelLocalStorageOptions();
-    }
-
-    // D3D11 Feature Level 9_3 and below do not support non-constant loop indexes in fragment
-    // shaders.  Shader compilation will fail.  To provide a better error message we can instruct
-    // the compiler to pre-validate.
-    if (!features.supportsNonConstantLoopIndexing.enabled)
-    {
-        options->validateLoopIndexing = true;
     }
 
     // The D3D translations are not currently validation-error-free

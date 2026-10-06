@@ -77,7 +77,7 @@ The implementation follows the **GDB Remote Serial Protocol** standard with [was
 
 #### 3. **Helper Classes** - Supporting Components
 
-- **ModuleManager**: Virtual address space management and module tracking
+- **ModuleManager**: Virtual address space management, module and instance tracking
 - **BreakpointManager**: Breakpoint storage and management
 - **VirtualAddress**: 64-bit virtual address encoding for LLDB compatibility
 
@@ -88,43 +88,44 @@ The debugger uses a sophisticated virtual address encoding system to present Web
 ```txt
 Address Format (64-bit):
 - Bits 63-62: Address Type (2 bits)
-- Bits 61-32: ID (30 bits) - ModuleID for code, InstanceID for memory  
+- Bits 61-32: InstanceId (30 bits)
 - Bits 31-0:  Offset (32 bits)
 
 Address Types:
-- 0x00 (Memory): Instance linear memory
-- 0x01 (Module): Module code/bytecode
+- 0x00 (Memory): The instance's linear memory
+- 0x01 (Module): The instance's view of its module image (bytecode)
 - 0x02 (Invalid): Invalid/unmapped regions
 - 0x03 (Invalid2): Invalid/unmapped regions
 
 Virtual Memory Layout:
 - 0x0000000000000000 - 0x3FFFFFFFFFFFFFFF: Memory regions
-- 0x4000000000000000 - 0x7FFFFFFFFFFFFFFF: Module regions  
+- 0x4000000000000000 - 0x7FFFFFFFFFFFFFFF: Module regions
 - 0x8000000000000000 - 0xFFFFFFFFFFFFFFFF: Invalid regions
 ```
 
-## Protocol Implementation
+Wasm scopes linear memory, globals, tables, and data segments to an instance rather than a
+module, so both halves of the address space are keyed by instance ID. Every live instance receives
+its own library entry, module image, and linear memory region. That ID also identifies the
+instance in `qWasmGlobal`. The protocol only requires IDs to be unique among live instances, but
+they are allocated monotonically and never reused to prevent aliasing stale addresses in LLDB.
+Modules carry no debugger-assigned identity.
 
-### Execution Control
+LLDB merges libraries that share a name, so libraries are named `<declared-name>@<instance-id>`.
+Because instance IDs are globally unique, library names remain distinct even when modules share a
+declared name. Modules declaring neither a name section nor a source URL fall back to
+`0x<image-base>.wasm`.
 
-- **[DONE]** `gdb-remote localhost:1234`: Attach to debugger
-- **[DONE]** `process interrupt`, `ctrl+C`: Stop execution at function entry
-- **[DONE]** `continue`: Resume WebAssembly execution
-- **[DONE]** `breakpoint set`: Set breakpoints at virtual addresses
-- **[DONE]** `step over`: Step over function calls
-- **[DONE]** `step in`: Step into function calls and exception handlers
-- **[DONE]** `step out`: Step out of current function
-- **[DONE]** `step instruction`: Single step through bytecode
+Instances of a module share one bytecode buffer, so a breakpoint patches that buffer once for all
+of them. A site, though, belongs to the instance its address names: LLDB gives every instance its
+own library and installs one site in each, and only that instance stops there. A sibling reaching
+the same patched byte resumes through it — dispatching the opcode the patch displaced — without
+reporting a stop. Setting a breakpoint by symbol name still covers every instance, because the
+symbol resolves once per library. The patch is lifted only once the last site referring to it and
+any step in flight are both gone.
 
-### Inspection
-
-- **[DONE]** `target modules list`: List loaded WebAssembly modules
-- **[DONE]** `disassemble`: Display WebAssembly bytecode
-- **[DONE]** `bt` (backtrace): Show WebAssembly call stack
-- **[DONE]** `frame variable`: List local variables
-- **[DONE]** `memory region --all`: List memory regions
-- **[DONE]** `memory read`: Read WebAssembly memory and module source
-- **[TODO]** `memory write`: Write to memory? source? or both?
+The patch byte is `0x00`, which is `unreachable`. Where the bytecode really is an `unreachable`
+the patch displaces nothing, so that byte reports the breakpoint and then the trap it hides;
+returning it as a resume opcode would throw a trap LLDB was never told about.
 
 ## Testing
 
@@ -187,19 +188,17 @@ lldb -o 'log enable gdb-remote packets' -o 'process connect --plugin wasm connec
 
 See [RWI_ARCHITECTURE.md](./RWI_ARCHITECTURE.md) for complete setup instructions including:
 
-- Starting Safari/MiniBrowser with `--wasm-debugger` flag
+- Starting Safari/MiniBrowser with `__XPC_JSC_enableWasmDebugger=1 JSC_enableWasmDebugger=1` flag
 - Using WasmDebuggerRWIClient to relay LLDB commands
 - Debugging WebContent processes via Remote Web Inspector
 
 ## Known Issues and Future Improvements
 
-### WASM Stack Value Type Support
+### Per-Page Debuggable Targets
 
-- **Issue**: Current implementation only supports WASM local variable inspection, missing WASM stack value types
-- **Current Support**: Local variables with types (parameters and locals in function scope)
-- **Missing Support**: Stack values with types
-- **Solution**: Extend debugging protocol to expose WASM operand stack contents with proper type information
-- **Benefits**: Complete variable inspection during debugging, better understanding of WASM execution state
+- **Issue**: Ideally each page (URL) hosted by a WebContent process should appear as a separate debuggable target in `lldb platform process list`, so users can attach to a specific website. Currently there is one `WasmDebuggerDebuggable` per WebContent process, so when Safari places multiple pages into the same process (and therefore the same VM), all their hostnames are aggregated into a single target entry (e.g. `"earth.google.com, github.com"`).
+- **Why aggregation is acceptable for now**: A single WebContent process runs a single `WasmDebugServer` that owns all Wasm execution for every page it hosts. Splitting that into per-page debuggables would create multiple LLDB sessions backed by the same VM state, which is architecturally incorrect. Aggregation correctly reflects that one LLDB attach covers all pages in the process.
+- **Future improvement**: If the architecture evolves so that each page gets its own isolated VM (and thus its own `WasmDebugServer`), replace the aggregated URL with a per-page `WasmDebuggerDebuggable` so each URL appears as a distinct, independently attachable target.
 
 ### Extended Opcode Test Coverage
 
@@ -219,26 +218,6 @@ See [RWI_ARCHITECTURE.md](./RWI_ARCHITECTURE.md) for complete setup instructions
 - **Location**: `WasmDebugServer.cpp:348-349`
 - **Solution**: Introduce various stop states and proper termination handling
 
-### Dynamic Module Notifications
-
-- **Issue**: LLDB is not notified when new modules are loaded or unloaded
-- **Location**: `WasmDebugServer.cpp:472, 484`
-- **Solution**: Implement proper LLDB notifications for dynamic module loading/unloading
-
-### Multi-Thread Display in LLDB
-
-- **Issue**: Thread select and stop reply protocol handlers need improvement to correctly display multi-VM data in LLDB
-- **Current Status**: Multi-VM stop-the-world is implemented, but thread information may not display correctly in LLDB UI
-
-### VM Lifecycle and Synchronization Testing
-
-- **Issue**: ExecutionHandler stress tests need additional coverage for VM lifecycle edge cases and race conditions
-- **Current Test Limitations**: Tests wait for VM construction and instance registration, but this doesn't guarantee VMs are actively running code that checks traps
-- **Missing Test Coverage**:
-  - VM lifecycle edge cases (construction, initialization, instance registration)
-  - `interrupt()` race conditions when VMs are not yet executing code
-  - Synchronization between VM construction and actual code execution
-
 ### X86_64 Support
 
 - **Issue**: The WebAssembly debugger is currently restricted to ARM64 platforms only
@@ -250,20 +229,30 @@ See [RWI_ARCHITECTURE.md](./RWI_ARCHITECTURE.md) for complete setup instructions
 
 The following references correspond to the numbered citations used throughout the WebAssembly debugger implementation:
 
-- [1] [Interrupts](https://sourceware.org/gdb/onlinedocs/gdb/Interrupts.html)  
-- [2] [Packet Acknowledgment](https://sourceware.org/gdb/onlinedocs/gdb/Packet-Acknowledgment.html)  
-- [3] [Packets](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Packets.html)  
+- [1] [Interrupts](https://sourceware.org/gdb/onlinedocs/gdb/Interrupts.html)
+- [2] [Packet Acknowledgment](https://sourceware.org/gdb/onlinedocs/gdb/Packet-Acknowledgment.html)
+- [3] [Packets](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Packets.html)
 - [4] [General Query Packets](https://sourceware.org/gdb/current/onlinedocs/gdb.html/General-Query-Packets.html)
 - [5] [Standard Replies](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Standard-Replies.html#Standard-Replies)
-- [6] [Packet Acknowledgment](https://sourceware.org/gdb/onlinedocs/gdb/Packet-Acknowledgment.html)  
-- [7] [qSupported](https://sourceware.org/gdb/current/onlinedocs/gdb.html/General-Query-Packets.html#qSupported)  
-- [8] [qProcessInfo](https://lldb.llvm.org/resources/lldbgdbremote.html#qprocessinfo)  
-- [9] [qHostInfo](https://lldb.llvm.org/resources/lldbgdbremote.html#qhostinfo)  
-- [10] [qRegisterInfo](https://lldb.llvm.org/resources/lldbgdbremote.html#qregisterinfo-hex-reg-id)  
-- [11] [qListThreadsInStopReply](https://lldb.llvm.org/resources/lldbgdbremote.html#qlistthreadsinstopreply)  
-- [12] [qEnableErrorStrings](https://lldb.llvm.org/resources/lldbgdbremote.html#qenableerrorstrings)  
-- [13] [qThreadStopInfo](https://lldb.llvm.org/resources/lldbgdbremote.html#qthreadstopinfo-tid)  
-- [14] [qXfer:library-list:read](https://sourceware.org/gdb/onlinedocs/gdb/General-Query-Packets.html#qXfer-library-list-read)  
-- [15] [qWasmCallStack](https://lldb.llvm.org/resources/lldbgdbremote.html#qwasmcallstack)  
-- [16] [qWasmLocal](https://lldb.llvm.org/resources/lldbgdbremote.html#qwasmlocal)  
+- [6] [Packet Acknowledgment](https://sourceware.org/gdb/onlinedocs/gdb/Packet-Acknowledgment.html)
+- [7] [qSupported](https://sourceware.org/gdb/current/onlinedocs/gdb.html/General-Query-Packets.html#qSupported)
+- [8] [qProcessInfo](https://lldb.llvm.org/resources/lldbgdbremote.html#qprocessinfo)
+- [9] [qHostInfo](https://lldb.llvm.org/resources/lldbgdbremote.html#qhostinfo)
+- [10] [qRegisterInfo](https://lldb.llvm.org/resources/lldbgdbremote.html#qregisterinfo-hex-reg-id)
+- [11] [qListThreadsInStopReply](https://lldb.llvm.org/resources/lldbgdbremote.html#qlistthreadsinstopreply)
+- [12] [qEnableErrorStrings](https://lldb.llvm.org/resources/lldbgdbremote.html#qenableerrorstrings)
+- [13] [qThreadStopInfo](https://lldb.llvm.org/resources/lldbgdbremote.html#qthreadstopinfo-tid)
+- [14] [qXfer:library-list:read](https://sourceware.org/gdb/onlinedocs/gdb/General-Query-Packets.html#qXfer-library-list-read)
+- [15] [qWasmCallStack](https://lldb.llvm.org/resources/lldbgdbremote.html#qwasmcallstack)
+- [16] [qWasmLocal](https://lldb.llvm.org/resources/lldbgdbremote.html#qwasmlocal)
 - [17] [qMemoryRegionInfo](https://lldb.llvm.org/resources/lldbgdbremote.html#qmemoryregioninfo-addr)
+- [18] [qWasmGlobal](https://lldb.llvm.org/resources/lldbgdbremote.html#qwasmglobal)
+- [19] [qWasmInstance](https://lldb.llvm.org/resources/lldbgdbremote.html#qwasminstance-qsupported-feature) —
+  advertised in the `qSupported` reply to opt into naming a module instance in a Wasm query. It
+  adds the form `qWasmGlobal:<global-index>;instance:<instance-id>;`, which reads a global from a
+  named instance rather than from the instance a stack frame is executing. The instance ID is the
+  ID a Wasm virtual address carries in bits 61:32. Added to LLDB by
+  [llvm/llvm-project#213176](https://github.com/llvm/llvm-project/pull/213176), resolving
+  [llvm/llvm-project#212833](https://github.com/llvm/llvm-project/issues/212833). An ID with no
+  live instance answers with an error.
+- [20] [qWasmStackValue](https://lldb.llvm.org/resources/lldbgdbremote.html#qwasmstackvalue)

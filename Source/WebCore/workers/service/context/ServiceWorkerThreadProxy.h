@@ -39,6 +39,7 @@
 #include <WebCore/WorkerDebuggerProxy.h>
 #include <WebCore/WorkerLoaderProxy.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
 #include <wtf/URLHash.h>
 #include <wtf/WeakRef.h>
@@ -67,14 +68,14 @@ public:
 
     ServiceWorkerIdentifier identifier() const { return m_serviceWorkerThread->identifier(); }
     ServiceWorkerThread& thread() { return m_serviceWorkerThread.get(); }
-    ServiceWorkerInspectorProxy& inspectorProxy() { return m_inspectorProxy; }
+    ServiceWorkerInspectorProxy& inspectorProxy() LIFETIME_BOUND { return m_inspectorProxy; }
 
     bool isTerminatingOrTerminated() const { return m_isTerminatingOrTerminated; }
     void setAsTerminatingOrTerminated() { m_isTerminatingOrTerminated = true; }
 
     WEBCORE_EXPORT RefPtr<FetchLoader> createBlobLoader(FetchLoaderClient&, const URL&);
 
-    const URL& scriptURL() const { return m_document->url(); }
+    const URL& scriptURL() const LIFETIME_BOUND { return m_document->url(); }
 
     WEBCORE_EXPORT void notifyNetworkStateChange(bool isOnline);
 
@@ -84,7 +85,7 @@ public:
     WEBCORE_EXPORT void navigationPreloadIsReady(SWServerConnectionIdentifier, FetchIdentifier, ResourceResponse&&);
     WEBCORE_EXPORT void navigationPreloadFailed(SWServerConnectionIdentifier, FetchIdentifier, ResourceError&&);
 
-    WEBCORE_EXPORT void fireMessageEvent(MessageWithMessagePorts&&, ServiceWorkerOrClientData&&);
+    WEBCORE_EXPORT void fireMessageEvent(MessageWithMessagePorts&&, ServiceWorkerOrClientData&&, CompletionHandlerCallingScope&& messageDispatched);
 
     WEBCORE_EXPORT void fireInstallEvent();
     WEBCORE_EXPORT void fireActivateEvent();
@@ -96,8 +97,8 @@ public:
 
     WEBCORE_EXPORT void didSaveScriptsToDisk(ScriptBuffer&&, HashMap<URL, ScriptBuffer>&& importedScripts);
 
-    WEBCORE_EXPORT void setLastNavigationWasAppInitiated(bool);
-    WEBCORE_EXPORT bool lastNavigationWasAppInitiated();
+    WEBCORE_EXPORT void NODELETE setLastNavigationWasAppInitiated(bool);
+    WEBCORE_EXPORT bool NODELETE lastNavigationWasAppInitiated();
 
     WEBCORE_EXPORT void setInspectable(bool);
 
@@ -121,7 +122,9 @@ private:
     void postTaskToLoader(ScriptExecutionContext::Task&&) final;
     ScriptExecutionContextIdentifier loaderContextIdentifier() const final;
     RefPtr<CacheStorageConnection> createCacheStorageConnection() final;
+    RefPtr<FileSystemStorageConnection> createFileSystemStorageConnection() final;
     RefPtr<RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final;
+    RefPtr<IDBClient::IDBConnectionProxy> createIDBConnectionProxy() final;
 
     // WorkerDebuggerProxy
     void postMessageToDebugger(const String&) final;
@@ -137,7 +140,7 @@ private:
 #endif
     const Ref<ServiceWorkerThread> m_serviceWorkerThread;
     WeakRef<CacheStorageProvider> m_cacheStorageProvider;
-    RefPtr<CacheStorageConnection> m_cacheStorageConnection;
+    const RefPtr<CacheStorageConnection> m_cacheStorageConnection;
     bool m_isTerminatingOrTerminated { false };
 
     ServiceWorkerInspectorProxy m_inspectorProxy;

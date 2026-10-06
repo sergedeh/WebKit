@@ -34,6 +34,10 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WorkQueue.h>
 
+namespace WebCore {
+struct ClientOrigin;
+}
+
 namespace WebKit {
 class CacheStorageCache;
 }
@@ -48,9 +52,10 @@ public:
     static Ref<CacheStorageCache> create(CacheStorageManager&, const String& name, const String& uniqueName, const String& path, Ref<WorkQueue>&&);
 
     ~CacheStorageCache();
-    const String& name() const { return m_name; }
-    const String& uniqueName() const { return m_uniqueName; }
-    CacheStorageManager* manager();
+    const String& name() const LIFETIME_BOUND { return m_name; }
+    const String& uniqueName() const LIFETIME_BOUND { return m_uniqueName; }
+    CacheStorageManager* NODELETE manager();
+    std::optional<WebCore::ClientOrigin> origin() const;
 
     void getSize(CompletionHandler<void(uint64_t)>&&);
     void open(WebCore::DOMCacheEngine::CacheIdentifierCallback&&);

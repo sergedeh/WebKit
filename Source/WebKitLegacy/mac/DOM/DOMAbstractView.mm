@@ -34,6 +34,7 @@
 #import <WebCore/Document.h>
 #import <WebCore/LocalDOMWindow.h>
 #import <WebCore/LocalFrame.h>
+#import <WebCore/LocalFrameInlines.h>
 #import <WebCore/ThreadCheck.h>
 #import <WebCore/WebScriptObjectPrivate.h>
 #import <WebCore/WindowProxy.h>
@@ -77,7 +78,7 @@ WebCore::LocalDOMWindow* core(DOMAbstractView *wrapper)
     return reinterpret_cast<WebCore::LocalFrame*>(wrapper->_internal)->document()->window();
 }
 
-DOMAbstractView *kit(WebCore::LocalDOMWindow* value)
+SUPPRESS_NODELETE DOMAbstractView *kit(WebCore::LocalDOMWindow* value)
 {
     WebCoreThreadViolationCheckRoundOne();
 
@@ -102,7 +103,7 @@ DOMAbstractView *kit(WebCore::DOMWindow* value)
     return kit(downcast<WebCore::LocalDOMWindow>(value));
 }
 
-DOMAbstractView *kit(WebCore::WindowProxy* windowProxy)
+SUPPRESS_NODELETE DOMAbstractView *kit(WebCore::WindowProxy* windowProxy)
 {
     if (!windowProxy)
         return nil;
@@ -112,7 +113,7 @@ DOMAbstractView *kit(WebCore::WindowProxy* windowProxy)
 
 WebCore::WindowProxy* toWindowProxy(DOMAbstractView *view)
 {
-    auto* window = core(view);
+    RefPtr window = core(view);
     if (!window || !window->frame())
         return nil;
     return &window->frame()->windowProxy();

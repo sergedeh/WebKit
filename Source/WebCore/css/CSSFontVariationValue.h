@@ -28,6 +28,7 @@
 
 #include "CSSValue.h"
 #include "FontTaggedSettings.h"
+#include <wtf/Function.h>
 
 namespace WebCore {
 
@@ -38,7 +39,7 @@ public:
         return adoptRef(*new CSSFontVariationValue(tag, WTF::move(value)));
     }
 
-    const FontTag& tag() const { return m_tag; }
+    const FontTag& tag() const LIFETIME_BOUND { return m_tag; }
     const CSSValue& value() const { return m_value; }
     String customCSSText(const CSS::SerializationContext&) const;
 

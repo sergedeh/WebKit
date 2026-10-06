@@ -26,6 +26,7 @@
 #include "SVGInlineTextBox.h"
 
 #include "FloatConversion.h"
+#include "FontCascadeInlines.h"
 #include "GraphicsContext.h"
 #include "HitTestResult.h"
 #include "LegacyInlineFlowBox.h"
@@ -36,13 +37,13 @@
 #include "RenderBlock.h"
 #include "RenderInline.h"
 #include "RenderSVGText.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderView.h"
 #include "SVGInlineTextBoxInlines.h"
 #include "SVGRenderingContext.h"
 #include "SVGResourcesCache.h"
 #include "SVGRootInlineBox.h"
 #include "SVGTextFragment.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "TextBoxSelectableRange.h"
 #include <wtf/TZoneMallocInlines.h>
 

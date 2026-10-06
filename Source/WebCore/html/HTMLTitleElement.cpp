@@ -28,8 +28,8 @@
 #include "HTMLNames.h"
 #include "NodeRenderStyle.h"
 #include "RenderElement.h"
-#include "RenderStyle.h"
 #include "ResolvedStyle.h"
+#include "StyleComputedStyle.h"
 #include "StyleResolver.h"
 #include "Text.h"
 #include "TextManipulationController.h"
@@ -55,30 +55,30 @@ Ref<HTMLTitleElement> HTMLTitleElement::create(const QualifiedName& tagName, Doc
     return adoptRef(*new HTMLTitleElement(tagName, document));
 }
 
-Node::InsertedIntoAncestorResult HTMLTitleElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLTitleElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
 
     if (insertionType.connectedToDocument)
-        return InsertedIntoAncestorResult::NeedsPostInsertionCallback;
+        return NeedsPostConnectionSteps::Yes;
 
-    return InsertedIntoAncestorResult::Done;
+    return NeedsPostConnectionSteps::No;
 }
 
-void HTMLTitleElement::didFinishInsertingNode()
+void HTMLTitleElement::postConnectionSteps()
 {
-    HTMLElement::didFinishInsertingNode();
+    HTMLElement::postConnectionSteps();
 
     m_title = computedTextWithDirection();
-    protectedDocument()->titleElementAdded(*this);
+    protect(document())->titleElementAdded(*this);
 }
 
-void HTMLTitleElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLTitleElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
 
     if (removalType.disconnectedFromDocument)
-        protectedDocument()->titleElementRemoved(*this);
+        protect(document())->titleElementRemoved(*this);
 }
 
 void HTMLTitleElement::childrenChanged(const ChildChange& change)
@@ -87,7 +87,7 @@ void HTMLTitleElement::childrenChanged(const ChildChange& change)
 
     if (isConnected()) {
         m_title = computedTextWithDirection();
-        protectedDocument()->titleElementTextChanged(*this);
+        protect(document())->titleElementTextChanged(*this);
     }
 }
 

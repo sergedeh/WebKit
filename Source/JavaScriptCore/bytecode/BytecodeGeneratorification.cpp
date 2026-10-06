@@ -111,29 +111,29 @@ public:
 
     void run();
 
-    BytecodeGraph& graph() { return m_graph; }
+    BytecodeGraph& NODELETE graph() { return m_graph; }
 
-    const Yields& yields() const
+    const Yields& NODELETE yields() const
     {
         return m_yields;
     }
 
-    Yields& yields()
+    Yields& NODELETE yields()
     {
         return m_yields;
     }
 
-    JSInstructionStream::Ref enterPoint() const
+    JSInstructionStream::Ref NODELETE enterPoint() const
     {
         return m_instructions.at(m_enterPoint);
     }
 
-    std::optional<GeneratorFrameData> generatorFrameData() const
+    std::optional<GeneratorFrameData> NODELETE generatorFrameData() const
     {
         return m_generatorFrameData;
     }
 
-    const JSInstructionStream& instructions() const
+    const JSInstructionStream& NODELETE instructions() const
     {
         return m_instructions;
     }
@@ -155,7 +155,7 @@ private:
         unsigned identifierIndex = m_codeBlock->numberOfIdentifiers();
         m_codeBlock->addIdentifier(identifier);
         ScopeOffset scopeOffset = m_generatorFrameSymbolTable->takeNextScopeOffset(NoLockingNecessary);
-        m_generatorFrameSymbolTable->set(NoLockingNecessary, identifier.impl(), SymbolTableEntry(VarOffset(scopeOffset)));
+        m_generatorFrameSymbolTable->add(NoLockingNecessary, identifier.impl(), SymbolTableEntry(VarOffset(scopeOffset)));
 
         Storage storage = {
             identifier,

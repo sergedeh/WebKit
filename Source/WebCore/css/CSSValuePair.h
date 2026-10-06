@@ -33,9 +33,9 @@ namespace WebCore {
 
 class CSSValuePair final : public CSSValue {
 public:
-    static Ref<CSSValuePair> create(Ref<CSSValue>, Ref<CSSValue>);
-    static Ref<CSSValuePair> createSlashSeparated(Ref<CSSValue>, Ref<CSSValue>);
-    static Ref<CSSValuePair> createNoncoalescing(Ref<CSSValue>, Ref<CSSValue>);
+    static Ref<CSSValuePair> NODELETE create(Ref<CSSValue>, Ref<CSSValue>);
+    static Ref<CSSValuePair> NODELETE createSlashSeparated(Ref<CSSValue>, Ref<CSSValue>);
+    static Ref<CSSValuePair> NODELETE createNoncoalescing(Ref<CSSValue>, Ref<CSSValue>);
 
     const CSSValue& first() const { return m_first; }
     CSSValue& first() { return m_first; }
@@ -54,6 +54,8 @@ public:
             return IterationStatus::Done;
         return IterationStatus::Continue;
     }
+
+    Ref<DeprecatedCSSOMValue> customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
 
 private:
     friend bool CSSValue::addHash(Hasher&) const;

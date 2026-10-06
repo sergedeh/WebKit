@@ -40,12 +40,12 @@
   readonly attribute boolean canGoBack;
   readonly attribute boolean canGoForward;
 
-  [ReturnsPromisePair] NavigationResult navigate(USVString url, optional NavigationNavigateOptions options = {});
-  [ReturnsPromisePair] NavigationResult reload(optional NavigationReloadOptions options = {});
+  [CallWith=CurrentGlobalObject, ReturnsPromisePair] NavigationResult navigate(USVString url, optional NavigationNavigateOptions options = {});
+  [CallWith=CurrentGlobalObject, ReturnsPromisePair] NavigationResult reload(optional NavigationReloadOptions options = {});
 
-  [ReturnsPromisePair] NavigationResult traverseTo(DOMString key, optional NavigationOptions options = {});
-  [ReturnsPromisePair] NavigationResult back(optional NavigationOptions options = {});
-  [ReturnsPromisePair] NavigationResult forward(optional NavigationOptions options = {});
+  [CallWith=CurrentGlobalObject, ReturnsPromisePair] NavigationResult traverseTo(DOMString key, optional NavigationOptions options = {});
+  [CallWith=CurrentGlobalObject, ReturnsPromisePair] NavigationResult back(optional NavigationOptions options = {});
+  [CallWith=CurrentGlobalObject, ReturnsPromisePair] NavigationResult forward(optional NavigationOptions options = {});
 
   attribute EventHandler onnavigate;
   attribute EventHandler onnavigatesuccess;
@@ -53,41 +53,13 @@
   attribute EventHandler oncurrententrychange;
 };
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary NavigationUpdateCurrentEntryOptions {
+dictionary NavigationUpdateCurrentEntryOptions {
   required any state;
 };
 
 [
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary NavigationOptions {
-  any info;
-};
-
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary NavigationNavigateOptions : NavigationOptions {
-  any state;
-  NavigationHistoryBehavior history = "auto";
-};
-
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary NavigationReloadOptions : NavigationOptions {
-  any state;
-};
-
-[
     JSGenerateToJSObject,
-    LegacyNativeDictionaryRequiredInterfaceNullability,
 ] dictionary NavigationResult {
   [BypassDocumentFullyActiveCheck] Promise<NavigationHistoryEntry> committed;
   [BypassDocumentFullyActiveCheck] Promise<NavigationHistoryEntry> finished;
-};
-
-enum NavigationHistoryBehavior {
-  "auto",
-  "push",
-  "replace"
 };

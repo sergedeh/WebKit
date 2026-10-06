@@ -26,13 +26,14 @@
 #include "config.h"
 #include <wtf/DataLog.h>
 
+#include <mutex>
 #include <stdarg.h>
 #include <string.h>
 #include <wtf/Assertions.h>
 #include <wtf/FilePrintStream.h>
 #include <wtf/LockedPrintStream.h>
 #include <wtf/ProcessID.h>
-#include <mutex>
+#include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -157,7 +158,7 @@ void setDataFile(const char* path)
             pathToOpen = formattedPath.data();
         }
 
-        file = FilePrintStream::open(pathToOpen, "w").release();
+        file = FilePrintStream::open(UTF8CStringView::unsafeFromUTF8(pathToOpen), "w"_s).release();
         if (file)
             WTFLogAlways("*** DataLog output to \"%s\" ***\n", pathToOpen);
         else

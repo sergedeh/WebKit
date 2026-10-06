@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <link rel=stylesheet href="resources/customizable-select-styles.css">
+<link rel=stylesheet href="update.css">
 
 <style>
 .blue {
@@ -7,10 +8,10 @@
 }
 </style>
 
-<div class=customizable-select-button popovertarget=popover id=button>
+<button class=customizable-select-button popovertarget=popover id=button>
   <span class=customizable-select-selectedoption>button</span>
-</div>
-<div id=popover popover=auto anchor=button class=customizable-select-popover>
+</button>
+<div id=popover popover=auto class=customizable-select-popover>
   <div class="customizable-select-option selected">
     <span class=blue>option</span> one
   </div>
@@ -20,5 +21,5 @@
 </div>
 
 <script>
-document.getElementById('popover').showPopover();
+document.getElementById('popover').showPopover({ source: button });
 </script>

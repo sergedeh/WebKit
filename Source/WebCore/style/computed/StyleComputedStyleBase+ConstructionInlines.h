@@ -63,70 +63,70 @@ inline ComputedStyleBase::ComputedStyleBase(CreateDefaultStyleTag)
     m_inheritedFlags.pointerEvents = static_cast<unsigned>(ComputedStyle::initialPointerEvents());
     m_inheritedFlags.insideLink = static_cast<unsigned>(InsideLink::NotInside);
     m_inheritedFlags.isZoomed = 0;
-#if ENABLE(TEXT_AUTOSIZING)
     m_inheritedFlags.autosizeStatus = 0;
-#endif
 
-    m_nonInheritedFlags.effectiveDisplay = static_cast<unsigned>(ComputedStyle::initialDisplay());
-    m_nonInheritedFlags.originalDisplay = static_cast<unsigned>(ComputedStyle::initialDisplay());
+    m_nonInheritedFlags.display = ComputedStyle::initialDisplay().toRaw();
+    m_nonInheritedFlags.originalDisplay = ComputedStyle::initialDisplay().toRaw();
     m_nonInheritedFlags.overflowX = static_cast<unsigned>(ComputedStyle::initialOverflowX());
     m_nonInheritedFlags.overflowY = static_cast<unsigned>(ComputedStyle::initialOverflowY());
-    m_nonInheritedFlags.clear = static_cast<unsigned>(ComputedStyle::initialClear());
     m_nonInheritedFlags.position = static_cast<unsigned>(ComputedStyle::initialPosition());
-    m_nonInheritedFlags.unicodeBidi = static_cast<unsigned>(ComputedStyle::initialUnicodeBidi());
     m_nonInheritedFlags.floating = static_cast<unsigned>(ComputedStyle::initialFloating());
+    m_nonInheritedFlags.clear = static_cast<unsigned>(ComputedStyle::initialClear());
+    m_nonInheritedFlags.boxSizing = static_cast<unsigned>(ComputedStyle::initialBoxSizing());
+    m_nonInheritedFlags.unicodeBidi = static_cast<unsigned>(ComputedStyle::initialUnicodeBidi());
     m_nonInheritedFlags.textDecorationLine = ComputedStyle::initialTextDecorationLine().toRaw();
     m_nonInheritedFlags.usesViewportUnits = false;
-    m_nonInheritedFlags.usesContainerUnits = false;
+    m_nonInheritedFlags.isContainerDependent = false;
     m_nonInheritedFlags.useTreeCountingFunctions = false;
     m_nonInheritedFlags.hasExplicitlyInheritedProperties = false;
     m_nonInheritedFlags.disallowsFastPathInheritance = false;
-    m_nonInheritedFlags.emptyState = false;
     m_nonInheritedFlags.firstChildState = false;
     m_nonInheritedFlags.lastChildState = false;
     m_nonInheritedFlags.isLink = false;
     m_nonInheritedFlags.pseudoElementType = 0;
     m_nonInheritedFlags.pseudoBits = 0;
+    m_nonInheritedFlags.pseudoElementBoxGeneration = std::to_underlying(PseudoElementBoxGeneration::Normal);
 
     static_assert((sizeof(InheritedFlags) <= 8), "InheritedFlags does not grow");
-    static_assert((sizeof(NonInheritedFlags) <= 8), "NonInheritedFlags does not grow");
+    static_assert((sizeof(NonInheritedFlags) <= 12), "NonInheritedFlags does not grow");
 }
 
 inline ComputedStyleBase::ComputedStyleBase(const ComputedStyleBase& other, CloneTag)
-    : m_nonInheritedData(other.m_nonInheritedData)
-    , m_nonInheritedFlags(other.m_nonInheritedFlags)
+    : m_nonInheritedFlags(other.m_nonInheritedFlags)
+    , m_inheritedFlags(other.m_inheritedFlags)
+    , m_nonInheritedData(other.m_nonInheritedData)
     , m_inheritedRareData(other.m_inheritedRareData)
     , m_inheritedData(other.m_inheritedData)
-    , m_inheritedFlags(other.m_inheritedFlags)
     , m_svgData(other.m_svgData)
 {
 }
 
 inline ComputedStyleBase::ComputedStyleBase(ComputedStyleBase& a, ComputedStyleBase&& b)
-    : m_nonInheritedData(a.m_nonInheritedData.replace(WTF::move(b.m_nonInheritedData)))
-    , m_nonInheritedFlags(std::exchange(a.m_nonInheritedFlags, b.m_nonInheritedFlags))
+    : m_nonInheritedFlags(std::exchange(a.m_nonInheritedFlags, b.m_nonInheritedFlags))
+    , m_inheritedFlags(std::exchange(a.m_inheritedFlags, b.m_inheritedFlags))
+    , m_nonInheritedData(a.m_nonInheritedData.replace(WTF::move(b.m_nonInheritedData)))
     , m_inheritedRareData(a.m_inheritedRareData.replace(WTF::move(b.m_inheritedRareData)))
     , m_inheritedData(a.m_inheritedData.replace(WTF::move(b.m_inheritedData)))
-    , m_inheritedFlags(std::exchange(a.m_inheritedFlags, b.m_inheritedFlags))
     , m_svgData(a.m_svgData.replace(WTF::move(b.m_svgData)))
-    , m_cachedPseudoStyles(std::exchange(a.m_cachedPseudoStyles, WTF::move(b.m_cachedPseudoStyles)))
+    , m_pseudoElementStyles(std::exchange(a.m_pseudoElementStyles, WTF::move(b.m_pseudoElementStyles)))
 {
 }
 
 inline void ComputedStyleBase::NonInheritedFlags::copyNonInheritedFrom(const NonInheritedFlags& other)
 {
     // Only some flags are copied because NonInheritedFlags contains things that are not actually style data.
-    effectiveDisplay = other.effectiveDisplay;
+    display = other.display;
     originalDisplay = other.originalDisplay;
     overflowX = other.overflowX;
     overflowY = other.overflowY;
-    clear = other.clear;
     position = other.position;
-    unicodeBidi = other.unicodeBidi;
     floating = other.floating;
+    clear = other.clear;
+    boxSizing = other.boxSizing;
+    unicodeBidi = other.unicodeBidi;
     textDecorationLine = other.textDecorationLine;
     usesViewportUnits = other.usesViewportUnits;
-    usesContainerUnits = other.usesContainerUnits;
+    isContainerDependent = other.isContainerDependent;
     useTreeCountingFunctions = other.useTreeCountingFunctions;
     hasExplicitlyInheritedProperties = other.hasExplicitlyInheritedProperties;
     disallowsFastPathInheritance = other.disallowsFastPathInheritance;

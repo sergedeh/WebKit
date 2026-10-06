@@ -30,7 +30,6 @@
 namespace WebCore {
 
 class DOMTokenList;
-class LazyLoadFrameObserver;
 class RenderIFrame;
 class TrustedHTML;
 
@@ -46,13 +45,12 @@ public:
     String referrerPolicyForBindings() const;
     ReferrerPolicy referrerPolicy() const final;
 
-    String srcdoc() const;
-    ExceptionOr<void> setSrcdoc(Variant<RefPtr<TrustedHTML>, String>&&, SubstituteData::SessionHistoryVisibility = SubstituteData::SessionHistoryVisibility::Visible);
+    String NODELETE srcdoc() const;
+    ExceptionOr<void> setSrcdoc(Variant<Ref<TrustedHTML>, String>&&, SubstituteData::SessionHistoryVisibility = SubstituteData::SessionHistoryVisibility::Visible);
     SubstituteData::SessionHistoryVisibility srcdocSessionHistoryVisibility() const { return m_srcdocSessionHistoryVisibility; };
 
-    LazyLoadFrameObserver& lazyLoadFrameObserver();
-
     void loadDeferredFrame();
+    void lazyLoadIntersectionCallbackInvoked(bool isIntersecting);
 
     enum LoadingValues { Lazy, Eager };
 
@@ -62,7 +60,7 @@ public:
 #endif
 
 #if ENABLE(CONTENT_EXTENSIONS)
-    const URL& initiatorSourceURL() const { return m_initiatorSourceURL; }
+    const URL& initiatorSourceURL() const LIFETIME_BOUND { return m_initiatorSourceURL; }
     void setInitiatorSourceURL(URL&& url) { m_initiatorSourceURL = WTF::move(url); }
 #endif
 
@@ -76,16 +74,18 @@ private:
 
     bool isInteractiveContent() const final { return true; }
 
-    bool rendererIsNeeded(const RenderStyle&) final;
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isReplaced(const RenderStyle* = nullptr) const final { return true; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    bool isReplaced(const Style::ComputedStyle* = nullptr) const final { return true; }
 
     ReferrerPolicy referrerPolicyFromAttribute() const;
     bool shouldLoadFrameLazily() final;
     bool isLazyLoadObserverActive() const final;
 
     const std::unique_ptr<DOMTokenList> m_sandbox;
-    std::unique_ptr<LazyLoadFrameObserver> m_lazyLoadFrameObserver;
+    AtomString m_deferredFrameURL;
+    ReferrerPolicy m_deferredReferrerPolicy { ReferrerPolicy::EmptyString };
+    bool m_isLazyLoading { false };
 #if ENABLE(CONTENT_EXTENSIONS)
     URL m_initiatorSourceURL;
 #endif

@@ -26,7 +26,7 @@
 
 #pragma once
 
-#include "AXObjectCache.h"
+#include "AXObjectTypes.h"
 #include "EditCommand.h"
 #include "CSSPropertyNames.h"
 #include "UndoStep.h"
@@ -36,6 +36,7 @@
 
 namespace WebCore {
 
+class AXObjectCache;
 class EditingStyle;
 class DataTransfer;
 class HTMLElement;
@@ -84,8 +85,8 @@ public:
     void append(SimpleEditCommand&);
     bool wasCreateLinkCommand() const { return m_editAction == EditAction::CreateLink; }
 
-    const VisibleSelection& startingSelection() const { return m_startingSelection; }
-    const VisibleSelection& endingSelection() const { return m_endingSelection; }
+    const VisibleSelection& startingSelection() const LIFETIME_BOUND { return m_startingSelection; }
+    const VisibleSelection& endingSelection() const LIFETIME_BOUND { return m_endingSelection; }
     void setStartingSelection(const VisibleSelection&);
     void setEndingSelection(const VisibleSelection&);
     Element* startingRootEditableElement() const { return m_startingRootEditableElement.get(); }
@@ -101,7 +102,7 @@ private:
 
     String label() const final;
     void didRemoveFromUndoManager() final { }
-    bool areRootEditabledElementsConnected();
+    bool NODELETE areRootEditabledElementsConnected();
 
     const Ref<Document> m_document;
     VisibleSelection m_startingSelection;
@@ -119,8 +120,7 @@ public:
 
     void apply();
     bool isFirstCommand(EditCommand* command) { return !m_commands.isEmpty() && m_commands.first() == command; }
-    EditCommandComposition* composition() const;
-    RefPtr<EditCommandComposition> protectedComposition() const { return composition(); }
+    EditCommandComposition* NODELETE composition() const;
     Ref<EditCommandComposition> ensureComposition();
 
     virtual bool isTypingCommand() const;
@@ -176,7 +176,7 @@ protected:
     void prepareWhitespaceAtPositionForSplit(Position&);
     void replaceCollapsibleWhitespaceWithNonBreakingSpaceIfNeeded(const VisiblePosition&);
     RefPtr<Text> textNodeForRebalance(const Position&) const;
-    bool shouldRebalanceLeadingWhitespaceFor(const String&) const;
+    bool NODELETE shouldRebalanceLeadingWhitespaceFor(const String&) const;
     void removeNodeAttribute(Element&, const QualifiedName& attribute);
     void removeChildrenInRange(Node&, unsigned from, unsigned to);
     virtual void removeNode(Node&, ShouldAssumeContentIsAlwaysEditable = DoNotAssumeContentIsAlwaysEditable);
@@ -192,6 +192,7 @@ protected:
     Position positionOutsideTabSpan(const Position&);
     void setNodeAttribute(Element&, const QualifiedName& attribute, const AtomString& value);
     void splitElement(Element&, Node& atChild);
+    void splitListElement(Element&, Node& atChild);
     void splitTextNode(Text&, unsigned offset);
     void splitTextNodeContainingElement(Text&, unsigned offset);
     void wrapContentsInDummySpan(Element&);
@@ -216,7 +217,7 @@ protected:
     void moveParagraphWithClones(const VisiblePosition& startOfParagraphToMove, const VisiblePosition& endOfParagraphToMove, Element* blockElement, Node* outerNode);
     void cloneParagraphUnderNewElement(const Position& start, const Position& end, Node* outerNode, Element* blockElement);
     void cleanupAfterDeletion(VisiblePosition destination = VisiblePosition());
-    
+
     VisibleSelection shouldBreakOutOfEmptyListItem() const;
     bool breakOutOfEmptyListItem();
     bool breakOutOfEmptyMailBlockquotedParagraph();
@@ -230,7 +231,7 @@ protected:
 private:
     bool isCompositeEditCommand() const override { return true; }
 
-    RefPtr<EditCommandComposition> m_composition;
+    const RefPtr<EditCommandComposition> m_composition;
 };
 
 } // namespace WebCore

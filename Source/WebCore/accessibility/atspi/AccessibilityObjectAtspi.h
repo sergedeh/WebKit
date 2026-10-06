@@ -62,7 +62,7 @@ public:
         TableCell = 1 << 11,
         Collection =  1 << 12
     };
-    const OptionSet<Interface>& interfaces() const { return m_interfaces; }
+    const OptionSet<Interface>& interfaces() const LIFETIME_BOUND { return m_interfaces; }
 
     void setParent(std::optional<AccessibilityObjectAtspi*>);
     WEBCORE_EXPORT std::optional<AccessibilityObjectAtspi*> parent() const;
@@ -84,8 +84,8 @@ public:
     void serialize(GVariantBuilder*) const;
 
     WEBCORE_EXPORT String id() const;
-    WEBCORE_EXPORT CString name() const;
-    WEBCORE_EXPORT CString description() const;
+    WEBCORE_EXPORT UTF8CString name() const;
+    WEBCORE_EXPORT UTF8CString description() const;
     WEBCORE_EXPORT String locale() const;
     WEBCORE_EXPORT Atspi::Role role() const;
     WEBCORE_EXPORT unsigned childCount() const;
@@ -133,6 +133,9 @@ public:
     WEBCORE_EXPORT double minimumValue() const;
     WEBCORE_EXPORT double maximumValue() const;
     WEBCORE_EXPORT double minimumIncrement() const;
+    WEBCORE_EXPORT void increment();
+    WEBCORE_EXPORT void decrement();
+    WEBCORE_EXPORT bool dismiss();
     void valueChanged(double);
 
     WEBCORE_EXPORT URL url() const;
@@ -141,7 +144,7 @@ public:
     WEBCORE_EXPORT bool doAction() const;
 
     WEBCORE_EXPORT String documentAttribute(const String&) const;
-    void loadEvent(const char*);
+    void loadEvent(ASCIILiteral);
 
     WEBCORE_EXPORT AccessibilityObjectAtspi* activeDescendant() const;
     void activeDescendantChanged();
@@ -167,6 +170,12 @@ public:
     WEBCORE_EXPORT unsigned columnSpan() const;
     WEBCORE_EXPORT std::pair<std::optional<unsigned>, std::optional<unsigned>> cellPosition() const;
 
+    WEBCORE_EXPORT bool focus() const;
+
+    WEBCORE_EXPORT AccessibilityObjectAtspi* focusableAncestor() const;
+    WEBCORE_EXPORT AccessibilityObjectAtspi* editableAncestor() const;
+    WEBCORE_EXPORT AccessibilityObjectAtspi* highestEditableAncestor() const;
+
 private:
     AccessibilityObjectAtspi(AXCoreObject*, AccessibilityRootAtspi*);
 
@@ -184,13 +193,12 @@ private:
     void buildInterfaces(GVariantBuilder*) const;
     void buildStates(GVariantBuilder*) const;
 
-    bool focus() const;
     float opacity() const;
 
     static TextGranularity atspiBoundaryToTextGranularity(Atspi::TextBoundaryType);
     static TextGranularity atspiGranularityToTextGranularity(Atspi::TextGranularityType);
-    CString text(int, int) const;
-    CString textAtOffset(int, TextGranularity, int&, int&) const;
+    UTF8CString text(int, int) const;
+    UTF8CString textAtOffset(int, TextGranularity, int&, int&) const;
     int characterAtOffset(int) const;
     std::optional<unsigned> characterOffset(char16_t, int) const;
     std::optional<unsigned> characterIndex(char16_t, unsigned) const;
@@ -283,7 +291,7 @@ private:
 
     RefPtr<AXCoreObject> m_coreObject;
     OptionSet<Interface> m_interfaces;
-    RefPtr<AccessibilityRootAtspi> m_root;
+    const RefPtr<AccessibilityRootAtspi> m_root;
     std::optional<RefPtr<AccessibilityObjectAtspi>> m_parent;
     bool m_isRegistered { false };
     String m_path;

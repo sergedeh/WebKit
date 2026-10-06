@@ -51,15 +51,15 @@ public:
     void attach(RenderTableSection& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
     void attach(RenderTableRow& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
 
-    bool childRequiresTable(const RenderElement& parent, const RenderObject& child);
+    bool NODELETE childRequiresTable(const RenderElement& parent, const RenderObject& child);
 
     void collapseAndDestroyAnonymousSiblingCells(const RenderTableCell& willBeDestroyed);
     void collapseAndDestroyAnonymousSiblingRows(const RenderTableRow& willBeDestroyed);
 
-    static RenderPtr<RenderTable> createAnonymousTableWithStyle(Document&, const RenderStyle&);
-    static RenderPtr<RenderTableCell> createAnonymousTableCellWithStyle(Document&, const RenderStyle&);
-    static RenderPtr<RenderTableRow> createAnonymousTableRowWithStyle(Document&, const RenderStyle&);
-    static RenderPtr<RenderTableSection> createAnonymousTableSectionWithStyle(Document&, const RenderStyle&);
+    static RenderPtr<RenderTable> createAnonymousTableWithStyle(Document&, const Style::ComputedStyle&);
+    static RenderPtr<RenderTableCell> createAnonymousTableCellWithStyle(Document&, const Style::ComputedStyle&);
+    static RenderPtr<RenderTableRow> createAnonymousTableRowWithStyle(Document&, const Style::ComputedStyle&);
+    static RenderPtr<RenderTableSection> createAnonymousTableSectionWithStyle(Document&, const Style::ComputedStyle&);
 
 private:
     template <typename Parent, typename Child>

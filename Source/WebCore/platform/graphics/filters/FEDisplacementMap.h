@@ -39,23 +39,27 @@ class FEDisplacementMap final : public FilterEffect {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEDisplacementMap);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEDisplacementMap);
 public:
-    WEBCORE_EXPORT static Ref<FEDisplacementMap> create(ChannelSelectorType xChannelSelector, ChannelSelectorType yChannelSelector, float scale, DestinationColorSpace = DestinationColorSpace::SRGB());
+    WEBCORE_EXPORT static Ref<FEDisplacementMap> create(ChannelSelectorType xChannelSelector, ChannelSelectorType yChannelSelector, float scale, ColorSpace = ColorSpace::SRGB(), bool in2IsTainted = false);
 
     bool operator==(const FEDisplacementMap&) const;
 
     ChannelSelectorType xChannelSelector() const { return m_xChannelSelector; }
-    bool setXChannelSelector(const ChannelSelectorType);
+    bool NODELETE setXChannelSelector(const ChannelSelectorType);
 
     ChannelSelectorType yChannelSelector() const { return m_yChannelSelector; }
-    bool setYChannelSelector(const ChannelSelectorType);
+    bool NODELETE setYChannelSelector(const ChannelSelectorType);
 
     float scale() const { return m_scale; }
-    bool setScale(float);
+    bool NODELETE setScale(float);
+
+    // §16.4: when in2 is tainted, this primitive becomes a pass-through of in.
+    bool in2IsTainted() const { return m_in2IsTainted; }
+    void setIn2IsTainted(bool tainted) { m_in2IsTainted = tainted; }
 
     static IntOutsets calculateOutsets(const FloatSize& maxDisplacement);
 
 private:
-    FEDisplacementMap(ChannelSelectorType xChannelSelector, ChannelSelectorType yChannelSelector, float, DestinationColorSpace);
+    FEDisplacementMap(ChannelSelectorType xChannelSelector, ChannelSelectorType yChannelSelector, float, ColorSpace);
 
     bool operator==(const FilterEffect& other) const override { return areEqual<FEDisplacementMap>(*this, other); }
 
@@ -63,7 +67,7 @@ private:
 
     FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const override;
 
-    const DestinationColorSpace& resultColorSpace(std::span<const Ref<FilterImage>>) const override;
+    const ColorSpace& resultColorSpace(std::span<const Ref<FilterImage>>) const override;
     void transformInputsColorSpace(std::span<const Ref<FilterImage>> inputs) const override;
 
     OptionSet<FilterRenderingMode> supportedFilterRenderingModes(OptionSet<FilterRenderingMode>) const override;
@@ -75,6 +79,7 @@ private:
     ChannelSelectorType m_xChannelSelector;
     ChannelSelectorType m_yChannelSelector;
     float m_scale;
+    bool m_in2IsTainted { false };
 };
 
 } // namespace WebCore

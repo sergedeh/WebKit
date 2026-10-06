@@ -38,7 +38,6 @@
 
 #ifndef EGL_ANGLE_direct3d_display
 #define EGL_ANGLE_direct3d_display 1
-#define EGL_D3D11_ELSE_D3D9_DISPLAY_ANGLE ((EGLNativeDisplayType)-2)
 #define EGL_D3D11_ONLY_DISPLAY_ANGLE ((EGLNativeDisplayType)-3)
 #endif /* EGL_ANGLE_direct3d_display */
 
@@ -63,7 +62,6 @@
 
 #ifndef EGL_ANGLE_platform_angle_d3d
 #define EGL_ANGLE_platform_angle_d3d 1
-#define EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE 0x3207
 #define EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE 0x3208
 #define EGL_PLATFORM_ANGLE_DEVICE_TYPE_D3D_WARP_ANGLE 0x320B
 #define EGL_PLATFORM_ANGLE_DEVICE_TYPE_D3D_REFERENCE_ANGLE 0x320C
@@ -97,6 +95,7 @@
 #define EGL_ANGLE_platform_angle_webgpu 1
 #define EGL_PLATFORM_ANGLE_TYPE_WEBGPU_ANGLE 0x34DD
 #define EGL_PLATFORM_ANGLE_DAWN_PROC_TABLE_ANGLE 0x3468
+#define EGL_PLATFORM_ANGLE_WEBGPU_INSTANCE_ANGLE 0x34F7
 #define EGL_PLATFORM_ANGLE_WEBGPU_DEVICE_ANGLE 0x34F6
 #endif /* EGL_ANGLE_platform_angle_webgpu */
 
@@ -134,22 +133,16 @@
 #define EGL_CONTEXT_VIRTUALIZATION_GROUP_ANGLE 0x3481
 #endif /* EGL_ANGLE_context_virtualization */
 
-#ifndef EGL_ANGLE_platform_angle_device_context_volatile_eagl
-#define EGL_ANGLE_platform_angle_device_context_volatile_eagl 1
-#define EGL_PLATFORM_ANGLE_DEVICE_CONTEXT_VOLATILE_EAGL_ANGLE 0x34A2
-#endif /* EGL_ANGLE_platform_angle_device_context_volatile_eagl */
-
-#ifndef EGL_ANGLE_platform_angle_device_context_volatile_cgl
-#define EGL_ANGLE_platform_angle_device_context_volatile_cgl 1
-#define EGL_PLATFORM_ANGLE_DEVICE_CONTEXT_VOLATILE_CGL_ANGLE 0x34A3
-#endif /* EGL_ANGLE_platform_angle_device_context_volatile_cgl */
-
 #ifndef EGL_ANGLE_platform_angle_device_id
 #define EGL_ANGLE_platform_angle_device_id
 #define EGL_PLATFORM_ANGLE_DEVICE_ID_HIGH_ANGLE 0x34D6
 #define EGL_PLATFORM_ANGLE_DEVICE_ID_LOW_ANGLE 0x34D7
-#define EGL_PLATFORM_ANGLE_DISPLAY_KEY_ANGLE 0x34DC
 #endif /* EGL_ANGLE_platform_angle_device_id */
+
+#ifndef EGL_ANGLE_platform_angle_display_key
+#define EGL_ANGLE_platform_angle_display_key
+#define EGL_PLATFORM_ANGLE_DISPLAY_KEY_ANGLE 0x34DC
+#endif /* EGL_ANGLE_platform_angle_display_key */
 
 #ifndef EGL_ANGLE_x11_visual
 #define EGL_ANGLE_x11_visual
@@ -185,6 +178,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglStreamPostD3DTextureANGLE(EGLDisplay dpy, EGLSt
 #ifndef EGL_ANGLE_create_context_webgl_compatibility
 #define EGL_ANGLE_create_context_webgl_compatibility 1
 #define EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE 0x33AC
+#define EGL_CONTEXT_HARDENED_ANGLE 0x34F8
 #endif /* EGL_ANGLE_create_context_webgl_compatibility */
 
 #ifndef EGL_ANGLE_display_texture_share_group

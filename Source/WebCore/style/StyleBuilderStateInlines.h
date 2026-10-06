@@ -26,23 +26,56 @@
 
 #pragma once
 
-#include "RenderStyle+SettersInlines.h"
+#include "PseudoElementIdentifier.h"
 #include "StyleBuilderState.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleZoom.h"
 
 namespace WebCore {
 namespace Style {
 
-inline void BuilderState::setTextOrientation(TextOrientation orientation) { m_fontDirty |= m_style.setTextOrientation(orientation); }
-inline void BuilderState::setWritingMode(StyleWritingMode mode) { m_fontDirty |= m_style.setWritingMode(mode); }
+inline bool BuilderState::isBuildingHighlightStyle() const
+{
+    auto pseudoElementType = m_style.pseudoElementType();
+    return pseudoElementType && isHighlightPseudoElement(*pseudoElementType);
+}
 
-inline void BuilderState::setZoom(Zoom zoom) { m_fontDirty |= m_style.setZoom(zoom); }
-inline void BuilderState::setUsedZoom(float zoom) { m_fontDirty |= m_style.setUsedZoom(zoom); }
+inline void BuilderState::setTextOrientation(TextOrientation orientation)
+{
+    m_fontDirty |= m_style.setTextOrientation(orientation);
+}
 
-inline const FontCascadeDescription& BuilderState::parentFontDescription() { return parentStyle().fontDescription(); }
-inline const FontCascadeDescription& BuilderState::fontDescription() { return m_style.fontDescription(); }
-inline void BuilderState::setFontDescription(FontCascadeDescription&& description) { m_fontDirty |= m_style.setFontDescriptionWithoutUpdate(WTF::move(description)); }
+inline void BuilderState::setWritingMode(StyleWritingMode mode)
+{
+    m_fontDirty |= m_style.setWritingMode(mode);
+}
+
+inline void BuilderState::setZoom(Zoom zoom)
+{
+    m_fontDirty |= m_style.setZoom(zoom);
+}
+
+inline void BuilderState::setUsedZoom(float zoom)
+{
+    m_fontDirty |= m_style.setUsedZoom(zoom);
+}
+
+inline const FontCascadeDescription& BuilderState::parentFontDescription()
+{
+    return parentStyle().fontDescription();
+}
+
+inline const FontCascadeDescription& BuilderState::fontDescription()
+{
+    return m_style.fontDescription();
+}
+
+inline void BuilderState::setFontDescription(FontCascadeDescription&& description)
+{
+    m_fontDirty |= m_style.setFontDescriptionWithoutUpdate(WTF::move(description));
+}
 
 inline void BuilderState::setFontDescriptionKeywordSizeFromIdentifier(CSSValueID identifier)
 {
@@ -64,27 +97,29 @@ inline void BuilderState::setFontDescriptionIsAbsoluteSize(bool isAbsoluteSize)
 
 inline void BuilderState::setFontDescriptionFontSize(float fontSize)
 {
-    if (m_style.fontDescription().specifiedSize() != fontSize) {
+    if (m_style.fontDescription().computedSize() != fontSize) {
         m_fontDirty = true;
-        m_style.mutableFontDescriptionWithoutUpdate().setSpecifiedSize(fontSize);
+        m_style.mutableFontDescriptionWithoutUpdate().setComputedSize(fontSize);
     }
 
-    SUPPRESS_UNCOUNTED_ARG auto computedSize = Style::computedFontSizeFromSpecifiedSize(fontSize, m_style.fontDescription().isAbsoluteSize(), useSVGZoomRules(), style(), document());
-    if (m_style.fontDescription().computedSize() != computedSize.size || m_style.fontDescription().usedZoomFactor() != computedSize.usedZoomFactor) {
+    SUPPRESS_UNCOUNTED_ARG auto usedFontSize = Style::usedFontSizeFromComputedSize(fontSize, m_style.fontDescription().isAbsoluteSize(), useSVGZoomRules(), style(), document());
+    if (m_style.fontDescription().usedSize() != usedFontSize.size || m_style.fontDescription().usedZoomFactor() != usedFontSize.zoomFactor) {
         m_fontDirty = true;
-        m_style.mutableFontDescriptionWithoutUpdate().setComputedSize(computedSize.size, computedSize.usedZoomFactor);
+        m_style.mutableFontDescriptionWithoutUpdate().setUsedSize(usedFontSize.size, usedFontSize.zoomFactor);
     }
 }
 
 inline void BuilderState::setFontDescriptionFamilies(FontFamilies&& families)
 {
-    if (m_style.fontDescription().families() == families.toPlatform() && m_style.fontDescription().isSpecifiedFont() == families.isSpecifiedFont())
+    bool hasAuthorSpecifiedNonGenericPrimaryFont = families.hasAuthorSpecifiedNonGenericPrimaryFont();
+    if (m_style.fontDescription().families() == families.toPlatform()
+        && m_style.fontDescription().hasAuthorSpecifiedNonGenericPrimaryFont() == hasAuthorSpecifiedNonGenericPrimaryFont)
         return;
 
     m_fontDirty = true;
     auto& fontCascade = m_style.mutableFontCascadeWithoutUpdate();
     fontCascade.mutableFontDescription().setFamilies(families.takePlatform());
-    fontCascade.mutableFontDescription().setIsSpecifiedFont(families.isSpecifiedFont());
+    fontCascade.mutableFontDescription().setHasAuthorSpecifiedNonGenericPrimaryFont(hasAuthorSpecifiedNonGenericPrimaryFont);
     fontCascade.updateUseBackslashAsYenSymbol();
 }
 
@@ -147,7 +182,7 @@ inline void BuilderState::setFontDescriptionFontSynthesisSmallCaps(FontSynthesis
     m_style.mutableFontDescriptionWithoutUpdate().setFontSynthesisSmallCaps(WTF::move(fontSynthesisSmallCaps));
 }
 
-inline void BuilderState::setFontDescriptionFontSynthesisStyle(FontSynthesisLonghandValue fontSynthesisStyle)
+inline void BuilderState::setFontDescriptionFontSynthesisStyle(FontSynthesisStyleLonghandValue fontSynthesisStyle)
 {
     if (m_style.fontDescription().fontSynthesisStyle() == fontSynthesisStyle)
         return;
@@ -185,13 +220,13 @@ inline void BuilderState::setFontDescriptionOpticalSizing(FontOpticalSizing opti
     m_style.mutableFontDescriptionWithoutUpdate().setOpticalSizing(opticalSizing);
 }
 
-inline void BuilderState::setFontDescriptionSpecifiedLocale(WebkitLocale&& specifiedLocale)
+inline void BuilderState::setFontDescriptionLocale(WebkitLocale&& locale)
 {
-    if (m_style.fontDescription().specifiedLocale() == specifiedLocale.platform())
+    if (m_style.fontDescription().computedLocale() == locale.platform())
         return;
 
     m_fontDirty = true;
-    m_style.mutableFontDescriptionWithoutUpdate().setSpecifiedLocale(specifiedLocale.takePlatform());
+    m_style.mutableFontDescriptionWithoutUpdate().setComputedLocale(locale.takePlatform());
 }
 
 inline void BuilderState::setFontDescriptionTextAutospace(TextAutospace textAutospace)

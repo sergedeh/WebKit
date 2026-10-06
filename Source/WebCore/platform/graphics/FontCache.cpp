@@ -31,6 +31,7 @@
 #include "FontCache.h"
 
 #include "FontCascade.h"
+#include "FontCascadeInlines.h"
 #include "FontCreationContext.h"
 #include "FontPlatformData.h"
 #include "FontSelector.h"
@@ -46,6 +47,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/AtomStringHash.h>
 #include <wtf/text/StringHash.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(OPENTYPE_VERTICAL)
 #include "OpenTypeVerticalData.h"
@@ -75,22 +77,18 @@ inline void add(Hasher& hasher, const FontPlatformDataCacheKey& key)
 
 struct FontPlatformDataCacheKeyHashTraits : public SimpleClassHashTraits<FontPlatformDataCacheKey> {
     static constexpr bool emptyValueIsZero = false;
-    static void constructDeletedValue(FontPlatformDataCacheKey& slot)
+    static void NODELETE constructDeletedValue(FontPlatformDataCacheKey& slot)
     {
         new (NotNull, &slot.descriptionKey) FontDescriptionKey(WTF::HashTableDeletedValue);
     }
-    static bool isDeletedValue(const FontPlatformDataCacheKey& key)
+    static bool NODELETE isDeletedValue(const FontPlatformDataCacheKey& key)
     {
         return key.descriptionKey.isHashTableDeletedValue();
     }
 };
 
 struct FontDataCacheKeyTraits : WTF::GenericHashTraits<FontPlatformData> {
-#if USE(SKIA)
     static constexpr bool emptyValueIsZero = false;
-#else
-    static constexpr bool emptyValueIsZero = true;
-#endif
 
     static const FontPlatformData& emptyValue()
     {
@@ -101,7 +99,7 @@ struct FontDataCacheKeyTraits : WTF::GenericHashTraits<FontPlatformData> {
     {
         new (NotNull, &slot) FontPlatformData(WTF::HashTableDeletedValue);
     }
-    static bool isDeletedValue(const FontPlatformData& value)
+    static bool NODELETE isDeletedValue(const FontPlatformData& value)
     {
         return value.isHashTableDeletedValue();
     }
@@ -125,7 +123,7 @@ struct FontCache::FontDataCaches {
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(FontCache::FontDataCaches);
 
-CheckedRef<FontCache> FontCache::forCurrentThread()
+FontCache& FontCache::forCurrentThread()
 {
     return threadGlobalDataSingleton().fontCache();
 }
@@ -292,6 +290,7 @@ void FontCache::purgeInactiveFontData(unsigned purgeCount)
 
     m_fontCascadeCache.pruneUnreferencedEntries();
     m_fontCascadeCache.pruneSystemFallbackFonts();
+    m_fontCascadeCache.clearShapedTextCaches();
 
 #if PLATFORM(IOS_FAMILY)
     Locker locker { m_fontLock };
@@ -300,7 +299,7 @@ void FontCache::purgeInactiveFontData(unsigned purgeCount)
     while (purgeCount) {
         Vector<Ref<Font>, 20> fontsToDelete;
         for (auto& font : m_fontDataCaches->data.values()) {
-            LOG(Fonts, " trying to purge font %s (has one ref %d)", font->platformData().description().utf8().data(), font->hasOneRef());
+            LOG_WITH_STREAM(Fonts, stream << " trying to purge font "_s << font->platformData().description() << " (has one ref "_s << font->hasOneRef() << ")"_s);
             if (!font->hasOneRef())
                 continue;
             fontsToDelete.append(font.copyRef());
@@ -345,7 +344,7 @@ RefPtr<OpenTypeVerticalData> FontCache::verticalData(const FontPlatformData& pla
 
 void FontCache::updateFontCascade(const FontCascade& fontCascade)
 {
-    fontCascade.updateFonts(m_fontCascadeCache.retrieveOrAddCachedFonts(fontCascade.fontDescription(), fontCascade.fontSelector()));
+    fontCascade.updateFonts(m_fontCascadeCache.retrieveOrAddCachedFonts(fontCascade.fontDescription(), protect(fontCascade.fontSelector())));
 }
 
 size_t FontCache::fontCount()
@@ -414,7 +413,7 @@ static void dispatchToAllFontCaches(F function)
 {
     ASSERT(isMainThread());
 
-    function(FontCache::forCurrentThread().get());
+    function(protect(FontCache::forCurrentThread()).get());
 
     for (Ref thread : WorkerOrWorkletThread::workerOrWorkletThreads()) {
         thread->runLoop().postTask([function](ScriptExecutionContext&) {
@@ -445,6 +444,13 @@ void FontCache::releaseNoncriticalMemoryInAllFontCaches()
 {
     dispatchToAllFontCaches([](FontCache& fontCache) {
         fontCache.releaseNoncriticalMemory();
+    });
+}
+
+void FontCache::releaseCriticalMemoryInAllFontCaches()
+{
+    dispatchToAllFontCaches([](FontCache& fontCache) {
+        fontCache.m_fontCascadeCache.clearShapedTextCaches();
     });
 }
 
@@ -488,9 +494,11 @@ RefPtr<Font> FontCache::similarFont(const FontDescription&, const String&)
     return nullptr;
 }
 
+#if !USE(SKIA)
 void FontCache::platformReleaseNoncriticalMemory()
 {
 }
+#endif
 #endif
 
 } // namespace WebCore

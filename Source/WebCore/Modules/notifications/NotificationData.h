@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,20 +25,22 @@
 
 #pragma once
 
+#include <WebCore/NotificationDirection.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <optional>
 #include <pal/SessionID.h>
-#include <wtf/MonotonicTime.h>
 #include <wtf/Platform.h>
 #include <wtf/URL.h>
 #include <wtf/UUID.h>
+#include <wtf/WallTime.h>
 #include <wtf/text/WTFString.h>
 
 OBJC_CLASS NSDictionary;
 
 namespace WebCore {
 
-enum class NotificationDirection : uint8_t;
+static constexpr Seconds silentPushTimeoutForProduction { 30_s };
+static constexpr Seconds silentPushTimeoutForTesting { 1_s };
 
 struct NotificationData {
     WEBCORE_EXPORT NotificationData isolatedCopy() const &;
@@ -47,7 +49,6 @@ struct NotificationData {
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT static std::optional<NotificationData> fromDictionary(NSDictionary *dictionaryRepresentation);
     WEBCORE_EXPORT NSDictionary *dictionaryRepresentation() const;
-    WEBCORE_EXPORT RetainPtr<NSDictionary> protectedDictionaryRepresentation() const;
 #endif
 
     bool isPersistent() const { return !serviceWorkerRegistrationURL.isNull(); }
@@ -58,13 +59,13 @@ struct NotificationData {
     String iconURL;
     String tag;
     String language;
-    WebCore::NotificationDirection direction;
+    NotificationDirection direction { NotificationDirection::Auto };
     String originString;
     URL serviceWorkerRegistrationURL;
     WTF::UUID notificationID { WTF::UUID::createVersion4() };
     std::optional<ScriptExecutionContextIdentifier> contextIdentifier;
     PAL::SessionID sourceSession { PAL::SessionID::defaultSessionID() };
-    MonotonicTime creationTime;
+    WallTime creationTime;
     Vector<uint8_t> data;
     std::optional<bool> silent;
 };

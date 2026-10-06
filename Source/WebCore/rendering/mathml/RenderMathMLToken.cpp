@@ -30,6 +30,9 @@
 
 #if ENABLE(MATHML)
 
+#include "FontCascadeInlines.h"
+#include "FontInlines.h"
+#include "GlyphPage.h"
 #include "MathMLElement.h"
 #include "MathMLNames.h"
 #include "MathMLTokenElement.h"
@@ -39,7 +42,8 @@
 #include "RenderElement.h"
 #include "RenderIterator.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
+#include "Settings.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -49,12 +53,12 @@ using namespace MathMLNames;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLToken);
 
-RenderMathMLToken::RenderMathMLToken(Type type, MathMLTokenElement& element, RenderStyle&& style)
+RenderMathMLToken::RenderMathMLToken(Type type, MathMLTokenElement& element, Style::ComputedStyle&& style)
     : RenderMathMLBlock(type, element, WTF::move(style))
 {
 }
 
-RenderMathMLToken::RenderMathMLToken(Type type, Document& document, RenderStyle&& style)
+RenderMathMLToken::RenderMathMLToken(Type type, Document& document, Style::ComputedStyle&& style)
     : RenderMathMLBlock(type, document, WTF::move(style))
 {
 }
@@ -72,9 +76,12 @@ void RenderMathMLToken::updateTokenContent()
     setMathVariantGlyphDirty();
 }
 
-void RenderMathMLToken::computePreferredLogicalWidths()
+void RenderMathMLToken::computeIntrinsicLogicalWidthContributions()
 {
-    ASSERT(needsPreferredLogicalWidthsUpdate());
+    ASSERT(hasInvalidContentLogicalWidths());
+
+    if (document().settings().coreMathMLDeprecateLegacyMathvariant())
+        return RenderMathMLBlock::computeIntrinsicLogicalWidthContributions();
 
     if (m_mathVariantGlyphDirty)
         updateMathVariantGlyph();
@@ -82,14 +89,15 @@ void RenderMathMLToken::computePreferredLogicalWidths()
     if (m_mathVariantCodePoint) {
         auto mathVariantGlyph = style().fontCascade().glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
         if (mathVariantGlyph.font) {
-            m_maxPreferredLogicalWidth = m_minPreferredLogicalWidth = mathVariantGlyph.font->widthForGlyph(mathVariantGlyph.glyph);
-            adjustPreferredLogicalWidthsForBorderAndPadding();
-            clearNeedsPreferredWidthsUpdate();
+            m_maxContentLogicalWidthContribution = protect(mathVariantGlyph.font)->widthForGlyph(mathVariantGlyph.glyph);
+            m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
+            adjustContentLogicalWidthsForBorderAndPadding();
+            clearContentLogicalWidthsInvalidation();
             return;
         }
     }
 
-    RenderMathMLBlock::computePreferredLogicalWidths();
+    RenderMathMLBlock::computeIntrinsicLogicalWidthContributions();
 }
 
 void RenderMathMLToken::updateMathVariantGlyph()
@@ -124,10 +132,10 @@ void RenderMathMLToken::updateMathVariantGlyph()
 void RenderMathMLToken::setMathVariantGlyphDirty()
 {
     m_mathVariantGlyphDirty = true;
-    setNeedsLayoutAndPreferredWidthsUpdate();
+    setNeedsLayoutAndInvalidateContentLogicalWidths();
 }
 
-void RenderMathMLToken::styleDidChange(Style::Difference diff, const RenderStyle* oldStyle)
+void RenderMathMLToken::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderMathMLBlock::styleDidChange(diff, oldStyle);
     setMathVariantGlyphDirty();
@@ -144,7 +152,7 @@ std::optional<LayoutUnit> RenderMathMLToken::firstLineBaseline() const
     if (m_mathVariantCodePoint) {
         auto mathVariantGlyph = style().fontCascade().glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
         if (mathVariantGlyph.font) {
-            auto baseline = settings().subpixelInlineLayoutEnabled() ? LayoutUnit(-mathVariantGlyph.font->boundsForGlyph(mathVariantGlyph.glyph).y()) : LayoutUnit(roundf(-mathVariantGlyph.font->boundsForGlyph(mathVariantGlyph.glyph).y()));
+            auto baseline = LayoutUnit(-protect(mathVariantGlyph.font)->boundsForGlyph(mathVariantGlyph.glyph).y());
             return { borderAndPaddingBefore() + baseline };
         }
     }
@@ -172,12 +180,14 @@ void RenderMathMLToken::layoutBlock(RelayoutChildren relayoutChildren, LayoutUni
     }
 
     recomputeLogicalWidth();
-    for (auto* child = firstInFlowChildBox(); child; child = child->nextInFlowSiblingBox())
+    for (CheckedPtr child = firstInFlowChildBox(); child; child = child->nextInFlowSiblingBox())
         child->layoutIfNeeded();
-    setLogicalWidth(LayoutUnit(mathVariantGlyph.font->widthForGlyph(mathVariantGlyph.glyph)));
-    setLogicalHeight(LayoutUnit(mathVariantGlyph.font->boundsForGlyph(mathVariantGlyph.glyph).height()));
+    setLogicalWidth(LayoutUnit(protect(mathVariantGlyph.font)->widthForGlyph(mathVariantGlyph.glyph)));
+    setLogicalHeight(LayoutUnit(protect(mathVariantGlyph.font)->boundsForGlyph(mathVariantGlyph.glyph).height()));
 
     adjustLayoutForBorderAndPadding();
+
+    updateLogicalHeight();
 
     layoutOutOfFlowBoxes(relayoutChildren);
 }
@@ -195,18 +205,18 @@ void RenderMathMLToken::paint(PaintInfo& info, const LayoutPoint& paintOffset)
         return;
 
     GraphicsContextStateSaver stateSaver(info.context());
-    info.context().setFillColor(style().visitedDependentColorApplyingColorFilter());
+    info.context().setFillColor(style().visitedDependentTextFillColorApplyingColorFilter());
 
-    auto glyphAscent = settings().subpixelInlineLayoutEnabled() ? -mathVariantGlyph.font->boundsForGlyph(mathVariantGlyph.glyph).y() : roundf(-mathVariantGlyph.font->boundsForGlyph(mathVariantGlyph.glyph).y());
+    auto glyphAscent = -protect(mathVariantGlyph.font)->boundsForGlyph(mathVariantGlyph.glyph).y();
     // FIXME: If we're just drawing a single glyph, why do we need to compute an advance?
-    auto advance = makeGlyphBufferAdvance(mathVariantGlyph.font->widthForGlyph(mathVariantGlyph.glyph));
+    auto advance = makeGlyphBufferAdvance(protect(mathVariantGlyph.font)->widthForGlyph(mathVariantGlyph.glyph));
     auto location = paintOffset + this->location() + LayoutPoint { borderLeft() + paddingLeft(), glyphAscent + borderAndPaddingBefore() };
     if (style().writingMode().isHorizontal())
-        location.setY(roundToDevicePixel(LayoutUnit { location.y() }, document().deviceScaleFactor()));
+        location.setY(roundToDevicePixel(LayoutUnit { location.y() }, protect(document())->deviceScaleFactor()));
     else
-        location.setX(roundToDevicePixel(LayoutUnit { location.x() }, document().deviceScaleFactor()));
+        location.setX(roundToDevicePixel(LayoutUnit { location.x() }, protect(document())->deviceScaleFactor()));
 
-    info.context().drawGlyphs(*mathVariantGlyph.font, singleElementSpan(mathVariantGlyph.glyph), singleElementSpan(advance), location, style().fontCascade().fontDescription().usedFontSmoothing());
+    info.context().drawGlyphs(protect(*mathVariantGlyph.font), singleElementSpan(mathVariantGlyph.glyph), singleElementSpan(advance), location, style().fontCascade().fontDescription().usedFontSmoothing());
 }
 
 void RenderMathMLToken::paintChildren(PaintInfo& paintInfo, const LayoutPoint& paintOffset, PaintInfo& paintInfoForChild, bool usePrintRect)

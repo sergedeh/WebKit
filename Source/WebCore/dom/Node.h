@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2020, 2026 Apple Inc. All rights reserved.
  * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
  *
  * This library is free software; you can redistribute it and/or
@@ -26,30 +26,21 @@
 
 #include <WebCore/EventTarget.h>
 #include <WebCore/NodeIdentifier.h>
-#include <WebCore/PlatformExportMacros.h>
-#include <WebCore/RenderStyleConstants.h>
+#include <WebCore/NodeType.h>
 #include <WebCore/StyleValidity.h>
-#include <bit>
-#include <compare>
-#include <new>
+#include <WebCore/WebCoreOpaqueRoot.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/CompactPointerTuple.h>
 #include <wtf/CompactUniquePtrTuple.h>
-#include <wtf/FastMalloc.h>
 #include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
-#include <wtf/ListHashSet.h>
-#include <wtf/MainThread.h>
 #include <wtf/OptionSet.h>
-#include <wtf/RefCounted.h>
+#include <wtf/OrderedHashSet.h>
 #include <wtf/RobinHoodHashSet.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/URLHash.h>
-#include <wtf/WeakPtr.h>
-#include <wtf/text/ASCIILiteral.h>
 
 namespace WTF {
 class TextStream;
@@ -76,10 +67,11 @@ class NodeList;
 class NodeListsNodeData;
 class NodeRareData;
 class QualifiedName;
+
+enum class PseudoElementType : uint8_t;
 class RenderBox;
 class RenderBoxModelObject;
 class RenderObject;
-class RenderStyle;
 class SVGQualifiedName;
 class ShadowRoot;
 class TouchEvent;
@@ -93,10 +85,11 @@ enum class TextDirection : bool;
 template<typename T> class ExceptionOr;
 
 namespace Style {
+class ComputedStyle;
 struct PseudoElementIdentifier;
 }
 
-}
+} // namespace WebCore
 
 WTF_ALLOW_COMPACT_POINTERS_TO_INCOMPLETE_TYPE(WebCore::NodeRareData);
 
@@ -110,8 +103,9 @@ using MutationObserverOptions = OptionSet<MutationObserverOptionType>;
 using MutationRecordDeliveryOptions = OptionSet<MutationObserverOptionType>;
 
 enum class IsMutationBySetInnerHTML : uint8_t { No, Yes };
+enum class CloneSubtree : bool { No, Yes };
 
-using NodeOrString = Variant<RefPtr<Node>, String>;
+using NodeOrString = Variant<Ref<Node>, String>;
 
 const int initialNodeVectorSize = 11; // Covers 99.5%. See webkit.org/b/80706
 typedef Vector<Ref<Node>, initialNodeVectorSize> NodeVector;
@@ -123,22 +117,9 @@ class Node : public EventTarget, public CanMakeCheckedPtr<Node> {
     friend class Document;
     friend class TreeScope;
 public:
-    enum NodeType {
-        ELEMENT_NODE = 1,
-        ATTRIBUTE_NODE = 2,
-        TEXT_NODE = 3,
-        CDATA_SECTION_NODE = 4,
-        PROCESSING_INSTRUCTION_NODE = 7,
-        COMMENT_NODE = 8,
-        DOCUMENT_NODE = 9,
-        DOCUMENT_TYPE_NODE = 10,
-        DOCUMENT_FRAGMENT_NODE = 11,
-    };
-    enum DeprecatedNodeType {
-        ENTITY_REFERENCE_NODE = 5,
-        ENTITY_NODE = 6,
-        NOTATION_NODE = 12,
-    };
+    // This opts the entire Node family tree into being allocated in the BuiltinTypeDescriptor TZone category.
+    static constexpr bool usesBuiltinTypeDescriptorTZoneCategory = true;
+
     enum DocumentPosition {
         DOCUMENT_POSITION_EQUIVALENT = 0x00,
         DOCUMENT_POSITION_DISCONNECTED = 0x01,
@@ -149,9 +130,9 @@ public:
         DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 0x20,
     };
 
-    static void dumpStatistics();
+    static void NODELETE dumpStatistics();
 
-    virtual ~Node();
+    WEBCORE_EXPORT virtual ~Node();
     void willBeDeletedFrom(Document&);
 
     // DOM methods & attributes for Node
@@ -165,32 +146,26 @@ public:
     NodeType nodeType() const { return nodeTypeFromBitFields(m_typeBitFields); }
     virtual size_t approximateMemoryCost() const { return sizeof(*this); }
     ContainerNode* parentNode() const;
-    inline RefPtr<ContainerNode> protectedParentNode() const;
     static constexpr ptrdiff_t parentNodeMemoryOffset() { return OBJECT_OFFSETOF(Node, m_parentNode); }
     inline Element* parentElement() const;
-    inline RefPtr<Element> protectedParentElement() const;
     Node* previousSibling() const { return m_previousSibling; }
-    RefPtr<Node> protectedPreviousSibling() const { return m_previousSibling; }
     static constexpr ptrdiff_t previousSiblingMemoryOffset() { return OBJECT_OFFSETOF(Node, m_previousSibling); }
     Node* nextSibling() const { return m_next; }
-    RefPtr<Node> protectedNextSibling() const { return m_next; }
     static constexpr ptrdiff_t nextSiblingMemoryOffset() { return OBJECT_OFFSETOF(Node, m_next); }
     WEBCORE_EXPORT Ref<NodeList> childNodes();
     inline Node* firstChild() const;
-    inline RefPtr<Node> protectedFirstChild() const;
     inline Node* lastChild() const;
-    inline RefPtr<Node> protectedLastChild() const;
     inline bool hasAttributes() const;
     inline NamedNodeMap* attributesMap() const;
-    Node* pseudoAwareNextSibling() const;
-    Node* pseudoAwarePreviousSibling() const;
-    Node* pseudoAwareFirstChild() const;
-    Node* pseudoAwareLastChild() const;
+    Node* NODELETE pseudoAwareNextSibling() const;
+    Node* NODELETE pseudoAwarePreviousSibling() const;
+    Node* NODELETE pseudoAwareFirstChild() const;
+    Node* NODELETE pseudoAwareLastChild() const;
 
     WEBCORE_EXPORT const URL& baseURI() const;
     
-    void getSubresourceURLs(ListHashSet<URL>&) const;
-    void getCandidateSubresourceURLs(ListHashSet<URL>&) const;
+    void getSubresourceURLs(OrderedHashSet<URL>&) const;
+    void getCandidateSubresourceURLs(OrderedHashSet<URL>&) const;
 
     WEBCORE_EXPORT ExceptionOr<void> insertBefore(Node& newChild, RefPtr<Node>&& refChild);
     WEBCORE_EXPORT ExceptionOr<void> replaceChild(Node& newChild, Node& oldChild);
@@ -206,13 +181,12 @@ public:
     };
     virtual Ref<Node> cloneNodeInternal(Document&, CloningOperation, CustomElementRegistry*) const = 0;
     virtual SerializedNode serializeNode(CloningOperation) const = 0;
-    Ref<Node> cloneNode(bool deep) const;
-    WEBCORE_EXPORT ExceptionOr<Ref<Node>> cloneNodeForBindings(bool deep) const;
+    Ref<Node> cloneNode(CloneSubtree) const;
+    WEBCORE_EXPORT ExceptionOr<Ref<Node>> cloneNodeForBindings(bool subtree) const;
 
-    virtual const AtomString& localName() const;
-    virtual const AtomString& namespaceURI() const;
-    virtual const AtomString& prefix() const;
-    virtual ExceptionOr<void> setPrefix(const AtomString&);
+    virtual const AtomString& NODELETE localName() const;
+    virtual const AtomString& NODELETE namespaceURI() const;
+    virtual const AtomString& NODELETE prefix() const;
     WEBCORE_EXPORT ExceptionOr<void> normalize();
 
     bool isSameNode(Node* other) const { return this == other; }
@@ -224,12 +198,12 @@ public:
     WEBCORE_EXPORT String textContent(bool convertBRsToNewlines = false) const;
     WEBCORE_EXPORT ExceptionOr<void> setTextContent(String&&);
     
-    Node* lastDescendant() const;
-    Node* firstDescendant() const;
+    Node* NODELETE lastDescendant() const;
+    Node* NODELETE firstDescendant() const;
 
     // From the NonDocumentTypeChildNode - https://dom.spec.whatwg.org/#nondocumenttypechildnode
-    WEBCORE_EXPORT Element* previousElementSibling() const;
-    WEBCORE_EXPORT Element* nextElementSibling() const;
+    WEBCORE_EXPORT Element* NODELETE previousElementSibling() const;
+    WEBCORE_EXPORT Element* NODELETE nextElementSibling() const;
 
     // From the ChildNode - https://dom.spec.whatwg.org/#childnode
     ExceptionOr<void> before(FixedVector<NodeOrString>&&);
@@ -267,9 +241,9 @@ public:
     virtual bool isHTMLFrameOwnerElement() const { return false; }
     virtual bool isPluginElement() const { return false; }
 
-    bool isDocumentNode() const { return nodeType() == DOCUMENT_NODE; }
+    bool isDocumentNode() const { return nodeType() == NodeType::Document; }
     bool isTreeScope() const { return isDocumentNode() || isShadowRoot(); }
-    bool isDocumentFragment() const { return nodeType() == DOCUMENT_FRAGMENT_NODE; }
+    bool isDocumentFragment() const { return nodeType() == NodeType::DocumentFragment; }
     bool isShadowRoot() const { return isDocumentFragment() && hasTypeFlag(TypeFlag::IsShadowRootOrFormControlElement); }
     inline bool isUserAgentShadowRoot() const; // Defined in NodeInlines.h
 
@@ -285,20 +259,17 @@ public:
     void setNeedsSVGRendererUpdate(bool flag) { setStateFlag(StateFlag::NeedsSVGRendererUpdate, flag); }
 
     // If this node is in a shadow tree, returns its shadow host. Otherwise, returns null.
-    WEBCORE_EXPORT Element* shadowHost() const;
-    RefPtr<Element> protectedShadowHost() const;
-    ShadowRoot* containingShadowRoot() const;
-    RefPtr<ShadowRoot> protectedContainingShadowRoot() const;
-    inline ShadowRoot* shadowRoot() const; // Defined in ElementRareData.h
-    inline RefPtr<ShadowRoot> protectedShadowRoot() const; // Defined in ElementRareData.h
+    WEBCORE_EXPORT Element* NODELETE shadowHost() const;
+    ShadowRoot* NODELETE containingShadowRoot() const;
+    inline ShadowRoot* shadowRoot() const; // Defined in Element.h.
     bool isClosedShadowHidden(const Node&) const;
 
-    HTMLSlotElement* assignedSlot() const;
-    HTMLSlotElement* assignedSlotForBindings() const;
-    HTMLSlotElement* manuallyAssignedSlot() const;
+    HTMLSlotElement* NODELETE assignedSlot() const;
+    HTMLSlotElement* NODELETE assignedSlotForBindings() const;
+    HTMLSlotElement* NODELETE manuallyAssignedSlot() const;
     void setManuallyAssignedSlot(HTMLSlotElement*);
 
-    bool hasEverPaintedImages() const;
+    bool NODELETE hasEverPaintedImages() const;
     void setHasEverPaintedImages(bool);
 
     bool isUncustomizedCustomElement() const { return customElementState() == CustomElementState::Uncustomized; }
@@ -322,47 +293,45 @@ public:
     void clearUsesScopedCustomElementRegistryMap() { clearStateFlag(StateFlag::UsesScopedCustomElementRegistryMap); }
 
     // Returns null, a child of ShadowRoot, or a legacy shadow root.
-    Node* nonBoundaryShadowTreeRootNode();
+    Node* NODELETE nonBoundaryShadowTreeRootNode();
 
     // Node's parent or shadow tree host.
-    inline ContainerNode* parentOrShadowHostNode() const; // Defined in NodeInlines.h
-    inline RefPtr<ContainerNode> protectedParentOrShadowHostNode() const; // Defined in NodeInlines.h
-    ContainerNode* parentInComposedTree() const;
-    WEBCORE_EXPORT Element* parentElementInComposedTree() const;
-    Element* parentOrShadowHostElement() const;
+    inline ContainerNode* NODELETE parentOrShadowHostNode() const; // Defined in NodeInlines.h
+    ContainerNode* NODELETE parentInComposedTree() const;
+    WEBCORE_EXPORT Element* NODELETE parentElementInComposedTree() const;
+    Element* NODELETE parentOrShadowHostElement() const;
     inline void setParentNode(ContainerNode*);
-    inline Node& rootNode() const;
-    inline Ref<Node> protectedRootNode() const;
-    WEBCORE_EXPORT Node& traverseToRootNode() const;
-    Node& shadowIncludingRoot() const;
+    inline Node& NODELETE rootNode() const;
+    WEBCORE_EXPORT Node& NODELETE traverseToRootNode() const;
+    Node& shadowIncludingRoot() const { return *m_shadowIncludingRoot; }
+    void resetShadowIncludingRoot() { m_shadowIncludingRoot = this; }
 
     struct GetRootNodeOptions {
         bool composed;
     };
-    Node& getRootNode(const GetRootNodeOptions&) const;
-    
-    inline WebCoreOpaqueRoot opaqueRoot() const;
-    WebCoreOpaqueRoot traverseToOpaqueRoot() const;
+    Node& NODELETE getRootNode(const GetRootNodeOptions&) const;
 
-    void queueTaskKeepingThisNodeAlive(TaskSource, Function<void ()>&&);
+    inline WebCoreOpaqueRoot opaqueRoot() const final { return WebCoreOpaqueRoot { m_shadowIncludingRoot }; }
+
+    template<typename T, typename Task> static void queueTaskKeepingNodeAlive(T&, TaskSource, Task&&);
     void queueTaskToDispatchEvent(TaskSource, Ref<Event>&&);
 
     // Use when it's guaranteed to that shadowHost is null.
     inline ContainerNode* parentNodeGuaranteedHostFree() const;
     // Returns the parent node, but null if the parent node is a ShadowRoot.
-    ContainerNode* nonShadowBoundaryParentNode() const;
+    ContainerNode* NODELETE nonShadowBoundaryParentNode() const;
 
     bool selfOrPrecedingNodesAffectDirAuto() const { return hasStateFlag(StateFlag::SelfOrPrecedingNodesAffectDirAuto); }
     void setSelfOrPrecedingNodesAffectDirAuto(bool flag) { setStateFlag(StateFlag::SelfOrPrecedingNodesAffectDirAuto, flag); }
 
-    TextDirection effectiveTextDirection() const;
-    void setEffectiveTextDirection(TextDirection);
+    TextDirection NODELETE effectiveTextDirection() const;
+    void NODELETE setEffectiveTextDirection(TextDirection);
 
     bool usesEffectiveTextDirection() const { return rareDataBitfields().usesEffectiveTextDirection; }
-    void setUsesEffectiveTextDirection(bool);
+    void NODELETE setUsesEffectiveTextDirection(bool);
 
     // Returns the enclosing event parent Element (or self) that, when clicked, would trigger a navigation.
-    WEBCORE_EXPORT Element* enclosingLinkEventParentOrSelf();
+    WEBCORE_EXPORT Element* NODELETE enclosingLinkEventParentOrSelf();
 
     // These low-level calls give the caller responsibility for maintaining the integrity of the tree.
     void setPreviousSibling(Node* previous) { m_previousSibling = previous; }
@@ -381,12 +350,12 @@ public:
     bool isUserActionElement() const { return hasStateFlag(StateFlag::IsUserActionElement); }
     void setUserActionElement(bool flag) { setStateFlag(StateFlag::IsUserActionElement, flag); }
 
-    bool inRenderedDocument() const;
+    bool NODELETE inRenderedDocument() const;
     bool needsStyleRecalc() const { return styleValidity() != Style::Validity::Valid || hasInvalidRenderer(); }
     Style::Validity styleValidity() const { return styleBitfields().styleValidity(); }
     bool hasInvalidRenderer() const { return hasStateFlag(StateFlag::HasInvalidRenderer); }
     bool styleResolutionShouldRecompositeLayer() const { return hasStateFlag(StateFlag::StyleResolutionShouldRecompositeLayer); }
-    bool childNeedsStyleRecalc() const { return hasStyleFlag(NodeStyleFlag::DescendantNeedsStyleResolution); }
+    bool childNeedsStyleRecalc() const { return hasStateFlag(StateFlag::DescendantNeedsStyleResolution); }
     bool isEditingText() const { return isTextNode() && hasTypeFlag(TypeFlag::IsPseudoElementOrSpecialInternalNode); }
 
     bool isDocumentFragmentForInnerOuterHTML() const { return isDocumentFragment() && hasTypeFlag(TypeFlag::IsPseudoElementOrSpecialInternalNode); }
@@ -404,7 +373,7 @@ public:
     void setWasParsedWithFastPath() { setStateFlag(StateFlag::WasParsedWithFastPath); }
     void clearWasParsedWithFastPath() { clearStateFlag(StateFlag::WasParsedWithFastPath); }
 
-    void setChildNeedsStyleRecalc() { setStyleFlag(NodeStyleFlag::DescendantNeedsStyleResolution); }
+    void setChildNeedsStyleRecalc() { setStateFlag(StateFlag::DescendantNeedsStyleResolution); }
     inline void clearChildNeedsStyleRecalc();
 
     inline void setHasValidStyle();
@@ -429,36 +398,34 @@ public:
     enum class Editability { ReadOnly, CanEditPlainText, CanEditRichly };
     enum class ShouldUpdateStyle { Update, DoNotUpdate };
     WEBCORE_EXPORT Editability computeEditability(UserSelectAllTreatment, ShouldUpdateStyle) const;
-    Editability computeEditabilityWithStyle(const RenderStyle*, UserSelectAllTreatment, ShouldUpdateStyle) const;
+    Editability computeEditabilityWithStyle(const Style::ComputedStyle*, UserSelectAllTreatment, ShouldUpdateStyle) const;
 
     WEBCORE_EXPORT LayoutRect absoluteBoundingRect(bool* isReplaced);
     inline IntRect pixelSnappedAbsoluteBoundingRect(bool* isReplaced); // Defined in NodeInlines.h
 
-    WEBCORE_EXPORT unsigned computeNodeIndex() const;
+    WEBCORE_EXPORT unsigned NODELETE computeNodeIndex() const;
 
     // Returns the DOM ownerDocument attribute. This method never returns null, except in the case
     // of a Document node.
-    WEBCORE_EXPORT Document* ownerDocument() const;
+    inline Document* ownerDocument() const;
 
     // Returns the document associated with this node. A document node returns itself.
-    inline Document& document() const; // Defined in NodeDocument.h
-    inline Ref<Document> protectedDocument() const; // Defined in NodeDocument.h
+    inline Document& NODELETE document() const; // Defined in NodeDocument.h
 
-    TreeScope& treeScope() const
+    TreeScope& NODELETE treeScope() const
     {
         ASSERT(m_treeScope);
         return *m_treeScope;
     }
-    inline Ref<TreeScope> protectedTreeScope() const; // Defined in NodeInlines.h
     inline void setTreeScopeRecursively(TreeScope&);
     static constexpr ptrdiff_t treeScopeMemoryOffset() { return OBJECT_OFFSETOF(Node, m_treeScope); }
 
-    TreeScope& treeScopeForSVGReferences() const;
+    TreeScope& NODELETE treeScopeForSVGReferences() const;
 
     // Returns true if this node is associated with a document and is in its associated document's
     // node tree, false otherwise (https://dom.spec.whatwg.org/#connected).
     bool isConnected() const { return hasEventTargetFlag(EventTargetFlag::IsConnected); }
-    bool isInUserAgentShadowTree() const;
+    inline bool isInUserAgentShadowTree() const; // Defined in NodeInlines.h
     bool isInShadowTree() const { return hasEventTargetFlag(EventTargetFlag::IsInShadowTree); }
     bool isInTreeScope() const { return isConnected() || isInShadowTree(); }
     bool hasBeenInUserAgentShadowTree() const { return hasEventTargetFlag(EventTargetFlag::HasBeenInUserAgentShadowTree); }
@@ -466,16 +433,14 @@ public:
     // https://dom.spec.whatwg.org/#in-a-document-tree
     bool isInDocumentTree() const { return isConnected() && !isInShadowTree(); }
 
-    bool isDocumentTypeNode() const { return nodeType() == DOCUMENT_TYPE_NODE; }
-    virtual bool childTypeAllowed(NodeType) const { return false; }
-    inline unsigned countChildNodes() const;
-    inline unsigned length() const;
+    bool isDocumentTypeNode() const { return nodeType() == NodeType::DocumentType; }
+    virtual bool NODELETE childTypeAllowed(NodeType) const { return false; }
+    inline unsigned NODELETE countChildNodes() const;
+    inline unsigned NODELETE length() const;
     inline Node* traverseToChildAt(unsigned) const;
 
-    ExceptionOr<void> checkSetPrefix(const AtomString& prefix);
-
     // https://dom.spec.whatwg.org/#concept-tree-descendant
-    WEBCORE_EXPORT bool isDescendantOf(const Node&) const;
+    WEBCORE_EXPORT bool NODELETE isDescendantOf(const Node&) const;
     bool isDescendantOf(const Node* other) const { return other && isDescendantOf(*other); }
 
     // https://dom.spec.whatwg.org/#concept-tree-inclusive-descendant
@@ -487,14 +452,17 @@ public:
     ALWAYS_INLINE bool contains(const Node* other) const { return other && contains(*other); }
 
     // https://dom.spec.whatwg.org/#concept-shadow-including-descendant
-    WEBCORE_EXPORT bool isShadowIncludingDescendantOf(const Node&) const;
+    WEBCORE_EXPORT bool NODELETE isShadowIncludingDescendantOf(const Node&) const;
     ALWAYS_INLINE bool isShadowIncludingDescendantOf(const Node* other) const { return other && isShadowIncludingDescendantOf(*other); }
 
     // https://dom.spec.whatwg.org/#concept-shadow-including-inclusive-ancestor
     ALWAYS_INLINE bool isShadowIncludingInclusiveAncestorOf(const Node& other) const { return this == &other || other.isShadowIncludingDescendantOf(*this); }
     ALWAYS_INLINE bool isShadowIncludingInclusiveAncestorOf(const Node* other) const { return other && isShadowIncludingInclusiveAncestorOf(*other); }
 
-    bool isComposedTreeDescendantOf(const Node&) const;
+    WEBCORE_EXPORT bool NODELETE isComposedTreeDescendantOf(const Node&) const;
+    ALWAYS_INLINE bool isComposedTreeInclusiveDescendantOf(const Node& other) const { return this == &other || isComposedTreeDescendantOf(other); }
+    ALWAYS_INLINE bool isComposedTreeInclusiveAncestorOf(const Node& other) const { return other.isComposedTreeInclusiveDescendantOf(*this); }
+    ALWAYS_INLINE bool isComposedTreeInclusiveAncestorOf(const Node* other) const { return other && isComposedTreeInclusiveAncestorOf(*other); }
 
     // Whether or not a selection can be started in this object
     virtual bool canStartSelection() const;
@@ -509,38 +477,47 @@ public:
     // Integration with rendering tree
 
     RenderObject* renderer() const { return m_renderer; }
-    inline CheckedPtr<RenderObject> checkedRenderer() const; // Defined in NodeInlines.h
     void setRenderer(RenderObject*); // Defined in NodeInlines.h
 
     // Use these two methods with caution.
     inline RenderBox* renderBox() const; // Defined in NodeInlines.h
-    inline CheckedPtr<RenderBox> checkedRenderBox() const; // Defined in NodeInlines.h
     inline RenderBoxModelObject* renderBoxModelObject() const; // Defined in NodeInlines.h
 
     // Wrapper for nodes that don't have a renderer, but still cache the style (like HTMLOptionElement).
-    inline const RenderStyle* renderStyle() const; // Defined in NodeRenderStyle.h
+    inline const Style::ComputedStyle* renderStyle() const; // Defined in NodeRenderStyle.h
 
-    WEBCORE_EXPORT const RenderStyle* computedStyle();
-    virtual const RenderStyle* computedStyle(const std::optional<Style::PseudoElementIdentifier>&);
+    WEBCORE_EXPORT const Style::ComputedStyle* computedStyle();
+    virtual const Style::ComputedStyle* computedStyle(const std::optional<Style::PseudoElementIdentifier>&);
 
-    enum class InsertedIntoAncestorResult {
-        Done,
-        NeedsPostInsertionCallback,
-    };
+    enum class NeedsPostConnectionSteps : bool { No, Yes };
     struct InsertionType {
         bool connectedToDocument { false };
         bool treeScopeChanged { false };
     };
-    // Called *after* this node or its ancestor is inserted into a new parent (may or may not be a part of document) by scripts or parser.
-    // insertedInto **MUST NOT** invoke scripts. Return NeedsPostInsertionCallback and implement didFinishInsertingNode instead to run scripts.
-    virtual InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode& parentOfInsertedTree);
-    virtual void didFinishInsertingNode() { }
+    // https://dom.spec.whatwg.org/#concept-node-insert-ext
+    // Called *after* this node or its ancestor is inserted into a new NODELETE parent (may or may not be a part of document) by scripts or parser.
+    // insertionSteps **MUST NOT** invoke scripts. Return NeedsPostConnectionSteps and implement postConnectionSteps instead to run scripts.
+    virtual NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode& parentOfInsertedTree);
+
+    // https://dom.spec.whatwg.org/#concept-node-post-connection-ext
+    virtual void postConnectionSteps() { }
 
     struct RemovalType {
         bool disconnectedFromDocument { false };
         bool treeScopeChanged { false };
     };
-    virtual void removedFromAncestor(RemovalType, ContainerNode& oldParentOfRemovedTree);
+    // https://dom.spec.whatwg.org/#concept-node-remove-ext
+    virtual void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree);
+
+    struct MovingType {
+        bool isSubtreeRoot { false };
+        bool didRemoveFromOldTreeScope { false };
+        bool didInsertIntoNewTreeScope { false };
+    };
+    // https://dom.spec.whatwg.org/#concept-node-move-ext
+    virtual void movingSteps(MovingType, ContainerNode& oldParent);
+
+    void updateShadowIncludingRootForSubtree();
 
     virtual String description() const;
     virtual String debugDescription() const;
@@ -555,12 +532,12 @@ public:
 
     void invalidateNodeListAndCollectionCachesInAncestors();
     void invalidateNodeListCollectionAndInnerHTMLPrefixCachesInAncestorsForAttribute(const QualifiedName&, const IsMutationBySetInnerHTML = IsMutationBySetInnerHTML::No);
-    NodeListsNodeData* nodeLists();
+    NodeListsNodeData* NODELETE nodeLists();
     void clearNodeLists();
 
     virtual bool willRespondToMouseMoveEvents() const;
-    WEBCORE_EXPORT bool willRespondToMouseClickEvents(const RenderStyle* = nullptr) const;
-    Editability computeEditabilityForMouseClickEvents(const RenderStyle* = nullptr) const;
+    WEBCORE_EXPORT bool willRespondToMouseClickEvents(const Style::ComputedStyle* = nullptr) const;
+    Editability computeEditabilityForMouseClickEvents(const Style::ComputedStyle* = nullptr) const;
     virtual bool willRespondToMouseClickEventsWithEditability(Editability) const;
     virtual bool willRespondToTouchEvents() const;
 
@@ -568,9 +545,9 @@ public:
 
     enum EventTargetInterfaceType eventTargetInterface() const override;
     ScriptExecutionContext* scriptExecutionContext() const final;
-    inline RefPtr<ScriptExecutionContext> protectedScriptExecutionContext() const;
 
     WEBCORE_EXPORT bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) override;
+    using EventTarget::addEventListener;
     bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) override;
     void removeAllEventListeners() override;
 
@@ -584,7 +561,7 @@ public:
 
     void dispatchWebKitSubmitEvent(Event& underlyingSubmitEvent);
 
-#if ENABLE(TOUCH_EVENTS)
+#if ENABLE(TWO_PHASE_CLICKS)
     virtual bool allowsDoubleTapGesture() const { return true; }
 #endif
 
@@ -593,13 +570,16 @@ public:
     // Perform the default action for an event.
     virtual void defaultEventHandler(Event&);
 
+    // Whether this node has activation behavior, per the DOM specification. This determines
+    // the event's activation target (the innermost node in the event path with activation behavior).
+    // https://dom.spec.whatwg.org/#eventtarget-activation-behavior
+    virtual bool hasActivationBehavior() const;
+
     ALWAYS_INLINE void ref() const;
     ALWAYS_INLINE void deref() const;
     ALWAYS_INLINE bool hasOneRef() const;
     ALWAYS_INLINE unsigned refCount() const;
     void applyRefDuringDestructionCheck() const;
-
-    inline void relaxAdoptionRequirement();
 
     HashMap<Ref<MutationObserver>, MutationRecordDeliveryOptions> registeredMutationObservers(MutationObserverOptionType, const QualifiedName* attributeName);
     void registerMutationObserver(MutationObserver&, MutationObserverOptions, const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& attributeFilter);
@@ -609,10 +589,10 @@ public:
     void notifyMutationObserversNodeWillDetach();
 
     unsigned connectedSubframeCount() const { return rareDataBitfields().connectedSubframeCount; }
-    void incrementConnectedSubframeCount(unsigned amount = 1);
-    void decrementConnectedSubframeCount(unsigned amount = 1);
-    void updateAncestorConnectedSubframeCountForRemoval() const;
-    void updateAncestorConnectedSubframeCountForInsertion() const;
+    void NODELETE incrementConnectedSubframeCount(unsigned amount = 1);
+    void NODELETE decrementConnectedSubframeCount(unsigned amount = 1);
+    void NODELETE updateAncestorConnectedSubframeCountForRemoval() const;
+    void NODELETE updateAncestorConnectedSubframeCountForInsertion() const;
 
 #if ENABLE(JIT)
     static constexpr ptrdiff_t typeFlagsMemoryOffset() { return OBJECT_OFFSETOF(Node, m_typeBitFields); }
@@ -623,12 +603,12 @@ public:
 #else
     static uint32_t rareDataPointerMask() { return -1; }
 #endif
-    static auto flagIsText() { return enumToUnderlyingType(TypeFlag::IsText); }
-    static auto flagIsContainer() { return enumToUnderlyingType(TypeFlag::IsContainerNode); }
-    static auto flagIsElement() { return enumToUnderlyingType(TypeFlag::IsElement); }
-    static auto flagIsHTML() { return enumToUnderlyingType(TypeFlag::IsHTMLElement); }
-    static auto flagIsLink() { return enumToUnderlyingType(StateFlag::IsLink); }
-    static auto flagIsParsingChildren() { return enumToUnderlyingType(StateFlag::IsParsingChildren); }
+    static auto flagIsText() { return std::to_underlying(TypeFlag::IsText); }
+    static auto flagIsContainer() { return std::to_underlying(TypeFlag::IsContainerNode); }
+    static auto flagIsElement() { return std::to_underlying(TypeFlag::IsElement); }
+    static auto flagIsHTML() { return std::to_underlying(TypeFlag::IsHTMLElement); }
+    static auto flagIsLink() { return std::to_underlying(StateFlag::IsLink); }
+    static auto flagIsParsingChildren() { return std::to_underlying(StateFlag::IsParsingChildren); }
 #endif // ENABLE(JIT)
 
 #if ASSERT_ENABLED
@@ -639,7 +619,7 @@ public:
     void setContainsSelectionEndPoint(bool value) { setStateFlag(StateFlag::ContainsSelectionEndPoint, value); }
 
     WEBCORE_EXPORT NodeIdentifier nodeIdentifier() const;
-    WEBCORE_EXPORT static Node* fromIdentifier(NodeIdentifier);
+    WEBCORE_EXPORT static Node* NODELETE fromIdentifier(NodeIdentifier);
 
 protected:
     enum class TypeFlag : uint16_t {
@@ -658,7 +638,7 @@ protected:
     };
     static constexpr auto typeFlagBitCount = 12;
 
-    static uint16_t constructBitFieldsFromNodeTypeAndFlags(NodeType type, OptionSet<TypeFlag> flags) { return (type << typeFlagBitCount) | flags.toRaw(); }
+    static uint16_t constructBitFieldsFromNodeTypeAndFlags(NodeType type, OptionSet<TypeFlag> flags) { return (std::to_underlying(type) << typeFlagBitCount) | flags.toRaw(); }
     static NodeType nodeTypeFromBitFields(uint16_t bitFields) { return static_cast<NodeType>((bitFields >> typeFlagBitCount) & 0xf); }
     // Don't bother masking with (1 << typeFlagBitCount) - 1 since OptionSet tolerates the upper 4-bits being used for other purposes.
     bool hasTypeFlag(TypeFlag flag) const { return OptionSet<TypeFlag>::fromRaw(m_typeBitFields).contains(flag); }
@@ -686,11 +666,13 @@ protected:
 #if ENABLE(FULLSCREEN_API)
         IsFullscreen = 1 << 19,
 #endif
-        IsShadowRootAttachedEventPending = 1 << 20,
-        InLargestContentfulPaintTextContentSet = 1 << 21,
-        DidMutateSubtreeAfterSetInnerHTML = 1 << 22,
-        WasParsedWithFastPath = 1 << 23
-        // 8 bits free.
+        InLargestContentfulPaintTextContentSet = 1 << 20,
+        DidMutateSubtreeAfterSetInnerHTML = 1 << 21,
+        WasParsedWithFastPath = 1 << 22,
+        ShouldNotifyTextManipulationControllerIfDisplayed = 1 << 23,
+        DescendantNeedsStyleResolution = 1 << 24,
+        DirectChildNeedsStyleResolution = 1 << 25,
+        // 6 bits free.
     };
 
     enum class TabIndexState : uint8_t {
@@ -738,22 +720,21 @@ protected:
     static constexpr uint32_t s_refCountMask = ~static_cast<uint32_t>(1);
 
     enum class NodeStyleFlag : uint16_t {
-        DescendantNeedsStyleResolution                          = 1 << 0,
-        DirectChildNeedsStyleResolution                         = 1 << 1,
-
-        AffectedByHasWithPositionalPseudoClass                  = 1 << 2,
-        ChildrenAffectedByFirstChildRules                       = 1 << 3,
-        ChildrenAffectedByLastChildRules                        = 1 << 4,
-        AffectsNextSiblingElementStyle                          = 1 << 5,
-        StyleIsAffectedByPreviousSibling                        = 1 << 6,
-        DescendantsAffectedByPreviousSibling                    = 1 << 7,
-        StyleAffectedByEmpty                                    = 1 << 8,
+        AffectedByHasWithBackwardSiblingRelationship            = 1 << 0,
+        AffectedByHasWithForwardSiblingRelationship             = 1 << 1,
+        ChildrenAffectedByFirstChildRules                       = 1 << 2,
+        ChildrenAffectedByLastChildRules                        = 1 << 3,
+        AffectsNextSiblingElementStyle                          = 1 << 4,
+        StyleIsAffectedByPreviousSibling                        = 1 << 5,
+        DescendantsAffectedByPreviousSibling                    = 1 << 6,
+        StyleAffectedByEmpty                                    = 1 << 7,
         // We optimize for :first-child and :last-child. The other positional child selectors like nth-child or
         // *-child-of-type, we will just give up and re-evaluate whenever children change at all.
-        ChildrenAffectedByForwardPositionalRules                = 1 << 9,
-        DescendantsAffectedByForwardPositionalRules             = 1 << 10,
-        ChildrenAffectedByBackwardPositionalRules               = 1 << 11,
-        DescendantsAffectedByBackwardPositionalRules            = 1 << 12,
+        ChildrenAffectedByForwardPositionalRules                = 1 << 8,
+        DescendantsAffectedByForwardPositionalRules             = 1 << 9,
+        ChildrenAffectedByBackwardPositionalRules               = 1 << 10,
+        DescendantsAffectedByBackwardPositionalRules            = 1 << 11,
+        AffectedByHasWithAdjacentSiblingRelationship            = 1 << 12,
     };
 
     struct StyleBitfields {
@@ -762,17 +743,17 @@ protected:
         uint16_t toRaw() const { return std::bit_cast<uint16_t>(*this); }
 
         Style::Validity styleValidity() const { return static_cast<Style::Validity>(m_styleValidity); }
-        void setStyleValidity(Style::Validity validity) { m_styleValidity = enumToUnderlyingType(validity); }
+        void setStyleValidity(Style::Validity validity) { m_styleValidity = std::to_underlying(validity); }
 
         OptionSet<NodeStyleFlag> flags() const { return OptionSet<NodeStyleFlag>::fromRaw(m_flags); }
         void setFlag(NodeStyleFlag flag) { m_flags = (flags() | flag).toRaw(); }
         void clearFlag(NodeStyleFlag flag) { m_flags = (flags() - flag).toRaw(); }
         void clearFlags(OptionSet<NodeStyleFlag> flagsToClear) { m_flags = (flags() - flagsToClear).toRaw(); }
-        void clearDescendantsNeedStyleResolution() { m_flags = (flags() - NodeStyleFlag::DescendantNeedsStyleResolution - NodeStyleFlag::DirectChildNeedsStyleResolution).toRaw(); }
 
     private:
         uint16_t m_styleValidity : 3 { 0 };
         uint16_t m_flags : 13 { 0 };
+        // 0 bits free.
     };
 
     StyleBitfields styleBitfields() const { return m_styleBitfields; }
@@ -781,11 +762,11 @@ protected:
     ALWAYS_INLINE void setStyleFlag(NodeStyleFlag);
     ALWAYS_INLINE void clearStyleFlags(OptionSet<NodeStyleFlag>);
 
-    virtual void addSubresourceAttributeURLs(ListHashSet<URL>&) const { }
-    virtual void addCandidateSubresourceURLs(ListHashSet<URL>&) const { }
+    virtual void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const { }
+    virtual void addCandidateSubresourceURLs(OrderedHashSet<URL>&) const { }
 
     bool hasRareData() const { return !!m_rareDataWithBitfields.pointer(); }
-    NodeRareData* rareData() const { return m_rareDataWithBitfields.pointer(); }
+    NodeRareData* rareData() const LIFETIME_BOUND { return m_rareDataWithBitfields.pointer(); }
     NodeRareData& ensureRareData();
     void clearRareData();
 
@@ -803,16 +784,27 @@ protected:
     ExceptionOr<NodeVector> convertNodesOrStringsIntoNodeVector(FixedVector<NodeOrString>&&);
 
 private:
+    Node(ClangVTableWorkaroundTag, Document&);
+
     WEBCORE_EXPORT void removedLastRef();
 
     void refEventTarget() final;
     void derefEventTarget() final;
 
-    void trackForDebugging();
+#if ASSERT_ENABLED
+    WEBCORE_EXPORT bool checkIsInUserAgentShadowTree(bool) const;
+#else
+    bool checkIsInUserAgentShadowTree(bool value) const { return value; }
+#endif
+
+    void NODELETE trackForDebugging();
+
+    void updateShadowIncludingRoot();
+
     void materializeRareData();
 
-    Vector<Ref<MutationObserverRegistration>>* mutationObserverRegistry();
-    WeakHashSet<MutationObserverRegistration>* transientMutationObserverRegistry();
+    Vector<Ref<MutationObserverRegistration>>* NODELETE mutationObserverRegistry();
+    WeakHashSet<MutationObserverRegistration>* NODELETE transientMutationObserverRegistry();
 
     void adjustStyleValidity(Style::Validity, Style::InvalidationMode);
 
@@ -821,15 +813,13 @@ private:
     static void moveTreeToNewScope(Node&, TreeScope& oldScope, TreeScope& newScope);
     void moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDocument);
     void moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDocument);
+    void adoptCustomElementRegistryIntoScopedRegistryDocument();
 
     WEBCORE_EXPORT void notifyInspectorOfRendererChange();
 
 #if ASSERT_ENABLED
     mutable bool m_inRemovedLastRefFunction { false };
-    bool m_adoptionIsRequired { true };
     bool m_deletionHasBegun { false };
-
-    friend inline void adopted(Node*);
 #endif
 
     mutable uint32_t m_refCountAndParentBit { s_refCountIncrement };
@@ -839,38 +829,27 @@ private:
 
     CheckedPtr<ContainerNode> m_parentNode;
     TreeScope* m_treeScope { nullptr };
-    Node* m_previousSibling { nullptr };
+    Node* m_shadowIncludingRoot { nullptr };
+    CheckedPtr<Node> m_previousSibling;
     CheckedPtr<Node> m_next;
     RenderObject* m_renderer { nullptr };
     CompactUniquePtrTuple<NodeRareData, uint16_t> m_rareDataWithBitfields;
 };
 
-bool connectedInSameTreeScope(const Node*, const Node*);
+bool NODELETE connectedInSameTreeScope(const Node*, const Node*);
 
-enum TreeType { Tree, ShadowIncludingTree, ComposedTree };
-template<TreeType = Tree> ContainerNode* parent(const Node&);
+enum TreeType { Tree, ShadowIncludingTree, ComposedTree, ComposedTreeIncludingPseudoElements };
+template<TreeType = Tree> ContainerNode* NODELETE parent(const Node&);
 template<TreeType = Tree> Node* commonInclusiveAncestor(const Node&, const Node&);
 template<TreeType = Tree> std::partial_ordering treeOrder(const Node&, const Node&);
 
 WEBCORE_EXPORT std::partial_ordering treeOrderForTesting(TreeType, const Node&, const Node&);
 
-bool isTouchRelatedEventType(const EventTypeInfo&, const EventTarget&);
-
-#if ASSERT_ENABLED
-
-inline void adopted(Node* node)
-{
-    if (!node)
-        return;
-    node->m_adoptionIsRequired = false;
-}
-
-#endif // ASSERT_ENABLED
+bool NODELETE isTouchRelatedEventType(const EventTypeInfo&, const EventTarget&);
 
 ALWAYS_INLINE void Node::ref() const
 {
     ASSERT(isMainThread());
-    ASSERT(!m_adoptionIsRequired);
     applyRefDuringDestructionCheck();
     m_refCountAndParentBit += s_refCountIncrement;
 }
@@ -880,14 +859,13 @@ inline void Node::applyRefDuringDestructionCheck() const
 #if ASSERT_ENABLED
     if (!deletionHasBegun())
         return;
-    WTF::RefCountDebugger::logRefDuringDestruction(this);
+    WTF::RefCountDebuggerBase::logRefDuringDestruction(this);
 #endif
 }
 
 ALWAYS_INLINE void Node::deref() const
 {
     ASSERT(isMainThread());
-    ASSERT(!m_adoptionIsRequired);
 
     ASSERT_WITH_SECURITY_IMPLICATION(refCount());
     auto updatedRefCount = m_refCountAndParentBit - s_refCountIncrement;
@@ -935,3 +913,5 @@ void showNodePath(const WebCore::Node*);
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::Node)
     static bool isType(const WebCore::EventTarget& target) { return target.isNode(); }
 SPECIALIZE_TYPE_TRAITS_END()
+
+extern template class mpark::variant<WTF::Ref<WebCore::Node>, WTF::String>;

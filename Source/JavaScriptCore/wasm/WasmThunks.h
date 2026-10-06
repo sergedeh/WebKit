@@ -64,8 +64,8 @@ class Thunks {
     WTF_MAKE_TZONE_ALLOCATED(Thunks);
     WTF_MAKE_NONCOPYABLE(Thunks);
 public:
-    static void initialize();
-    static Thunks& singleton();
+    static void NODELETE initialize();
+    static Thunks& NODELETE singleton();
 
     MacroAssemblerCodeRef<JITThunkPtrTag> stub(ThunkGenerator);
     MacroAssemblerCodeRef<JITThunkPtrTag> stub(const AbstractLocker&, ThunkGenerator);
@@ -74,7 +74,7 @@ public:
 private:
     Thunks() = default;
 
-    UncheckedKeyHashMap<ThunkGenerator, MacroAssemblerCodeRef<JITThunkPtrTag>> m_stubs;
+    UncheckedKeyHashMap<ThunkGenerator, MacroAssemblerCodeRef<JITThunkPtrTag>> m_stubs WTF_GUARDED_BY_LOCK(m_lock);
     Lock m_lock;
 };
 

@@ -52,7 +52,7 @@ class WEBCORE_EXPORT PlaybackSessionInterfaceMac final
 public:
     static Ref<PlaybackSessionInterfaceMac> create(PlaybackSessionModel&);
     virtual ~PlaybackSessionInterfaceMac();
-    PlaybackSessionModel* playbackSessionModel() const;
+    PlaybackSessionModel* NODELETE playbackSessionModel() const;
 
     bool isInWindowFullscreenActive() const;
     void enterInWindowFullscreen();
@@ -67,14 +67,13 @@ public:
     void legibleMediaSelectionOptionsChanged(const Vector<MediaSelectionOption>& /*options*/, uint64_t /*selectedIndex*/) final;
     void audioMediaSelectionIndexChanged(uint64_t) final;
     void legibleMediaSelectionIndexChanged(uint64_t) final;
-    void externalPlaybackChanged(bool /* enabled */, PlaybackSessionModel::ExternalPlaybackTargetType, const String& /* localizedDeviceName */) final;
+    void externalPlaybackChanged(bool /* enabled */, PlaybackSessionModel::ExternalPlaybackTargetType, const String& /* localizedDeviceName */, const String& /* localizedRouteName */) final;
     void isPictureInPictureSupportedChanged(bool) final;
     void ensureControlsManager() final;
 
 #if ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER)
     void setPlayBackControlsManager(WebPlaybackControlsManager *);
     WebPlaybackControlsManager *playBackControlsManager();
-    RetainPtr<WebPlaybackControlsManager> protectedPlayBackControlsManager();
 
     void updatePlaybackControlsManagerCanTogglePictureInPicture();
 #endif
@@ -93,7 +92,7 @@ public:
     uint64_t logIdentifier() const;
     const Logger* loggerPtr() const;
     ASCIILiteral logClassName() const { return "PlaybackSessionInterfaceMac"_s; };
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& NODELETE logChannel() const;
 #endif
 
 private:

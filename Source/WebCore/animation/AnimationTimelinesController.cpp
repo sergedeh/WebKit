@@ -36,7 +36,6 @@
 #include "DocumentWindow.h"
 #include "ElementInlines.h"
 #include "EventLoop.h"
-#include "EventTargetInlines.h"
 #include "GraphicsLayer.h"
 #include "KeyframeEffect.h"
 #include "LocalDOMWindow.h"
@@ -214,7 +213,8 @@ void AnimationTimelinesController::updateAnimationsAndSendEvents(ReducedResoluti
     }
 
     // 3. Perform a microtask checkpoint.
-    protectedDocument()->checkedEventLoop()->performMicrotaskCheckpoint();
+    Ref document = this->document();
+    protect(document->eventLoop())->performMicrotaskCheckpoint(document->vm());
 
     if (RefPtr documentTimeline = m_document->existingTimeline()) {
         // FIXME: pending animation events should be owned by this controller rather
@@ -229,7 +229,7 @@ void AnimationTimelinesController::updateAnimationsAndSendEvents(ReducedResoluti
 
         // 7. Dispatch each of the events in events to dispatch at their corresponding target using the order established in the previous step.
         for (auto& event : events)
-            event->protectedTarget()->dispatchEvent(event);
+            protect(event->target())->dispatchEvent(event);
     }
 
     // This will cancel any scheduled invalidation if we end up removing all animations.
@@ -256,21 +256,40 @@ void AnimationTimelinesController::updateAnimationsAndSendEvents(ReducedResoluti
     }
 }
 
-void AnimationTimelinesController::runPostRenderingUpdateTasks()
+void AnimationTimelinesController::updateStaleScrollTimelines()
 {
-#if ENABLE(THREADED_ANIMATIONS)
-    if (m_document->settings().threadedScrollDrivenAnimationsEnabled()) {
-        for (Ref timeline : m_timelines)
-            timeline->runPostRenderingUpdateTasks();
-        if (m_acceleratedEffectStackUpdater)
-            m_acceleratedEffectStackUpdater->update();
-    }
-#endif
     // https://drafts.csswg.org/scroll-animations-1/#event-loop
     auto scrollTimelines = std::exchange(m_updatedScrollTimelines, { });
     for (auto scrollTimeline : scrollTimelines)
         scrollTimeline->updateCurrentTimeIfStale();
 }
+
+bool AnimationTimelinesController::hasProgressBasedScrollDrivenAnimation() const
+{
+    for (Ref timeline : m_timelines) {
+        if (!timeline->isProgressBased())
+            continue;
+        for (auto& animation : timeline->relevantAnimations()) {
+            RefPtr effect = animation->keyframeEffect();
+            if (effect && !effect->isCompletelyAccelerated())
+                return true;
+        }
+    }
+    return false;
+}
+
+#if ENABLE(THREADED_ANIMATIONS)
+void AnimationTimelinesController::runPostRenderingUpdateTasks()
+{
+    Ref settings = m_document->settings();
+    if (!settings->threadedScrollDrivenAnimationsEnabled() && !settings->threadedTimeBasedAnimationsEnabled())
+        return;
+    for (Ref timeline : m_timelines)
+        timeline->runPostRenderingUpdateTasks();
+    if (m_acceleratedEffectStackUpdater)
+        m_acceleratedEffectStackUpdater->update();
+}
+#endif
 
 std::optional<Seconds> AnimationTimelinesController::timeUntilNextTickForAnimationsWithFrameRate(FramesPerSecond frameRate) const
 {
@@ -289,7 +308,7 @@ void AnimationTimelinesController::suspendAnimations()
 
     m_cachedCurrentTimeClearanceTimer.stop();
 
-    for (Ref timeline : m_timelines)
+    for (auto& timeline : copyToVectorOf<Ref<AnimationTimeline>>(m_timelines))
         timeline->suspendAnimations();
 
     m_isSuspended = true;
@@ -310,10 +329,10 @@ void AnimationTimelinesController::resumeAnimations()
 
 ReducedResolutionSeconds AnimationTimelinesController::liveCurrentTime() const
 {
-    return protectedDocument()->protectedWindow()->nowTimestamp();
+    return protect(document().window())->nowTimestamp();
 }
 
-std::optional<Seconds> AnimationTimelinesController::currentTime(UseCachedCurrentTime useCachedCurrentTime)
+std::optional<ReducedResolutionSeconds> AnimationTimelinesController::currentTime(UseCachedCurrentTime useCachedCurrentTime)
 {
     if (!m_document->window())
         return std::nullopt;
@@ -350,7 +369,7 @@ void AnimationTimelinesController::cacheCurrentTime(ReducedResolutionSeconds new
     // start time.
     if (!m_pendingAnimationsProcessingTaskCancellationGroup.hasPendingTask()) {
         CancellableTask task(m_pendingAnimationsProcessingTaskCancellationGroup, std::bind(&AnimationTimelinesController::processPendingAnimations, this));
-        protectedDocument()->checkedEventLoop()->queueTask(TaskSource::InternalAsyncTask, WTF::move(task));
+        protect(protect(document())->eventLoop())->queueTask(TaskSource::InternalAsyncTask, WTF::move(task));
     }
 
     if (!m_isSuspended) {
@@ -384,7 +403,7 @@ void AnimationTimelinesController::processPendingAnimations()
 
 bool AnimationTimelinesController::isPendingTimelineAttachment(const WebAnimation& animation) const
 {
-    CheckedPtr styleOriginatedTimelinesController = protectedDocument()->styleOriginatedTimelinesController();
+    CheckedPtr styleOriginatedTimelinesController = document().styleOriginatedTimelinesController();
     return styleOriginatedTimelinesController && styleOriginatedTimelinesController->isPendingTimelineAttachment(animation);
 }
 
@@ -392,7 +411,7 @@ bool AnimationTimelinesController::isPendingTimelineAttachment(const WebAnimatio
 void AnimationTimelinesController::scheduleAcceleratedEffectStackUpdateForTarget(const Styleable& target)
 {
     if (!m_acceleratedEffectStackUpdater)
-        m_acceleratedEffectStackUpdater = makeUnique<AcceleratedEffectStackUpdater>();
+        lazyInitialize(m_acceleratedEffectStackUpdater, makeUnique<AcceleratedEffectStackUpdater>());
     m_acceleratedEffectStackUpdater->scheduleUpdateForTarget(target);
 
     if (RefPtr documentTimeline = m_document->existingTimeline())

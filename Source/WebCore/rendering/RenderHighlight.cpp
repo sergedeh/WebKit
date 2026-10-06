@@ -40,6 +40,7 @@
 #include "RenderLayer.h"
 #include "RenderMultiColumnSpannerPlaceholder.h"
 #include "RenderObject.h"
+#include "RenderText.h"
 #include "RenderView.h"
 #include "TextBoxSelectableRange.h"
 #include "VisibleSelection.h"
@@ -115,7 +116,7 @@ bool RenderHighlight::setRenderRange(const HighlightRange& highlightRange)
     unsigned startOffset = startPosition.computeOffsetInContainerNode();
     unsigned endOffset = endPosition.computeOffsetInContainerNode();
 
-    setRenderRange({ startRenderer.get(), endRenderer.get(), startOffset, endOffset });
+    setRenderRange({ startRenderer, endRenderer, startOffset, endOffset });
     return true;
 }
 
@@ -125,10 +126,9 @@ RenderObject::HighlightState RenderHighlight::highlightStateForRenderer(const Re
         return renderer.selectionState();
 
     if (&renderer == m_renderRange.start()) {
-        if (m_renderRange.start() && m_renderRange.end() && m_renderRange.start() == m_renderRange.end())
+        if (m_renderRange.end() && m_renderRange.start() == m_renderRange.end())
             return RenderObject::HighlightState::Both;
-        if (m_renderRange.start())
-            return RenderObject::HighlightState::Start;
+        return RenderObject::HighlightState::Start;
     }
     if (&renderer == m_renderRange.end())
         return RenderObject::HighlightState::End;

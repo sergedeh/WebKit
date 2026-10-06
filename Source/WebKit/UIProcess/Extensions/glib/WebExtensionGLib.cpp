@@ -29,6 +29,7 @@
 #include <WebCore/LocalizedStrings.h>
 #include <wtf/FileSystem.h>
 #include <wtf/Language.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
@@ -45,8 +46,8 @@ WebExtension::WebExtension(GFile* resourcesFile, RefPtr<API::Error>& outError)
 
     outError = nullptr;
 
-    GUniquePtr<char> baseURL(g_file_get_uri(resourcesFile));
-    m_resourceBaseURL = URL { makeString(String::fromUTF8(baseURL.get()), "/"_s) };
+    auto baseURL = GMallocString::unsafeAdoptFromUTF8(g_file_get_uri(resourcesFile));
+    m_resourceBaseURL = URL { makeString(baseURL.span(), '/') };
 
     if (m_resourceBaseURL.isValid()) {
         auto isDirectory = g_file_query_file_type(resourcesFile, G_FILE_QUERY_INFO_NONE, nullptr) == G_FILE_TYPE_DIRECTORY;
@@ -63,17 +64,7 @@ WebExtension::WebExtension(GFile* resourcesFile, RefPtr<API::Error>& outError)
     }
 }
 
-WebExtension::WebExtension(const JSON::Value& manifest, Resources&& resources)
-    : m_manifestJSON(manifest)
-    , m_resources(WTF::move(resources))
-{
-    auto manifestString = manifest.toJSONString();
-    RELEASE_ASSERT(manifestString);
-
-    m_resources.set("manifest.json"_s, manifestString);
-}
-
-Expected<Ref<API::Data>, RefPtr<API::Error>> WebExtension::resourceDataForPath(const String& originalPath, CacheResult cacheResult, SuppressNotFoundErrors suppressErrors)
+std::expected<Ref<API::Data>, RefPtr<API::Error>> WebExtension::resourceDataForPath(const String& originalPath, CacheResult cacheResult, SuppressNotFoundErrors suppressErrors)
 {
     ASSERT(originalPath);
 
@@ -93,40 +84,39 @@ Expected<Ref<API::Data>, RefPtr<API::Error>> WebExtension::resourceDataForPath(c
     if (path == generatedBackgroundPageFilename || path  == generatedBackgroundServiceWorkerFilename)
         return API::Data::create(generatedBackgroundContent().utf8().span());
 
-    if (auto entry = m_resources.find(path); entry != m_resources.end()) {
-        return WTF::switchOn(entry->value,
-            [](const Ref<API::Data>& data) {
-                return data;
-            },
-            [](const String& string) {
-                return API::Data::create(string.utf8().span());
-            });
+    if (auto maybeData = m_dataResources.getOptional(path))
+        return *maybeData;
+
+    if (auto maybeString = m_stringResources.getOptional(path)) {
+        auto data = API::Data::create(maybeString->utf8().span());
+        m_dataResources.set(path, data);
+        return data;
     }
 
     auto resourceURL = resourceFileURLForPath(path);
     if (resourceURL.isEmpty()) {
         if (suppressErrors == SuppressNotFoundErrors::No)
-            return makeUnexpected(createError(Error::ResourceNotFound, WEB_UI_FORMAT_STRING("Unable to find \"%s\" in the extension’s resources. It is an invalid path.", "WKWebExtensionErrorResourceNotFound description with invalid file path", path.utf8().data())));
+            return makeUnexpected(createError(Error::ResourceNotFound, WEB_UI_FORMAT_STRING("Unable to find “%s” in the extension’s resources. It is an invalid path.", "WKWebExtensionErrorResourceNotFound description with invalid file path", path.utf8())));
         return makeUnexpected(nullptr);
     }
 
     auto rawData = FileSystem::readEntireFile(resourceURL.fileSystemPath());
     if (!rawData.has_value()) {
         if (suppressErrors == SuppressNotFoundErrors::No)
-            return makeUnexpected(createError(Error::ResourceNotFound, WEB_UI_FORMAT_STRING("Unable to find \"%s\" in the extension’s resources.", "WKWebExtensionErrorResourceNotFound description with file name", path.utf8().data())));
+            return makeUnexpected(createError(Error::ResourceNotFound, WEB_UI_FORMAT_STRING("Unable to find “%s” in the extension’s resources.", "WKWebExtensionErrorResourceNotFound description with file name", path.utf8())));
         return makeUnexpected(nullptr);
     }
 
     Ref data = API::Data::create(*rawData);
     if (cacheResult == CacheResult::Yes)
-        m_resources.set(path, data);
+        m_dataResources.set(path, data);
 
     return data;
 }
 
 void WebExtension::recordError(Ref<API::Error> error)
 {
-    RELEASE_LOG_ERROR(Extensions, "Error recorded: %s", error->localizedDescription().utf8().data());
+    RELEASE_LOG_ERROR(Extensions, "Error recorded: %s", error->localizedDescription().utf8());
 
     // Only the first occurrence of each error is recorded in the array. This prevents duplicate errors,
     // such as repeated "resource not found" errors, from being included multiple times.

@@ -45,6 +45,7 @@
 #include <wtf/SmallSet.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRandom.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC {
 
@@ -74,7 +75,7 @@ typedef SharedTask<WasmBoundsCheckGeneratorFunction> WasmBoundsCheckGenerator;
 typedef void PrologueGeneratorFunction(CCallHelpers&, Code&);
 typedef SharedTask<PrologueGeneratorFunction> PrologueGenerator;
 
-extern const char* const tierName;
+inline constexpr ASCIILiteral tierName { "Air "_s };
 
 // This is an IR that is very close to the bare metal. It requires about 40x more bytes than the
 // generated machine code - for example if you're generating 1MB of machine code, you need about
@@ -109,7 +110,7 @@ public:
     void setOptLevel(unsigned optLevel) { m_optLevel = optLevel; }
     unsigned optLevel() const { return m_optLevel; }
     
-    bool needsUsedRegisters() const;
+    bool NODELETE needsUsedRegisters() const;
 
     JS_EXPORT_PRIVATE BasicBlock* addBlock(double frequency = 1);
 
@@ -146,7 +147,7 @@ public:
     }
 
     template<Bank bank, typename Func>
-    void forEachTmp(const Func& func)
+    void forEachTmp(NOESCAPE const Func& func)
     {
         unsigned numTmps = this->numTmps(bank);
         for (unsigned i = 0; i < numTmps; ++i)
@@ -154,7 +155,7 @@ public:
     }
 
     template<typename Func>
-    void forEachTmp(const Func& func)
+    void forEachTmp(NOESCAPE const Func& func)
     {
         static_assert(numBanks == 2);
         forEachTmp<GP>(func);
@@ -189,11 +190,11 @@ public:
     // Note that this is not the same thing as proc().numEntrypoints(). This value here may be zero
     // until we lower EntrySwitch.
     unsigned numEntrypoints() const { return m_entrypoints.size(); }
-    const Vector<FrequentedBlock>& entrypoints() const { return m_entrypoints; }
+    const Vector<FrequentedBlock>& entrypoints() const LIFETIME_BOUND { return m_entrypoints; }
     const FrequentedBlock& entrypoint(unsigned index) const { return m_entrypoints[index]; }
-    bool isEntrypoint(BasicBlock*) const;
+    bool NODELETE isEntrypoint(BasicBlock*) const;
     // Note: It is only valid to call this function after LowerEntrySwitch.
-    std::optional<unsigned> entrypointIndex(BasicBlock*) const;
+    std::optional<unsigned> NODELETE entrypointIndex(BasicBlock*) const;
 
     // Note: We allow this to be called even before we set m_entrypoints just for convenience to users of this API.
     // However, if you call this before setNumEntrypoints, setNumEntrypoints will overwrite this value.
@@ -243,7 +244,7 @@ public:
     RegisterAtOffsetList calleeSaveRegisterAtOffsetList() const;
     
     // This just tells you what the callee saves are.
-    RegisterSetBuilder calleeSaveRegisters() const { return m_calleeSaveRegisters; }
+    RegisterSet calleeSaveRegisters() const { return m_calleeSaveRegisters; }
 
     // Recomputes predecessors and deletes unreachable blocks.
     JS_EXPORT_PRIVATE void resetReachability();
@@ -256,15 +257,15 @@ public:
 
     // This is used by phases that optimize the block list. You shouldn't use this unless you really know
     // what you're doing.
-    Vector<std::unique_ptr<BasicBlock>>& blockList() { return m_blocks; }
+    Vector<std::unique_ptr<BasicBlock>>& blockList() LIFETIME_BOUND { return m_blocks; }
 
     // Finds the smallest index' such that at(index') != null and index' >= index.
-    JS_EXPORT_PRIVATE unsigned findFirstBlockIndex(unsigned index) const;
+    JS_EXPORT_PRIVATE unsigned NODELETE findFirstBlockIndex(unsigned index) const;
 
     // Finds the smallest index' such that at(index') != null and index' > index.
-    unsigned findNextBlockIndex(unsigned index) const;
+    unsigned NODELETE findNextBlockIndex(unsigned index) const;
 
-    BasicBlock* findNextBlock(BasicBlock*) const;
+    BasicBlock* NODELETE findNextBlock(BasicBlock*) const;
 
     class iterator {
     public:
@@ -304,16 +305,16 @@ public:
     iterator begin() const LIFETIME_BOUND { return iterator(*this, 0); }
     iterator end() const LIFETIME_BOUND { return iterator(*this, size()); }
 
-    const SparseCollection<StackSlot>& stackSlots() const { return m_stackSlots; }
-    SparseCollection<StackSlot>& stackSlots() { return m_stackSlots; }
+    const SparseCollection<StackSlot>& stackSlots() const LIFETIME_BOUND { return m_stackSlots; }
+    SparseCollection<StackSlot>& stackSlots() LIFETIME_BOUND { return m_stackSlots; }
 
-    const SparseCollection<Special>& specials() const { return m_specials; }
-    SparseCollection<Special>& specials() { return m_specials; }
+    const SparseCollection<Special>& specials() const LIFETIME_BOUND { return m_specials; }
+    SparseCollection<Special>& specials() LIFETIME_BOUND { return m_specials; }
 
-    void addFastTmp(Tmp);
+    JS_EXPORT_PRIVATE void addFastTmp(Tmp);
 
     template<typename Functor>
-    void forEachFastTmp(const Functor& functor) const
+    void forEachFastTmp(NOESCAPE const Functor& functor) const
     {
         for (Tmp tmp : m_fastTmps)
             functor(tmp);
@@ -345,14 +346,14 @@ public:
     bool shouldPreserveB3Origins() const { return m_preserveB3Origins; }
     void forcePreservationOfB3Origins() { m_preserveB3Origins = true; }
 
-    bool usesSIMD() const;
+    bool NODELETE usesSIMD() const;
 
     void setDisassembler(std::unique_ptr<Disassembler>&& disassembler)
     {
         m_disassembler = WTF::move(disassembler);
         forcePreservationOfB3Origins();
     }
-    Disassembler* disassembler() { return m_disassembler.get(); }
+    Disassembler* disassembler() LIFETIME_BOUND { return m_disassembler.get(); }
 
     RegisterSet mutableGPRs();
     ScalarRegisterSet pinnedRegisters() const { return m_pinnedRegs; }
@@ -361,9 +362,6 @@ public:
     void emitEpilogue(CCallHelpers&);
 
     std::unique_ptr<GenerateAndAllocateRegisters> m_generateAndAllocateRegisters;
-
-    void setForceIRCRegisterAllocation() { m_forceIRC = true; }
-    bool forceIRCRegisterAllocation() { return m_forceIRC; }
 
     void setIonGraphPasses(Ref<JSON::Array>&&);
     void appendIonGraphPass(ASCIILiteral);
@@ -396,7 +394,7 @@ private:
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
     SparseCollection<Special> m_specials;
     std::unique_ptr<CFG> m_cfg;
-    SmallSet<Tmp, DefaultHash<Tmp>, 2> m_fastTmps;
+    SmallSet<Tmp, DefaultHash<Tmp>, HashTraits<Tmp>, 2> m_fastTmps;
     CCallSpecial* m_cCallSpecial { nullptr };
     unsigned m_numGPTmps { 0 };
     unsigned m_numFPTmps { 0 };
@@ -405,9 +403,8 @@ private:
     unsigned m_optLevel { defaultOptLevel() };
     bool m_stackIsAllocated { false };
     bool m_preserveB3Origins { true };
-    bool m_forceIRC { false };
     RegisterAtOffsetList m_uncorrectedCalleeSaveRegisterAtOffsetList;
-    RegisterSetBuilder m_calleeSaveRegisters;
+    RegisterSet m_calleeSaveRegisters;
     StackSlot* m_calleeSaveStackSlot { nullptr };
     Vector<FrequentedBlock> m_entrypoints; // This is empty until after lowerEntrySwitch().
     Vector<MacroAssembler::Label> m_entrypointLabels; // This is empty until code generation.

@@ -27,7 +27,8 @@
 
 #if ENABLE(WEBGL)
 
-#include "WebGLObject.h"
+#include <WebCore/GraphicsContextGL.h>
+#include <WebCore/WebGLObject.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 #include <wtf/Vector.h>
@@ -53,7 +54,8 @@ class WebGLFramebuffer final : public WebGLObject {
 public:
     virtual ~WebGLFramebuffer();
 
-    static RefPtr<WebGLFramebuffer> create(WebGLRenderingContextBase&);
+    static Ref<WebGLFramebuffer> createLost();
+    static Ref<WebGLFramebuffer> create(WebGLRenderingContextBase&);
 #if ENABLE(WEBXR)
     static RefPtr<WebGLFramebuffer> createOpaque(WebGLRenderingContextBase&);
 #endif
@@ -84,10 +86,17 @@ public:
 
     void didBind() { m_hasEverBeenBound = true; }
 
-    // Wrapper for drawBuffersEXT/drawBuffersARB to work around a driver bug.
+    // Set draw buffers for this framebuffer. ANGLE handles filtering internally.
     void drawBuffers(const Vector<GCGLenum>& bufs);
 
-    GCGLenum getDrawBuffer(GCGLenum);
+    GCGLenum NODELETE getDrawBuffer(GCGLenum);
+
+    const Vector<GCGLenum>& getDrawBuffers() const { return m_drawBuffers; }
+
+    // Set the read buffer for this framebuffer. NONE or COLOR_ATTACHMENTi.
+    void readBuffer(GCGLenum src);
+
+    GCGLenum getReadBuffer() const { return m_readBuffer; }
 
     void addMembersToOpaqueRoots(const AbstractLocker&, JSC::AbstractSlotVisitor&);
 
@@ -111,6 +120,7 @@ private:
 #endif
     };
     WebGLFramebuffer(WebGLRenderingContextBase&, PlatformGLObject, Type);
+    WebGLFramebuffer();
 
     void deleteObjectImpl(const AbstractLocker&, GraphicsContextGL*, PlatformGLObject) override;
 
@@ -118,10 +128,7 @@ private:
     void removeAttachmentFromBoundFramebuffer(const AbstractLocker&, GCGLenum target, GCGLenum attachment);
 
     // Check if the framebuffer is currently bound to the given target.
-    bool isBound(GCGLenum target) const;
-
-    // Check if a new drawBuffers call should be issued. This is called when we add or remove an attachment.
-    void drawBuffersIfNecessary(bool force);
+    bool NODELETE isBound(GCGLenum target) const;
 
     void setAttachmentInternal(GCGLenum attachment, AttachmentEntry);
     // If a given attachment point for the currently bound framebuffer is not
@@ -136,7 +143,8 @@ private:
     HashMap<GCGLenum, AttachmentEntry> m_attachments;
     bool m_hasEverBeenBound { false };
     Vector<GCGLenum> m_drawBuffers;
-    Vector<GCGLenum> m_filteredDrawBuffers;
+    // The GL default read buffer of a framebuffer object is COLOR_ATTACHMENT0.
+    GCGLenum m_readBuffer { GraphicsContextGL::COLOR_ATTACHMENT0 };
 #if ENABLE(WEBXR)
     const bool m_isOpaque;
     bool m_insideWebXRRAF { false };

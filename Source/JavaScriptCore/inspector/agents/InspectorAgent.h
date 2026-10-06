@@ -47,6 +47,8 @@ class JS_EXPORT_PRIVATE InspectorAgent final : public InspectorAgentBase, public
     WTF_MAKE_TZONE_ALLOCATED(InspectorAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     InspectorAgent(AgentContext&);
     ~InspectorAgent() final;
 
@@ -65,8 +67,6 @@ public:
     void evaluateForTestInFrontend(const String& script);
 
 private:
-    CheckedRef<InspectorEnvironment> checkedEnvironment() { return m_environment.get(); }
-
     WeakRef<InspectorEnvironment> m_environment;
     const UniqueRef<InspectorFrontendDispatcher> m_frontendDispatcher;
     const Ref<InspectorBackendDispatcher> m_backendDispatcher;

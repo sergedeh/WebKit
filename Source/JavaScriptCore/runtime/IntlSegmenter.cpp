@@ -27,6 +27,7 @@
 #include "IntlSegmenter.h"
 
 #include "IntlObjectInlines.h"
+#include "IntlSegmentDataObject.h"
 #include "IntlSegments.h"
 #include "IntlWorkaround.h"
 #include "JSCInlines.h"
@@ -100,7 +101,7 @@ void IntlSegmenter::initializeSegmenter(JSGlobalObject* globalObject, JSValue lo
     }
 
     UErrorCode status = U_ZERO_ERROR;
-    m_segmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(ubrk_open(type, m_locale.utf8().data(), nullptr, 0, &status));
+    m_segmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(ubrk_open(type, m_locale.ascii().data(), nullptr, 0, &status));
     if (U_FAILURE(status)) {
         throwTypeError(globalObject, scope, "failed to initialize Segmenter"_s);
         return;
@@ -162,23 +163,6 @@ ASCIILiteral IntlSegmenter::granularityString(Granularity granularity)
     }
     ASSERT_NOT_REACHED();
     return { };
-}
-
-JSObject* IntlSegmenter::createSegmentDataObject(JSGlobalObject* globalObject, JSString* string, int32_t startIndex, int32_t endIndex, UBreakIterator& segmenter, Granularity granularity)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* result = constructEmptyObject(globalObject);
-    JSString* substring = jsSubstring(globalObject, string, startIndex, endIndex - startIndex);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    result->putDirect(vm, vm.propertyNames->segment, substring);
-    result->putDirect(vm, vm.propertyNames->index, jsNumber(startIndex));
-    result->putDirect(vm, vm.propertyNames->input, string);
-    if (granularity == IntlSegmenter::Granularity::Word) {
-        int32_t ruleStatus = ubrk_getRuleStatus(&segmenter);
-        result->putDirect(vm, vm.propertyNames->isWordLike, jsBoolean(!(ruleStatus >= UBRK_WORD_NONE && ruleStatus <= UBRK_WORD_NONE_LIMIT)));
-    }
-    return result;
 }
 
 } // namespace JSC

@@ -43,7 +43,7 @@
 #import <pal/cocoa/AVFoundationSoftLink.h>
 
 @interface WebInterruptionObserverHelper : NSObject {
-    WebCore::AudioSessionIOS* _callback;
+    ThreadSafeWeakPtr<WebCore::AudioSessionIOS> _callback;
 }
 
 - (id)initWithCallback:(WebCore::AudioSessionIOS*)callback;
@@ -76,12 +76,12 @@
 
 - (void)clearCallback
 {
-    _callback = nil;
+    _callback = nullptr;
 }
 
 - (void)interruption:(NSNotification *)notification
 {
-    if (!_callback)
+    if (!_callback.get())
         return;
 
     // FIXME: Migrate to AVAudioSessionDidBecomeInactiveNotification and AVAudioSessionResumptionRecommendationNotification (rdar://168264893).
@@ -90,7 +90,7 @@
     auto flags = (type == AVAudioSessionInterruptionTypeEnded && [[[notification userInfo] objectForKey:AVAudioSessionInterruptionOptionKey] unsignedIntegerValue] == AVAudioSessionInterruptionOptionShouldResume) ? WebCore::AudioSession::MayResume::Yes : WebCore::AudioSession::MayResume::No;
 
     callOnWebThreadOrDispatchAsyncOnMainThread([protectedSelf = retainPtr(self), type, flags]() mutable {
-        auto* callback = protectedSelf->_callback;
+        RefPtr callback = protectedSelf->_callback;
         if (!callback)
             return;
 
@@ -104,8 +104,8 @@
 
 - (void)sessionMediaServicesWereReset:(NSNotification *)notification
 {
-    if (_callback)
-        _callback->sessionMediaServicesWereReset();
+    if (RefPtr callback = _callback)
+        callback->sessionMediaServicesWereReset();
 }
 @end
 
@@ -249,7 +249,7 @@ void AudioSessionIOS::setCategory(CategoryType newCategory, Mode newMode, RouteS
         break;
     }
 
-    NSString *modeString = [&] {
+    RetainPtr<NSString> modeString = [&] {
         switch (newMode) {
         case Mode::MoviePlayback:
             return AVAudioSessionModeMoviePlayback;
@@ -301,8 +301,8 @@ void AudioSessionIOS::setCategory(CategoryType newCategory, Mode newMode, RouteS
         ALWAYS_LOG(identifier, "prefered microphone = ", m_lastSetPreferredMicrophoneID);
     }
 #endif
-    for (auto& observer : audioSessionCategoryChangedObservers())
-        observer(*this, category());
+    for (Ref observer : audioSessionCategoryChangedObservers())
+        observer.get()(*this, category());
 }
 
 AudioSession::CategoryType AudioSessionIOS::category() const

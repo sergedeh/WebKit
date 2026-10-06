@@ -36,12 +36,12 @@
 
 namespace JSC { namespace FTL {
 
-static size_t bytesForGPRs()
+static size_t NODELETE bytesForGPRs()
 {
     return MacroAssembler::numberOfRegisters() * sizeof(int64_t);
 }
 
-static size_t bytesForFPRs()
+static size_t NODELETE bytesForFPRs()
 {
     // FIXME: It might be worthwhile saving the full state of the FP registers, at some point.
     // Right now we don't need this since we only do the save/restore just prior to OSR exit, and
@@ -76,15 +76,15 @@ namespace {
 struct Regs {
     Regs()
     {
-        special = RegisterSetBuilder::stackRegisters();
-        special.merge(RegisterSetBuilder::reservedHardwareRegisters());
+        special = RegisterSet::stackRegisters();
+        special.merge(RegisterSet::reservedHardwareRegisters());
 
         first = MacroAssembler::firstRegister();
         while (special.contains(first, IgnoreVectors))
             first = MacroAssembler::nextRegister(first);
     }
 
-    GPRReg nextRegister(GPRReg current)
+    GPRReg NODELETE nextRegister(GPRReg current)
     {
         auto next = MacroAssembler::nextRegister(current);
         for (; next <= MacroAssembler::lastRegister(); next = MacroAssembler::nextRegister(next)) {

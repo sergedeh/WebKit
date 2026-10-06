@@ -34,6 +34,7 @@
 
 #include "JSCInlines.h"
 #include "JSLock.h"
+#include "TopExceptionScope.h"
 #include <wtf/text/WTFString.h>
 
 namespace Inspector {
@@ -102,7 +103,9 @@ ScriptFunctionCall::ScriptFunctionCall(JSC::JSGlobalObject* globalObject, JSC::J
 {
 }
 
-Expected<JSValue, NakedPtr<Exception>> ScriptFunctionCall::call()
+ScriptFunctionCall::~ScriptFunctionCall() = default;
+
+std::expected<JSValue, NakedPtr<Exception>> ScriptFunctionCall::call()
 {
     JSObject* thisObject = m_thisObject.get();
 
@@ -110,7 +113,7 @@ Expected<JSValue, NakedPtr<Exception>> ScriptFunctionCall::call()
     JSLockHolder lock(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    auto makeExceptionResult = [&] (Exception* exception) -> Expected<JSValue, NakedPtr<Exception>> {
+    auto makeExceptionResult = [&] (Exception* exception) -> std::expected<JSValue, NakedPtr<Exception>> {
         // Do not treat a terminated execution exception as having an exception. Just treat it as an empty result.
         if (!vm.isTerminationException(exception))
             return makeUnexpected(exception);

@@ -42,10 +42,6 @@ public:
     {
         ASSERT(lineIndex <= lines().size());
     }
-    LineBoxIteratorModernPath(LineBoxIteratorModernPath&&) = default;
-    LineBoxIteratorModernPath(const LineBoxIteratorModernPath&) = default;
-    LineBoxIteratorModernPath& operator=(const LineBoxIteratorModernPath&) = default;
-    LineBoxIteratorModernPath& operator=(LineBoxIteratorModernPath&&) = default;
 
     float contentLogicalTop() const { return line().enclosingContentLogicalTop(); }
     float contentLogicalBottom() const { return line().enclosingContentLogicalBottom(); }
@@ -59,19 +55,36 @@ public:
 
     bool hasEllipsis() const { return line().hasEllipsis(); }
     FloatRect ellipsisVisualRectIgnoringBlockDirection() const { return lineEllipsis().visualRect; }
-    TextRun ellipsisText() const { return TextRun { lineEllipsis().text.string() }; }
+    TextRun ellipsisText() const
+    {
+        return TextRun { lineEllipsis().text.string(), 0, 0, ExpansionBehavior::defaultBehavior(),
+            line().isLeftToRightInlineDirection() ? TextDirection::LTR : TextDirection::RTL };
+    }
 
     float contentLogicalTopAdjustedForPrecedingLineBox() const
     {
         if (formattingContextRoot().writingMode().isLineInverted() || !m_lineIndex)
             return contentLogicalTop();
-        return LineBoxIteratorModernPath { *m_inlineContent, m_lineIndex - 1 }.contentLogicalBottom();
+        for (auto precedingLineIndex = m_lineIndex; precedingLineIndex--;) {
+            auto precedingLineBox = LineBoxIteratorModernPath { *m_inlineContent, precedingLineIndex };
+            if (!precedingLineBox.line().hasContentfulInFlowBox())
+                continue;
+            if (precedingLineBox.hasBlockLevelBox())
+                break;
+            if (precedingLineBox.logicalBottom() < logicalTop())
+                break;
+            return precedingLineBox.contentLogicalBottom();
+        }
+        return contentLogicalTop();
     }
     float contentLogicalBottomAdjustedForFollowingLineBox() const
     {
         if (!formattingContextRoot().writingMode().isLineInverted() || m_lineIndex == lines().size() - 1)
             return contentLogicalBottom();
-        return LineBoxIteratorModernPath { *m_inlineContent, m_lineIndex + 1 }.contentLogicalTop();
+        auto followingLineBox = LineBoxIteratorModernPath { *m_inlineContent, m_lineIndex + 1 };
+        if (followingLineBox.hasBlockLevelBox())
+            return contentLogicalBottom();
+        return followingLineBox.contentLogicalTop();
     }
 
     float contentLogicalLeft() const
@@ -90,6 +103,7 @@ public:
 
     bool isFirstAfterPageBreak() const { return line().isFirstAfterPageBreak(); }
     bool hasBlockLevelBox() const { return line().hasBlockLevelBox(); }
+    bool hasContentfulInFlowBox() const { return line().hasContentfulInFlowBox(); }
 
     size_t lineIndex() const { return m_lineIndex; }
 
@@ -140,9 +154,15 @@ public:
 private:
     void setAtEnd() { m_lineIndex = lines().size(); }
 
-    const InlineDisplay::Lines& lines() const { return m_inlineContent->displayContent().lines; }
-    const InlineDisplay::Line& line() const { return lines()[m_lineIndex]; }
-    InlineDisplay::Line::Ellipsis lineEllipsis() const { return *m_inlineContent->displayContent().lineEllipsis(m_lineIndex); }
+    const InlineDisplay::Lines& lines() const LIFETIME_BOUND { return m_inlineContent->displayContent().lines; }
+    const InlineDisplay::Line& line() const LIFETIME_BOUND { return lines()[m_lineIndex]; }
+    InlineDisplay::Line::Ellipsis lineEllipsis() const
+    {
+        if (auto ellipsis = m_inlineContent->displayContent().lineEllipsis(m_lineIndex))
+            return *ellipsis;
+        ASSERT_NOT_REACHED();
+        return { };
+    }
 
     WeakPtr<const LayoutIntegration::InlineContent> m_inlineContent;
     size_t m_lineIndex { 0 };

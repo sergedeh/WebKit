@@ -61,9 +61,9 @@ public:
         m_last->append(WTF::move(string));
     }
 
-    void insertAtCurrentInsertionPoint(SegmentedString&& string)
+    void insertAtCurrentInsertionPoint(const SegmentedString& string)
     {
-        m_first.append(WTF::move(string));
+        m_first.append(string);
     }
 
     bool hasInsertionPoint() const
@@ -87,8 +87,8 @@ public:
         return m_last->isClosed();
     }
 
-    SegmentedString& current() { return m_first; }
-    const SegmentedString& current() const { return m_first; }
+    SegmentedString& current() LIFETIME_BOUND { return m_first; }
+    const SegmentedString& current() const LIFETIME_BOUND { return m_first; }
 
     void splitInto(SegmentedString& next)
     {

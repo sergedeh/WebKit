@@ -17,9 +17,11 @@
  * Boston, MA 02110-1301, USA.
  */
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary ScrollIntoViewOptions : ScrollOptions {
-    [ImplementedAs=blockPosition] ScrollLogicalPosition block = "start";
-    [ImplementedAs=inlinePosition] ScrollLogicalPosition inline = "nearest";
+// https://drafts.csswg.org/cssom-view/#dictdef-scrollintoviewoptions
+dictionary ScrollIntoViewOptions : ScrollOptions {
+    // No default values so we can distinguish an author-specified alignment (which must be honored)
+    // from an unspecified one (which defaults to start/nearest and may be adjusted for scroll-snap-align).
+    [ImplementedAs=blockPosition] ScrollLogicalPosition block;
+    [ImplementedAs=inlinePosition] ScrollLogicalPosition inline;
+    ScrollIntoViewContainer container = "all";
 };

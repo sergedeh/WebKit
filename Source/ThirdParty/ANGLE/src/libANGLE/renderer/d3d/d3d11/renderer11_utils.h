@@ -11,15 +11,13 @@
 #ifndef LIBANGLE_RENDERER_D3D_D3D11_RENDERER11_UTILS_H_
 #define LIBANGLE_RENDERER_D3D_D3D11_RENDERER11_UTILS_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include <array>
 #include <functional>
 #include <vector>
+#include "common/unsafe_buffers.h"
 
 #include "common/Color.h"
+#include "common/com_utils.h"
 
 #include "libANGLE/Caps.h"
 #include "libANGLE/Error.h"
@@ -86,8 +84,6 @@ void GenerateCaps(ID3D11Device *device,
                   gl::Extensions *extensions,
                   gl::Limitations *limitations,
                   ShPixelLocalStorageOptions *);
-
-D3D_FEATURE_LEVEL GetMinimumFeatureLevelForES31();
 
 }  // namespace d3d11_gl
 
@@ -177,23 +173,6 @@ struct RasterizerStateKey final
 
 bool operator==(const RasterizerStateKey &a, const RasterizerStateKey &b);
 bool operator!=(const RasterizerStateKey &a, const RasterizerStateKey &b);
-
-template <typename outType>
-outType *DynamicCastComObject(IUnknown *object)
-{
-    outType *outObject = nullptr;
-    HRESULT result =
-        object->QueryInterface(__uuidof(outType), reinterpret_cast<void **>(&outObject));
-    if (SUCCEEDED(result))
-    {
-        return outObject;
-    }
-    else
-    {
-        SafeRelease(outObject);
-        return nullptr;
-    }
-}
 
 inline bool isDeviceLostError(HRESULT errorCode)
 {
@@ -305,7 +284,7 @@ void SetBufferData(ID3D11DeviceContext *context, ID3D11Buffer *constantBuffer, c
     ASSERT(SUCCEEDED(result));
     if (SUCCEEDED(result))
     {
-        memcpy(mappedResource.pData, &value, sizeof(T));
+        ANGLE_UNSAFE_TODO(memcpy(mappedResource.pData, &value, sizeof(T)));
         context->Unmap(constantBuffer, 0);
     }
 }
@@ -342,29 +321,30 @@ class [[nodiscard]] ScopedUnmapper final : angle::NonCopyable
 
 struct GenericData
 {
-    GenericData() {}
-    ~GenericData()
+    GenericData() = default;
+    ~GenericData() { reset(); }
+
+    void reset()
     {
         if (object)
         {
             // We can have a nullptr factory when holding passed-in resources.
             if (manager)
             {
-                manager->onReleaseGeneric(resourceType, object);
+                manager->onReleaseGeneric(resourceType, object.Get());
                 manager = nullptr;
             }
-            object->Release();
-            object = nullptr;
+            object.Reset();
         }
     }
 
-    ResourceType resourceType  = ResourceType::Last;
-    ID3D11Resource *object     = nullptr;
+    ResourceType resourceType = ResourceType::Last;
+    angle::ComPtr<ID3D11Resource> object;
     ResourceManager11 *manager = nullptr;
 };
 
 // A helper class which wraps a 2D or 3D texture.
-class TextureHelper11 : public Resource11Base<ID3D11Resource, std::shared_ptr, GenericData>
+class TextureHelper11 : public Resource11Base<ID3D11Resource, std::shared_ptr<GenericData>>
 {
   public:
     TextureHelper11();
@@ -374,10 +354,10 @@ class TextureHelper11 : public Resource11Base<ID3D11Resource, std::shared_ptr, G
     TextureHelper11 &operator=(TextureHelper11 &&other);
     TextureHelper11 &operator=(const TextureHelper11 &other);
 
-    bool isBuffer() const { return mData->resourceType == ResourceType::Buffer; }
-    bool is2D() const { return mData->resourceType == ResourceType::Texture2D; }
-    bool is3D() const { return mData->resourceType == ResourceType::Texture3D; }
-    ResourceType getTextureType() const { return mData->resourceType; }
+    bool isBuffer() const { return data().resourceType == ResourceType::Buffer; }
+    bool is2D() const { return data().resourceType == ResourceType::Texture2D; }
+    bool is3D() const { return data().resourceType == ResourceType::Texture3D; }
+    ResourceType getTextureType() const { return data().resourceType; }
     gl::Extents getExtents() const { return mExtents; }
     DXGI_FORMAT getFormat() const { return mFormatSet->texFormat; }
     const d3d11::Format &getFormatSet() const { return *mFormatSet; }
@@ -386,25 +366,31 @@ class TextureHelper11 : public Resource11Base<ID3D11Resource, std::shared_ptr, G
     template <typename DescT, typename ResourceT>
     void init(Resource11<ResourceT> &&texture, const DescT &desc, const d3d11::Format &format)
     {
-        std::swap(mData->manager, texture.mData->manager);
+        if (mData.use_count() > 1)
+        {
+            mData = std::make_shared<GenericData>();
+        }
+        else
+        {
+            data().reset();
+        }
 
-        // Can't use std::swap because texture is typed, and here we use ID3D11Resource.
-        ID3D11Resource *temp  = mData->object;
-        mData->object         = texture.mData->object;
-        texture.mData->object = static_cast<ResourceT *>(temp);
+        data().manager         = texture.data().manager;
+        texture.data().manager = nullptr;
+        data().object          = std::move(texture.data().object);
 
         mFormatSet = &format;
         initDesc(desc);
     }
 
     template <typename ResourceT>
-    void set(ResourceT *object, const d3d11::Format &format)
+    void set(angle::ComPtr<ResourceT> object, const d3d11::Format &format)
     {
         ASSERT(!valid());
 
         mFormatSet     = &format;
-        mData->object  = object;
-        mData->manager = nullptr;
+        data().object  = std::move(object);
+        data().manager = nullptr;
 
         GetDescFromD3D11<ResourceT> desc;
         getDesc(&desc);

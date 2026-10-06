@@ -26,13 +26,47 @@
 #import "config.h"
 #import "MediaDeviceRouteController.h"
 
-#if HAVE(AVROUTING_FRAMEWORK)
-
 #import "MediaStrategy.h"
 #import "PlatformStrategies.h"
-#import <WebKitAdditions/MediaDeviceRouteControllerAdditions.mm>
 
-#import <pal/ios/AVRoutingSoftLink.h>
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
+
+#import "Logging.h"
+#import "MediaDeviceRoute.h"
+#import "MediaSessionHelperIOS.h"
+#import "MediaStrategy.h"
+#import "PlatformStrategies.h"
+#import "WebMediaDevicePlatformRoute.h"
+#import <wtf/darwin/DispatchExtras.h>
+
+#import <pal/ios/AVSystemRoutingSoftLink.h>
+
+#if HAVE(AVSYSTEMROUTING_FRAMEWORK)
+
+@interface WebMediaDeviceRouteObserver : NSObject <AVSystemRouteControllerObserver>
+@end
+
+@implementation WebMediaDeviceRouteObserver
+
+- (void)systemRouteController:(AVSystemRouteController *)controller handleEvent:(AVSystemRouteEvent *)event completionHandler:(void (^)(BOOL))completionHandler
+{
+    using namespace WebCore;
+    dispatch_async(mainDispatchQueueSingleton(), ^{
+        RELEASE_LOG(Media, "WebMediaDeviceRouteObserver handling event %ld", (long)event.reason);
+        switch (event.reason) {
+        case AVSystemRouteEventReasonActivate:
+            return completionHandler(MediaDeviceRouteController::singleton().activateRoute(event.route));
+        case AVSystemRouteEventReasonDeactivate:
+            return completionHandler(MediaDeviceRouteController::singleton().deactivateRoute(event.route));
+        }
+
+        RELEASE_ASSERT_NOT_REACHED();
+    });
+}
+
+@end
+
+#endif // HAVE(AVSYSTEMROUTING_FRAMEWORK)
 
 namespace WebCore {
 
@@ -43,11 +77,14 @@ MediaDeviceRouteController& MediaDeviceRouteController::singleton()
 }
 
 MediaDeviceRouteController::MediaDeviceRouteController()
-    : m_controller { adoptNS([[WebMediaDeviceRouteController alloc] init]) }
-    , m_platformController { [WebMediaDevicePlatformRouteControllerClass sharedRoutingSystemController] }
+#if HAVE(AVSYSTEMROUTING_FRAMEWORK)
+    : m_routeObserver { adoptNS([[WebMediaDeviceRouteObserver alloc] init]) }
+    , m_platformController { [PAL::getAVSystemRouteControllerClassSingleton() sharedController] }
+#endif
 {
-    ASSERT([m_platformController systemDelegate] == nil);
-    [m_platformController setSystemDelegate:m_controller.get()];
+#if HAVE(AVSYSTEMROUTING_FRAMEWORK)
+    [m_platformController addObserver:m_routeObserver.get()];
+#endif
 }
 
 RefPtr<MediaDeviceRoute> MediaDeviceRouteController::mostRecentActiveRoute() const
@@ -92,11 +129,13 @@ bool MediaDeviceRouteController::deactivateRoute(WebMediaDevicePlatformRoute *pl
     return true;
 }
 
-} // namespace WebCore
+void MediaDeviceRouteController::deactivateAllRoutes()
+{
+    m_activeRoutes.clear();
 
-#endif // HAVE(AVROUTING_FRAMEWORK)
-
-namespace WebCore {
+    if (RefPtr client = m_client.get())
+        client->activeRoutesDidChange(*this);
+}
 
 static bool& mockMediaDeviceRouteControllerEnabledValue()
 {
@@ -106,17 +145,21 @@ static bool& mockMediaDeviceRouteControllerEnabledValue()
 
 void setMockMediaDeviceRouteControllerEnabled(bool isEnabled)
 {
+    MediaDeviceRouteController::singleton().deactivateAllRoutes();
+    MediaDeviceRouteController::singleton().setClient(isEnabled ? &MediaSessionHelper::sharedHelper() : nullptr);
+
     if (mockMediaDeviceRouteControllerEnabledValue() == isEnabled)
         return;
 
     mockMediaDeviceRouteControllerEnabledValue() = isEnabled;
-#if ENABLE(VIDEO)
     platformStrategies()->mediaStrategy()->resetMediaEngines();
-#endif
 }
+
 bool mockMediaDeviceRouteControllerEnabled()
 {
     return mockMediaDeviceRouteControllerEnabledValue();
 }
 
 } // namespace WebCore
+
+#endif // ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)

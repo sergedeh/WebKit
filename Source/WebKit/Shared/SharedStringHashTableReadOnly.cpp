@@ -34,7 +34,7 @@ namespace WebKit {
 
 using namespace WebCore;
 
-static inline unsigned doubleHash(unsigned key)
+static inline unsigned NODELETE doubleHash(unsigned key)
 {
     key = ~key + (key >> 23);
     key ^= (key << 12);
@@ -94,11 +94,6 @@ SharedStringHash* SharedStringHashTableReadOnly::findSlot(SharedStringHash share
             k = 1 | doubleHash(h);
         i = (i + k) & sizeMask;
     }
-}
-
-RefPtr<WebCore::SharedMemory> SharedStringHashTableReadOnly::protectedSharedMemory() const
-{
-    return sharedMemory();
 }
 
 } // namespace WebKit

@@ -31,6 +31,7 @@
 #include "EventNames.h"
 #include "PaymentRequest.h"
 #include <wtf/TZoneMallocInlines.h>
+#include "EventTargetInlines.h"
 
 namespace WebCore {
 
@@ -73,7 +74,7 @@ ExceptionOr<void> PaymentRequestUpdateEvent::updateWith(Ref<DOMPromise>&& detail
         return Exception { ExceptionCode::TypeError };
     }
 
-    auto exception = downcast<PaymentRequest>(protectedTarget())->updateWith(reason, WTF::move(detailsPromise));
+    auto exception = downcast<PaymentRequest>(protect(target()))->updateWith(reason, WTF::move(detailsPromise));
     if (exception.hasException())
         return exception.releaseException();
 

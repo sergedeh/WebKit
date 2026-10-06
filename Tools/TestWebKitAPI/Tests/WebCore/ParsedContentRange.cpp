@@ -26,7 +26,6 @@
 #include "config.h"
 
 #include <WebCore/ParsedContentRange.h>
-#include <WebCore/ParsedRequestRange.h>
 #include <wtf/text/WTFString.h>
 
 using namespace WebCore;
@@ -91,36 +90,9 @@ TEST(WebCore, ParsedContentRangeFromValues)
 
 TEST(WebCore, ParsedContentRangeToString)
 {
-    ASSERT_STREQ("bytes 0-1/2", ParsedContentRange(0, 1, 2).headerValue().utf8().data());
-    ASSERT_STREQ("bytes 0-1/*", ParsedContentRange(0, 1, ParsedContentRange::unknownLength).headerValue().utf8().data());
-    ASSERT_STREQ("", ParsedContentRange().headerValue().utf8().data());
+    ASSERT_EQ("bytes 0-1/2"_s, ParsedContentRange(0, 1, 2).headerValue());
+    ASSERT_EQ("bytes 0-1/*"_s, ParsedContentRange(0, 1, ParsedContentRange::unknownLength).headerValue());
+    ASSERT_TRUE(ParsedContentRange().headerValue().isEmpty());
 }
 
-TEST(WebCore, ParsedRequestRange)
-{
-    Vector<String> failureCases {
-        { },
-        emptyString(),
-        "abc"_s,
-        "bytes="_s,
-        "bytes=-"_s,
-        "bytes=abc-"_s,
-        "bytes=1-abc"_s,
-        "bytes=2-1"_s,
-        "bytes=1-"_s,
-        "bytes=-1"_s,
-        "bytes=1-999999999999999999999999"_s
-    };
-    for (const auto& input : failureCases)
-        EXPECT_EQ(std::nullopt, ParsedRequestRange::parse(input));
-
-    auto compare = [] (const String& input, std::optional<size_t> begin, std::optional<size_t> end) {
-        auto range = ParsedRequestRange::parse(input);
-        EXPECT_NE(std::nullopt, range);
-        
-    };
-    compare("bytes=1-1"_s, 1, 1);
-    compare("bytes=1-2"_s, 1, 2);
-}
-
-}
+} // namespace TestWebKitAPI

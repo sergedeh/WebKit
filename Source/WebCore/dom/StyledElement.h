@@ -52,10 +52,8 @@ public:
     void invalidateStyleAttribute();
 
     const StyleProperties* inlineStyle() const { return elementData() ? elementData()->m_inlineStyle.get() : nullptr; }
-    RefPtr<StyleProperties> protectedInlineStyle() const;
-    
+
     WEBCORE_EXPORT bool setInlineStyleProperty(CSSPropertyID, CSSValueID identifier, IsImportant = IsImportant::No);
-    bool setInlineStyleProperty(CSSPropertyID, CSSPropertyID identifier, IsImportant = IsImportant::No);
     WEBCORE_EXPORT bool setInlineStyleProperty(CSSPropertyID, double value, CSSUnitType, IsImportant = IsImportant::No);
     WEBCORE_EXPORT bool setInlineStyleProperty(CSSPropertyID, const String& value, IsImportant = IsImportant::No, bool* didFailParsing = nullptr);
     bool setInlineStyleCustomProperty(const AtomString& property, const String& value, IsImportant = IsImportant::No);
@@ -91,12 +89,18 @@ protected:
     void addPropertyToPresentationalHintStyle(MutableStyleProperties&, CSSPropertyID, const String& value);
     void addPropertyToPresentationalHintStyle(MutableStyleProperties&, CSSPropertyID, Ref<CSSValue>&&);
 
-    void addSubresourceAttributeURLs(ListHashSet<URL>&) const override;
+    void mapLanguageAttributeToLocale(const AtomString& value, MutableStyleProperties&);
+
+    void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const override;
     Attribute replaceURLsInAttributeValue(const Attribute&, const CSS::SerializationContext&) const override;
 
 private:
+    StyledElement(ClangVTableWorkaroundTag, const QualifiedName&, Document&);
+
     void styleAttributeChanged(const AtomString& newStyleString, AttributeModificationReason);
     void synchronizeStyleAttributeInternalImpl();
+    void synchronizeStyleAttributeForSelectorInvalidation();
+    bool isStyleAttributeAllowedByContentSecurityPolicy(const AtomString& styleString, OrdinalNumber startLineNumber);
 
     void inlineStyleChanged();
     CSSStyleProperties* inlineStyleCSSOMWrapper();

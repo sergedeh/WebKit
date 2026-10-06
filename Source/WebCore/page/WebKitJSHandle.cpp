@@ -26,24 +26,37 @@
 #include "config.h"
 #include "WebKitJSHandle.h"
 
+#include "CommonVM.h"
 #include "DOMWindow.h"
 #include "Frame.h"
+#include "JSDOMGlobalObject.h"
 #include "JSWindowProxy.h"
-#include <JavaScriptCore/JSCellInlines.h>
-#include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/Weak.h>
+#include "WebCoreJSClientData.h"
+#include <JavaScriptCore/JSCInlines.h>
+#include <wtf/MainThread.h>
 
 namespace WebCore {
 
-struct JSHandleData {
-    JSC::Strong<JSC::JSObject> strongReference;
-    size_t refCount { 0 };
-};
-using HandleMap = HashMap<JSHandleIdentifier, JSHandleData>;
-static HandleMap& handleMap()
+using HandleToGlobalMap = JSC::WeakGCMap<JSHandleIdentifier, JSDOMGlobalObject>;
+
+static HandleToGlobalMap& handleToGlobalMap(JSC::VM& vm)
 {
-    static MainThreadNeverDestroyed<HandleMap> map;
-    return map.get();
+    return downcast<JSVMClientData>(vm.clientData)->jsHandleGlobalObjects();
+}
+
+// Handles are only ever created on the main thread, so the global object a handle names always
+// belongs to the common VM.
+static HandleToGlobalMap* handleToGlobalMapIfExists()
+{
+    ASSERT(isMainThread());
+    auto* vm = commonVMOrNull();
+    return vm ? &handleToGlobalMap(*vm) : nullptr;
+}
+
+static JSDOMGlobalObject* globalObjectForIdentifier(JSHandleIdentifier identifier)
+{
+    auto* map = handleToGlobalMapIfExists();
+    return map ? map->get(identifier) : nullptr;
 }
 
 Ref<WebKitJSHandle> WebKitJSHandle::create(JSC::JSObject* object)
@@ -58,40 +71,32 @@ WebKitJSHandle::~WebKitJSHandle()
 
 void WebKitJSHandle::jsHandleSentToAnotherProcess(JSHandleIdentifier identifier)
 {
-    auto it = handleMap().find(identifier);
-    if (it == handleMap().end()) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-    ASSERT(it->value.refCount);
-    ++it->value.refCount;
+    if (auto* global = globalObjectForIdentifier(identifier))
+        global->refJSHandle(identifier);
 }
 
 void WebKitJSHandle::jsHandleDestroyed(JSHandleIdentifier identifier)
 {
-    auto it = handleMap().find(identifier);
-    if (it == handleMap().end()) {
-        ASSERT_NOT_REACHED();
+    auto* map = handleToGlobalMapIfExists();
+    if (!map)
         return;
-    }
-    if (!--it->value.refCount)
-        handleMap().remove(identifier);
+    auto* global = map->get(identifier);
+    if (!global || global->derefJSHandle(identifier))
+        map->remove(identifier);
 }
 
 JSC::JSObject* WebKitJSHandle::objectForIdentifier(JSHandleIdentifier identifier)
 {
-    auto it = handleMap().find(identifier);
-    if (it == handleMap().end()) {
-        ASSERT_NOT_REACHED();
+    auto* global = globalObjectForIdentifier(identifier);
+    if (!global)
         return nullptr;
-    }
-    return it->value.strongReference.get();
+    return global->jsHandle(identifier);
 }
 
-static Markable<FrameIdentifier> windowFrameIdentifier(JSC::JSObject* object)
+static Markable<FrameIdentifier> NODELETE windowFrameIdentifier(JSC::JSObject* object)
 {
-    if (auto* window = jsDynamicCast<WebCore::JSWindowProxy*>(object)) {
-        if (RefPtr frame = window->protectedWrapped()->frame())
+    if (auto* window = dynamicDowncast<WebCore::JSWindowProxy>(object)) {
+        if (auto* frame = window->wrapped().frame())
             return frame->frameID();
     }
     return std::nullopt;
@@ -101,14 +106,12 @@ WebKitJSHandle::WebKitJSHandle(JSC::JSObject* object)
     : m_identifier(JSHandleIdentifier(WebProcessJSHandleIdentifier(reinterpret_cast<uintptr_t>(object)), Process::identifier()))
     , m_windowFrameIdentifier(WebCore::windowFrameIdentifier(object))
 {
-    auto addResult = handleMap().ensure(m_identifier, [&] {
-        return JSHandleData {
-            JSC::Strong<JSC::JSObject> { object->globalObject()->vm(), object },
-            0 // Immediately incremented.
-        };
-    });
-    auto& data = addResult.iterator->value;
-    data.refCount++;
+    auto* global = dynamicDowncast<JSDOMGlobalObject>(object->realmMayBeNull());
+    if (!global)
+        return;
+    global->addJSHandle(m_identifier, *object);
+    ASSERT(&global->vm() == commonVMOrNull());
+    handleToGlobalMap(global->vm()).set(m_identifier, global);
 }
 
 }

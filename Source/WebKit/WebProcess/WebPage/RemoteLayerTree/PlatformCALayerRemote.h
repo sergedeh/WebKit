@@ -29,6 +29,7 @@
 #include "RemoteLayerTreeContext.h"
 #include "RemoteLayerTreeTransaction.h"
 #include <WebCore/HTMLMediaElementIdentifier.h>
+#include <WebCore/PlaceholderFrameIdentifier.h>
 #include <WebCore/PlatformCALayer.h>
 #include <WebCore/PlatformCALayerDelegatedContents.h>
 #include <WebCore/PlatformLayer.h>
@@ -36,7 +37,6 @@
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
-class LayerPool;
 #if ENABLE(THREADED_ANIMATIONS)
 class AcceleratedEffect;
 struct AcceleratedEffectValues;
@@ -54,7 +54,7 @@ using LayerHostingContextID = uint32_t;
 struct PlatformCALayerRemoteDelegatedContents {
     ImageBufferBackendHandle surface;
     RefPtr<WebCore::PlatformCALayerDelegatedContentsFence> finishedFence;
-    std::optional<WebCore::RenderingResourceIdentifier> surfaceIdentifier;
+    std::optional<WebCore::PlaceholderFrameIdentifier> frameIdentifier;
 };
 
 class PlatformCALayerRemote : public WebCore::PlatformCALayer, public CanMakeWeakPtr<PlatformCALayerRemote> {
@@ -182,7 +182,7 @@ public:
     void setOpacity(float) override;
 
     void setFilters(const WebCore::FilterOperations&) override;
-    static bool filtersCanBeComposited(const WebCore::FilterOperations&);
+    static bool NODELETE filtersCanBeComposited(const WebCore::FilterOperations&);
     void copyFiltersFrom(const WebCore::PlatformCALayer&) override;
 
     void setBlendMode(WebCore::BlendMode) override;
@@ -263,16 +263,15 @@ public:
 
     unsigned backingStoreBytesPerPixel() const override;
 
-    void setClonedLayer(const PlatformCALayer*);
+    void NODELETE setClonedLayer(const PlatformCALayer*);
 
-    LayerProperties& properties() { return m_properties; }
-    const LayerProperties& properties() const { return m_properties; }
+    LayerProperties& properties() LIFETIME_BOUND { return m_properties; }
+    const LayerProperties& properties() const LIFETIME_BOUND { return m_properties; }
 
     void didCommit();
 
     void moveToContext(RemoteLayerTreeContext&);
     RemoteLayerTreeContext* context() const { return m_context.get(); }
-    RefPtr<RemoteLayerTreeContext> protectedContext() const { return m_context.get(); }
 
     void markFrontBufferVolatileForTesting() override;
     virtual void populateCreationProperties(RemoteLayerTreeTransaction::LayerCreationProperties&, const RemoteLayerTreeContext&, WebCore::PlatformCALayer::LayerType);
@@ -301,15 +300,13 @@ private:
     void updateBackingStore();
     void removeSublayer(PlatformCALayerRemote*);
 
-    WebCore::DestinationColorSpace displayColorSpace() const;
+    WebCore::ColorSpace displayColorSpace(WebCore::ContentsFormat) const;
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     WebCore::IncludeDynamicContentScalingDisplayList shouldIncludeDisplayListInBackingStore() const;
 #endif
 
-    bool requiresCustomAppearanceUpdateOnBoundsChange() const;
-
-    WebCore::LayerPool* layerPool() override;
+    bool NODELETE requiresCustomAppearanceUpdateOnBoundsChange() const;
 
     LayerProperties m_properties;
     WebCore::PlatformCALayerList m_children;

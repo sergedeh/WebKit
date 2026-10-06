@@ -61,7 +61,7 @@ public:
     // FIXME: Should add a function like this to HashMap so the two kinds of maps are more interchangable.
     template<typename KeyArgument> const ValueType* tryGet(const KeyArgument&) const;
 
-    const std::array<ElementType, N>& array() const { return m_array; }
+    const std::array<ElementType, N>& array() const LIFETIME_BOUND { return m_array; }
 
 private:
     std::array<ElementType, N> m_array;
@@ -72,7 +72,7 @@ public:
     constexpr SortedArraySet(std::array<ElementType, N>&&);
     template<typename KeyArgument> bool contains(const KeyArgument&) const;
 
-    const std::array<ElementType, N>& array() const { return m_array; }
+    const std::array<ElementType, N>& array() const LIFETIME_BOUND { return m_array; }
 
 private:
     std::array<ElementType, N> m_array;
@@ -86,7 +86,7 @@ template<typename SortedArrayKeyType> struct SortedArrayKeyTraits {
     static std::optional<SortedArrayKeyType> parse(const SortedArrayKeyType& key) { return key; }
 };
 
-// NoUppercaseLettersOptimized means no characters with the 0x20 bit set.
+// NoUppercaseLettersOptimized means no characters without the 0x20 bit set.
 // That means the strings can't include control characters, uppercase letters, or any of @[\]_.
 enum class ASCIISubset : uint8_t { All, NoUppercaseLetters, NoUppercaseLettersOptimized };
 

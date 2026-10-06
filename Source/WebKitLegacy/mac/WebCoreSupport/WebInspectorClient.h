@@ -52,6 +52,7 @@ class CertificateInfo;
 class LocalFrame;
 class Page;
 class PageInspectorController;
+struct DiagnosticLoggingDictionary;
 }
 
 class WebInspectorFrontendClient;
@@ -103,7 +104,7 @@ private:
     std::unique_ptr<WebCore::InspectorFrontendClientLocal::Settings> createFrontendSettings();
 
     WeakObjCPtr<WebView> m_inspectedWebView;
-    RetainPtr<WebNodeHighlighter> m_highlighter;
+    const RetainPtr<WebNodeHighlighter> m_highlighter;
     WeakPtr<WebCore::Page> m_frontendPage;
     std::unique_ptr<WebInspectorFrontendClient> m_frontendClient;
 };
@@ -142,7 +143,7 @@ public:
     void setAttachedWindowWidth(unsigned height) override;
 
 #if !PLATFORM(IOS_FAMILY)
-    const WebCore::FloatRect& sheetRect() const { return m_sheetRect; }
+    const WebCore::FloatRect& sheetRect() const LIFETIME_BOUND { return m_sheetRect; }
 #endif
     void setSheetRect(const WebCore::FloatRect&) override;
 
@@ -151,7 +152,7 @@ public:
 
 #if ENABLE(INSPECTOR_TELEMETRY)
     bool supportsDiagnosticLogging() override;
-    void logDiagnosticEvent(const String& eventName, const WebCore::DiagnosticLoggingClient::ValueDictionary&) override;
+    void logDiagnosticEvent(const String& eventName, const WebCore::DiagnosticLoggingDictionary&) override;
 #endif
 
     void sendMessageToBackend(const String& message) final;
@@ -165,7 +166,7 @@ private:
 #if !PLATFORM(IOS_FAMILY)
     WeakObjCPtr<WebView> m_inspectedWebView;
     WeakPtr<LegacyWebPageInspectorController> m_webPageInspectorController;
-    RetainPtr<WebInspectorWindowController> m_frontendWindowController;
+    const RetainPtr<WebInspectorWindowController> m_frontendWindowController;
     String m_inspectedURL;
     HashMap<String, RetainPtr<NSURL>> m_suggestedToActualURLMap;
     WebCore::FloatRect m_sheetRect;

@@ -38,13 +38,20 @@ enum class FocusTrigger : uint8_t { Other, Click, Bindings };
 enum class FocusVisibility : uint8_t { Invisible, Visible, ForceInvisible };
 
 struct FocusOptions {
+    bool preventScroll { false };
+    std::optional<bool> focusVisible { std::nullopt };
+
+    // Non-IDL members.
     SelectionRestorationMode selectionRestorationMode { SelectionRestorationMode::RestoreOrSelectAll };
     FocusDirection direction { FocusDirection::None };
     FocusRemovalEventsMode removalEventsMode { FocusRemovalEventsMode::Dispatch };
     FocusTrigger trigger { FocusTrigger::Other };
     FocusVisibility visibility { FocusVisibility::Invisible };
-    bool preventScroll { false };
-    std::optional<bool> focusVisible { std::nullopt };
+    // Set when focus is moving because an assistive technology moved its cursor, rather than
+    // because the user activated the element. iOS must not present the focused element's input
+    // view in that case, as it would open a picker, or raise the keyboard, for a control the user
+    // only moved their cursor to.
+    bool preventInputViewPresentation { false };
 };
 
 } // namespace WebCore

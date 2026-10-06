@@ -54,19 +54,31 @@ Ref<RealtimeIncomingAudioSourceLibWebRTC> RealtimeIncomingAudioSourceLibWebRTC::
 RealtimeIncomingAudioSourceLibWebRTC::RealtimeIncomingAudioSourceLibWebRTC(Ref<webrtc::AudioTrackInterface>&& audioTrack, String&& audioTrackId)
     : RealtimeIncomingAudioSource(WTF::move(audioTrack), WTF::move(audioTrackId))
 {
+#ifndef GST_DISABLE_GST_DEBUG
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
         GST_DEBUG_CATEGORY_INIT(webkit_libwebrtc_incoming_audio_debug, "webkitlibwebrtcaudioincoming", 0, "WebKit LibWebRTC incoming audio source");
     });
-    GST_DEBUG("Created incoming audio source with ID: %s", persistentID().utf8().data());
+#if GST_CHECK_VERSION(1, 22, 0)
+    m_id = persistentID().ascii();
+    GST_DEBUG("Created incoming audio source with ID: %s", m_id);
+#endif
+#endif
+}
+
+RealtimeIncomingAudioSourceLibWebRTC::~RealtimeIncomingAudioSourceLibWebRTC()
+{
+    stop();
 }
 
 void RealtimeIncomingAudioSourceLibWebRTC::OnData(const void* audioData, int, int sampleRate, size_t numberOfChannels, size_t numberOfFrames)
 {
+#ifndef GST_DISABLE_GST_DEBUG
 #if GST_CHECK_VERSION(1, 22, 0)
-    GST_TRACE_ID(persistentID().utf8().data(), "Handling %zu incoming audio frames", numberOfFrames);
+    GST_TRACE_ID(m_id.data(), "Handling %zu incoming audio frames", numberOfFrames);
 #else
     GST_TRACE("Handling %zu incoming audio frames", numberOfFrames);
+#endif
 #endif
     GstAudioInfo info;
     GstAudioFormat format = gst_audio_format_build_integer(
@@ -78,9 +90,9 @@ void RealtimeIncomingAudioSourceLibWebRTC::OnData(const void* audioData, int, in
     gst_audio_info_set_format(&info, format, sampleRate, numberOfChannels, NULL);
 
     auto bufferSize = GST_AUDIO_INFO_BPF(&info) * numberOfFrames;
-    auto buffer = adoptGRef(gst_buffer_new_memdup(const_cast<gpointer>(audioData), bufferSize));
+    GRefPtr buffer = adoptGRef(gst_buffer_new_memdup(const_cast<gpointer>(audioData), bufferSize));
     gst_buffer_add_audio_meta(buffer.get(), &info, numberOfFrames, nullptr);
-    auto caps = adoptGRef(gst_audio_info_to_caps(&info));
+    GRefPtr caps = adoptGRef(gst_audio_info_to_caps(&info));
 
     if (m_baseTime == MediaTime::invalidTime())
         m_baseTime = MediaTime::createWithSeconds(MonotonicTime::now().secondsSinceEpoch());
@@ -88,7 +100,7 @@ void RealtimeIncomingAudioSourceLibWebRTC::OnData(const void* audioData, int, in
     MediaTime mediaTime = m_baseTime + MediaTime((m_numberOfFrames * G_USEC_PER_SEC) / sampleRate, G_USEC_PER_SEC);
     GST_BUFFER_PTS(buffer.get()) = toGstUnsigned64Time(mediaTime);
 
-    auto sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
+    GRefPtr sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
     GStreamerAudioData data(WTF::move(sample), info);
     audioSamplesAvailable(mediaTime, data, GStreamerAudioStreamDescription(info), numberOfFrames);
 

@@ -32,10 +32,10 @@ class LegacyRenderSVGViewportContainer final : public LegacyRenderSVGContainer {
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGViewportContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGViewportContainer);
 public:
-    LegacyRenderSVGViewportContainer(SVGSVGElement&, RenderStyle&&);
+    LegacyRenderSVGViewportContainer(SVGSVGElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGViewportContainer();
 
-    SVGSVGElement& svgSVGElement() const;
+    SVGSVGElement& NODELETE svgSVGElement() const;
 
     FloatRect viewport() const { return m_viewport; }
 
@@ -53,7 +53,7 @@ private:
     ASCIILiteral renderName() const override { return "RenderSVGViewportContainer"_s; }
 
     AffineTransform viewportTransform() const;
-    const AffineTransform& localToParentTransform() const override { return m_localToParentTransform; }
+    const AffineTransform& localToParentTransform() const LIFETIME_BOUND override { return m_localToParentTransform; }
 
     void calcViewport() override;
     bool calculateLocalTransform() override;
@@ -61,9 +61,9 @@ private:
     void applyViewportClip(PaintInfo&) override;
     bool pointIsInsideViewportClip(const FloatPoint& pointInParent) override;
 
-    bool m_didTransformToRootUpdate : 1;
-    bool m_isLayoutSizeChanged : 1;
-    bool m_needsTransformUpdate : 1;
+    bool m_didTransformToRootUpdate : 1 { false };
+    bool m_isLayoutSizeChanged : 1 { false };
+    bool m_needsTransformUpdate : 1 { true };
 
     FloatRect m_viewport;
     mutable AffineTransform m_localToParentTransform;

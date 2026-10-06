@@ -28,7 +28,9 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "ExceptionScope.h"
 #include "JSCInlines.h"
+#include "JSString.h"
 #include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyInstance.h"
 #include "ObjectConstructor.h"
@@ -64,7 +66,7 @@ void JSWebAssemblyTable::destroy(JSCell* cell)
 template<typename Visitor>
 void JSWebAssemblyTable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSWebAssemblyTable* thisObject = jsCast<JSWebAssemblyTable*>(cell);
+    JSWebAssemblyTable* thisObject = uncheckedDowncast<JSWebAssemblyTable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     Base::visitChildren(thisObject, visitor);
@@ -73,7 +75,7 @@ void JSWebAssemblyTable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSWebAssemblyTable);
 
-std::optional<uint32_t> JSWebAssemblyTable::grow(JSGlobalObject* globalObject, uint32_t delta, JSValue defaultValue)
+std::optional<uint32_t> JSWebAssemblyTable::grow(JSGlobalObject* globalObject, uint64_t delta, JSValue defaultValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -139,6 +141,7 @@ void JSWebAssemblyTable::clear(uint32_t index)
 JSObject* JSWebAssemblyTable::type(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     Wasm::TableElementType element = m_table->type();
     JSString* elementString = nullptr;
@@ -160,16 +163,23 @@ JSObject* JSWebAssemblyTable::type(JSGlobalObject* globalObject)
     }
 
     JSObject* result;
+    auto addressType = m_table->addressType();
+
     auto maximum = m_table->maximum();
     if (maximum) {
-        result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        result->putDirect(vm, Identifier::fromString(vm, "maximum"_s), jsNumber(*maximum));
+        result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+        auto maxValue = addressValueFromUint64(globalObject, *maximum, addressType);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        result->putDirect(vm, Identifier::fromString(vm, "maximum"_s), maxValue);
     } else
-        result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
 
-    uint32_t minimum = m_table->length();
-    result->putDirect(vm, Identifier::fromString(vm, "minimum"_s), jsNumber(minimum));
+    auto minValue = addressValueFromUint64(globalObject, m_table->length(), addressType);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    result->putDirect(vm, Identifier::fromString(vm, "minimum"_s), minValue);
     result->putDirect(vm, Identifier::fromString(vm, "element"_s), elementString);
+    result->putDirect(vm, Identifier::fromString(vm, "address"_s), addressTypeString(vm, addressType));
+
     return result;
 }
 

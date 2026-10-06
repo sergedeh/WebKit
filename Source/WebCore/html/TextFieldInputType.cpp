@@ -36,6 +36,7 @@
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "ContainerNodeInlines.h"
+#include "CSSSelector.h"
 #include "DOMFormData.h"
 #include "DocumentEventLoop.h"
 #include "DocumentPage.h"
@@ -57,6 +58,8 @@
 #include "LocalizedStrings.h"
 #include "NodeRenderStyle.h"
 #include "PlatformKeyboardEvent.h"
+#include "PlatformRenderTheme.h"
+#include "PseudoClassChangeInvalidation.h"
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderTextControlSingleLine.h"
@@ -96,17 +99,18 @@ TextFieldInputType::~TextFieldInputType()
 bool TextFieldInputType::isKeyboardFocusable(const FocusEventData&) const
 {
     ASSERT(element());
+    Ref element = *this->element();
 #if PLATFORM(IOS_FAMILY)
-    if (element()->isReadOnly())
+    if (element->isReadOnly())
         return false;
 #endif
-    return protectedElement()->isTextFormControlFocusable();
+    return element->isTextFormControlFocusable();
 }
 
 bool TextFieldInputType::isMouseFocusable() const
 {
     ASSERT(element());
-    return protectedElement()->isTextFormControlFocusable();
+    return protect(element())->isTextFormControlFocusable();
 }
 
 bool TextFieldInputType::isEmptyValue() const
@@ -118,14 +122,14 @@ bool TextFieldInputType::isEmptyValue() const
         return visibleValue().isEmpty();
     }
 
-    for (RefPtr text = TextNodeTraversal::firstWithin(*innerText); text; text = TextNodeTraversal::next(*text, innerText.get())) {
+    for (auto* text = TextNodeTraversal::firstWithin(*innerText); text; text = TextNodeTraversal::next(*text, innerText.get())) {
         if (text->length())
             return false;
     }
     return true;
 }
 
-bool TextFieldInputType::valueMissing(const String& value) const
+bool TextFieldInputType::valueMissing(StringView value) const
 {
     ASSERT(element());
     Ref element = *this->element();
@@ -197,7 +201,7 @@ void TextFieldInputType::handleClickEvent(MouseEvent&)
 void TextFieldInputType::showPicker()
 {
 #if !PLATFORM(IOS_FAMILY)
-    if (protectedElement()->hasDataList())
+    if (protect(element())->hasDataList())
         displaySuggestions(DataListSuggestionActivationType::ControlClicked);
 #endif
 }
@@ -214,7 +218,7 @@ auto TextFieldInputType::handleKeydownEvent(KeyboardEvent& event) -> ShouldCallB
         event.setDefaultHandled();
     }
     RefPtr frame = element->document().frame();
-    if (frame && frame->protectedEditor()->doTextFieldCommandFromEvent(element.get(), &event))
+    if (frame && protect(frame->editor())->doTextFieldCommandFromEvent(element.get(), &event))
         event.setDefaultHandled();
     return ShouldCallBaseEventHandler::Yes;
 }
@@ -222,7 +226,7 @@ auto TextFieldInputType::handleKeydownEvent(KeyboardEvent& event) -> ShouldCallB
 void TextFieldInputType::handleKeydownEventForSpinButton(KeyboardEvent& event)
 {
     ASSERT(element());
-    if (!protectedElement()->isMutable())
+    if (!protect(element())->isMutable())
         return;
     if (m_suggestionPicker)
         return;
@@ -246,7 +250,7 @@ void TextFieldInputType::forwardEvent(Event& event)
     if (isFocusEvent || isBlurEvent)
         capsLockStateMayHaveChanged();
     if (event.isMouseEvent() || isFocusEvent || isBlurEvent)
-        protectedElement()->forwardEvent(event);
+        protect(element())->forwardEvent(event);
 }
 
 void TextFieldInputType::elementDidBlur()
@@ -266,9 +270,16 @@ void TextFieldInputType::elementDidBlur()
 
     CheckedPtr innerLayerScrollable = innerLayer->ensureLayerScrollableArea();
 
-    bool isLeftToRightDirection = downcast<RenderTextControlSingleLine>(*renderer).style().isLeftToRightDirection();
-    ScrollOffset scrollOffset(isLeftToRightDirection ? 0 : innerLayerScrollable->scrollWidth(), 0);
-    innerLayerScrollable->scrollToOffset(scrollOffset);
+    auto writingMode = downcast<RenderTextControlSingleLine>(*renderer).style().writingMode();
+    int xOffset = 0;
+    int yOffset = 0;
+    if (writingMode.isInlineFlipped()) {
+        if (writingMode.isHorizontal())
+            xOffset = innerLayerScrollable->scrollWidth();
+        else
+            yOffset = innerLayerScrollable->scrollHeight();
+    }
+    innerLayerScrollable->scrollToOffset(ScrollOffset(xOffset, yOffset));
 
     closeSuggestions();
 }
@@ -279,14 +290,14 @@ void TextFieldInputType::handleFocusEvent(Node* oldFocusedNode, FocusDirection)
     ASSERT_UNUSED(oldFocusedNode, oldFocusedNode != element());
     Ref element = *this->element();
     if (RefPtr frame = element->document().frame())
-        frame->protectedEditor()->textFieldDidBeginEditing(element.get());
+        protect(frame->editor())->textFieldDidBeginEditing(element.get());
 }
 
 void TextFieldInputType::handleBlurEvent()
 {
     InputType::handleBlurEvent();
     ASSERT(element());
-    protectedElement()->endEditing();
+    protect(element())->endEditing();
 }
 
 bool TextFieldInputType::shouldSubmitImplicitly(Event& event)
@@ -296,28 +307,22 @@ bool TextFieldInputType::shouldSubmitImplicitly(Event& event)
         || InputType::shouldSubmitImplicitly(event);
 }
 
-RenderPtr<RenderElement> TextFieldInputType::createInputRenderer(RenderStyle&& style)
+RenderPtr<RenderElement> TextFieldInputType::createInputRenderer(Style::ComputedStyle&& style)
 {
     ASSERT(element());
-    // FIXME: https://github.com/llvm/llvm-project/pull/142471 Moving style is not unsafe.
-    SUPPRESS_UNCOUNTED_ARG return createRenderer<RenderTextControlSingleLine>(RenderObject::Type::TextControlSingleLine, *protectedElement(), WTF::move(style));
-}
-
-bool TextFieldInputType::needsContainer() const
-{
-    return false;
+    return createRenderer<RenderTextControlSingleLine>(RenderObject::Type::TextControlSingleLine, *protect(element()), WTF::move(style));
 }
 
 bool TextFieldInputType::shouldHaveSpinButton() const
 {
     ASSERT(element());
-    return RenderTheme::singleton().shouldHaveSpinButton(*protectedElement());
+    return RenderTheme::singleton().shouldHaveSpinButton(*protect(element()));
 }
 
 bool TextFieldInputType::shouldHaveCapsLockIndicator() const
 {
     ASSERT(element());
-    return RenderTheme::singleton().shouldHaveCapsLockIndicator(*protectedElement());
+    return RenderTheme::singleton().shouldHaveCapsLockIndicator(*protect(element()));
 }
 
 void TextFieldInputType::createShadowSubtree()
@@ -415,11 +420,15 @@ void TextFieldInputType::removeShadowSubtree()
     m_innerText = nullptr;
     m_placeholder = nullptr;
     m_innerBlock = nullptr;
-    if (RefPtr innerSpinButton = m_innerSpinButton)
+    if (auto* innerSpinButton = m_innerSpinButton.get())
         innerSpinButton->removeSpinButtonOwner();
     m_innerSpinButton = nullptr;
     m_capsLockIndicator = nullptr;
+    if (RefPtr autoFillButton = m_autoFillButton.get())
+        autoFillButton->removeOwner();
     m_autoFillButton = nullptr;
+    if (RefPtr dataListDropdownIndicator = m_dataListDropdownIndicator)
+        dataListDropdownIndicator->removeOwner();
     m_dataListDropdownIndicator = nullptr;
     m_container = nullptr;
 }
@@ -455,16 +464,6 @@ void TextFieldInputType::readOnlyStateChanged()
     updateAutoFillButton();
 }
 
-bool TextFieldInputType::supportsReadOnly() const
-{
-    return true;
-}
-
-bool TextFieldInputType::shouldUseInputMethod() const
-{
-    return true;
-}
-
 void TextFieldInputType::createDataListDropdownIndicator()
 {
     ASSERT(!m_dataListDropdownIndicator);
@@ -474,7 +473,7 @@ void TextFieldInputType::createDataListDropdownIndicator()
         return;
     
     ScriptDisallowedScope::EventAllowedScope allowedScope(*m_container);
-    Ref dataListDropdownIndicator = DataListButtonElement::create(element()->protectedDocument().get(), *this);
+    Ref dataListDropdownIndicator = DataListButtonElement::create(protect(element()->document()).get(), *this);
     m_dataListDropdownIndicator = dataListDropdownIndicator.copyRef();
     RefPtr { m_container }->appendChild(dataListDropdownIndicator);
     dataListDropdownIndicator->setUserAgentPart(UserAgentParts::webkitListButton());
@@ -638,19 +637,19 @@ void TextFieldInputType::updatePlaceholderText()
         return;
 
     Ref element = *this->element();
-    auto placeholderText = element->placeholder();
-    if (placeholderText.isEmpty()) {
+    if (!element->hasAttributeWithoutSynchronization(placeholderAttr)) {
         if (RefPtr placeholder = std::exchange(m_placeholder, nullptr))
             placeholder->remove();
         return;
     }
+    auto placeholderText = element->placeholder();
     if (!m_placeholder) {
-        Ref placeholder = TextControlPlaceholderElement::create(element->protectedDocument());
+        Ref placeholder = TextControlPlaceholderElement::create(protect(element->document()));
         m_placeholder = placeholder.copyRef();
         if (RefPtr container = m_container)
-            element->protectedUserAgentShadowRoot()->insertBefore(placeholder, container);
+            protect(element->userAgentShadowRoot())->insertBefore(placeholder, container);
         else
-            element->protectedUserAgentShadowRoot()->insertBefore(placeholder, innerTextElement());
+            protect(element->userAgentShadowRoot())->insertBefore(placeholder, innerTextElement());
     }
     RefPtr { m_placeholder }->setInnerText(WTF::move(placeholderText));
 }
@@ -707,7 +706,7 @@ void TextFieldInputType::didSetValueByUserEdit()
     if (!element->focused())
         return;
     if (RefPtr frame = element->document().frame())
-        frame->protectedEditor()->textDidChangeInTextField(element.get());
+        protect(frame->editor())->textDidChangeInTextField(element.get());
     if (element->hasDataList())
         displaySuggestions(DataListSuggestionActivationType::TextChanged);
 }
@@ -745,7 +744,7 @@ void TextFieldInputType::focusAndSelectSpinButtonOwner()
 bool TextFieldInputType::shouldSpinButtonRespondToMouseEvents() const
 {
     ASSERT(element());
-    return protectedElement()->isMutable();
+    return protect(element())->isMutable();
 }
 
 bool TextFieldInputType::shouldDrawCapsLockIndicator() const
@@ -765,7 +764,7 @@ bool TextFieldInputType::shouldDrawCapsLockIndicator() const
     if (!frame)
         return false;
 
-    if (!frame->checkedSelection()->isFocusedAndActive())
+    if (!frame->selection().isFocusedAndActive())
         return false;
 
     return PlatformKeyboardEvent::currentCapsLockState();
@@ -829,7 +828,7 @@ void TextFieldInputType::createContainer(PreserveSelectionRange preserveSelectio
     innerBlock->appendChild(Ref { *m_innerText });
 
     if (selectionState) {
-        document->checkedEventLoop()->queueTask(TaskSource::DOMManipulation, [selectionState = *selectionState, element = WeakPtr { element }] {
+        protect(document->eventLoop())->queueTask(TaskSource::DOMManipulation, [selectionState = *selectionState, element = WeakPtr { element }] {
             if (!element || !element->focused())
                 return;
 
@@ -851,7 +850,7 @@ void TextFieldInputType::createAutoFillButton(AutoFillButtonType autoFillButtonT
         return;
 
     ASSERT(element());
-    Ref autoFillButton = AutoFillButtonElement::create(element()->protectedDocument().get(), *this);
+    Ref autoFillButton = AutoFillButtonElement::create(protect(element()->document()).get(), *this);
     m_autoFillButton = autoFillButton.copyRef();
     RefPtr { m_container }->appendChild(autoFillButton);
 
@@ -929,12 +928,23 @@ void TextFieldInputType::dataListButtonElementWasClicked()
     }
 }
 
-IntRect TextFieldInputType::elementRectInRootViewCoordinates() const
+IntRect TextFieldInputType::elementRectInMainFrameViewCoordinates() const
 {
     if (!element()->renderer())
         return IntRect();
     Ref element = *this->element();
-    return element->protectedDocument()->protectedView()->contentsToRootView(element->checkedRenderer()->absoluteBoundingBoxRect());
+    return protect(element->document().view())->contentsToMainFrameView(protect(element->renderer())->absoluteBoundingBoxRect());
+}
+
+std::optional<FrameIdentifier> TextFieldInputType::rootFrameID() const
+{
+    RefPtr element = this->element();
+    if (!element)
+        return std::nullopt;
+    RefPtr view = element->document().view();
+    if (!view)
+        return std::nullopt;
+    return view->rootFrameID();
 }
 
 Vector<DataListSuggestion> TextFieldInputType::suggestions()
@@ -978,7 +988,7 @@ Vector<DataListSuggestion> TextFieldInputType::suggestions()
 
 void TextFieldInputType::didSelectDataListOption(const String& selectedOption)
 {
-    protectedElement()->setValue(selectedOption, DispatchInputAndChangeEvent);
+    protect(element())->setValue(selectedOption, DispatchInputAndChangeEvent);
 }
 
 void TextFieldInputType::didCloseSuggestions()
@@ -986,39 +996,44 @@ void TextFieldInputType::didCloseSuggestions()
     m_cachedSuggestions = { };
     if (RefPtr suggestionPicker = std::exchange(m_suggestionPicker, nullptr))
         suggestionPicker->detach();
+    setPopupIsVisible(false);
     if (CheckedPtr renderer = element()->renderer())
         renderer->repaint();
 }
 
 void TextFieldInputType::displaySuggestions(DataListSuggestionActivationType type)
 {
-    if (element()->isDisabledFormControl() || !element()->renderer())
+    Ref element = *this->element();
+    if (element->isDisabledFormControl() || !element->renderer())
         return;
 
     if (!UserGestureIndicator::processingUserGesture() && !(type == DataListSuggestionActivationType::TextChanged || type == DataListSuggestionActivationType::DataListMayHaveChanged))
         return;
 
-    if (!m_suggestionPicker && suggestions().size() > 0)
+    if (!m_suggestionPicker && suggestions().size() > 0) {
+        setPopupIsVisible(true);
         m_suggestionPicker = chrome()->createDataListSuggestionPicker(*this);
+    }
 
-    if (RefPtr suggestionPicker = m_suggestionPicker)
+    if (RefPtr suggestionPicker = m_suggestionPicker) {
+        setPopupIsVisible(true);
         suggestionPicker->displayWithActivationType(type);
+    }
 }
 
 void TextFieldInputType::closeSuggestions()
 {
     if (RefPtr suggestionPicker = m_suggestionPicker)
         suggestionPicker->close();
+    setPopupIsVisible(false);
 }
 
-bool TextFieldInputType::isPresentingAttachedView() const
+void TextFieldInputType::setPopupIsVisible(bool visible)
 {
-    return !!m_suggestionPicker;
-}
-
-bool TextFieldInputType::isFocusingWithDataListDropdown() const
-{
-    return m_isFocusingWithDataListDropdown;
+    if (m_popupIsVisible == visible || !element())
+        return;
+    Style::PseudoClassChangeInvalidation styleInvalidation(*protect(element()), CSSSelector::PseudoClass::Open, visible);
+    m_popupIsVisible = visible;
 }
 
 } // namespace WebCore

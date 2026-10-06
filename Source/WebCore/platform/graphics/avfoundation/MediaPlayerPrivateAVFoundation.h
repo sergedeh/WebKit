@@ -27,14 +27,14 @@
 
 #if ENABLE(VIDEO) && USE(AVFOUNDATION)
 
-#include "FloatSize.h"
-#include "InbandTextTrackPrivateAVF.h"
-#include "MediaPlayerPrivate.h"
-#include "Timer.h"
+#include <WebCore/FloatSize.h>
+#include <WebCore/MediaPlayerPrivate.h>
+#include <WebCore/Timer.h>
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
 #include <wtf/Lock.h>
 #include <wtf/LoggerHelper.h>
+#include <wtf/NativePromise.h>
 #include <wtf/RefCounted.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 
@@ -48,7 +48,7 @@ class MediaPlayerPrivateAVFoundation
     : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MediaPlayerPrivateAVFoundation, WTF::DestructionThread::Main>
     , public MediaPlayerPrivateInterface
 #if !RELEASE_LOG_DISABLED
-    , private LoggerHelper
+    , protected LoggerHelper
 #endif
 {
 public:
@@ -152,7 +152,6 @@ public:
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger.get(); }
-    Ref<const Logger> protectedLogger() const { return logger(); }
     ASCIILiteral logClassName() const override { return "MediaPlayerPrivateAVFoundation"_s; }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     WTFLogChannel& logChannel() const final;
@@ -169,6 +168,7 @@ protected:
 
     // MediaPlayerPrivatePrivateInterface overrides.
     void load(const String& url) override;
+    void load(const URL&, const LoadOptions&) override;
 #if ENABLE(MEDIA_SOURCE)
     void load(const URL&, const LoadOptions&, MediaSourcePrivateClient&) override;
 #endif
@@ -185,11 +185,14 @@ protected:
     FloatSize naturalSize() const override;
     bool hasVideo() const override { return m_cachedHasVideo; }
     bool hasAudio() const override { return m_cachedHasAudio; }
+    bool pageIsVisible() const { return m_pageIsVisible; }
     void setPageIsVisible(bool) final;
+    ViewportVisibility viewportVisibility() const { return m_viewportVisibility; }
+    void setViewportVisibility(ViewportVisibility) final;
     MediaTime duration() const override;
     MediaTime currentTime() const override = 0;
-    void seekToTarget(const SeekTarget&) final;
-    bool seeking() const final;
+    Ref<MediaTimePromise> seekToTarget(const SeekTarget&) final;
+    bool seeking() const;
     bool paused() const override;
     void setVolume(float) override = 0;
     bool hasClosedCaptions() const override { return m_cachedHasCaptions; }
@@ -200,7 +203,7 @@ protected:
     const PlatformTimeRanges& buffered() const override;
     bool didLoadingProgress() const override;
     void paint(GraphicsContext&, const FloatRect&) override = 0;
-    DestinationColorSpace colorSpace() override = 0;
+    ColorSpace colorSpace() override = 0;
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&) override = 0;
     void setPreload(MediaPlayer::Preload) override;
     PlatformLayer* platformLayer() const override { return 0; }
@@ -248,7 +251,8 @@ protected:
     virtual AssetStatus assetStatus() const = 0;
     virtual long assetErrorCode() const = 0;
 
-    virtual void platformSetVisible(bool) = 0;
+    virtual void platformPageIsVisibleChanged(bool) = 0;
+    virtual void platformViewportVisibilityChanged(ViewportVisibility) = 0;
     virtual void platformPlay() = 0;
     virtual void platformPause() = 0;
     virtual bool platformPaused() const { return !rate(); }
@@ -277,6 +281,8 @@ protected:
     virtual void updateVideoLayerGravity() = 0;
     virtual void resolvedURLChanged() = 0;
 
+    virtual void updateIsAudible() = 0;
+
     virtual bool isHLS() const { return false; }
 
     void updateStates();
@@ -292,13 +298,12 @@ protected:
     void setNetworkState(MediaPlayer::NetworkState);
     void setReadyState(MediaPlayer::ReadyState);
 
-    bool isVisible() const { return m_visible; }
     MediaRenderingMode currentRenderingMode() const;
     MediaRenderingMode preferredRenderingMode() const;
 
     bool metaDataAvailable() const { return m_readyState >= MediaPlayer::ReadyState::HaveMetadata; }
     MediaTime maxTimeLoaded() const;
-    bool isReadyForVideoSetup() const;
+    bool NODELETE isReadyForVideoSetup() const;
     virtual void setUpVideoRendering();
     virtual void tearDownVideoRendering();
     virtual bool haveBeenAskedToPaint() const { return false; }
@@ -306,9 +311,9 @@ protected:
 
     void mainThreadCallback();
     
-    void invalidateCachedDuration();
+    void NODELETE invalidateCachedDuration();
 
-    const String& assetURL() const { return m_assetURL.string(); }
+    const String& assetURL() const LIFETIME_BOUND { return m_assetURL.string(); }
 
     RefPtr<MediaPlayer> player() const { return m_player.get(); }
 
@@ -322,7 +327,7 @@ protected:
     Vector<RefPtr<InbandTextTrackPrivateAVF>> m_textTracks;
 
     void setResolvedURL(URL&&);
-    const URL& resolvedURL() const { return m_resolvedURL; }
+    const URL& resolvedURL() const LIFETIME_BOUND { return m_resolvedURL; }
 
     void setNeedsRenderingModeChanged();
     void renderingModeChanged();
@@ -337,8 +342,6 @@ protected:
     Function<void()> m_pendingSeek;
     MediaTime m_lastSeekTime;
 
-    mutable Lock m_queuedNotificationsLock;
-    Deque<Notification> m_queuedNotifications WTF_GUARDED_BY_LOCK(m_queuedNotificationsLock);
 
     MediaPlayer::NetworkState m_networkState;
     MediaPlayer::ReadyState m_readyState;
@@ -349,6 +352,7 @@ protected:
     RefPtr<SecurityOrigin> m_resolvedOrigin;
 
     MediaPlayer::Preload m_preload;
+    std::optional<MediaTimePromise::AutoRejectProducer> m_seekPromise;
 
 #if !RELEASE_LOG_DISABLED
     const Ref<const Logger> m_logger;
@@ -364,7 +368,7 @@ protected:
     int m_delayCharacteristicsChangedNotification;
     bool m_mainThreadCallPending;
     bool m_assetIsPlayable;
-    bool m_visible;
+    bool m_pageIsVisible { false };
     bool m_loadingMetadata;
     bool m_isAllowedToRender;
     bool m_cachedHasAudio;
@@ -376,6 +380,12 @@ protected:
     bool m_shouldMaintainAspectRatio;
     bool m_seeking;
     bool m_needsRenderingModeChanged { false };
+    ViewportVisibility m_viewportVisibility { ViewportVisibility::NotVisible };
+    bool m_disableTeardownOnVisibilityChange { false };
+
+private:
+    void seekInternal(const SeekTarget&);
+    void resolveSeekPromiseIfNeeded();
 };
 
 String convertEnumerationToString(MediaPlayerPrivateAVFoundation::MediaRenderingMode);

@@ -12,7 +12,7 @@
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/vk/VulkanMemoryAllocator.h"
 #include "include/gpu/vk/VulkanTypes.h"
-#include "include/private/base/SkAPI.h"
+#include "include/private/SkAPI.h"
 #include "include/private/gpu/vk/SkiaVulkan.h"
 
 #include <cstdint>
@@ -39,7 +39,7 @@ struct SK_API VulkanBackendContext {
     // fDeviceFeatures and fDeviceFeatures2 are null we will assume no features are enabled.
     const VkPhysicalDeviceFeatures*  fDeviceFeatures = nullptr;
     const VkPhysicalDeviceFeatures2* fDeviceFeatures2 = nullptr;
-    // Optional. The client may provide an inplementation of a VulkanMemoryAllocator for Skia to use
+    // The client must provide an inplementation of a VulkanMemoryAllocator for Skia to use
     // for allocating Vulkan resources that use VkDeviceMemory.
     sk_sp<VulkanMemoryAllocator>     fMemoryAllocator;
     skgpu::VulkanGetProc             fGetProc;

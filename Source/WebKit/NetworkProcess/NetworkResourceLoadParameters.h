@@ -34,12 +34,14 @@
 #include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/FetchOptions.h>
 #include <WebCore/FetchingWorkerIdentifier.h>
+#include <WebCore/IPAddressSpace.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/NavigationRequester.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
 #include <WebCore/SecurityContext.h>
 #include <WebCore/ServiceWorkerIdentifier.h>
 #include <WebCore/SharedWorkerIdentifier.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/Seconds.h>
 
 namespace IPC {
@@ -52,8 +54,9 @@ namespace WebKit {
 struct NetworkResourceLoadParameters {
     void createSandboxExtensionHandlesIfNecessary();
 
-    RefPtr<WebCore::SecurityOrigin> parentOrigin() const;
+    RefPtr<WebCore::SecurityOrigin> NODELETE parentOrigin() const;
     NetworkLoadParameters networkLoadParameters() const;
+    WebCore::SecurityOriginData topOriginForServiceWorkers(const URL& requestURL) const;
 
     WebPageProxyIdentifier webPageProxyID;
     WebCore::PageIdentifier webPageID;
@@ -69,6 +72,7 @@ struct NetworkResourceLoadParameters {
     bool shouldClearReferrerOnHTTPSToHTTPRedirect { true };
     bool needsCertificateInfo { false };
     bool isMainFrameNavigation { false };
+    bool navigationLosesFrameSpecificStorageAccess { false };
     std::optional<NavigationActionData> mainResourceNavigationDataForAnyFrame { };
     PreconnectOnly shouldPreconnectOnly { PreconnectOnly::No };
     std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain { NavigatingToAppBoundDomain::No };
@@ -76,11 +80,9 @@ struct NetworkResourceLoadParameters {
     bool allowPrivacyProxy { true };
     OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections { };
 
-    RefPtr<WebCore::SecurityOrigin> protectedSourceOrigin() const { return sourceOrigin; }
     uint64_t requiredCookiesVersion { 0 };
 
     Markable<WebCore::ResourceLoaderIdentifier> identifier { };
-    Vector<SandboxExtensionHandle> requestBodySandboxExtensions { };
     std::optional<SandboxExtensionHandle> resourceSandboxExtension { };
     Seconds maximumBufferingTime { };
     WebCore::FetchOptions options { };
@@ -89,8 +91,8 @@ struct NetworkResourceLoadParameters {
     URL frameURL { };
     WebCore::CrossOriginEmbedderPolicy parentCrossOriginEmbedderPolicy { };
     WebCore::CrossOriginEmbedderPolicy crossOriginEmbedderPolicy { };
+    WebCore::DocumentIsolationPolicy documentIsolationPolicy { WebCore::DocumentIsolationPolicy::None };
     WebCore::HTTPHeaderMap originalRequestHeaders { };
-    bool shouldRestrictHTTPResponseAccess { false };
     WebCore::PreflightPolicy preflightPolicy { WebCore::PreflightPolicy::Consider };
     bool shouldEnableCrossOriginResourcePolicy { false };
     Vector<Ref<WebCore::SecurityOrigin>> frameAncestorOrigins { };
@@ -131,6 +133,16 @@ struct NetworkResourceLoadParameters {
 
     bool isInitiatorPrefetch { false };
     bool isInitiatedByDedicatedWorker { false };
+    bool globalPrivacyControlEnabled { false };
+    bool shouldConsiderEnhancedSecurityForInsecureResponse { false };
+    MonotonicTime originalNavigationStartTime { };
+
+    // The connection's own address space is only known once a response arrives, so it is not a field here.
+    WebCore::IPAddressSpace clientAddressSpace { WebCore::IPAddressSpace::Public };
+    bool clientIsSecureContext { false };
+    // FIXME: A compromised web process can claim these to skip the permissions policy refusal. https://bugs.webkit.org/show_bug.cgi?id=326009
+    bool localNetworkAllowedByPermissionsPolicy { false };
+    bool loopbackNetworkAllowedByPermissionsPolicy { false };
 };
 
 } // namespace WebKit

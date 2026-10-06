@@ -7,12 +7,13 @@
 //    Helper functions for the Vulkan Renderer.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/vulkan/vk_utils.h"
 
+#include <array>
+
+#include "common/unsafe_buffers.h"
+
+#include "common/span.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/Display.h"
 #include "libANGLE/renderer/vulkan/BufferVk.h"
@@ -45,10 +46,6 @@ namespace rx
 {
 namespace
 {
-// Pick an arbitrary value to initialize non-zero memory for sanitization.  Note that 0x3F3F3F3F
-// as float is about 0.75.
-constexpr int kNonZeroInitValue = 0x3F;
-
 VkImageUsageFlags GetStagingBufferUsageFlags(vk::StagingUsage usage)
 {
     switch (usage)
@@ -75,10 +72,11 @@ bool FindCompatibleMemory(const VkPhysicalDeviceMemoryProperties &memoryProperti
     {
         ASSERT(memoryIndex < memoryProperties.memoryTypeCount);
 
-        if ((memoryProperties.memoryTypes[memoryIndex].propertyFlags &
+        if ((ANGLE_UNSAFE_TODO(memoryProperties.memoryTypes[memoryIndex]).propertyFlags &
              requestedMemoryPropertyFlags) == requestedMemoryPropertyFlags)
         {
-            *memoryPropertyFlagsOut = memoryProperties.memoryTypes[memoryIndex].propertyFlags;
+            *memoryPropertyFlagsOut =
+                ANGLE_UNSAFE_TODO(memoryProperties.memoryTypes[memoryIndex]).propertyFlags;
             *typeIndexOut           = static_cast<uint32_t>(memoryIndex);
             return true;
         }
@@ -124,29 +122,16 @@ VkResult FindAndAllocateCompatibleMemory(vk::ErrorContext *context,
     return result;
 }
 
-template <typename T>
-VkResult AllocateAndBindBufferOrImageMemory(vk::ErrorContext *context,
-                                            vk::MemoryAllocationType memoryAllocationType,
-                                            VkMemoryPropertyFlags requestedMemoryPropertyFlags,
-                                            VkMemoryPropertyFlags *memoryPropertyFlagsOut,
-                                            const VkMemoryRequirements &memoryRequirements,
-                                            const void *extraAllocationInfo,
-                                            const VkBindImagePlaneMemoryInfoKHR *extraBindInfo,
-                                            T *bufferOrImage,
-                                            uint32_t *memoryTypeIndexOut,
-                                            vk::DeviceMemory *deviceMemoryOut);
-
-template <>
-VkResult AllocateAndBindBufferOrImageMemory(vk::ErrorContext *context,
-                                            vk::MemoryAllocationType memoryAllocationType,
-                                            VkMemoryPropertyFlags requestedMemoryPropertyFlags,
-                                            VkMemoryPropertyFlags *memoryPropertyFlagsOut,
-                                            const VkMemoryRequirements &memoryRequirements,
-                                            const void *extraAllocationInfo,
-                                            const VkBindImagePlaneMemoryInfoKHR *extraBindInfo,
-                                            vk::Image *image,
-                                            uint32_t *memoryTypeIndexOut,
-                                            vk::DeviceMemory *deviceMemoryOut)
+VkResult AllocateAndBindImageMemory(vk::ErrorContext *context,
+                                    vk::MemoryAllocationType memoryAllocationType,
+                                    VkMemoryPropertyFlags requestedMemoryPropertyFlags,
+                                    VkMemoryPropertyFlags *memoryPropertyFlagsOut,
+                                    const VkMemoryRequirements &memoryRequirements,
+                                    const void *extraAllocationInfo,
+                                    const VkBindImagePlaneMemoryInfoKHR *extraBindInfo,
+                                    vk::Image *image,
+                                    uint32_t *memoryTypeIndexOut,
+                                    vk::DeviceMemory *deviceMemoryOut)
 {
     const vk::MemoryProperties &memoryProperties = context->getRenderer()->getMemoryProperties();
 
@@ -174,20 +159,16 @@ VkResult AllocateAndBindBufferOrImageMemory(vk::ErrorContext *context,
     return VK_SUCCESS;
 }
 
-template <>
-VkResult AllocateAndBindBufferOrImageMemory(vk::ErrorContext *context,
-                                            vk::MemoryAllocationType memoryAllocationType,
-                                            VkMemoryPropertyFlags requestedMemoryPropertyFlags,
-                                            VkMemoryPropertyFlags *memoryPropertyFlagsOut,
-                                            const VkMemoryRequirements &memoryRequirements,
-                                            const void *extraAllocationInfo,
-                                            const VkBindImagePlaneMemoryInfoKHR *extraBindInfo,
-                                            vk::Buffer *buffer,
-                                            uint32_t *memoryTypeIndexOut,
-                                            vk::DeviceMemory *deviceMemoryOut)
+VkResult AllocateAndBindBufferMemory(vk::ErrorContext *context,
+                                     vk::MemoryAllocationType memoryAllocationType,
+                                     VkMemoryPropertyFlags requestedMemoryPropertyFlags,
+                                     VkMemoryPropertyFlags *memoryPropertyFlagsOut,
+                                     const VkMemoryRequirements &memoryRequirements,
+                                     const void *extraAllocationInfo,
+                                     vk::Buffer *buffer,
+                                     uint32_t *memoryTypeIndexOut,
+                                     vk::DeviceMemory *deviceMemoryOut)
 {
-    ASSERT(extraBindInfo == nullptr);
-
     const vk::MemoryProperties &memoryProperties = context->getRenderer()->getMemoryProperties();
 
     VK_RESULT_TRY(FindAndAllocateCompatibleMemory(
@@ -196,31 +177,6 @@ VkResult AllocateAndBindBufferOrImageMemory(vk::ErrorContext *context,
         deviceMemoryOut));
 
     VK_RESULT_TRY(buffer->bindMemory(context->getDevice(), *deviceMemoryOut, 0));
-    return VK_SUCCESS;
-}
-
-template <typename T>
-VkResult AllocateBufferOrImageMemory(vk::ErrorContext *context,
-                                     vk::MemoryAllocationType memoryAllocationType,
-                                     VkMemoryPropertyFlags requestedMemoryPropertyFlags,
-                                     VkMemoryPropertyFlags *memoryPropertyFlagsOut,
-                                     const void *extraAllocationInfo,
-                                     T *bufferOrImage,
-                                     uint32_t *memoryTypeIndexOut,
-                                     vk::DeviceMemory *deviceMemoryOut,
-                                     VkDeviceSize *sizeOut)
-{
-    // Call driver to determine memory requirements.
-    VkMemoryRequirements memoryRequirements;
-    bufferOrImage->getMemoryRequirements(context->getDevice(), &memoryRequirements);
-
-    VK_RESULT_TRY(AllocateAndBindBufferOrImageMemory(
-        context, memoryAllocationType, requestedMemoryPropertyFlags, memoryPropertyFlagsOut,
-        memoryRequirements, extraAllocationInfo, nullptr, bufferOrImage, memoryTypeIndexOut,
-        deviceMemoryOut));
-
-    *sizeOut = memoryRequirements.size;
-
     return VK_SUCCESS;
 }
 
@@ -308,6 +264,7 @@ bool GetAvailableValidationLayers(const std::vector<VkLayerProperties> &layerPro
 {
 
     ASSERT(enabledLayerNames);
+    const size_t enabledLayerNamesCountWithoutValidationLayer = enabledLayerNames->size();
     for (const auto &layerProp : layerProps)
     {
         std::string layerPropLayerName = std::string(layerProp.layerName);
@@ -334,7 +291,7 @@ bool GetAvailableValidationLayers(const std::vector<VkLayerProperties> &layerPro
         }
     }
 
-    if (enabledLayerNames->size() == 0)
+    if (enabledLayerNames->size() == enabledLayerNamesCountWithoutValidationLayer)
     {
         // Generate an error if the layers were explicitly requested, warning otherwise.
         if (mustHaveLayers)
@@ -402,7 +359,7 @@ MemoryProperties::MemoryProperties() : mMemoryProperties{} {}
 void MemoryProperties::init(VkPhysicalDevice physicalDevice)
 {
     ASSERT(mMemoryProperties.memoryTypeCount == 0);
-    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &mMemoryProperties);
+    VK_CALL(vkGetPhysicalDeviceMemoryProperties, physicalDevice, &mMemoryProperties);
     ASSERT(mMemoryProperties.memoryTypeCount > 0);
 }
 
@@ -415,7 +372,8 @@ bool MemoryProperties::hasLazilyAllocatedMemory() const
 {
     for (uint32_t typeIndex = 0; typeIndex < mMemoryProperties.memoryTypeCount; ++typeIndex)
     {
-        const VkMemoryType &memoryType = mMemoryProperties.memoryTypes[typeIndex];
+        const VkMemoryType &memoryType =
+            ANGLE_UNSAFE_TODO(mMemoryProperties.memoryTypes[typeIndex]);
         if ((memoryType.propertyFlags & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) != 0)
         {
             return true;
@@ -486,6 +444,74 @@ VkResult MemoryProperties::findCompatibleMemoryIndex(
     return VK_ERROR_INCOMPATIBLE_DRIVER;
 }
 
+uint32_t MemoryProperties::findTileMemoryTypeIndex() const
+{
+    uint32_t tileMemoryHeapIndex = kInvalidMemoryHeapIndex;
+    for (uint32_t heapIndex = 0; heapIndex < mMemoryProperties.memoryTypeCount; heapIndex++)
+    {
+        if (ANGLE_UNSAFE_TODO(mMemoryProperties.memoryHeaps[heapIndex]).flags &
+            VK_MEMORY_HEAP_TILE_MEMORY_BIT_QCOM)
+        {
+            // There should be only one tile memory heap
+            ASSERT(tileMemoryHeapIndex == kInvalidMemoryHeapIndex);
+            tileMemoryHeapIndex = heapIndex;
+        }
+    }
+
+    uint32_t tileMemoryTypeIndex = kInvalidMemoryTypeIndex;
+    if (tileMemoryHeapIndex != kInvalidMemoryHeapIndex)
+    {
+        for (uint32_t memoryTypeIndex = 0; memoryTypeIndex < mMemoryProperties.memoryTypeCount;
+             memoryTypeIndex++)
+        {
+            if (ANGLE_UNSAFE_TODO(mMemoryProperties.memoryTypes[memoryTypeIndex]).heapIndex ==
+                tileMemoryHeapIndex)
+            {
+                // There should be only one memoryTypeIndex that matches the tile memory heap
+                ASSERT(tileMemoryTypeIndex == kInvalidMemoryTypeIndex);
+                tileMemoryTypeIndex = memoryTypeIndex;
+            }
+        }
+    }
+    return tileMemoryTypeIndex;
+}
+
+void MemoryProperties::log(std::ostringstream &out) const
+{
+    out << "\nmMemoryProperties.memoryHeaps[" << mMemoryProperties.memoryHeapCount << "] = {\n"
+        << std::hex;
+    for (uint32_t heapIndex = 0; heapIndex < mMemoryProperties.memoryHeapCount; heapIndex++)
+    {
+        out << "\t{ .size=0x" << ANGLE_UNSAFE_TODO(mMemoryProperties.memoryHeaps[heapIndex]).size;
+        out << " .flags=0x" << ANGLE_UNSAFE_TODO(mMemoryProperties.memoryHeaps[heapIndex]).flags
+            << " }";
+
+        if (heapIndex < mMemoryProperties.memoryHeapCount - 1)
+        {
+            out << "\n";
+        }
+    }
+    out << " \n}";
+
+    out << "\nmMemoryProperties.memoryTypes[" << mMemoryProperties.memoryTypeCount << "] = {\n"
+        << std::hex;
+    for (uint32_t memoryTypeIndex = 0; memoryTypeIndex < mMemoryProperties.memoryTypeCount;
+         memoryTypeIndex++)
+    {
+        out << "\t{ .heapIndex=0x"
+            << ANGLE_UNSAFE_TODO(mMemoryProperties.memoryTypes[memoryTypeIndex]).heapIndex;
+        out << " .propertyFlags=0x"
+            << ANGLE_UNSAFE_TODO(mMemoryProperties.memoryTypes[memoryTypeIndex]).propertyFlags
+            << " }";
+
+        if (memoryTypeIndex < mMemoryProperties.memoryTypeCount - 1)
+        {
+            out << "\n";
+        }
+    }
+    out << " \n}";
+}
+
 // StagingBuffer implementation.
 StagingBuffer::StagingBuffer() : mSize(0) {}
 
@@ -497,7 +523,10 @@ void StagingBuffer::destroy(Renderer *renderer)
     mSize = 0;
 }
 
-angle::Result StagingBuffer::init(ErrorContext *context, VkDeviceSize size, StagingUsage usage)
+angle::Result StagingBuffer::init(ErrorContext *context,
+                                  VkDeviceSize size,
+                                  StagingUsage usage,
+                                  const int initValue)
 {
     VkBufferCreateInfo createInfo    = {};
     createInfo.sType                 = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -522,15 +551,7 @@ angle::Result StagingBuffer::init(ErrorContext *context, VkDeviceSize size, Stag
                                         &memoryTypeIndex, &mBuffer, &mAllocation));
     mSize = static_cast<size_t>(size);
 
-    // Wipe memory to an invalid value when the 'allocateNonZeroMemory' feature is enabled. The
-    // invalid values ensures our testing doesn't assume zero-initialized memory.
-    if (renderer->getFeatures().allocateNonZeroMemory.enabled)
-    {
-        ANGLE_TRY(InitMappableAllocation(context, allocator, &mAllocation, size, kNonZeroInitValue,
-                                         requiredFlags));
-    }
-
-    return angle::Result::Continue;
+    return InitMappableAllocation(context, allocator, &mAllocation, size, initValue, requiredFlags);
 }
 
 void StagingBuffer::release(ContextVk *contextVk)
@@ -558,7 +579,7 @@ angle::Result InitMappableAllocation(ErrorContext *context,
 {
     uint8_t *mapPointer;
     ANGLE_VK_TRY(context, allocation->map(allocator, &mapPointer));
-    memset(mapPointer, value, static_cast<size_t>(size));
+    ANGLE_UNSAFE_TODO(memset(mapPointer, value, static_cast<size_t>(size)));
 
     if ((memoryPropertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0)
     {
@@ -571,7 +592,7 @@ angle::Result InitMappableAllocation(ErrorContext *context,
 }
 
 VkResult AllocateBufferMemory(ErrorContext *context,
-                              vk::MemoryAllocationType memoryAllocationType,
+                              MemoryAllocationType memoryAllocationType,
                               VkMemoryPropertyFlags requestedMemoryPropertyFlags,
                               VkMemoryPropertyFlags *memoryPropertyFlagsOut,
                               const void *extraAllocationInfo,
@@ -580,14 +601,20 @@ VkResult AllocateBufferMemory(ErrorContext *context,
                               DeviceMemory *deviceMemoryOut,
                               VkDeviceSize *sizeOut)
 {
-    return AllocateBufferOrImageMemory(context, memoryAllocationType, requestedMemoryPropertyFlags,
-                                       memoryPropertyFlagsOut, extraAllocationInfo, buffer,
-                                       memoryTypeIndexOut, deviceMemoryOut, sizeOut);
+    VkMemoryRequirements memoryRequirements;
+    buffer->getMemoryRequirements(context->getDevice(), &memoryRequirements);
+
+    VK_RESULT_TRY(AllocateAndBindBufferMemory(
+        context, memoryAllocationType, requestedMemoryPropertyFlags, memoryPropertyFlagsOut,
+        memoryRequirements, extraAllocationInfo, buffer, memoryTypeIndexOut, deviceMemoryOut));
+
+    *sizeOut = memoryRequirements.size;
+    return VK_SUCCESS;
 }
 
 VkResult AllocateImageMemory(ErrorContext *context,
-                             vk::MemoryAllocationType memoryAllocationType,
-                             VkMemoryPropertyFlags memoryPropertyFlags,
+                             MemoryAllocationType memoryAllocationType,
+                             VkMemoryPropertyFlags requestedMemoryPropertyFlags,
                              VkMemoryPropertyFlags *memoryPropertyFlagsOut,
                              const void *extraAllocationInfo,
                              Image *image,
@@ -595,9 +622,15 @@ VkResult AllocateImageMemory(ErrorContext *context,
                              DeviceMemory *deviceMemoryOut,
                              VkDeviceSize *sizeOut)
 {
-    return AllocateBufferOrImageMemory(context, memoryAllocationType, memoryPropertyFlags,
-                                       memoryPropertyFlagsOut, extraAllocationInfo, image,
-                                       memoryTypeIndexOut, deviceMemoryOut, sizeOut);
+    VkMemoryRequirements memoryRequirements;
+    image->getMemoryRequirements(context->getDevice(), &memoryRequirements);
+
+    VK_RESULT_TRY(AllocateAndBindImageMemory(context, memoryAllocationType,
+                                             requestedMemoryPropertyFlags, memoryPropertyFlagsOut,
+                                             memoryRequirements, extraAllocationInfo, nullptr,
+                                             image, memoryTypeIndexOut, deviceMemoryOut));
+    *sizeOut = memoryRequirements.size;
+    return VK_SUCCESS;
 }
 
 VkResult AllocateImageMemoryWithRequirements(ErrorContext *context,
@@ -611,10 +644,70 @@ VkResult AllocateImageMemoryWithRequirements(ErrorContext *context,
                                              DeviceMemory *deviceMemoryOut)
 {
     VkMemoryPropertyFlags memoryPropertyFlagsOut = 0;
-    return AllocateAndBindBufferOrImageMemory(context, memoryAllocationType, memoryPropertyFlags,
-                                              &memoryPropertyFlagsOut, memoryRequirements,
-                                              extraAllocationInfo, extraBindInfo, image,
-                                              memoryTypeIndexOut, deviceMemoryOut);
+    return AllocateAndBindImageMemory(context, memoryAllocationType, memoryPropertyFlags,
+                                      &memoryPropertyFlagsOut, memoryRequirements,
+                                      extraAllocationInfo, extraBindInfo, image, memoryTypeIndexOut,
+                                      deviceMemoryOut);
+}
+
+VkResult AllocateImageMemoryFromTileHeap(ErrorContext *context,
+                                         MemoryAllocationType memoryAllocationType,
+                                         VkMemoryPropertyFlags requestedMemoryPropertyFlags,
+                                         VkMemoryPropertyFlags *memoryPropertyFlagsOut,
+                                         Image *image,
+                                         uint32_t *memoryTypeIndexOut,
+                                         DeviceMemory *deviceMemoryOut,
+                                         VkDeviceSize *sizeOut)
+{
+    vk::Renderer *renderer = context->getRenderer();
+    VkDevice device        = renderer->getDevice();
+
+    VkImageMemoryRequirementsInfo2 info       = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
+                                                 nullptr, image->getHandle()};
+    VkTileMemoryRequirementsQCOM tileMemReqs  = {VK_STRUCTURE_TYPE_TILE_MEMORY_REQUIREMENTS_QCOM,
+                                                 nullptr, 0, 0};
+    VkMemoryRequirements2 memoryRequirements2 = {
+        VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &tileMemReqs, {}};
+    image->getMemoryRequirements2(device, info, &memoryRequirements2);
+
+    if (tileMemReqs.size == 0)
+    {
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+
+    uint32_t tileMemoryTypeIndex = renderer->getTileMemoyTypeIndex();
+    ASSERT(tileMemoryTypeIndex != kInvalidMemoryTypeIndex);
+
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType                = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.pNext                = nullptr;
+    allocInfo.memoryTypeIndex      = tileMemoryTypeIndex;
+    allocInfo.allocationSize       = tileMemReqs.size;
+
+    // Add the new allocation for tracking.
+    renderer->getMemoryAllocationTracker()->setPendingMemoryAlloc(
+        memoryAllocationType, allocInfo.allocationSize, tileMemoryTypeIndex);
+
+    DeviceScoped<DeviceMemory> deviceMemory(device);
+    VK_RESULT_TRY(deviceMemory.get().allocate(device, allocInfo));
+
+    VK_RESULT_TRY(image->bindMemory(device, deviceMemory.get()));
+
+    renderer->onMemoryAlloc(memoryAllocationType, allocInfo.allocationSize, tileMemoryTypeIndex,
+                            deviceMemoryOut->getHandle());
+
+    *deviceMemoryOut    = deviceMemory.release();
+    *memoryTypeIndexOut = tileMemoryTypeIndex;
+    *memoryPropertyFlagsOut =
+        renderer->getMemoryProperties().getMemoryType(tileMemoryTypeIndex).propertyFlags;
+    *sizeOut = tileMemReqs.size;
+
+    // The tile memory are lazily allocated at vkCmdBindTileMemoryQCOM() time.
+    requestedMemoryPropertyFlags |= VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
+    ASSERT((*memoryPropertyFlagsOut & requestedMemoryPropertyFlags) ==
+           requestedMemoryPropertyFlags);
+
+    return VK_SUCCESS;
 }
 
 VkResult AllocateBufferMemoryWithRequirements(ErrorContext *context,
@@ -627,30 +720,9 @@ VkResult AllocateBufferMemoryWithRequirements(ErrorContext *context,
                                               uint32_t *memoryTypeIndexOut,
                                               DeviceMemory *deviceMemoryOut)
 {
-    return AllocateAndBindBufferOrImageMemory(context, memoryAllocationType, memoryPropertyFlags,
-                                              memoryPropertyFlagsOut, memoryRequirements,
-                                              extraAllocationInfo, nullptr, buffer,
-                                              memoryTypeIndexOut, deviceMemoryOut);
-}
-
-angle::Result InitShaderModule(ErrorContext *context,
-                               ShaderModulePtr *shaderModulePtr,
-                               const uint32_t *shaderCode,
-                               size_t shaderCodeSize)
-{
-    ASSERT(!(*shaderModulePtr));
-    VkShaderModuleCreateInfo createInfo = {};
-    createInfo.sType                    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    createInfo.flags                    = 0;
-    createInfo.codeSize                 = shaderCodeSize;
-    createInfo.pCode                    = shaderCode;
-
-    ShaderModulePtr newShaderModule = ShaderModulePtr::MakeShared(context->getDevice());
-    ANGLE_VK_TRY(context, newShaderModule->init(context->getDevice(), createInfo));
-
-    *shaderModulePtr = std::move(newShaderModule);
-
-    return angle::Result::Continue;
+    return AllocateAndBindBufferMemory(
+        context, memoryAllocationType, memoryPropertyFlags, memoryPropertyFlagsOut,
+        memoryRequirements, extraAllocationInfo, buffer, memoryTypeIndexOut, deviceMemoryOut);
 }
 
 angle::Result InitExternalSharedFDMemory(
@@ -664,13 +736,14 @@ angle::Result InitExternalSharedFDMemory(
     DeviceMemory *deviceMemoryOut,
     VkDeviceSize *sizeOut)
 {
-    VkMemoryRequirements externalMemoryRequirements;
     VkDevice device = context->getRenderer()->getDevice();
-    vkGetBufferMemoryRequirements(device, buffer->getHandle(), &externalMemoryRequirements);
+    VkMemoryRequirements externalMemoryRequirements;
+    buffer->getMemoryRequirements(device, &externalMemoryRequirements);
 
     VkMemoryFdPropertiesKHR memoryFdProperties = {};
-    vkGetMemoryFdPropertiesKHR(device, externalMemoryHandleType, sharedBufferFD,
-                               &memoryFdProperties);
+    memoryFdProperties.sType                   = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR;
+    VK_CALL(vkGetMemoryFdPropertiesKHR, device, externalMemoryHandleType, sharedBufferFD,
+            &memoryFdProperties);
     externalMemoryRequirements.memoryTypeBits = memoryFdProperties.memoryTypeBits;
 
     VkImportMemoryFdInfoKHR importMemoryFdInfo = {};
@@ -693,16 +766,16 @@ angle::Result GetHostPointerMemoryRequirements(ErrorContext *context,
                                                Buffer *buffer)
 {
     VkDevice device = context->getRenderer()->getDevice();
-    vkGetBufferMemoryRequirements(device, buffer->getHandle(), &memRequirements);
+    buffer->getMemoryRequirements(device, &memRequirements);
 
     VkMemoryHostPointerPropertiesEXT externalMemoryHostProperties = {};
     externalMemoryHostProperties.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT;
     externalMemoryHostProperties.pNext = nullptr;
 
     // Get properties for external memory host pointer
-    vkGetMemoryHostPointerPropertiesEXT(device,
-                                        VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
-                                        hostPtr, &externalMemoryHostProperties);
+    VK_CALL(vkGetMemoryHostPointerPropertiesEXT, device,
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, hostPtr,
+            &externalMemoryHostProperties);
 
     // Buffer memory type bits should be compatible with host pointer memory type bits
     memRequirements.memoryTypeBits =
@@ -742,6 +815,26 @@ angle::Result InitExternalHostMemory(ErrorContext *context,
                               memoryPropertyFlagsOut, memoryTypeIndexOut, deviceMemoryOut));
 
     *sizeOut = externalMemoryRequirements.size;
+
+    return angle::Result::Continue;
+}
+
+angle::Result InitShaderModule(ErrorContext *context,
+                               ShaderModulePtr *shaderModulePtr,
+                               const uint32_t *shaderCode,
+                               size_t shaderCodeSize)
+{
+    ASSERT(!(*shaderModulePtr));
+    VkShaderModuleCreateInfo createInfo = {};
+    createInfo.sType                    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.flags                    = 0;
+    createInfo.codeSize                 = shaderCodeSize;
+    createInfo.pCode                    = shaderCode;
+
+    ShaderModulePtr newShaderModule = ShaderModulePtr::MakeShared(context->getDevice());
+    ANGLE_VK_TRY(context, newShaderModule->init(context->getDevice(), createInfo));
+
+    *shaderModulePtr = std::move(newShaderModule);
 
     return angle::Result::Continue;
 }
@@ -800,62 +893,63 @@ void GarbageObject::destroy(Renderer *renderer)
     switch (mHandleType)
     {
         case HandleType::Semaphore:
-            vkDestroySemaphore(device, (VkSemaphore)mHandle, nullptr);
+            VK_CALL(vkDestroySemaphore, device, (VkSemaphore)mHandle, nullptr);
             break;
         case HandleType::CommandBuffer:
             // Command buffers are pool allocated.
             UNREACHABLE();
             break;
         case HandleType::Event:
-            vkDestroyEvent(device, (VkEvent)mHandle, nullptr);
+            VK_CALL(vkDestroyEvent, device, (VkEvent)mHandle, nullptr);
             break;
         case HandleType::Fence:
-            vkDestroyFence(device, (VkFence)mHandle, nullptr);
+            VK_CALL(vkDestroyFence, device, (VkFence)mHandle, nullptr);
             break;
         case HandleType::DeviceMemory:
-            vkFreeMemory(device, (VkDeviceMemory)mHandle, nullptr);
+            VK_CALL(vkFreeMemory, device, (VkDeviceMemory)mHandle, nullptr);
             break;
         case HandleType::Buffer:
-            vkDestroyBuffer(device, (VkBuffer)mHandle, nullptr);
+            VK_CALL(vkDestroyBuffer, device, (VkBuffer)mHandle, nullptr);
             break;
         case HandleType::BufferView:
-            vkDestroyBufferView(device, (VkBufferView)mHandle, nullptr);
+            VK_CALL(vkDestroyBufferView, device, (VkBufferView)mHandle, nullptr);
             break;
         case HandleType::Image:
-            vkDestroyImage(device, (VkImage)mHandle, nullptr);
+            VK_CALL(vkDestroyImage, device, (VkImage)mHandle, nullptr);
             break;
         case HandleType::ImageView:
-            vkDestroyImageView(device, (VkImageView)mHandle, nullptr);
+            VK_CALL(vkDestroyImageView, device, (VkImageView)mHandle, nullptr);
             break;
         case HandleType::ShaderModule:
-            vkDestroyShaderModule(device, (VkShaderModule)mHandle, nullptr);
+            VK_CALL(vkDestroyShaderModule, device, (VkShaderModule)mHandle, nullptr);
             break;
         case HandleType::PipelineLayout:
-            vkDestroyPipelineLayout(device, (VkPipelineLayout)mHandle, nullptr);
+            VK_CALL(vkDestroyPipelineLayout, device, (VkPipelineLayout)mHandle, nullptr);
             break;
         case HandleType::RenderPass:
-            vkDestroyRenderPass(device, (VkRenderPass)mHandle, nullptr);
+            VK_CALL(vkDestroyRenderPass, device, (VkRenderPass)mHandle, nullptr);
             break;
         case HandleType::Pipeline:
-            vkDestroyPipeline(device, (VkPipeline)mHandle, nullptr);
+            VK_CALL(vkDestroyPipeline, device, (VkPipeline)mHandle, nullptr);
             break;
         case HandleType::DescriptorSetLayout:
-            vkDestroyDescriptorSetLayout(device, (VkDescriptorSetLayout)mHandle, nullptr);
+            VK_CALL(vkDestroyDescriptorSetLayout, device, (VkDescriptorSetLayout)mHandle, nullptr);
             break;
         case HandleType::Sampler:
-            vkDestroySampler(device, (VkSampler)mHandle, nullptr);
+            // Samplers are never garbage collected.
+            UNREACHABLE();
             break;
         case HandleType::DescriptorPool:
-            vkDestroyDescriptorPool(device, (VkDescriptorPool)mHandle, nullptr);
+            VK_CALL(vkDestroyDescriptorPool, device, (VkDescriptorPool)mHandle, nullptr);
             break;
         case HandleType::Framebuffer:
-            vkDestroyFramebuffer(device, (VkFramebuffer)mHandle, nullptr);
+            VK_CALL(vkDestroyFramebuffer, device, (VkFramebuffer)mHandle, nullptr);
             break;
         case HandleType::CommandPool:
-            vkDestroyCommandPool(device, (VkCommandPool)mHandle, nullptr);
+            VK_CALL(vkDestroyCommandPool, device, (VkCommandPool)mHandle, nullptr);
             break;
         case HandleType::QueryPool:
-            vkDestroyQueryPool(device, (VkQueryPool)mHandle, nullptr);
+            VK_CALL(vkDestroyQueryPool, device, (VkQueryPool)mHandle, nullptr);
             break;
         case HandleType::Allocation:
             vma::FreeMemory(renderer->getAllocator().getHandle(), (VmaAllocation)mHandle);
@@ -870,7 +964,7 @@ void GarbageObject::destroy(Renderer *renderer)
 
 void MakeDebugUtilsLabel(GLenum source, const char *marker, VkDebugUtilsLabelEXT *label)
 {
-    static constexpr angle::ColorF kLabelColors[6] = {
+    static constexpr std::array<angle::ColorF, 6> kLabelColors = {
         angle::ColorF(1.0f, 0.5f, 0.5f, 1.0f),  // DEBUG_SOURCE_API
         angle::ColorF(0.5f, 1.0f, 0.5f, 1.0f),  // DEBUG_SOURCE_WINDOW_SYSTEM
         angle::ColorF(0.5f, 0.5f, 1.0f, 1.0f),  // DEBUG_SOURCE_SHADER_COMPILER
@@ -880,7 +974,7 @@ void MakeDebugUtilsLabel(GLenum source, const char *marker, VkDebugUtilsLabelEXT
     };
 
     int colorIndex = source - GL_DEBUG_SOURCE_API;
-    ASSERT(colorIndex >= 0 && static_cast<size_t>(colorIndex) < ArraySize(kLabelColors));
+    ASSERT(colorIndex >= 0 && static_cast<size_t>(colorIndex) < kLabelColors.size());
 
     label->sType      = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
     label->pNext      = nullptr;
@@ -904,7 +998,7 @@ angle::Result SetDebugUtilsObjectName(ContextVk *contextVk,
     if (vkSetDebugUtilsObjectNameEXT)
     {
         ANGLE_VK_TRY(contextVk,
-                     vkSetDebugUtilsObjectNameEXT(renderer->getDevice(), &objectNameInfo));
+                     VK_CALL(vkSetDebugUtilsObjectNameEXT, renderer->getDevice(), &objectNameInfo));
     }
     return angle::Result::Continue;
 }
@@ -956,9 +1050,9 @@ ResourceSerialFactory::ResourceSerialFactory() : mCurrentUniqueSerial(1) {}
 
 ResourceSerialFactory::~ResourceSerialFactory() {}
 
-uint32_t ResourceSerialFactory::issueSerial()
+uint64_t ResourceSerialFactory::issueSerial()
 {
-    uint32_t newSerial = ++mCurrentUniqueSerial;
+    uint64_t newSerial = ++mCurrentUniqueSerial;
     // make sure serial does not wrap
     ASSERT(newSerial > 0);
     return newSerial;
@@ -1008,7 +1102,7 @@ void ApplyPipelineCreationFeedback(ErrorContext *context,
 
 size_t MemoryAllocInfoMapKey::hash() const
 {
-    return angle::ComputeGenericHash(*this);
+    return angle::ComputeGenericHash(angle::byte_span_from_ref(*this));
 }
 
 PipelineStage GetPipelineStage(gl::ShaderType stage)
@@ -1065,6 +1159,10 @@ PFN_vkBindImageMemory2KHR vkBindImageMemory2KHR   = nullptr;
 
 // VK_KHR_maintenance5
 PFN_vkCmdBindIndexBuffer2KHR vkCmdBindIndexBuffer2KHR = nullptr;
+PFN_vkGetImageSubresourceLayout2KHR vkGetImageSubresourceLayout2KHR = nullptr;
+
+// VK_QCOM_tile_memory_heap
+PFN_vkCmdBindTileMemoryQCOM vkCmdBindTileMemoryQCOM = nullptr;
 
 // VK_KHR_external_fence_capabilities
 PFN_vkGetPhysicalDeviceExternalFencePropertiesKHR vkGetPhysicalDeviceExternalFencePropertiesKHR =
@@ -1096,18 +1194,20 @@ PFN_vkGetAndroidHardwareBufferPropertiesANDROID vkGetAndroidHardwareBufferProper
 PFN_vkGetMemoryAndroidHardwareBufferANDROID vkGetMemoryAndroidHardwareBufferANDROID = nullptr;
 #    endif
 
-#    define GET_INSTANCE_FUNC(vkName)                                                          \
-        do                                                                                     \
-        {                                                                                      \
-            vkName = reinterpret_cast<PFN_##vkName>(vkGetInstanceProcAddr(instance, #vkName)); \
-            ASSERT(vkName);                                                                    \
+#    define GET_INSTANCE_FUNC(vkName)                                                              \
+        do                                                                                         \
+        {                                                                                          \
+            vkName =                                                                               \
+                reinterpret_cast<PFN_##vkName>(VK_CALL(vkGetInstanceProcAddr, instance, #vkName)); \
+            ASSERT(vkName);                                                                        \
         } while (0)
 
-#    define GET_DEVICE_FUNC(vkName)                                                        \
-        do                                                                                 \
-        {                                                                                  \
-            vkName = reinterpret_cast<PFN_##vkName>(vkGetDeviceProcAddr(device, #vkName)); \
-            ASSERT(vkName);                                                                \
+#    define GET_DEVICE_FUNC(vkName)                                                            \
+        do                                                                                     \
+        {                                                                                      \
+            vkName =                                                                           \
+                reinterpret_cast<PFN_##vkName>(VK_CALL(vkGetDeviceProcAddr, device, #vkName)); \
+            ASSERT(vkName);                                                                    \
         } while (0)
 
 // VK_KHR_shared_presentable_image
@@ -1304,6 +1404,13 @@ void InitFragmentShadingRateKHRDeviceFunction(VkDevice device)
 void InitMaintenance5Functions(VkDevice device)
 {
     GET_DEVICE_FUNC(vkCmdBindIndexBuffer2KHR);
+    GET_DEVICE_FUNC(vkGetImageSubresourceLayout2KHR);
+}
+
+// VK_QCOM_tile_memory_heap
+void InitTileMemoryHeapFunctions(VkDevice device)
+{
+    GET_DEVICE_FUNC(vkCmdBindTileMemoryQCOM);
 }
 
 // VK_GOOGLE_display_timing
@@ -1400,6 +1507,21 @@ void InitBindMemory2KHRFunctionsFromCore()
 
 #undef ASSIGN_FROM_CORE
 
+#define ASSIGN_EXT_FROM_KHR(vkName)               \
+    do                                            \
+    {                                             \
+        /* The KHR entry point must be present */ \
+        ASSERT(vkName##KHR != nullptr);           \
+        vkName##EXT = vkName##KHR;                \
+    } while (0)
+
+void InitGetImageSubresourceLayoutEXTFunctionFromKHR()
+{
+    ASSIGN_EXT_FROM_KHR(vkGetImageSubresourceLayout2);
+}
+
+#undef ASSIGN_EXT_FROM_KHR
+
 GLenum CalculateGenerateMipmapFilter(ContextVk *contextVk, angle::FormatID formatID)
 {
     const bool formatSupportsLinearFiltering = contextVk->getRenderer()->hasImageFormatFeatureBits(
@@ -1409,18 +1531,14 @@ GLenum CalculateGenerateMipmapFilter(ContextVk *contextVk, angle::FormatID forma
     return formatSupportsLinearFiltering && !hintFastest ? GL_LINEAR : GL_NEAREST;
 }
 
-bool HasRequiredGlobalPriority(
-    const std::vector<VkQueueFamilyGlobalPriorityPropertiesEXT> &globalPriorityProperties,
-    VkQueueGlobalPriorityEXT requiredGlobalPriority)
+bool HasRequiredGlobalPriority(const VkQueueFamilyGlobalPriorityProperties &globalPriorityProperty,
+                               VkQueueGlobalPriority requiredGlobalPriority)
 {
-    for (const auto &globalPriorityProperty : globalPriorityProperties)
+    for (uint32_t i = 0; i < globalPriorityProperty.priorityCount; i++)
     {
-        for (uint32_t i = 0; i < globalPriorityProperty.priorityCount; i++)
+        if (ANGLE_UNSAFE_TODO(globalPriorityProperty.priorities[i]) == requiredGlobalPriority)
         {
-            if (globalPriorityProperty.priorities[i] == requiredGlobalPriority)
-            {
-                return true;
-            }
+            return true;
         }
     }
 
@@ -1862,7 +1980,7 @@ void GetExtentsAndLayerCount(gl::TextureType textureType,
     }
 }
 
-vk::LevelIndex GetLevelIndex(gl::LevelIndex levelGL, gl::LevelIndex baseLevel)
+vk::LevelIndex GetLevelIndex(gl::OwnerLevel levelGL, gl::OwnerLevel baseLevel)
 {
     ASSERT(baseLevel <= levelGL);
     return vk::LevelIndex(levelGL.get() - baseLevel.get());
@@ -1977,9 +2095,9 @@ GLuint GetSampleCount(VkSampleCountFlags supportedCounts, GLuint requestedCount)
     return 0;
 }
 
-gl::LevelIndex GetLevelIndex(vk::LevelIndex levelVk, gl::LevelIndex baseLevel)
+gl::OwnerLevel GetLevelIndex(vk::LevelIndex levelVk, gl::OwnerLevel baseLevel)
 {
-    return gl::LevelIndex(levelVk.get() + baseLevel.get());
+    return baseLevel + levelVk.get();
 }
 
 GLenum ConvertVkFixedRateToGLFixedRate(const VkImageCompressionFixedRateFlagsEXT vkCompressionRate)

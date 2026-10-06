@@ -32,8 +32,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 #include <wtf/text/StringConcatenate.h>
-#include <wtf/text/StringHash.h>
-#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
@@ -58,7 +56,7 @@ public:
     }
 
     bool isEmpty() const { return m_registrableDomain.isEmpty() || m_registrableDomain == "nullOrigin"_s; }
-    const String& string() const { return m_registrableDomain; }
+    const String& string() const LIFETIME_BOUND { return m_registrableDomain; }
 
     friend bool operator==(const RegistrableDomain&, const RegistrableDomain&) = default;
     bool operator==(ASCIILiteral other) const { return m_registrableDomain == other; }

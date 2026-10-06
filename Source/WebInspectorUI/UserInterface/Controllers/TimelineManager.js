@@ -84,7 +84,7 @@ WI.TimelineManager = class TimelineManager extends WI.Object
             return;
 
         // COMPATIBILITY (iOS 13): Timeline.enable did not exist yet.
-        // COMPATIBILITY (iOS 26.0, macOS 26.0): `Timeline.enable` did not exist yet for Worker targets.
+        // COMPATIBILITY (macOS 15.4, iOS 18.4): `Timeline.enable` did not exist yet for Worker targets.
         if (target.hasCommand("Timeline.enable"))
             target.TimelineAgent.enable();
 
@@ -269,7 +269,7 @@ WI.TimelineManager = class TimelineManager extends WI.Object
 
         for (let target of WI.targets) {
             // COMPATIBILITY (iOS 13): Timeline.disable did not exist yet.
-            // COMPATIBILITY (iOS 26.0, macOS 26.0): `Timeline.disable` did not exist yet for Worker targets.
+            // COMPATIBILITY (macOS 15.4, iOS 18.4): `Timeline.disable` did not exist yet for Worker targets.
             if (target.hasCommand("Timeline.disable"))
                 target.TimelineAgent.disable();
         }
@@ -332,7 +332,7 @@ WI.TimelineManager = class TimelineManager extends WI.Object
         }
 
         if (json.version !== WI.TimelineRecording.SerializationVersion) {
-            WI.NetworkManager.synthesizeImportError(WI.UIString("unsupported version"));
+            WI.TimelineManager.synthesizeImportError(WI.UIString("unsupported version"));
             return;
         }
 
@@ -843,30 +843,48 @@ WI.TimelineManager = class TimelineManager extends WI.Object
             console.assert(isNaN(endTime));
 
             // Pass the startTime as the endTime since this record type has no duration.
-            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.InvalidateStyles, startTime, startTime, stackTrace, sourceCodeLocation);
+            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.InvalidateStyles, startTime, startTime, stackTrace, sourceCodeLocation, {
+                domNodeOrInfo: WI.domManager.nodeForId(recordPayload.data.nodeId),
+            });
 
         case InspectorBackend.Enum.Timeline.EventType.RecalculateStyles:
-            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.RecalculateStyles, startTime, endTime, stackTrace, sourceCodeLocation);
+            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.RecalculateStyles, startTime, endTime, stackTrace, sourceCodeLocation, {
+                domNodeOrInfo: WI.domManager.nodeForId(recordPayload.data.nodeId),
+            });
 
         case InspectorBackend.Enum.Timeline.EventType.InvalidateLayout:
             console.assert(isNaN(endTime));
 
             // Pass the startTime as the endTime since this record type has no duration.
-            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.InvalidateLayout, startTime, startTime, stackTrace, sourceCodeLocation);
+            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.InvalidateLayout, startTime, startTime, stackTrace, sourceCodeLocation, {
+                domNodeOrInfo: WI.domManager.nodeForId(recordPayload.data.nodeId),
+            });
+
+        case InspectorBackend.Enum.Timeline.EventType.ScheduleLayout:
+            console.assert(isNaN(endTime));
+
+            // Pass the startTime as the endTime since this record type has no duration.
+            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.ScheduleLayout, startTime, startTime, stackTrace, sourceCodeLocation, {
+                domNodeOrInfo: WI.domManager.nodeForId(recordPayload.data.nodeId),
+            });
 
         case InspectorBackend.Enum.Timeline.EventType.Layout:
             var layoutRecordType = sourceCodeLocation ? WI.LayoutTimelineRecord.EventType.ForcedLayout : WI.LayoutTimelineRecord.EventType.Layout;
             return new WI.LayoutTimelineRecord(layoutRecordType, startTime, endTime, stackTrace, sourceCodeLocation, {
                 quad: new WI.Quad(recordPayload.data.root),
+                domNodeOrInfo: WI.domManager.nodeForId(recordPayload.data.nodeId),
             });
 
         case InspectorBackend.Enum.Timeline.EventType.Paint:
             return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.Paint, startTime, endTime, stackTrace, sourceCodeLocation, {
                 quad: new WI.Quad(recordPayload.data.clip),
+                domNodeOrInfo: WI.domManager.nodeForId(recordPayload.data.nodeId),
             });
 
         case InspectorBackend.Enum.Timeline.EventType.Composite:
-            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.Composite, startTime, endTime, stackTrace, sourceCodeLocation);
+            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.Composite, startTime, endTime, stackTrace, sourceCodeLocation, {
+                domNodeOrInfo: WI.domManager.nodeForId(recordPayload.data.nodeId),
+            });
 
         case InspectorBackend.Enum.Timeline.EventType.FirstContentfulPaint:
             return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.FirstContentfulPaint, startTime, startTime, stackTrace, sourceCodeLocation);
@@ -874,7 +892,7 @@ WI.TimelineManager = class TimelineManager extends WI.Object
         case InspectorBackend.Enum.Timeline.EventType.LargestContentfulPaint:
             return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.LargestContentfulPaint, startTime, startTime, stackTrace, sourceCodeLocation, {
                 area: recordPayload.data.area,
-                domNode: WI.domManager.nodeForId(recordPayload.data.nodeId),
+                domNodeOrInfo: WI.domManager.nodeForId(recordPayload.data.nodeId),
             });
 
         case InspectorBackend.Enum.Timeline.EventType.RenderingFrame:
@@ -931,7 +949,7 @@ WI.TimelineManager = class TimelineManager extends WI.Object
                 break;
             }
 
-            this._webTimelineScriptRecordsExpectingScriptProfilerEventsForTarget.getOrInitialize(target, []).push(record);
+            this._webTimelineScriptRecordsExpectingScriptProfilerEventsForTarget.getOrInsert(target, []).push(record);
             return record;
 
         case InspectorBackend.Enum.Timeline.EventType.ConsoleProfile:
@@ -1026,7 +1044,7 @@ WI.TimelineManager = class TimelineManager extends WI.Object
             }
 
             if (record) {
-                this._webTimelineScriptRecordsExpectingScriptProfilerEventsForTarget.getOrInitialize(target, []).push(record);
+                this._webTimelineScriptRecordsExpectingScriptProfilerEventsForTarget.getOrInsert(target, []).push(record);
                 return record;
             }
             break;
@@ -1442,7 +1460,7 @@ WI.TimelineManager = class TimelineManager extends WI.Object
         let enabledTimelineTypes = this.enabledTimelineTypes;
 
         for (let target of targets) {
-            // COMPATIBILITY (iOS 26.0, macOS 26.0): `Timeline.setInstruments` did not exist yet for Worker targets.
+            // COMPATIBILITY (macOS 15.4, iOS 18.4): `Timeline.setInstruments` did not exist yet for Worker targets.
             if (!target.hasCommand("Timeline.setInstruments"))
                 continue;
 

@@ -45,7 +45,7 @@ static constexpr size_t counterSize = 16;
 static constexpr uint64_t allBitsSet = ~(uint64_t)0;
 }
 
-static inline bool usagesAreInvalidForCryptoAlgorithmAESCTR(CryptoKeyUsageBitmap usages)
+static inline bool NODELETE usagesAreInvalidForCryptoAlgorithmAESCTR(CryptoKeyUsageBitmap usages)
 {
     return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits);
 }
@@ -113,7 +113,7 @@ void CryptoAlgorithmAESCTR::generateKey(const CryptoAlgorithmParameters& paramet
         return;
     }
 
-    callback(WTF::move(result));
+    callback(result.releaseNonNull());
 }
 
 void CryptoAlgorithmAESCTR::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)

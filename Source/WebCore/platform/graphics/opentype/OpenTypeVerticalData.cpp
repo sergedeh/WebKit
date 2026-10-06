@@ -29,6 +29,7 @@
 
 #include "FloatRect.h"
 #include "Font.h"
+#include "FontInlines.h"
 #include "GlyphPage.h"
 #include "OpenTypeTypes.h"
 #include "SharedBuffer.h"
@@ -108,7 +109,7 @@ struct VORGTable {
         OpenType::Int16 vertOriginY;
     } vertOriginYMetrics[1];
 
-    size_t requiredSize() const { return sizeof(*this) + sizeof(VertOriginYMetrics) * (numVertOriginYMetrics - 1); }
+    size_t requiredSize() const { return offsetof(VORGTable, vertOriginYMetrics) + sizeof(VertOriginYMetrics) * static_cast<size_t>(numVertOriginYMetrics); }
 };
 
 struct SubstitutionSubTable : TableBase {
@@ -172,9 +173,9 @@ struct LookupTable : TableBase {
                 if (!isValidEnd(buffer, &coverage2->ranges[countRange]))
                     return false;
                 for (uint16_t i = 0, indexTo = 0; i < countRange; ++i) {
-                    uint16_t from = coverage2->ranges[i].start;
-                    uint16_t fromEnd = coverage2->ranges[i].end + 1; // OpenType "end" is inclusive
-                    if (indexTo + (fromEnd - from) > countTo)
+                    unsigned from = coverage2->ranges[i].start;
+                    unsigned fromEnd = coverage2->ranges[i].end + 1; // OpenType "end" is inclusive
+                    if (fromEnd <= from || indexTo + (fromEnd - from) > countTo)
                         return false;
                     for (; from != fromEnd; ++from, ++indexTo)
                         map->set(from, singleSubstitution2->substitute[indexTo]);
@@ -240,11 +241,14 @@ struct FeatureList : TableBase {
 
     const FeatureTable* findFeature(OpenType::Tag tag, const SharedBuffer& buffer) const
     {
-        for (uint16_t i = 0; i < featureCount; ++i) {
-            if (isValidEnd(buffer, &features[i]) && features[i].featureTag == tag)
+        uint16_t count = featureCount;
+        if (!isValidEnd(buffer, &features[count]))
+            return nullptr;
+        for (uint16_t i = 0; i < count; ++i) {
+            if (features[i].featureTag == tag)
                 return validateOffset<FeatureTable>(buffer, features[i].featureOffset);
         }
-        return 0;
+        return nullptr;
     }
 };
 
@@ -353,7 +357,7 @@ struct GSUBTable : TableBase {
         const FeatureList* features = featureList(buffer);
         if (!features)
             return 0;
-        const FeatureTable* feature = 0;
+        const FeatureTable* feature = nullptr;
         if (langSys)
             feature = langSys->feature(featureTag, features, buffer);
         if (!feature) {

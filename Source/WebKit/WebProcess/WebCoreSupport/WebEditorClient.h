@@ -125,12 +125,18 @@ private:
 
 #if PLATFORM(COCOA)
     void setInsertionPasteboard(const String& pasteboardName) final;
+    HashMap<WebCore::FrameIdentifier, WebCore::AttributedString> collectAttributedStringsForRemoteFrames(WebCore::FrameIdentifier rootFrameIdentifier, const Vector<WebCore::FrameIdentifier>&) final;
 #endif
 
 #if USE(APPKIT)
     void uppercaseWord() final;
     void lowercaseWord() final;
     void capitalizeWord() final;
+    bool canApplyCaseTransformations(const String&) final;
+    bool canConvertToTraditionalChinese(const String&) final;
+    bool canConvertToSimplifiedChinese(const String&) final;
+    void convertToTraditionalChinese() final;
+    void convertToSimplifiedChinese() final;
 #endif
 
 #if USE(AUTOMATIC_TEXT_REPLACEMENT)
@@ -187,6 +193,10 @@ private:
     void didDispatchInputMethodKeydown(WebCore::KeyboardEvent&) final;
 #endif
 
+#if PLATFORM(COCOA)
+    bool shouldAllowSingleClickToChangeSelection(WebCore::Node&, const WebCore::VisibleSelection&, WebCore::MouseEventInputSource) const final;
+#endif
+
 #if PLATFORM(IOS_FAMILY)
     void startDelayingAndCoalescingContentChangeNotifications() final;
     void stopDelayingAndCoalescingContentChangeNotifications() final;
@@ -195,7 +205,6 @@ private:
     RefPtr<WebCore::DocumentFragment> documentFragmentFromDelegate(int index) final;
     bool performsTwoStepPaste(WebCore::DocumentFragment*) final;
     void updateStringForFind(const String&) final;
-    bool shouldAllowSingleClickToChangeSelection(WebCore::Node&, const WebCore::VisibleSelection&) const final;
     bool shouldRevealCurrentSelectionAfterInsertion() const final;
     bool shouldSuppressPasswordEcho() const final;
     bool shouldRemoveDictationAlternativesAfterEditing() const final;

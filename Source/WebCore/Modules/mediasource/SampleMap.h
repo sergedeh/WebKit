@@ -113,11 +113,12 @@ class SampleMap {
 public:
     SampleMap() = default;
 
-    WEBCORE_EXPORT bool empty() const;
+    WEBCORE_EXPORT bool NODELETE empty() const;
     size_t size() const { return m_decodeOrder.m_samples.size(); }
     WEBCORE_EXPORT void clear();
     WEBCORE_EXPORT void addSample(Ref<MediaSample>&&);
     WEBCORE_EXPORT void removeSample(const MediaSample&);
+    WEBCORE_EXPORT void replaceSample(const MediaSample& original, Ref<MediaSample>&& replacement);
     size_t sizeInBytes() const { return m_totalSize; }
 
     template<typename I>

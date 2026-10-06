@@ -36,12 +36,12 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(QualifiedNameCache);
 
 struct QNameComponentsTranslator {
-    static unsigned hash(const QualifiedNameComponents& components)
+    static unsigned NODELETE hash(const QualifiedNameComponents& components)
     {
         return computeHash(components);
     }
 
-    static bool equal(QualifiedName::QualifiedNameImpl* name, const QualifiedNameComponents& c)
+    static bool NODELETE equal(QualifiedName::QualifiedNameImpl* name, const QualifiedNameComponents& c)
     {
         return c.m_prefix == name->m_prefix.impl() && c.m_localName == name->m_localName.impl() && c.m_namespaceURI == name->m_namespaceURI.impl();
     }

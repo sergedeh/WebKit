@@ -57,7 +57,7 @@ static inline const AtomString& eventTypeForKeyboardEventType(PlatformEvent::Typ
     return eventNames().keydownEvent;
 }
 
-static inline int windowsVirtualKeyCodeWithoutLocation(int keycode)
+static inline int NODELETE windowsVirtualKeyCodeWithoutLocation(int keycode)
 {
     switch (keycode) {
     case VK_LCONTROL:
@@ -74,7 +74,15 @@ static inline int windowsVirtualKeyCodeWithoutLocation(int keycode)
     }
 }
 
-static inline KeyboardEvent::KeyLocationCode keyLocationCode(const PlatformKeyboardEvent& key)
+bool KeyboardEvent::isEnterKeyKeydownEvent(Event& event)
+{
+    if (event.type() != eventNames().keydownEvent)
+        return false;
+    auto* keyboardEvent = dynamicDowncast<KeyboardEvent>(event);
+    return keyboardEvent && keyboardEvent->keyIdentifier() == "Enter"_s;
+}
+
+static inline KeyboardEvent::KeyLocationCode NODELETE keyLocationCode(const PlatformKeyboardEvent& key)
 {
     if (key.isKeypad())
         return KeyboardEvent::DOM_KEY_LOCATION_NUMPAD;
@@ -113,7 +121,7 @@ static bool viewIsCompositing(WindowProxy* view)
     RefPtr window = dynamicDowncast<LocalDOMWindow>(view->window());
     if (!window)
         return false;
-    RefPtr localFrame = window->localFrame();
+    RefPtr localFrame = window->frame();
     return localFrame && localFrame->editor().hasComposition();
 }
 
@@ -234,12 +242,12 @@ int KeyboardEvent::charCode() const
     bool backwardCompatibilityMode = false;
     RefPtr view = this->view();
     RefPtr window = dynamicDowncast<LocalDOMWindow>(view ? view->window() : nullptr);
-    if (RefPtr frame = window ? window->localFrame() : nullptr)
+    if (RefPtr frame = window ? window->frame() : nullptr)
         backwardCompatibilityMode = frame->eventHandler().needsKeyboardEventDisambiguationQuirks();
 
     if (!m_underlyingPlatformEvent || (type() != eventNames().keypressEvent && !backwardCompatibilityMode))
         return 0;
-    return m_underlyingPlatformEvent->text().characterStartingAt(0);
+    return m_underlyingPlatformEvent->text().codePointAt(0);
 }
 
 unsigned KeyboardEvent::which() const

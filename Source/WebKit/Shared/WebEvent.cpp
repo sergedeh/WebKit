@@ -37,21 +37,20 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebEvent);
 
-WebEvent::WebEvent(WebEventType type, OptionSet<WebEventModifier> modifiers, MonotonicTime timestamp, WTF::UUID authorizationToken)
-    : m_type(type)
-    , m_modifiers(modifiers)
-    , m_timestamp(timestamp)
-    , m_authorizationToken(authorizationToken)
+#if PLATFORM(GTK) || PLATFORM(WPE)
+uintptr_t generateSignpostIdentifier()
+{
+    static std::atomic<uintptr_t> identifier;
+    return ++identifier;
+}
+#endif
+
+WebEvent::WebEvent(WebEventData&& data)
+    : m_data(WTF::move(data))
 {
 }
 
-WebEvent::WebEvent(WebEventType type, OptionSet<WebEventModifier> modifiers, MonotonicTime timestamp)
-    : m_type(type)
-    , m_modifiers(modifiers)
-    , m_timestamp(timestamp)
-    , m_authorizationToken(WTF::UUID::createVersion4())
-{
-}
+WebEvent::~WebEvent() = default;
 
 // https://html.spec.whatwg.org/multipage/interaction.html#activation-triggering-input-event
 bool WebEvent::isActivationTriggeringEvent() const

@@ -61,12 +61,12 @@ public:
             return false;
 
         // If the URI matches our documents URL, we're dealing with a local reference.
-        URL url = document.completeURL(uri);
+        URL url = document.encodingParseURL(uri);
         ASSERT(!url.protocolIsData());
         return !equalIgnoringFragmentIdentifier(url, document.url());
     }
 
-    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGURIReference>;
+    using PropertyRegistry = SVGPropertyOwnerRegistryBase<SVGURIReference>;
 
     String href() const { return m_href->currentValue(); }
     SVGAnimatedString& hrefAnimated() { return m_href; }
@@ -74,7 +74,7 @@ public:
 protected:
     SVGURIReference(SVGElement* contextElement);
 
-    static bool isKnownAttribute(const QualifiedName& attributeName);
+    static bool NODELETE isKnownAttribute(const QualifiedName& attributeName);
 
     virtual bool haveFiredLoadEvent() const { return false; }
     virtual void setHaveFiredLoadEvent(bool) { }
@@ -85,9 +85,9 @@ protected:
     void dispatchLoadEvent();
 
 private:
-    SVGElement& contextElement() const;
+    SVGElement& NODELETE contextElement() const;
 
-    Ref<SVGAnimatedString> m_href;
+    const Ref<SVGAnimatedString> m_href;
 };
 
 } // namespace WebCore

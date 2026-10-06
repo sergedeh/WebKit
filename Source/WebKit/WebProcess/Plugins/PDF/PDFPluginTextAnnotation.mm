@@ -30,7 +30,7 @@
 
 #import "PDFAnnotationTypeHelpers.h"
 #import "PDFKitSPI.h"
-#import <WebCore/AddEventListenerOptionsInlines.h>
+#import "PDFPluginBase.h"
 #import <WebCore/CSSPrimitiveValue.h>
 #import <WebCore/CSSPropertyNames.h>
 #import <WebCore/ColorCocoa.h>
@@ -70,13 +70,13 @@ static const String cssAlignmentValueForNSTextAlignment(NSTextAlignment alignmen
 
 Ref<PDFPluginTextAnnotation> PDFPluginTextAnnotation::create(PDFAnnotation *annotation, PDFPluginBase* plugin)
 {
-    ASSERT(PDFAnnotationTypeHelpers::annotationIsWidgetOfType(annotation, WidgetType::Text));
+    ASSERT(PDFAnnotationTypeHelpers::annotationIsWidgetOfType(annotation, PDFAnnotationTypeHelpers::WidgetType::Text));
     return adoptRef(*new PDFPluginTextAnnotation(annotation, plugin));
 }
 
 PDFPluginTextAnnotation::~PDFPluginTextAnnotation()
 {
-    protectedElement()->removeEventListener(eventNames().keydownEvent, *eventListener(), false);
+    protect(element())->removeEventListener(eventNames().keydownEvent, *eventListener(), { .capture = false });
 }
 
 Ref<Element> PDFPluginTextAnnotation::createAnnotationElement()
@@ -86,7 +86,7 @@ Ref<Element> PDFPluginTextAnnotation::createAnnotationElement()
     bool isMultiline = [textAnnotation isMultiline];
 
     Ref element = downcast<HTMLTextFormControlElement>(document->createElement(isMultiline ? textareaTag : inputTag, false));
-    element->addEventListener(eventNames().keydownEvent, *eventListener(), false);
+    element->addEventListener(eventNames().keydownEvent, *eventListener());
 
     if (!textAnnotation)
         return element;
@@ -106,23 +106,23 @@ void PDFPluginTextAnnotation::updateGeometry()
     PDFPluginAnnotation::updateGeometry();
 
     Ref styledElement = downcast<StyledElement>(*element());
-    styledElement->setInlineStyleProperty(CSSPropertyFontSize, protectedAnnotation().get().font.pointSize * plugin()->contentScaleFactor(), CSSUnitType::CSS_PX);
+    styledElement->setInlineStyleProperty(CSSPropertyFontSize, protect(annotation()).get().font.pointSize * plugin()->contentScaleFactor(), CSSUnitType::Px);
 }
 
 void PDFPluginTextAnnotation::commit()
 {
-    protectedAnnotation().get().widgetStringValue = value().createNSString().get();
+    protect(annotation()).get().widgetStringValue = value().createNSString().get();
     PDFPluginAnnotation::commit();
 }
 
 String PDFPluginTextAnnotation::value() const
 {
-    return downcast<HTMLTextFormControlElement>(protectedElement())->value();
+    return downcast<HTMLTextFormControlElement>(protect(element()))->value();
 }
 
 void PDFPluginTextAnnotation::setValue(const String& value)
 {
-    downcast<HTMLTextFormControlElement>(protectedElement())->setValue(value);
+    downcast<HTMLTextFormControlElement>(protect(element()))->setValue(value);
 }
 
 bool PDFPluginTextAnnotation::handleEvent(Event& event)

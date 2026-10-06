@@ -42,6 +42,7 @@ struct ColorLayers;
 struct ColorMix;
 struct ContrastColor;
 struct LightDarkColor;
+struct RelativeAlphaColor;
 template<typename Descriptor> struct AbsoluteColor;
 template<typename Descriptor> struct RelativeColor;
 
@@ -59,6 +60,7 @@ private:
         UniqueRef<ColorMix>,
         UniqueRef<ContrastColor>,
         UniqueRef<LightDarkColor>,
+        UniqueRef<RelativeAlphaColor>,
         UniqueRef<AbsoluteColor<RGBFunctionLegacy<Number<>>>>,
         UniqueRef<AbsoluteColor<RGBFunctionLegacy<Percentage<>>>>,
         UniqueRef<AbsoluteColor<RGBFunctionModernAbsolute>>,
@@ -107,6 +109,7 @@ public:
     explicit Color(ColorMix&&);
     explicit Color(ContrastColor&&);
     explicit Color(LightDarkColor&&);
+    explicit Color(RelativeAlphaColor&&);
     explicit Color(AbsoluteColor<RGBFunctionLegacy<Number<>>>&&);
     explicit Color(AbsoluteColor<RGBFunctionLegacy<Percentage<>>>&&);
     explicit Color(AbsoluteColor<RGBFunctionModernAbsolute>&&);
@@ -152,11 +155,11 @@ public:
 
     bool operator==(const Color&) const;
 
-    bool isResolved() const;
+    bool NODELETE isResolved() const;
     std::optional<ResolvedColor> resolved() const;
-    bool isKeyword() const;
+    bool NODELETE isKeyword() const;
     std::optional<KeywordColor> keyword() const;
-    bool isHex() const;
+    bool NODELETE isHex() const;
     std::optional<HexColor> hex() const;
 
     // Return an absolute color if possible, otherwise an invalid color.
@@ -165,7 +168,7 @@ public:
 
     // This helper allows us to treat all the alternatives in ColorKind
     // as const references, pretending the UniqueRefs don't exist.
-    template<typename... F> decltype(auto) switchOn(F&&...) const;
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
 
 private:
     friend struct MarkableTraits<Color>;
@@ -184,24 +187,7 @@ bool containsColorSchemeDependentColor(const Color&);
 template<> struct Serialize<Color> { void operator()(StringBuilder&, const SerializationContext&, const Color&); };
 template<> struct ComputedStyleDependenciesCollector<Color> { void operator()(ComputedStyleDependencies&, const Color&); };
 template<> struct CSSValueChildrenVisitor<Color> { IterationStatus operator()(NOESCAPE const Function<IterationStatus(CSSValue&)>&, const Color&); };
-
-template<typename... F> decltype(auto) Color::switchOn(F&&... f) const
-{
-    auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
-    using ResultType = decltype(visitor(std::declval<KeywordColor>()));
-
-    return WTF::switchOn(value,
-        [&](const EmptyToken&) -> ResultType {
-            RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&]<typename T>(const T& color) -> ResultType {
-            return visitor(color);
-        },
-        [&]<typename T>(const UniqueRef<T>& color) -> ResultType {
-            return visitor(color.get());
-        }
-    );
-}
+template<> struct DeprecatedCSSOMValueCreation<Color> { Ref<DeprecatedCSSOMValue> operator()(CSSValuePool&, CSSStyleDeclaration&, const Color&); };
 
 } // namespace CSS
 } // namespace WebCore

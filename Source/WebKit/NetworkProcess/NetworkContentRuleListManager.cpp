@@ -28,6 +28,7 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
+#include "Logging.h"
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
 #include "WebCompiledContentRuleList.h"
@@ -63,12 +64,6 @@ void NetworkContentRuleListManager::deref() const
     m_networkProcess->deref();
 }
 
-Ref<NetworkProcess> NetworkContentRuleListManager::protectedNetworkProcess() const
-{
-    ASSERT(RunLoop::isMain());
-    return m_networkProcess.get();
-}
-
 void NetworkContentRuleListManager::contentExtensionsBackend(UserContentControllerIdentifier identifier, BackendCallback&& callback)
 {
     auto iterator = m_contentExtensionBackends.find(identifier);
@@ -79,7 +74,7 @@ void NetworkContentRuleListManager::contentExtensionsBackend(UserContentControll
     m_pendingCallbacks.ensure(identifier, [] {
         return Vector<BackendCallback> { };
     }).iterator->value.append(WTF::move(callback));
-    protectedNetworkProcess()->protectedParentProcessConnection()->send(Messages::NetworkProcessProxy::ContentExtensionRules { identifier }, 0);
+    protect(m_networkProcess->parentProcessConnection())->send(Messages::NetworkProcessProxy::ContentExtensionRules { identifier }, 0);
 }
 
 void NetworkContentRuleListManager::addContentRuleLists(UserContentControllerIdentifier identifier, Vector<std::pair<WebCompiledContentRuleListData, URL>>&& contentRuleLists)
@@ -122,6 +117,24 @@ void NetworkContentRuleListManager::removeAllContentRuleLists(UserContentControl
 void NetworkContentRuleListManager::remove(UserContentControllerIdentifier identifier)
 {
     m_contentExtensionBackends.remove(identifier);
+}
+
+void NetworkContentRuleListManager::setTrackingPreventionContentRuleList(std::optional<WebCompiledContentRuleListData>&& ruleListData)
+{
+    m_trackingPreventionContentExtensionBackend = nullptr;
+    if (!ruleListData)
+        return;
+
+    auto identifier = ruleListData->identifier;
+    RefPtr compiledContentRuleList = WebCompiledContentRuleList::create(WTF::move(*ruleListData));
+    if (!compiledContentRuleList) {
+        RELEASE_LOG_ERROR(ResourceLoadStatistics, "NetworkContentRuleListManager::setTrackingPreventionContentRuleList: Failed to create rule list");
+        return;
+    }
+
+    auto backend = makeUnique<WebCore::ContentExtensions::ContentExtensionsBackend>();
+    backend->addContentExtension(identifier, compiledContentRuleList.releaseNonNull(), { }, ContentExtensions::ContentExtension::ShouldCompileCSS::No);
+    m_trackingPreventionContentExtensionBackend = WTF::move(backend);
 }
 
 } // namespace WebKit

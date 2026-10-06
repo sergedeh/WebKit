@@ -53,20 +53,20 @@ CommandEncoderImpl::~CommandEncoderImpl() = default;
 
 RefPtr<RenderPassEncoder> CommandEncoderImpl::beginRenderPass(const RenderPassDescriptor& descriptor)
 {
-    auto label = descriptor.label.utf8();
+    auto label = toBackingStringView(descriptor.label);
 
     Vector<WGPURenderPassColorAttachment> colorAttachments;
     Ref convertToBackingContext = m_convertToBackingContext;
     for (const auto& colorAttachment : descriptor.colorAttachments) {
         if (colorAttachment) {
-            RefPtr texture = colorAttachment->protectedTexture().get();
-            RefPtr textureView = colorAttachment->protectedView().get();
-            RefPtr resolveTexture = colorAttachment->protectedResolveTexture().get();
-            RefPtr resolveTarget = colorAttachment->protectedResolveTarget().get();
+            RefPtr texture = colorAttachment->texture();
+            RefPtr textureView = colorAttachment->textureView();
+            RefPtr resolveTexture = colorAttachment->resolveTexture();
+            RefPtr resolveTarget = colorAttachment->resolveTextureView();
             colorAttachments.append(WGPURenderPassColorAttachment {
                 .texture = texture ? convertToBackingContext->convertToBacking(*texture) : nullptr,
                 .view = textureView ? convertToBackingContext->convertToBacking(*textureView) : nullptr,
-                .depthSlice = colorAttachment->depthSlice,
+                .depthSlice = convertToBackingContext->convertDepthSliceToBacking(colorAttachment->depthSlice),
                 .resolveTexture = resolveTexture ? convertToBackingContext->convertToBacking(*resolveTexture) : nullptr,
                 .resolveTarget = resolveTarget ? convertToBackingContext->convertToBacking(*resolveTarget) : nullptr,
                 .loadOp = convertToBackingContext->convertToBacking(colorAttachment->loadOp),
@@ -77,7 +77,7 @@ RefPtr<RenderPassEncoder> CommandEncoderImpl::beginRenderPass(const RenderPassDe
             colorAttachments.append(WGPURenderPassColorAttachment {
                 .texture = nullptr,
                 .view = nullptr,
-                .depthSlice = std::nullopt,
+                .depthSlice = WGPU_DEPTH_SLICE_UNDEFINED,
                 .resolveTexture = nullptr,
                 .resolveTarget = nullptr,
                 .loadOp = WGPULoadOp_Clear,
@@ -88,8 +88,8 @@ RefPtr<RenderPassEncoder> CommandEncoderImpl::beginRenderPass(const RenderPassDe
 
     std::optional<WGPURenderPassDepthStencilAttachment> depthStencilAttachment;
     if (descriptor.depthStencilAttachment) {
-        RefPtr texture = descriptor.depthStencilAttachment->protectedTexture().get();
-        RefPtr textureView = descriptor.depthStencilAttachment->protectedView().get();
+        RefPtr texture = descriptor.depthStencilAttachment->texture();
+        RefPtr textureView = descriptor.depthStencilAttachment->textureView();
 
         depthStencilAttachment = WGPURenderPassDepthStencilAttachment {
             .texture = texture ? convertToBackingContext->convertToBacking(*texture) : nullptr,
@@ -105,19 +105,19 @@ RefPtr<RenderPassEncoder> CommandEncoderImpl::beginRenderPass(const RenderPassDe
         };
     }
 
-    WGPURenderPassTimestampWrites timestampWrites {
-        .querySet = descriptor.timestampWrites ? convertToBackingContext->convertToBacking(*descriptor.timestampWrites->protectedQuerySet()) : nullptr,
+    WGPUPassTimestampWrites timestampWrites {
+        .querySet = descriptor.timestampWrites ? convertToBackingContext->convertToBacking(*protect(descriptor.timestampWrites->querySet)) : nullptr,
         .beginningOfPassWriteIndex = descriptor.timestampWrites ? descriptor.timestampWrites->beginningOfPassWriteIndex : 0,
         .endOfPassWriteIndex = descriptor.timestampWrites ? descriptor.timestampWrites->endOfPassWriteIndex : 0
     };
 
     WGPURenderPassDescriptor backingDescriptor {
         .maxDrawCount = descriptor.maxDrawCount.value_or(UINT64_MAX),
-        .label = label.data(),
+        .label = label,
         .colorAttachmentCount = colorAttachments.size(),
         .colorAttachments = colorAttachments.size() ? colorAttachments.span().data() : nullptr,
         .depthStencilAttachment = depthStencilAttachment ? &depthStencilAttachment.value() : nullptr,
-        .occlusionQuerySet = descriptor.occlusionQuerySet ? convertToBackingContext->convertToBacking(*descriptor.protectedOcclusionQuerySet()) : nullptr,
+        .occlusionQuerySet = descriptor.occlusionQuerySet ? convertToBackingContext->convertToBacking(*protect(descriptor.occlusionQuerySet)) : nullptr,
         .timestampWrites = timestampWrites.querySet ? &timestampWrites : nullptr
     };
 
@@ -128,8 +128,8 @@ RefPtr<ComputePassEncoder> CommandEncoderImpl::beginComputePass(const std::optio
 {
     String label = descriptor ? descriptor->label : emptyString();
 
-    WGPUComputePassTimestampWrites timestampWrites {
-        .querySet = (descriptor && descriptor->timestampWrites && descriptor->timestampWrites->querySet) ? m_convertToBackingContext->convertToBacking(*descriptor->timestampWrites->protectedQuerySet().get()) : nullptr,
+    WGPUPassTimestampWrites timestampWrites {
+        .querySet = (descriptor && descriptor->timestampWrites && descriptor->timestampWrites->querySet) ? m_convertToBackingContext->convertToBacking(*protect(descriptor->timestampWrites->querySet)) : nullptr,
         .beginningOfPassWriteIndex = (descriptor && descriptor->timestampWrites) ? descriptor->timestampWrites->beginningOfPassWriteIndex : 0,
         .endOfPassWriteIndex = (descriptor && descriptor->timestampWrites) ? descriptor->timestampWrites->endOfPassWriteIndex : 0
     };
@@ -160,17 +160,17 @@ void CommandEncoderImpl::copyBufferToTexture(
 {
     Ref convertToBackingContext = m_convertToBackingContext;
 
-    WGPUImageCopyBuffer backingSource {
+    WGPUTexelCopyBufferInfo backingSource {
         .layout = {
             .offset = source.offset,
             .bytesPerRow = source.bytesPerRow.value_or(WGPU_COPY_STRIDE_UNDEFINED),
             .rowsPerImage = source.rowsPerImage.value_or(WGPU_COPY_STRIDE_UNDEFINED),
         },
-        .buffer = convertToBackingContext->convertToBacking(source.protectedBuffer().get()),
+        .buffer = convertToBackingContext->convertToBacking(protect(source.buffer)),
     };
 
-    WGPUImageCopyTexture backingDestination {
-        .texture = convertToBackingContext->convertToBacking(destination.protectedTexture().get()),
+    WGPUTexelCopyTextureInfo backingDestination {
+        .texture = convertToBackingContext->convertToBacking(protect(destination.texture)),
         .mipLevel = destination.mipLevel,
         .origin = destination.origin ? convertToBackingContext->convertToBacking(*destination.origin) : WGPUOrigin3D { 0, 0, 0 },
         .aspect = convertToBackingContext->convertToBacking(destination.aspect),
@@ -188,20 +188,20 @@ void CommandEncoderImpl::copyTextureToBuffer(
 {
     Ref convertToBackingContext = m_convertToBackingContext;
 
-    WGPUImageCopyTexture backingSource {
-        .texture = convertToBackingContext->convertToBacking(source.protectedTexture().get()),
+    WGPUTexelCopyTextureInfo backingSource {
+        .texture = convertToBackingContext->convertToBacking(protect(source.texture)),
         .mipLevel = source.mipLevel,
         .origin = source.origin ? convertToBackingContext->convertToBacking(*source.origin) : WGPUOrigin3D { 0, 0, 0 },
         .aspect = convertToBackingContext->convertToBacking(source.aspect),
     };
 
-    WGPUImageCopyBuffer backingDestination {
+    WGPUTexelCopyBufferInfo backingDestination {
         .layout = {
             .offset = destination.offset,
             .bytesPerRow = destination.bytesPerRow.value_or(WGPU_COPY_STRIDE_UNDEFINED),
             .rowsPerImage = destination.rowsPerImage.value_or(WGPU_COPY_STRIDE_UNDEFINED),
         },
-        .buffer = convertToBackingContext->convertToBacking(destination.protectedBuffer().get()),
+        .buffer = convertToBackingContext->convertToBacking(protect(destination.buffer)),
     };
 
     WGPUExtent3D backingCopySize = convertToBackingContext->convertToBacking(copySize);
@@ -216,15 +216,15 @@ void CommandEncoderImpl::copyTextureToTexture(
 {
     Ref convertToBackingContext = m_convertToBackingContext;
 
-    WGPUImageCopyTexture backingSource {
-        .texture = convertToBackingContext->convertToBacking(source.protectedTexture().get()),
+    WGPUTexelCopyTextureInfo backingSource {
+        .texture = convertToBackingContext->convertToBacking(protect(source.texture)),
         .mipLevel = source.mipLevel,
         .origin = source.origin ? convertToBackingContext->convertToBacking(*source.origin) : WGPUOrigin3D { 0, 0, 0 },
         .aspect = convertToBackingContext->convertToBacking(source.aspect),
     };
 
-    WGPUImageCopyTexture backingDestination {
-        .texture = convertToBackingContext->convertToBacking(destination.protectedTexture().get()),
+    WGPUTexelCopyTextureInfo backingDestination {
+        .texture = convertToBackingContext->convertToBacking(protect(destination.texture)),
         .mipLevel = destination.mipLevel,
         .origin = destination.origin ? convertToBackingContext->convertToBacking(*destination.origin) : WGPUOrigin3D { 0, 0, 0 },
         .aspect = convertToBackingContext->convertToBacking(destination.aspect),
@@ -245,7 +245,7 @@ void CommandEncoderImpl::clearBuffer(
 
 void CommandEncoderImpl::pushDebugGroup(String&& groupLabel)
 {
-    wgpuCommandEncoderPushDebugGroup(m_backing.get(), groupLabel.utf8().data());
+    wgpuCommandEncoderPushDebugGroup(m_backing.get(), toBackingStringView(groupLabel));
 }
 
 void CommandEncoderImpl::popDebugGroup()
@@ -255,7 +255,7 @@ void CommandEncoderImpl::popDebugGroup()
 
 void CommandEncoderImpl::insertDebugMarker(String&& markerLabel)
 {
-    wgpuCommandEncoderInsertDebugMarker(m_backing.get(), markerLabel.utf8().data());
+    wgpuCommandEncoderInsertDebugMarker(m_backing.get(), toBackingStringView(markerLabel));
 }
 
 void CommandEncoderImpl::writeTimestamp(const QuerySet& querySet, Size32 queryIndex)
@@ -285,7 +285,7 @@ RefPtr<CommandBuffer> CommandEncoderImpl::finish(const CommandBufferDescriptor& 
 
 void CommandEncoderImpl::setLabelInternal(const String& label)
 {
-    wgpuCommandEncoderSetLabel(m_backing.get(), label.utf8().data());
+    wgpuCommandEncoderSetLabel(m_backing.get(), toBackingStringView(label));
 }
 
 } // namespace WebCore::WebGPU

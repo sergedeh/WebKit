@@ -45,7 +45,7 @@ struct Saturate {
 
     Parameter value;
 
-    static Saturate passthroughForInterpolation();
+    static Saturate NODELETE passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return false; }
@@ -63,7 +63,7 @@ DEFINE_TYPE_WRAPPER_GET(Saturate, value);
 
 // MARK: - Conversion
 
-template<> struct ToCSS<Saturate> { auto operator()(const Saturate&, const RenderStyle&) -> CSS::Saturate; };
+template<> struct ToCSS<Saturate> { auto operator()(const Saturate&, const Style::ComputedStyle&) -> CSS::Saturate; };
 template<> struct ToStyle<CSS::Saturate> { auto operator()(const CSS::Saturate&, const BuilderState&) -> Saturate; };
 
 // MARK: - Blending

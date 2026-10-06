@@ -42,7 +42,7 @@ template<> struct Converter<IDLInterface<XPathNSResolver>> : DefaultConverter<ID
     using Result = ConversionResult<IDLInterface<XPathNSResolver>>;
 
     template<typename ExceptionThrower = DefaultExceptionThrower>
-    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, NOESCAPE ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
         JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -51,11 +51,11 @@ template<> struct Converter<IDLInterface<XPathNSResolver>> : DefaultConverter<ID
             return Result::exception();
         }
 
-        auto object = asObject(value);
-        if (object->inherits<JSXPathNSResolver>())
-            return { JSC::jsCast<JSXPathNSResolver*>(object)->wrapped() };
+        auto* object = asObject(value);
+        if (auto* resolver = dynamicDowncast<JSXPathNSResolver>(*object))
+            return { resolver->wrapped() };
 
-        return { JSCustomXPathNSResolver::create(object, JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject)) };
+        return { JSCustomXPathNSResolver::create(object, downcast<JSDOMGlobalObject>(&lexicalGlobalObject)) };
     }
 };
 

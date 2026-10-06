@@ -31,6 +31,7 @@
 #if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
 #include "AsyncScrollingCoordinator.h"
 #include "CoordinatedPlatformLayer.h"
+#include "PlatformTouchEvent.h"
 #include "ScrollingThread.h"
 #include "ScrollingTreeFixedNodeCoordinated.h"
 #include "ScrollingTreeFrameHostingNode.h"
@@ -81,6 +82,7 @@ Ref<ScrollingTreeNode> ScrollingTreeCoordinated::createScrollingTreeNode(Scrolli
 
 void ScrollingTreeCoordinated::applyLayerPositionsInternal()
 {
+    assertIsHeld(m_treeLock);
     auto* rootScrollingNode = rootNode();
     if (!rootScrollingNode)
         return;
@@ -111,56 +113,341 @@ void ScrollingTreeCoordinated::didCompletePlatformRenderingUpdate()
     renderingUpdateComplete();
 }
 
-static bool collectDescendantLayersAtPoint(Vector<Ref<CoordinatedPlatformLayer>>& layersAtPoint, const Ref<CoordinatedPlatformLayer>& parent, const FloatPoint& point)
+using LayerAndPoint = std::pair<Ref<CoordinatedPlatformLayer>, FloatPoint>;
+
+static void collectDescendantLayersAtPoint(Vector<LayerAndPoint, 16>& layersAtPoint, const Ref<CoordinatedPlatformLayer>& parent, const FloatPoint& point, NOESCAPE const std::function<bool(const Ref<CoordinatedPlatformLayer>&, const FloatPoint&)>& transformedPointFunction)
 {
-    bool existsOnDescendent = false;
-    bool existsOnLayer = !!parent->scrollingNodeID() && parent->bounds().contains(point) && parent->eventRegion().contains(roundedIntPoint(point));
-    for (auto& child : parent->children()) {
-        Locker childLocker { child->lock() };
-        FloatPoint transformedPoint(point);
-        if (child->transform().isInvertible()) {
-            float originX = child->anchorPoint().x() * child->size().width();
-            float originY = child->anchorPoint().y() * child->size().height();
-            auto transform = *(TransformationMatrix()
-                .translate3d(originX + child->position().x() - parent->boundsOrigin().x(), originY + child->position().y() - parent->boundsOrigin().y(), child->anchorPoint().z())
-                .multiply(child->transform())
-                .translate3d(-originX, -originY, -child->anchorPoint().z()).inverse());
-            auto pointInChildSpace = transform.projectPoint(point);
-            transformedPoint.set(pointInChildSpace.x(), pointInChildSpace.y());
+    Vector<Ref<CoordinatedPlatformLayer>> children;
+    FloatPoint parentBoundsOrigin;
+    {
+        Locker parentLocker { parent->lock() };
+
+        if (parent->masksToBounds() && !parent->bounds().contains(point))
+            return;
+
+        if (RefPtr mask = parent->mask()) {
+            Locker maskLocker { mask->lock() };
+            if (!mask->bounds().contains(point))
+                return;
         }
-        existsOnDescendent |= collectDescendantLayersAtPoint(layersAtPoint, child, transformedPoint);
+
+        children = parent->children();
+        parentBoundsOrigin = parent->boundsOrigin();
     }
 
-    if (existsOnLayer && !existsOnDescendent)
-        layersAtPoint.append(parent);
+    for (auto& layer : children) {
+        FloatPoint transformedPoint;
+        bool handlesEvent;
+        bool hasChildren;
+        {
+            Locker layerLocker { layer->lock() };
 
-    return existsOnLayer || existsOnDescendent;
+            if (!layer->transform().isInvertible())
+                continue;
+
+            float originX = layer->anchorPoint().x() * layer->size().width();
+            float originY = layer->anchorPoint().y() * layer->size().height();
+
+            auto transform = TransformationMatrix()
+                .translate3d(originX + layer->position().x() - parentBoundsOrigin.x(), originY + layer->position().y() - parentBoundsOrigin.y(), layer->anchorPoint().z())
+                .multiply(layer->transform())
+                .translate3d(-originX, -originY, -layer->anchorPoint().z())
+                .inverse()
+                .value();
+
+            transformedPoint = transform.projectPoint(point);
+
+            handlesEvent = [&] {
+                assertIsHeld(layer->lock());
+                if (layer->bounds().isEmpty())
+                    return false;
+                if (!layer->bounds().contains(transformedPoint))
+                    return false;
+                if (transformedPointFunction)
+                    return transformedPointFunction(layer, transformedPoint);
+                return true;
+            }();
+
+            hasChildren = !layer->children().isEmpty();
+        }
+
+        if (handlesEvent)
+            layersAtPoint.append({ layer, transformedPoint });
+
+        if (hasChildren)
+            collectDescendantLayersAtPoint(layersAtPoint, layer, transformedPoint, transformedPointFunction);
+    }
+}
+
+static bool layerEventRegionContainsPoint(const Ref<CoordinatedPlatformLayer>& layer, const FloatPoint& localPoint)
+{
+    assertIsHeld(layer->lock());
+    // Scrolling changes boundsOrigin on the scroll container layer, but we computed its event region ignoring scroll position, so factor out bounds origin.
+    auto originRelativePoint = localPoint - toFloatSize(layer->boundsOrigin());
+    return layer->eventRegion().contains(roundedIntPoint(originRelativePoint));
+}
+
+static Vector<LayerAndPoint, 16> layersAtPointToCheckForScrolling(const Ref<CoordinatedPlatformLayer>& parent, const FloatPoint& point, bool& hasAnyNonInteractiveScrollingLayers)
+{
+    Vector<LayerAndPoint, 16> layersAtPoint;
+    collectDescendantLayersAtPoint(layersAtPoint, parent, point, [&] (auto layer, auto transformedPoint) {
+        assertIsHeld(layer->lock());
+        if (layerEventRegionContainsPoint(layer, transformedPoint))
+            return true;
+        if (layer->scrollingNodeID()) {
+            hasAnyNonInteractiveScrollingLayers = true;
+            return true;
+        }
+        return false;
+    });
+    // Hit-test front to back.
+    layersAtPoint.reverse();
+    return layersAtPoint;
+}
+
+static bool isScrolledBy(const ScrollingTree& tree, ScrollingNodeID scrollingNodeID, const RefPtr<CoordinatedPlatformLayer>& hitLayer)
+{
+    for (auto layer = hitLayer; layer;) {
+        Locker layerLocker { layer->lock() };
+
+        auto nodeID = layer->scrollingNodeID();
+        if (nodeID == scrollingNodeID)
+            return true;
+
+        RefPtr scrollingNode = tree.nodeForID(nodeID);
+        if (RefPtr proxyNode = dynamicDowncast<ScrollingTreeOverflowScrollProxyNode>(scrollingNode)) {
+            auto actingOverflowScrollingNodeID = proxyNode->overflowScrollingNodeID();
+            if (actingOverflowScrollingNodeID == scrollingNodeID)
+                return true;
+        }
+
+        if (RefPtr positionedNode = dynamicDowncast<ScrollingTreePositionedNode>(scrollingNode)) {
+            if (positionedNode->relatedOverflowScrollingNodes().contains(scrollingNodeID))
+                return false;
+        }
+
+        layer = layer->parent();
+    }
+
+    return false;
 }
 
 RefPtr<ScrollingTreeNode> ScrollingTreeCoordinated::scrollingNodeForPoint(FloatPoint point)
 {
-    auto* rootScrollingNode = rootNode();
+    RefPtr rootScrollingNode = rootNode();
     if (!rootScrollingNode)
         return nullptr;
 
-    Locker layerLocker { m_layerHitTestMutex };
+    Locker locker { m_layerHitTestMutex };
 
-    auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeCoordinated*>(rootScrollingNode)->rootContentsLayer();
-    Vector<Ref<CoordinatedPlatformLayer>> layersAtPoint;
-    {
-        Locker rootContentsLayerLocker { rootContentsLayer->lock() };
-        collectDescendantLayersAtPoint(layersAtPoint, Ref { *rootContentsLayer }, point);
-    }
+    auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeCoordinated*>(rootScrollingNode.get())->rootContentsLayer();
+    FloatPoint scrollOrigin = rootScrollingNode->scrollOrigin();
+    auto pointInContentsLayer = point;
+    pointInContentsLayer.moveBy(scrollOrigin);
 
-    for (auto& layer : layersAtPoint | std::views::reverse) {
-        Locker locker { layer->lock() };
-        auto* scrollingNode = nodeForID(layer->scrollingNodeID());
-        if (is<ScrollingTreeScrollingNode>(scrollingNode))
+    bool hasAnyNonInteractiveScrollingLayers = false;
+    auto layersAtPoint = layersAtPointToCheckForScrolling(*rootContentsLayer, pointInContentsLayer, hasAnyNonInteractiveScrollingLayers);
+
+    RefPtr<CoordinatedPlatformLayer> frontmostInteractiveLayer;
+    for (size_t i = 0; i < layersAtPoint.size(); ++i) {
+        auto [layer, transformedPoint] = layersAtPoint[i];
+
+        {
+            Locker layerLocker { layer->lock() };
+            if (!layerEventRegionContainsPoint(layer, transformedPoint))
+                continue;
+        }
+
+        if (!frontmostInteractiveLayer)
+            frontmostInteractiveLayer = layer.get();
+
+        auto scrollingNodeForLayer = [&] (auto layer, auto point) -> RefPtr<ScrollingTreeNode> {
+            UNUSED_PARAM(point);
+            std::optional<ScrollingNodeID> nodeID;
+            {
+                Locker layerLocker { layer->lock() };
+                nodeID = layer->scrollingNodeID();
+            }
+            RefPtr scrollingNode = nodeForID(nodeID);
+            if (!is<ScrollingTreeScrollingNode>(scrollingNode))
+                return nullptr;
+            ASSERT(frontmostInteractiveLayer);
+            if (isScrolledBy(*this, *nodeID, frontmostInteractiveLayer.get()))
+                return scrollingNode;
+            return nullptr;
+        };
+
+        if (RefPtr scrollingNode = scrollingNodeForLayer(layer, transformedPoint))
             return scrollingNode;
+
+        // This layer may be scrolled by some other layer further back which may itself be non-interactive.
+        if (hasAnyNonInteractiveScrollingLayers) {
+            for (size_t j = i + 1; j < layersAtPoint.size(); ++j) {
+                auto [behindLayer, behindPoint] = layersAtPoint[j];
+                if (RefPtr scrollingNode = scrollingNodeForLayer(behindLayer, behindPoint))
+                    return scrollingNode;
+            }
+        }
+        // FIXME: Hit-test scroll indicator layers.
     }
 
     return rootScrollingNode;
 }
+
+#if HAVE(DISPLAY_LINK)
+void ScrollingTreeCoordinated::hasNodeWithAnimatedScrollChanged(bool hasNodeWithAnimatedScroll)
+{
+    ASSERT(ScrollingThread::isCurrentThread());
+
+    if (hasNodeWithAnimatedScroll)
+        didScheduleRenderingUpdate();
+
+    RefPtr scrollingCoordinator = m_scrollingCoordinator;
+    if (!scrollingCoordinator)
+        return;
+    scrollingCoordinator->hasNodeWithAnimatedScrollChanged(hasNodeWithAnimatedScroll);
+}
+#endif
+
+#if ENABLE(WHEEL_EVENT_REGIONS)
+OptionSet<EventListenerRegionType> ScrollingTreeCoordinated::eventListenerRegionTypesForPoint(FloatPoint point) const
+{
+    RefPtr rootScrollingNode = rootNode();
+    if (!rootScrollingNode)
+        return { };
+
+    Locker locker { m_layerHitTestMutex };
+
+    auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeCoordinated*>(rootScrollingNode.get())->rootContentsLayer();
+
+    Vector<LayerAndPoint, 16> layersAtPoint;
+    collectDescendantLayersAtPoint(layersAtPoint, *rootContentsLayer, point, [&] (auto layer, auto transformedPoint) {
+        assertIsHeld(layer->lock());
+        return layerEventRegionContainsPoint(layer, transformedPoint);
+    });
+
+    if (layersAtPoint.isEmpty())
+        return { };
+
+    auto [hitLayer, transformedPoint] = layersAtPoint.last();
+
+    Locker hitLayerLocker { hitLayer->lock() };
+    return hitLayer->eventRegion().eventListenerRegionTypesForPoint(roundedIntPoint(transformedPoint));
+}
+#endif
+
+#if ENABLE(COORDINATED_TOUCH_EVENTS)
+static std::optional<LayerAndPoint> findLayerOfEventRegionAtPoint(const ScrollingTreeCoordinated& scrollingTree, FloatPoint point)
+{
+    RefPtr rootScrollingNode = scrollingTree.rootNode();
+    if (!rootScrollingNode)
+        return { };
+
+    ScrollingTree::HitTestLocker hitTestLocker(const_cast<ScrollingTreeCoordinated&>(scrollingTree));
+
+    Ref rootContentsLayer = *static_cast<ScrollingTreeFrameScrollingNodeCoordinated*>(rootScrollingNode.get())->rootContentsLayer();
+
+    Vector<LayerAndPoint, 16> layersAtPoint;
+    collectDescendantLayersAtPoint(layersAtPoint, rootContentsLayer, point, [&] (auto layer, auto transformedPoint) {
+        assertIsHeld(layer->lock());
+        return layerEventRegionContainsPoint(layer, transformedPoint);
+    });
+
+    if (layersAtPoint.isEmpty())
+        return { };
+
+    return layersAtPoint.last();
+}
+
+static TrackingType mergeTrackingTypes(TrackingType a, TrackingType b)
+{
+    if (static_cast<uintptr_t>(b) > static_cast<uintptr_t>(a))
+        return b;
+    return a;
+}
+
+TrackingType ScrollingTreeCoordinated::eventTrackingTypeForTouchEvent(const PlatformTouchEvent& event)
+{
+    auto offset = mainFrameScrollOffset();
+    if (!offset)
+        return TrackingType::NotTracking;
+
+    for (auto& touchPoint : event.touchPoints()) {
+        if (touchPoint.state() != PlatformTouchPoint::State::TouchPressed)
+            continue;
+
+        FloatPoint location { touchPoint.pos() };
+        location.move(*offset);
+
+        auto layerAndPoint = findLayerOfEventRegionAtPoint(*this, location);
+        if (!layerAndPoint)
+            continue;
+
+        Locker layerLocker { layerAndPoint->first->lock() };
+        auto& eventRegion = layerAndPoint->first->eventRegion();
+
+        auto update = [&](TrackingType& trackingType, EventTrackingRegions::EventType eventType) {
+            if (trackingType == TrackingType::Synchronous)
+                return;
+
+            auto trackingTypeForLocation = eventRegion.eventTrackingTypeForPoint(eventType, roundedIntPoint(layerAndPoint->second));
+            trackingType = mergeTrackingTypes(trackingType, trackingTypeForLocation);
+        };
+
+        auto& tracking = m_touchEventTracking;
+        using Type = EventTrackingRegions::EventType;
+
+        update(tracking.touchForceChangedTracking, Type::Touchforcechange);
+        update(tracking.touchStartTracking, Type::Touchstart);
+        update(tracking.touchMoveTracking, Type::Touchmove);
+        update(tracking.touchEndTracking, Type::Touchend);
+        update(tracking.touchStartTracking, Type::Pointerover);
+        update(tracking.touchStartTracking, Type::Pointerenter);
+        update(tracking.touchStartTracking, Type::Pointerdown);
+        update(tracking.touchMoveTracking, Type::Pointermove);
+        update(tracking.touchEndTracking, Type::Pointerup);
+        update(tracking.touchEndTracking, Type::Pointerout);
+        update(tracking.touchEndTracking, Type::Pointerleave);
+        update(tracking.touchStartTracking, Type::Mousedown);
+        update(tracking.touchMoveTracking, Type::Mousemove);
+        update(tracking.touchEndTracking, Type::Mouseup);
+        update(tracking.touchEndTracking, Type::Gestureend);
+        update(tracking.touchMoveTracking, Type::Gesturechange);
+        update(tracking.touchStartTracking, Type::Gesturestart);
+    }
+
+    bool allTouchPointsAreReleased = true;
+    auto globalTrackingType = m_touchEventTracking.isTrackingAnything() ? TrackingType::Asynchronous : TrackingType::NotTracking;
+    globalTrackingType = mergeTrackingTypes(globalTrackingType, m_touchEventTracking.touchForceChangedTracking);
+    for (auto& touchPoint : event.touchPoints()) {
+        switch (touchPoint.state()) {
+        case PlatformTouchPoint::State::TouchReleased:
+            globalTrackingType = mergeTrackingTypes(globalTrackingType, m_touchEventTracking.touchEndTracking);
+            break;
+        case PlatformTouchPoint::State::TouchPressed:
+            allTouchPointsAreReleased = false;
+            globalTrackingType = mergeTrackingTypes(globalTrackingType, m_touchEventTracking.touchStartTracking);
+            break;
+        case PlatformTouchPoint::State::TouchMoved:
+        case PlatformTouchPoint::State::TouchStationary:
+            allTouchPointsAreReleased = false;
+            globalTrackingType = mergeTrackingTypes(globalTrackingType, m_touchEventTracking.touchMoveTracking);
+            break;
+        case PlatformTouchPoint::State::TouchCancelled:
+            globalTrackingType = mergeTrackingTypes(globalTrackingType, TrackingType::Asynchronous);
+            break;
+        case PlatformTouchPoint::State::TouchStateEnd:
+            ASSERT_NOT_REACHED();
+            break;
+        }
+    }
+
+    if (allTouchPointsAreReleased)
+        m_touchEventTracking.reset();
+
+    return globalTrackingType;
+}
+#endif
 
 } // namespace WebCore
 

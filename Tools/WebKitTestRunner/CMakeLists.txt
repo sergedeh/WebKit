@@ -28,6 +28,11 @@ set(WebKitTestRunner_FRAMEWORKS
     WebKit
     bmalloc
 )
+# WKTR uses WebKit2 only and needs no WebKitLegacy (WebKit1) headers, so skip it
+# on iOS. It is kept on macOS for now; removing it there is separate cleanup.
+if (APPLE AND NOT WEBKIT_SDK_IS_IOS_FAMILY)
+    list(APPEND WebKitTestRunner_FRAMEWORKS WebKitLegacy)
+endif ()
 
 if (COMPILER_IS_GCC_OR_CLANG)
     if (HAVE_STD_EXPERIMENTAL_FILESYSTEM)
@@ -48,22 +53,23 @@ set(WebKitTestRunner_WEB_PREFERENCES_TEMPLATES
 
 set(WebKitTestRunner_WEB_PREFERENCES
     ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml
+    ${WEB_PREFERENCES_ADDITIONS}
 )
 
 set_source_files_properties(${WebKitTestRunner_WEB_PREFERENCES} PROPERTIES GENERATED TRUE)
 
 add_custom_command(
     OUTPUT ${WebKitTestRunner_DERIVED_SOURCES_DIR}/TestOptionsGeneratedKeys.h
-    DEPENDS ${WebKitTestRunner_WEB_PREFERENCES_TEMPLATES} ${WebKitTestRunner_WEB_PREFERENCES} WTF_CopyPreferences
-    COMMAND ${RUBY_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend WebKit --outputDir "${WebKitTestRunner_DERIVED_SOURCES_DIR}" --template ${WebKitTestRunner_DIR}/Scripts/PreferencesTemplates/TestOptionsGeneratedKeys.h.erb ${WebKitTestRunner_WEB_PREFERENCES}
+    DEPENDS ${WebKitTestRunner_WEB_PREFERENCES_TEMPLATES} ${WebKitTestRunner_WEB_PREFERENCES} WTF_CopyPreferences ${WEBKITADDITIONS_HEADERS_DEPENDENCIES}
+    COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend WebKit --outputDir "${WebKitTestRunner_DERIVED_SOURCES_DIR}" --template ${WebKitTestRunner_DIR}/Scripts/PreferencesTemplates/TestOptionsGeneratedKeys.h.erb ${WebKitTestRunner_WEB_PREFERENCES}
     COMMAND_EXPAND_LISTS
     VERBATIM)
 
-list(APPEND WebKitTestRunner_SOURCES
-    ${WebKitTestRunner_DERIVED_SOURCES_DIR}/TestOptionsGeneratedKeys.h
+add_custom_target(WebKitTestRunnerGeneratedPreferences
+    DEPENDS ${WebKitTestRunner_DERIVED_SOURCES_DIR}/TestOptionsGeneratedKeys.h
 )
 
-set(WebKitTestRunner_DEPENDENCIES TestRunnerInjectedBundle)
+set(WebKitTestRunner_DEPENDENCIES TestRunnerInjectedBundle WebKitTestRunnerGeneratedPreferences)
 
 set(TestRunnerInjectedBundle_SOURCES
     InjectedBundle/AccessibilityController.cpp
@@ -86,7 +92,13 @@ set(TestRunnerInjectedBundle_PRIVATE_INCLUDE_DIRECTORIES
     ${WebKitTestRunner_DIR}/InjectedBundle
 )
 
-set(TestRunnerInjectedBundle_LIBRARY_TYPE SHARED)
+# macOS: MODULE + BUNDLE TRUE (PlatformMac) emits a CFBundle matching Xcode's MH_BUNDLE output.
+# Other ports: SHARED dylib/so.
+if (APPLE)
+    set(TestRunnerInjectedBundle_LIBRARY_TYPE MODULE)
+else ()
+    set(TestRunnerInjectedBundle_LIBRARY_TYPE SHARED)
+endif ()
 set(TestRunnerInjectedBundle_PRIVATE_LIBRARIES
     WebKit::TestRunnerShared
     WebKit::WebCoreTestSupport
@@ -122,7 +134,9 @@ WEBKIT_LIBRARY_DECLARE(TestRunnerInjectedBundle)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
 
 WEBKIT_LIBRARY(TestRunnerInjectedBundle)
+WEBKIT_ADD_PREFIX_HEADER(TestRunnerInjectedBundle WebKitTestRunnerPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
 WEBKIT_EXECUTABLE(WebKitTestRunner)
+WEBKIT_ADD_PREFIX_HEADER(WebKitTestRunner WebKitTestRunnerPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
 
 if (COMPILER_IS_GCC_OR_CLANG)
     WEBKIT_ADD_TARGET_CXX_FLAGS(TestRunnerInjectedBundle -Wno-unused-parameter)

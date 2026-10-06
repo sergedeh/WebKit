@@ -20,11 +20,6 @@ ContextImpl::ContextImpl(const gl::State &state, gl::ErrorSet *errorSet)
 
 ContextImpl::~ContextImpl() {}
 
-void ContextImpl::invalidateTexture(gl::TextureType target)
-{
-    UNREACHABLE();
-}
-
 angle::Result ContextImpl::startTiling(const gl::Context *context,
                                        const gl::Rectangle &area,
                                        GLbitfield preserveMask)
@@ -101,6 +96,12 @@ angle::Result ContextImpl::releaseTextures(const gl::Context *context,
 {
     UNREACHABLE();
     return angle::Result::Stop;
+}
+
+const angle::PerfMonitorCounterGroupsInfo &ContextImpl::getPerfMonitorCountersInfo() const
+{
+    static angle::base::NoDestructor<angle::PerfMonitorCounterGroupsInfo> sCountersInfo;
+    return *sCountersInfo;
 }
 
 const angle::PerfMonitorCounterGroups &ContextImpl::getPerfMonitorCounters()

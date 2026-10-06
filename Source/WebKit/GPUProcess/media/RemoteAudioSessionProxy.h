@@ -49,6 +49,7 @@ struct SharedPreferencesForWebProcess;
 class RemoteAudioSessionProxy
     : public RefCounted<RemoteAudioSessionProxy>, public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteAudioSessionProxy);
+    friend class RemoteAudioSessionProxyManager;
 public:
     static Ref<RemoteAudioSessionProxy> create(GPUConnectionToWebProcess& gpuConnection)
     {
@@ -74,7 +75,7 @@ public:
     void beginInterruption();
     void endInterruption(WebCore::AudioSession::MayResume);
 
-    const String& sceneIdentifier() const { return m_sceneIdentifier; }
+    const String& sceneIdentifier() const LIFETIME_BOUND { return m_sceneIdentifier; }
     void setSceneIdentifier(const String&);
 
     WebCore::AudioSession::SoundStageSize soundStageSize() const { return m_soundStageSize; }
@@ -99,7 +100,10 @@ private:
     void setPreferredBufferSize(uint64_t);
     using SetActiveCompletion = CompletionHandler<void(bool)>;
     void tryToSetActive(bool, SetActiveCompletion&&);
+    void tryToSetActiveSync(bool, SetActiveCompletion&&);
     void setIsPlayingToBluetoothOverride(std::optional<bool>&& value);
+    void systemCategoryForTesting(CompletionHandler<void(WebCore::AudioSessionCategory)>&&);
+    void systemActivationCountForTesting(CompletionHandler<void(uint64_t)>&&);
     void triggerBeginInterruptionForTesting();
     void triggerEndInterruptionForTesting();
 
@@ -107,8 +111,7 @@ private:
     void endInterruptionRemote(WebCore::AudioSession::MayResume);
 
     RemoteAudioSessionProxyManager& audioSessionManager();
-    Ref<RemoteAudioSessionProxyManager> protectedAudioSessionManager();
-    Ref<IPC::Connection> protectedConnection() const;
+    IPC::Connection& connection() const;
 
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnection;
     WebCore::AudioSession::CategoryType m_category { WebCore::AudioSession::CategoryType::None };

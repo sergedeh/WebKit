@@ -40,6 +40,7 @@
 #include "DocumentPage.h"
 #include "EventLoop.h"
 #include "EventNames.h"
+#include "JSDOMConvertBoolean.h"
 #include "JSMediaKeyStatusMap.h"
 #include "Logging.h"
 #include "MediaKeyMessageEvent.h"
@@ -53,6 +54,8 @@
 #include "SecurityOriginData.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
+#include <JavaScriptCore/HeapCellInlines.h>
+#include <JavaScriptCore/StrongInlines.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -129,6 +132,14 @@ const String& MediaKeySession::sessionId() const
     return m_sessionId;
 }
 
+bool MediaKeySession::hasSecurityOrigin(const String& origin) const
+{
+    String sessionOrigin;
+    if (RefPtr document = downcast<Document>(scriptExecutionContext()))
+        sessionOrigin = protect(document->securityOrigin())->toString();
+    return origin == sessionOrigin;
+}
+
 double MediaKeySession::expiration() const
 {
     return m_expiration;
@@ -148,7 +159,7 @@ void MediaKeySession::generateRequest(const AtomString& initDataType, const Buff
     // 1. If this object is closed, return a promise rejected with an InvalidStateError.
     // 2. If this object's uninitialized value is false, return a promise rejected with an InvalidStateError.
     auto identifier = LOGIDENTIFIER;
-    ALWAYS_LOG(identifier, "initDataType(", initDataType, "), initData.length(", initData.length(), ")");
+    ALWAYS_LOG(identifier, "initDataType(", initDataType, "), initData.byteLength(", initData.byteLength(), ")");
 
     if (m_closed || !m_uninitialized) {
         ERROR_LOG(identifier, "Rejected: closed(", m_closed, ") or !uninitialized(", !m_uninitialized, ")");
@@ -161,8 +172,8 @@ void MediaKeySession::generateRequest(const AtomString& initDataType, const Buff
 
     // 4. If initDataType is the empty string, return a promise rejected with a newly created TypeError.
     // 5. If initData is an empty array, return a promise rejected with a newly created TypeError.
-    if (initDataType.isEmpty() || !initData.length()) {
-        ERROR_LOG(identifier, "Rejected: initDataType empty(", initDataType.isEmpty(), ") or initData empty(", !initData.length(), ")");
+    if (initDataType.isEmpty() || !initData.byteLength()) {
+        ERROR_LOG(identifier, "Rejected: initDataType empty(", initDataType.isEmpty(), ") or initData empty(", !initData.byteLength(), ")");
         promise->reject(ExceptionCode::TypeError);
         return;
     }
@@ -320,19 +331,27 @@ void MediaKeySession::load(const String& sessionId, Ref<DeferredPromise>&& promi
             return;
         }
 
-        // 8.3. If there is a MediaKeySession object that is not closed in this object's Document whose sessionId attribute is sanitized session ID, reject promise with a QuotaExceededError.
-        // FIXME: This needs a global MediaKeySession tracker.
-
         String origin;
         if (RefPtr document = downcast<Document>(session.scriptExecutionContext()))
-            origin = document->securityOrigin().toString();
+            origin = protect(document->securityOrigin())->toString();
+
+        // 8.3. If there is a MediaKeySession object that is not closed in this object's Document whose sessionId attribute is sanitized session ID, reject promise with a QuotaExceededError.
+        if (session.m_keys && session.m_keys->hasOpenSessionWithIdForOrigin(sanitizedSessionId.value(), WTF::move(origin))) {
+            ERROR_LOG_WITH_THIS(&session, identifier, "Rejected: Another open MediaKeySession with the same session ID already exists for this security origin");
+            promise->reject(ExceptionCode::QuotaExceededError);
+            return;
+        }
 
         // 8.4. Let expiration time be NaN.
         // 8.5. Let message be null.
         // 8.6. Let message type be null.
         // 8.7. Let cdm be the CDM instance represented by this object's cdm instance value.
         // 8.8. Use the cdm to execute the following steps:
-        session.m_instanceSession->loadSession(session.m_sessionType, *sanitizedSessionId, origin, [weakThis = WeakPtr { session }, promise = WTF::move(promise), sanitizedSessionId = *sanitizedSessionId, identifier = WTF::move(identifier)] (std::optional<CDMInstanceSession::KeyStatusVector>&& knownKeys, std::optional<double>&& expiration, std::optional<CDMInstanceSession::Message>&& message, CDMInstanceSession::SuccessValue succeeded, CDMInstanceSession::SessionLoadFailure failure) mutable {
+        session.m_instanceSession->loadSession(session.m_sessionType, *sanitizedSessionId, origin,
+            [weakThis = WeakPtr { session }, promise = WTF::move(promise), sanitizedSessionId = *sanitizedSessionId, identifier = WTF::move(identifier), origin]
+            (std::optional<CDMInstanceSession::KeyStatusVector>&& knownKeys, std::optional<double>&& expiration,
+            std::optional<CDMInstanceSession::Message>&& message, CDMInstanceSession::SuccessValue succeeded,
+            CDMInstanceSession::SessionLoadFailure failure) mutable {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis) {
                 promise->reject(ExceptionCode::InvalidStateError);
@@ -372,7 +391,17 @@ void MediaKeySession::load(const String& sessionId, Ref<DeferredPromise>&& promi
             }
 
             // 8.9. Queue a task to run the following steps:
-            queueTaskKeepingObjectAlive(*protectedThis, TaskSource::Networking, [knownKeys = WTF::move(knownKeys), expiration = WTF::move(expiration), message = WTF::move(message), sanitizedSessionId, succeeded, promise = WTF::move(promise), identifier = WTF::move(identifier)](auto& session) mutable {
+            queueTaskKeepingObjectAlive(*protectedThis, TaskSource::Networking, [knownKeys = WTF::move(knownKeys), expiration = WTF::move(expiration), message = WTF::move(message), sanitizedSessionId, succeeded, promise = WTF::move(promise), identifier = WTF::move(identifier), origin = WTF::move(origin)](auto& session) mutable {
+                // We must reevaluate condition 8.3 to avoid a race condition in case the id of the sessions
+                // compared before were empty at the moment of comparison because they were in the middle of a
+                // session loading that completed asynchronously. Their ids should have settled now, so let's
+                // check again.
+                if (session.m_keys && session.m_keys->hasOpenSessionWithIdForOrigin(sanitizedSessionId, origin)) {
+                    ERROR_LOG_WITH_THIS(&session, identifier, "Rejected (later): Another open MediaKeySession with the same session ID already exists for this security origin");
+                    promise->reject(ExceptionCode::QuotaExceededError);
+                    return;
+                }
+
                 // 8.9.1. If any of the preceding steps failed, reject promise with a the appropriate error name.
                 if (succeeded == CDMInstanceSession::SuccessValue::Failed) {
                     ERROR_LOG_WITH_THIS(&session, identifier, "::task() Rejected: Other failure");
@@ -416,7 +445,7 @@ void MediaKeySession::update(const BufferSource& response, Ref<DeferredPromise>&
     // 1. If this object is closed, return a promise rejected with an InvalidStateError.
     // 2. If this object's callable value is false, return a promise rejected with an InvalidStateError.
     auto identifier = LOGIDENTIFIER;
-    ALWAYS_LOG(identifier, "response.length(", response.length(), ")");
+    ALWAYS_LOG(identifier, "response.byteLength(", response.byteLength(), ")");
 
     if (m_closed || !m_callable) {
         ERROR_LOG(identifier, "Rejected: closed(", m_closed, ") or !callable(", !m_callable, ")");
@@ -425,7 +454,7 @@ void MediaKeySession::update(const BufferSource& response, Ref<DeferredPromise>&
     }
 
     // 3. If response is an empty array, return a promise rejected with a newly created TypeError.
-    if (!response.length()) {
+    if (!response.byteLength()) {
         ERROR_LOG(identifier, "Rejected: empty response");
         promise->reject(ExceptionCode::TypeError);
         return;
@@ -551,7 +580,7 @@ void MediaKeySession::close(Ref<DeferredPromise>&& promise)
 
     // 1. Let session be the associated MediaKeySession object.
     // 2. If session is closed, return a resolved promise.
-    ALWAYS_LOG(identifier, "EME - closing session ", m_sessionId.utf8().data());
+    ALWAYS_LOG(identifier, "EME - closing session ", m_sessionId);
 
     if (m_closed) {
         ALWAYS_LOG(identifier, "Resolved: already closed");
@@ -676,7 +705,10 @@ void MediaKeySession::enqueueMessage(MediaKeyMessageType messageType, const Shar
     // 2. Queue a task to create an event named message that does not bubble and is not cancellable using the MediaKeyMessageEvent
     //    interface with its type attribute set to message and its isTrusted attribute initialized to true, and dispatch it at the
     //    session.
-    auto messageEvent = MediaKeyMessageEvent::create(eventNames().messageEvent, {messageType, message.tryCreateArrayBuffer()}, Event::IsTrusted::Yes);
+    RefPtr buffer = message.tryCreateArrayBuffer();
+    if (!buffer)
+        return;
+    auto messageEvent = MediaKeyMessageEvent::create(eventNames().messageEvent, MediaKeyMessageEventInit { { }, messageType, buffer.releaseNonNull() }, Event::IsTrusted::Yes);
     queueTaskToDispatchEvent(*this, TaskSource::Networking, WTF::move(messageEvent));
 }
 
@@ -762,7 +794,7 @@ void MediaKeySession::sessionIdChanged(const String& sessionId)
 
 PlatformDisplayID MediaKeySession::displayID()
 {
-    RefPtr document = downcast<Document>(scriptExecutionContext());
+    auto* document = downcast<Document>(scriptExecutionContext());
     if (!document)
         return 0;
 
@@ -772,9 +804,15 @@ PlatformDisplayID MediaKeySession::displayID()
     return 0;
 }
 
-void MediaKeySession::updateExpiration(double)
+void MediaKeySession::updateExpiration(double newExpiration)
 {
-    notImplemented();
+    // https://w3c.github.io/encrypted-media/#update-expiration
+    // 1. Let the session be the associated MediaKeySession object.
+    // 2. Let expiration time be NaN.
+    // 3. If the license(s) and/or key(s) associated with the session expire at a specific time,
+    //    let expiration time be the expiration time in milliseconds since 01 January 1970 UTC.
+    // 4. Set the session's expiration attribute to expiration time.
+    m_expiration = newExpiration;
 }
 
 void MediaKeySession::sessionClosed()
@@ -782,6 +820,12 @@ void MediaKeySession::sessionClosed()
     // https://w3c.github.io/encrypted-media/#session-closed
     // W3C Editor's Draft 09 November 2016
     ALWAYS_LOG(LOGIDENTIFIER);
+
+    // close(), stop(), and a CDM-reported close during update() each queue a task that lands here. They guard on
+    // m_closed before enqueuing, but it is only set when the task runs, so more than one task can already be queued.
+    // Update m_closed here to ensure the promise is only resolved once, and avoid an assertion in DOMPromiseProxy.
+    if (std::exchange(m_closed, true))
+        return;
 
     // 1. Let session be the associated MediaKeySession object.
     // 2. If session's session type is "persistent-usage-record", execute the following steps in parallel:
@@ -797,11 +841,16 @@ void MediaKeySession::sessionClosed()
     // 4. Run the Update Expiration algorithm on the session, providing NaN.
     updateExpiration(std::numeric_limits<double>::quiet_NaN());
 
-    // Let's consider the session closed before any promise on the 'closed' attribute is resolved.
-    m_closed = true;
-
     // 5. Let promise be the closed attribute of the session.
     // 6. Resolve promise.
+    // Skip if the context is stopping (e.g. a back/forward-cached page being pruned); otherwise resolving the
+    // promise trips DeferredPromise's suspended-context assertion.
+    RefPtr context = scriptExecutionContext();
+    if (!context || context->activeDOMObjectsAreStopped()) {
+        ALWAYS_LOG(LOGIDENTIFIER, "Context is stopping; not resolving closed promise");
+        return;
+    }
+
     m_closedPromise->resolve();
 }
 
@@ -845,6 +894,8 @@ void MediaKeySession::stop()
         if (!protectedThis)
             return;
 
+        // Run Session Closed synchronously to avoid the CDM session outliving the page and leaking into the next
+        // navigation.
         ALWAYS_LOG_WITH_THIS(protectedThis, logIdentifier, "::lambda, closed");
         protectedThis->sessionClosed();
     });

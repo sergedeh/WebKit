@@ -29,8 +29,10 @@
 
 #if ENABLE(MATHML)
 
+#include "NodeDocument.h"
 #include "RenderMathMLScripts.h"
 #include "Settings.h"
+#include "StyleComputedStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -39,7 +41,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(MathMLScriptsElement);
 
 using namespace MathMLNames;
 
-static MathMLScriptsElement::ScriptType scriptTypeOf(const QualifiedName& tagName)
+static MathMLScriptsElement::ScriptType NODELETE scriptTypeOf(const QualifiedName& tagName)
 {
     if (tagName.matches(msubTag))
         return MathMLScriptsElement::ScriptType::Sub;
@@ -90,7 +92,7 @@ void MathMLScriptsElement::attributeChanged(const QualifiedName& name, const Ato
     MathMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
-RenderPtr<RenderElement> MathMLScriptsElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> MathMLScriptsElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     ASSERT(hasTagName(msubTag) || hasTagName(msupTag) || hasTagName(msubsupTag) || hasTagName(mmultiscriptsTag));
     return createRenderer<RenderMathMLScripts>(RenderObject::Type::MathMLScripts, *this, WTF::move(style));

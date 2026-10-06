@@ -75,7 +75,7 @@ public:
 #elif USE(CURL)
     Data(Variant<Vector<uint8_t>, FileSystem::MappedFileData>&&);
 #endif
-    bool isNull() const;
+    bool NODELETE isNull() const;
     bool isEmpty() const { return !size(); }
 
     std::span<const uint8_t> span() const LIFETIME_BOUND;
@@ -91,7 +91,6 @@ public:
 
 #if PLATFORM(COCOA)
     dispatch_data_t dispatchData() const { return m_dispatchData.get(); }
-    OSObjectPtr<dispatch_data_t> protectedDispatchData() const;
     Data copyData() const;
 #endif
 

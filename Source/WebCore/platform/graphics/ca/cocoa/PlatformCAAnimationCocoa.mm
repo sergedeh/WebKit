@@ -134,7 +134,7 @@ RetainPtr<CAMediaTimingFunction> toCAMediaTimingFunction(const TimingFunction& t
         std::reference_wrapper<const CubicBezierTimingFunction> function = *cubic;
 
         if (reverse) {
-            reversed = function.get().createReversed();
+            reversed = protect(function.get())->createReversed();
             function = *reversed;
         }
 
@@ -165,16 +165,16 @@ PlatformCAAnimationCocoa::PlatformCAAnimationCocoa(AnimationType type, const Str
 {
     switch (type) {
     case AnimationType::Basic:
-        m_animation = [CABasicAnimation animationWithKeyPath:keyPath.createNSString().get()];
+        lazyInitialize(m_animation, retainPtr([CABasicAnimation animationWithKeyPath:keyPath.createNSString().get()]));
         break;
     case AnimationType::Group:
-        m_animation = [CAAnimationGroup animation];
+        lazyInitialize(m_animation, retainPtr([CAAnimationGroup animation]));
         break;
     case AnimationType::Keyframe:
-        m_animation = [CAKeyframeAnimation animationWithKeyPath:keyPath.createNSString().get()];
+        lazyInitialize(m_animation, retainPtr([CAKeyframeAnimation animationWithKeyPath:keyPath.createNSString().get()]));
         break;
     case AnimationType::Spring:
-        m_animation = [CASpringAnimation animationWithKeyPath:keyPath.createNSString().get()];
+        lazyInitialize(m_animation, retainPtr([CASpringAnimation animationWithKeyPath:keyPath.createNSString().get()]));
         break;
     }
 }
@@ -196,12 +196,10 @@ PlatformCAAnimationCocoa::PlatformCAAnimationCocoa(PlatformAnimationRef animatio
         return;
     }
     
-    m_animation = caAnimation;
+    lazyInitialize(m_animation, retainPtr(caAnimation));
 }
 
-PlatformCAAnimationCocoa::~PlatformCAAnimationCocoa()
-{
-}
+PlatformCAAnimationCocoa::~PlatformCAAnimationCocoa() = default;
 
 Ref<PlatformCAAnimation> PlatformCAAnimationCocoa::copy() const
 {
@@ -219,7 +217,7 @@ Ref<PlatformCAAnimation> PlatformCAAnimationCocoa::copy() const
     animation->copyTimingFunctionFrom(*this);
     animation->setValueFunction(valueFunction());
 
-    setHasExplicitBeginTime(downcast<PlatformCAAnimationCocoa>(animation.get()).platformAnimation(), hasExplicitBeginTime(platformAnimation()));
+    setHasExplicitBeginTime(protect(downcast<PlatformCAAnimationCocoa>(animation.get()).platformAnimation()), hasExplicitBeginTime(protect(platformAnimation())));
     
     // Copy the specific Basic or Keyframe values.
     if (animationType() == AnimationType::Keyframe) {

@@ -31,11 +31,8 @@
 #include <WebCore/IOSurfaceDrawingBuffer.h>
 #include <WebCore/ProcessIdentity.h>
 #include <array>
-#include <wtf/CheckedPtr.h>
-
-#if ENABLE(MEDIA_STREAM)
 #include <memory>
-#endif
+#include <wtf/CheckedPtr.h>
 
 #if ENABLE(WEBXR)
 #include <WebCore/PlatformXR.h>
@@ -53,10 +50,6 @@ class GraphicsLayerContentsDisplayDelegate;
 
 #if ENABLE(VIDEO)
 class GraphicsContextGLCVCocoa;
-#endif
-
-#if ENABLE(MEDIA_STREAM)
-class ImageRotationSessionVT;
 #endif
 
 // IOSurface backing store for an image of a texture.
@@ -79,9 +72,7 @@ class WEBCORE_EXPORT GraphicsContextGLCocoa : public GraphicsContextGLANGLE, pub
 public:
     static RefPtr<GraphicsContextGLCocoa> create(WebCore::GraphicsContextGLAttributes&&, ProcessIdentity&& resourceOwner);
     ~GraphicsContextGLCocoa();
-    IOSurface* displayBufferSurface();
-
-    std::tuple<GCGLenum, GCGLenum> externalImageTextureBindingPoint() final;
+    IOSurface* NODELETE displayBufferSurface();
 
     enum class PbufferAttachmentUsage { Read, Write, ReadWrite };
     // Returns a handle which, if non-null, must be released via the
@@ -101,8 +92,6 @@ public:
     GCGLExternalSync createExternalSync(ExternalSyncSource&&) final;
     bool enableRequiredWebXRExtensions() final;
 
-    // GL_EXT_discard_framebuffer
-    void framebufferDiscard(GCGLenum, std::span<const GCGLenum>) final;
     // GL_WEBKIT_explicit_resolve_target
     void framebufferResolveRenderbuffer(GCGLenum, GCGLenum, GCGLenum, PlatformGLObject) final;
 #endif
@@ -118,10 +107,10 @@ public:
     RefPtr<VideoFrame> surfaceBufferToVideoFrame(SurfaceBuffer) final;
 #endif
     RefPtr<PixelBuffer> readCompositedResults() final;
-    void setDrawingBufferColorSpace(const DestinationColorSpace&) final;
+    void setDrawingBufferColorSpace(const ColorSpace&) final;
     void prepareForDisplay() override;
 
-    RefPtr<NativeImage> copyNativeImageYFlipped(SurfaceBuffer) override;
+    RefPtr<NativeImage> copyNativeImage(SurfaceBuffer) override;
 
     // Prepares current frame for display. The `finishedSignal` will be invoked once the frame has finished rendering.
     void prepareForDisplayWithFinishedSignal(Function<void()> finishedSignal);
@@ -135,12 +124,13 @@ protected:
     bool platformInitialize() final;
     void invalidateKnownTextureContent(GCGLuint) final;
     bool reshapeDrawingBuffer() final;
-    void prepareForDrawingBufferWrite() final;
 
-    IOSurfacePbuffer& drawingBuffer();
-    IOSurfacePbuffer& displayBuffer();
-    IOSurfacePbuffer& surfaceBuffer(SurfaceBuffer);
+    IOSurfacePbuffer& NODELETE drawingBuffer();
+    IOSurfacePbuffer& NODELETE displayBuffer();
+    IOSurfacePbuffer& NODELETE copyBuffer();
+    IOSurfacePbuffer& NODELETE surfaceBuffer(SurfaceBuffer);
     bool bindNextDrawingBuffer();
+    IOSurfacePbuffer createDrawingBuffer();
     void freeDrawingBuffers();
 
     // Inserts new fence that will invoke `signal` from a background thread when completed.
@@ -153,18 +143,15 @@ protected:
     GraphicsContextGLCV* cvContext();
 #endif
     void* createMetalSharedEventEGLSync(id, uint64_t);
+    RetainPtr<IOSurfaceRef> copySurfaceBuffer(SurfaceBuffer);
 
     ProcessIdentity m_resourceOwner;
-    DestinationColorSpace m_drawingBufferColorSpace;
+    ColorSpace m_drawingBufferColorSpace;
 #if ENABLE(VIDEO)
-    std::unique_ptr<GraphicsContextGLCVCocoa> m_cv;
+    const std::unique_ptr<GraphicsContextGLCVCocoa> m_cv;
 #endif
-#if ENABLE(MEDIA_STREAM)
-    std::unique_ptr<ImageRotationSessionVT> m_mediaSampleRotationSession;
-    IntSize m_mediaSampleRotationSessionSize;
-#endif
-    RetainPtr<MTLSharedEventListener> m_finishedMetalSharedEventListener;
-    RetainPtr<id> m_finishedMetalSharedEvent; // FIXME: Remove all C++ includees and use id<MTLSharedEvent>.
+    const RetainPtr<MTLSharedEventListener> m_finishedMetalSharedEventListener;
+    const RetainPtr<id> m_finishedMetalSharedEvent; // FIXME: Remove all C++ includees and use id<MTLSharedEvent>.
 #if ENABLE(WEBXR)
     using RasterizationRateMapArray =  EnumeratedArray<PlatformXR::Layout, RetainPtr<MTLRasterizationRateMap>, PlatformXR::Layout::Layered>;
     RasterizationRateMapArray m_rasterizationRateMap;

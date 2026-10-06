@@ -33,9 +33,26 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/text/MakeString.h>
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/BrowsingWarningAdditions.mm>)
+#import <WebKitAdditions/BrowsingWarningAdditions.mm>
+#endif
+
+#if !defined(BROWSING_WARNING_PROVIDER_ADDITIONS)
+#define BROWSING_WARNING_PROVIDER_ADDITIONS
+#endif
+
+#if !defined(BROWSING_WARNING_PROVIDER_SHORT_NAME_ADDITIONS)
+#define BROWSING_WARNING_PROVIDER_SHORT_NAME_ADDITIONS
+#endif
+
+#if !defined(BROWSING_WARNING_DETAILS_TEXT_ADDITIONS)
+#define BROWSING_WARNING_DETAILS_TEXT_ADDITIONS
+#endif
+
 NSString * const SSBProviderGoogle = @"SSBProviderGoogle";
 NSString * const SSBProviderTencent = @"SSBProviderTencent";
 NSString * const SSBProviderApple = @"SSBProviderApple";
+BROWSING_WARNING_PROVIDER_ADDITIONS
 
 namespace WebKit {
 
@@ -71,10 +88,10 @@ static String localizedProviderShortName(SSBServiceLookupResult *result)
         return "Tencent"_s;
     if ([result.provider isEqual:SSBProviderApple])
         return "Apple"_s;
+    BROWSING_WARNING_PROVIDER_SHORT_NAME_ADDITIONS
     ASSERT_NOT_REACHED();
     return ""_s;
 }
-
 
 static void replace(NSMutableAttributedString *string, NSString *toReplace, NSString *replaceWith)
 {
@@ -114,7 +131,7 @@ static NSString *browsingWarningTitleText(SSBServiceLookupResult *result)
 static NSString *browsingWarningTitleText(BrowsingWarning::Data data)
 {
     return WTF::switchOn(data, [&] (BrowsingWarning::SafeBrowsingWarningData data) {
-        return browsingWarningTitleText(data.result.get());
+        return browsingWarningTitleText(protect(data.result));
     }, [&] (BrowsingWarning::HTTPSNavigationFailureData) {
         return WEB_UI_NSSTRING(@"This Connection Is Not Secure", "Not Secure Connection warning page title");
     });
@@ -134,7 +151,7 @@ static NSString *browsingWarningText(SSBServiceLookupResult *result)
 static NSString *browsingWarningText(BrowsingWarning::Data data)
 {
     return WTF::switchOn(data, [&] (BrowsingWarning::SafeBrowsingWarningData data) {
-        return browsingWarningText(data.result.get());
+        return browsingWarningText(protect(data.result));
     }, [&] (BrowsingWarning::HTTPSNavigationFailureData) {
         return WEB_UI_NSSTRING(@"This website does not support connecting securely over HTTPS. The information you see and enter on this website, including credit cards, phone numbers, and passwords, can be read and altered by other people.", "Not Secure Connection warning text");
     });
@@ -142,6 +159,8 @@ static NSString *browsingWarningText(BrowsingWarning::Data data)
 
 static NSMutableAttributedString *browsingDetailsText(const URL& url, SSBServiceLookupResult *result)
 {
+    BROWSING_WARNING_DETAILS_TEXT_ADDITIONS;
+
     if (result.isPhishing) {
         RetainPtr phishingDescription = WEB_UI_NSSTRING(@"Warnings are shown for websites that have been reported as deceptive. Deceptive websites try to trick you into believing they are legitimate websites you trust.", "Phishing warning description");
         RetainPtr learnMore = WEB_UI_NSSTRING(@"Learn more…", "Action from safe browsing warning");
@@ -182,7 +201,7 @@ static NSMutableAttributedString *browsingDetailsText(const URL& url, SSBService
 static NSMutableAttributedString *browsingDetailsText(const URL& url, BrowsingWarning::Data data)
 {
     if (auto* safeBrowsingData = std::get_if<BrowsingWarning::SafeBrowsingWarningData>(&data))
-        return browsingDetailsText(url, safeBrowsingData->result.get());
+        return browsingDetailsText(url, protect(safeBrowsingData->result));
     return nil;
 }
 

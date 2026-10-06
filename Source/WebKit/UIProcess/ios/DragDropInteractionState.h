@@ -30,6 +30,7 @@
 #import "UIKitSPI.h"
 #import <WebCore/DragActions.h>
 #import <WebCore/DragData.h>
+#import <WebCore/FrameIdentifier.h>
 #import <WebCore/Path.h>
 #import <WebCore/TextIndicator.h>
 #import <WebCore/WebItemProviderPasteboard.h>
@@ -59,6 +60,7 @@ struct DragSourceState {
     bool containsSelection { false };
 
     NSInteger itemIdentifier { 0 };
+    std::optional<WebCore::FrameIdentifier> frameID;
 };
 
 using DragItemToPreviewMap = HashMap<RetainPtr<UIDragItem>, RetainPtr<UITargetedDragPreview>>;
@@ -72,13 +74,13 @@ public:
     // These helper methods are unique to UIDragInteraction.
     void prepareForDragSession(id <UIDragSession>, dispatch_block_t completionHandler);
     void dragSessionWillBegin();
-    void stageDragItem(const WebCore::DragItem&, DragSourceState::DragPreviewContentType);
+    void stageDragItem(const WebCore::DragItem&, DragSourceState::DragPreviewContentType, const std::optional<WebCore::FrameIdentifier>&);
     bool hasStagedDragSource() const;
-    const DragSourceState& stagedDragSource() const { return m_stagedDragSource.value(); }
+    const DragSourceState& stagedDragSource() const LIFETIME_BOUND { return m_stagedDragSource.value(); }
     enum class DidBecomeActive : bool { No, Yes };
     void clearStagedDragSource(DidBecomeActive = DidBecomeActive::No);
-    UITargetedDragPreview *previewForLifting(UIDragItem *, UIView *contentView, UIView *previewContainer, RefPtr<WebCore::TextIndicator>&&) const;
-    UITargetedDragPreview *previewForCancelling(UIDragItem *, UIView *contentView, UIView *previewContainer);
+    UITargetedDragPreview *previewForLifting(UIDragItem *, UIView *contentView, UIView *previewContainer, UIScrollView *, RefPtr<WebCore::TextIndicator>&&) const;
+    UITargetedDragPreview *previewForCancelling(UIDragItem *, UIView *contentView, UIView *previewContainer, UIScrollView *);
     void dragSessionWillDelaySetDownAnimation(dispatch_block_t completion);
     bool shouldRequestAdditionalItemForDragSession(id <UIDragSession>) const;
     void dragSessionWillRequestAdditionalItem(void (^completion)(NSArray <UIDragItem *> *));
@@ -99,6 +101,8 @@ public:
     BlockPtr<void(NSArray<UIDragItem *> *)> takeAddDragItemCompletionBlock() { return WTF::move(m_addDragItemCompletionBlock); }
     Vector<RetainPtr<UIView>> takePreviewViewsForDragCancel() { return std::exchange(m_previewViewsForDragCancel, { }); }
     std::optional<WebCore::NodeIdentifier> nodeIdentifier() const { return m_nodeIdentifier; }
+    std::optional<WebCore::FrameIdentifier> initialDragSourceFrameID() const;
+    std::optional<WebCore::FrameIdentifier> dragSourceFrameIDForItem(UIDragItem *) const;
 
     void addDefaultDropPreview(UIDragItem *, UITargetedDragPreview *);
     UITargetedDragPreview *finalDropPreview(UIDragItem *) const;
@@ -110,7 +114,7 @@ private:
     std::optional<DragSourceState> activeDragSourceForItem(UIDragItem *) const;
     UITargetedDragPreview *defaultDropPreview(UIDragItem *) const;
 
-    RetainPtr<UITargetedDragPreview> createDragPreviewInternal(UIDragItem *, UIView *contentView, UIView *previewContainer, AddPreviewViewToContainer, const RefPtr<WebCore::TextIndicator>&&) const;
+    RetainPtr<UITargetedDragPreview> createDragPreviewInternal(UIDragItem *, UIView *contentView, UIView *previewContainer, UIScrollView *, AddPreviewViewToContainer, const RefPtr<WebCore::TextIndicator>&&) const;
 
     CGPoint m_lastGlobalPosition { CGPointZero };
     CGPoint m_adjustedPositionForDragEnd { CGPointZero };
@@ -128,6 +132,10 @@ private:
     DragItemToPreviewMap m_finalDropPreviews;
     std::optional<WebCore::NodeIdentifier> m_nodeIdentifier;
 };
+
+#if PLATFORM(VISION)
+CGFloat clampedDragPreviewCenterAxis(CGFloat naturalCenter, CGFloat viewportMin, CGFloat viewportMax, CGFloat halfSize);
+#endif
 
 } // namespace WebKit
 

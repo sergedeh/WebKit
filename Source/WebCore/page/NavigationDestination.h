@@ -44,7 +44,8 @@ public:
 
     ~NavigationDestination();
 
-    const URL& url() const { return m_url; };
+    const URL& url() const LIFETIME_BOUND { return m_url; };
+    void setURL(URL&& url) { m_url = WTF::move(url); }
     String key() const { return m_entry ? m_entry->key() : String(); };
     String id() const { return m_entry ? m_entry->id() : String(); };
     int64_t index() const { return m_entry ? m_entry->index() : -1; };
@@ -55,7 +56,7 @@ public:
 private:
     explicit NavigationDestination(const URL&, RefPtr<NavigationHistoryEntry>&&, bool isSameDocument);
 
-    RefPtr<NavigationHistoryEntry> m_entry;
+    const RefPtr<NavigationHistoryEntry> m_entry;
     URL m_url;
     bool m_isSameDocument;
     RefPtr<SerializedScriptValue> m_stateObject;

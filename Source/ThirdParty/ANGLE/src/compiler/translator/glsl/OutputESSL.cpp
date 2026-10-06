@@ -12,18 +12,13 @@ namespace sh
 TOutputESSL::TOutputESSL(TCompiler *compiler,
                          TInfoSinkBase &objSink,
                          const ShCompileOptions &compileOptions)
-    : TOutputGLSLBase(compiler, objSink, compileOptions)
+    : TOutputGLSLBase(compiler, objSink, compileOptions, false)
 {}
 
 bool TOutputESSL::writeVariablePrecision(TPrecision precision)
 {
     if (precision == EbpUndefined)
         return false;
-
-    if (precision == EbpHigh && !isHighPrecisionSupported())
-    {
-        precision = EbpMedium;
-    }
 
     TInfoSinkBase &out = objSink();
     out << getPrecisionString(precision);
@@ -33,22 +28,6 @@ bool TOutputESSL::writeVariablePrecision(TPrecision precision)
 ImmutableString TOutputESSL::translateTextureFunction(const ImmutableString &name,
                                                       const ShCompileOptions &option)
 {
-    // Check WEBGL_video_texture invocation first.
-    if (name == "textureVideoWEBGL")
-    {
-        if (option.takeVideoTextureAsExternalOES)
-        {
-            // TODO(http://anglebug.com/42262534): Implement external image situation.
-            UNIMPLEMENTED();
-            return ImmutableString("");
-        }
-        else
-        {
-            // Default translating textureVideoWEBGL to texture2D.
-            return ImmutableString("texture2D");
-        }
-    }
-
     return name;
 }
 

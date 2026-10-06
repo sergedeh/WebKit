@@ -1,5 +1,7 @@
 
-PASS Non-rendered symbol with rect
-PASS display:none <g> with rect
-FAIL display:none <rect> assert_approx_equals: none_rect.getBBox().x {} expected 90 +/- 0.1 but got 0
+PASS symbol: the non-rendered container reports zero
+PASS symbol: the rect child reports the geometry it would have if rendered
+PASS display:none <g>: the non-rendered container reports zero
+PASS display:none <g>: the rect child reports the geometry it would have if rendered
+PASS display:none <rect> returns zero bbox
 

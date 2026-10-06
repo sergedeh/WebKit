@@ -28,8 +28,8 @@
 
 #if ENABLE(PICTURE_IN_PICTURE_API)
 
-#include <WebCore/PictureInPictureObserver.h>
-#include <WebCore/Supplementable.h>
+#include "PictureInPictureObserver.h"
+#include "Supplementable.h"
 #include <wtf/LoggerHelper.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
@@ -51,15 +51,10 @@ class HTMLVideoElementPictureInPicture
 public:
     HTMLVideoElementPictureInPicture(HTMLVideoElement&);
     static HTMLVideoElementPictureInPicture& from(HTMLVideoElement&);
-    static Ref<HTMLVideoElementPictureInPicture> protectedFrom(HTMLVideoElement&);
     static void providePictureInPictureTo(HTMLVideoElement&);
     virtual ~HTMLVideoElementPictureInPicture();
 
     static void requestPictureInPicture(HTMLVideoElement&, Ref<DeferredPromise>&&);
-    static bool autoPictureInPicture(HTMLVideoElement&);
-    static void setAutoPictureInPicture(HTMLVideoElement&, bool);
-    static bool disablePictureInPicture(HTMLVideoElement&);
-    static void setDisablePictureInPicture(HTMLVideoElement&, bool);
 
     void exitPictureInPicture(Ref<DeferredPromise>&&);
 
@@ -71,22 +66,19 @@ public:
     const Logger& logger() const final { return m_logger.get(); }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "HTMLVideoElementPictureInPicture"_s; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& NODELETE logChannel() const final;
 #endif
 
     // PictureInPictureObserver.
-    void ref() const final;
+    void NODELETE ref() const final;
     void deref() const final;
 
 private:
     static ASCIILiteral supplementName() { return "HTMLVideoElementPictureInPicture"_s; }
     bool isHTMLVideoElementPictureInPicture() const final { return true; }
 
-    bool m_autoPictureInPicture { false };
-    bool m_disablePictureInPicture { false };
-
     WeakRef<HTMLVideoElement> m_videoElement;
-    RefPtr<PictureInPictureWindow> m_pictureInPictureWindow;
+    const Ref<PictureInPictureWindow> m_pictureInPictureWindow;
     RefPtr<DeferredPromise> m_enterPictureInPicturePromise;
     RefPtr<DeferredPromise> m_exitPictureInPicturePromise;
 

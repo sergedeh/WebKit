@@ -83,6 +83,12 @@ void SurfaceImpl::setFixedHeight(EGLint height)
     UNREACHABLE();
 }
 
+void SurfaceImpl::setSwapBehavior(EGLenum behavior)
+{
+    // Behavior is ignored for backends that don't implement it.
+    UNIMPLEMENTED();
+}
+
 void SurfaceImpl::setTimestampsEnabled(bool enabled)
 {
     UNREACHABLE();
@@ -208,5 +214,8 @@ bool SurfaceImpl::supportsSingleRenderBuffer() const
 {
     return false;
 }
+
+void SurfaceImpl::attachToFramebuffer(const gl::Context *context, gl::Framebuffer *framebuffer) {}
+void SurfaceImpl::detachFromFramebuffer(gl::Framebuffer *framebuffer) {}
 
 }  // namespace rx

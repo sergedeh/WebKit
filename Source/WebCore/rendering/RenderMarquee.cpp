@@ -49,13 +49,15 @@
 #include "HTMLMarqueeElement.h"
 #include "HTMLNames.h"
 #include "LocalFrameView.h"
+#include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderView.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -84,7 +86,7 @@ int RenderMarquee::marqueeSpeed() const
     return result;
 }
 
-static MarqueeDirection reverseDirection(MarqueeDirection direction)
+static MarqueeDirection NODELETE reverseDirection(MarqueeDirection direction)
 {
     switch (direction) {
     case MarqueeDirection::Auto:
@@ -109,9 +111,9 @@ MarqueeDirection RenderMarquee::direction() const
 {
     // FIXME: Support the CSS3 "auto" value for determining the direction of the marquee.
     // For now just map MarqueeDirection::Auto to MarqueeDirection::Backward
-    CheckedRef layer = m_layer.get();
-    auto result = layer->renderer().style().marqueeDirection();
-    auto writingMode = layer->renderer().writingMode();
+    auto& layer = m_layer.get();
+    auto result = layer.renderer().style().marqueeDirection();
+    auto writingMode = layer.renderer().writingMode();
     if (result == MarqueeDirection::Auto)
         result = MarqueeDirection::Backward;
     if (result == MarqueeDirection::Forward)
@@ -122,7 +124,7 @@ MarqueeDirection RenderMarquee::direction() const
     // Now we have the real direction.  Next we check to see if the increment is negative.
     // If so, then we reverse the direction.
     // FIXME: This will fail for `increment` that uses `calc()`, though this can currently never happen due to the property being internal
-    if (auto& increment = layer->renderer().style().marqueeIncrement(); increment.isKnownNegative())
+    if (auto& increment = layer.renderer().style().marqueeIncrement(); increment.isKnownNegative())
         result = reverseDirection(result);
     
     return result;
@@ -135,44 +137,44 @@ bool RenderMarquee::isHorizontal() const
 
 int RenderMarquee::computePosition(MarqueeDirection dir, bool stopAtContentEdge)
 {
-    CheckedPtr box = protectedLayer()->renderBox();
+    CheckedPtr box = layer().renderBox();
     ASSERT(box);
     CheckedRef boxStyle = box->style();
     if (isHorizontal()) {
-        bool ltr = boxStyle->isLeftToRightDirection();
-        LayoutUnit clientWidth = box->clientWidth();
-        LayoutUnit contentWidth = ltr ? box->maxPreferredLogicalWidth() : box->minPreferredLogicalWidth();
+        bool ltr = boxStyle->writingMode().deprecatedIsLeftToRightDirection();
+        LayoutUnit paddingBoxWidth = box->paddingBoxWidth();
+        LayoutUnit contentWidth = ltr ? box->maxContentLogicalWidthContribution() : box->minContentLogicalWidthContribution();
         if (ltr)
             contentWidth += (box->paddingRight() - box->borderLeft());
         else {
-            contentWidth = box->width() - contentWidth;
+            contentWidth = box->borderBoxWidth() - contentWidth;
             contentWidth += (box->paddingLeft() - box->borderRight());
         }
         if (dir == MarqueeDirection::Right) {
             if (stopAtContentEdge)
-                return std::max<LayoutUnit>(0, ltr ? (contentWidth - clientWidth) : (clientWidth - contentWidth));
+                return std::max<LayoutUnit>(0, ltr ? (contentWidth - paddingBoxWidth) : (paddingBoxWidth - contentWidth));
 
-            return ltr ? contentWidth : clientWidth;
+            return ltr ? contentWidth : paddingBoxWidth;
         }
 
         if (stopAtContentEdge)
-            return std::min<LayoutUnit>(0, ltr ? (contentWidth - clientWidth) : (clientWidth - contentWidth));
+            return std::min<LayoutUnit>(0, ltr ? (contentWidth - paddingBoxWidth) : (paddingBoxWidth - contentWidth));
 
-        return ltr ? -clientWidth : -contentWidth;
+        return ltr ? -paddingBoxWidth : -contentWidth;
     }
 
     // Vertical
     int contentHeight = box->layoutOverflowRect().maxY() - box->borderTop() + box->paddingBottom();
-    int clientHeight = roundToInt(box->clientHeight());
+    int paddingBoxHeight = roundToInt(box->paddingBoxHeight());
     if (dir == MarqueeDirection::Up) {
         if (stopAtContentEdge)
-            return std::min(contentHeight - clientHeight, 0);
+            return std::min(contentHeight - paddingBoxHeight, 0);
 
-        return -clientHeight;
+        return -paddingBoxHeight;
     }
 
     if (stopAtContentEdge)
-        return std::max(contentHeight - clientHeight, 0);
+        return std::max(contentHeight - paddingBoxHeight, 0);
 
     return contentHeight;
 }
@@ -216,7 +218,7 @@ void RenderMarquee::updateMarqueePosition()
 {
     bool activate = (m_totalLoops <= 0 || m_currentLoop < m_totalLoops);
     if (activate) {
-        MarqueeBehavior behavior = protectedLayer()->renderer().style().marqueeBehavior();
+        MarqueeBehavior behavior = layer().renderer().style().marqueeBehavior();
         m_start = computePosition(direction(), behavior == MarqueeBehavior::Alternate);
         m_end = computePosition(reverseDirection(direction()), behavior == MarqueeBehavior::Alternate || behavior == MarqueeBehavior::Slide);
         if (!m_stopped)
@@ -302,8 +304,8 @@ void RenderMarquee::timerFired()
             addIncrement = !addIncrement;
         }
         bool positive = range > 0;
-        int clientSize = (isHorizontal() ? roundToInt(renderBox->clientWidth()) : roundToInt(renderBox->clientHeight()));
-        int increment = std::abs(Style::evaluate<float>(layer->renderer().style().marqueeIncrement(), clientSize, Style::ZoomNeeded { }));
+        int clientSize = (isHorizontal() ? roundToInt(renderBox->paddingBoxWidth()) : roundToInt(renderBox->paddingBoxHeight()));
+        int increment = std::abs(Style::evaluate<float>(layer->renderer().style().marqueeIncrement(), clientSize, layer->renderer().style().usedZoomForLength()));
         int currentPos = (isHorizontal() ? scrollableArea->scrollOffset().x() : scrollableArea->scrollOffset().y());
         newPos =  currentPos + (addIncrement ? increment : -increment);
         if (positive)

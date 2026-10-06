@@ -38,7 +38,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 {
     if (WebCoreObjCScheduleDeallocateOnMainRunLoop(WKContextMenuElementInfo.class, self))
         return;
-    _elementInfo->API::ContextMenuElementInfo::~ContextMenuElementInfo();
+    SUPPRESS_UNCOUNTED_ARG _elementInfo->API::ContextMenuElementInfo::~ContextMenuElementInfo();
     [super dealloc];
 }
 
@@ -58,7 +58,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 
 - (_WKActivatedElementInfo *)_activatedElementInfo
 {
-    return [_WKActivatedElementInfo activatedElementInfoWithInteractionInformationAtPosition:_elementInfo->interactionInformation() userInfo:_elementInfo->userInfo().get()];
+    return [_WKActivatedElementInfo activatedElementInfoWithInteractionInformationAtPosition:_elementInfo->interactionInformation() userInfo:protect(*_elementInfo)->userInfo().get()];
 }
 
 @end

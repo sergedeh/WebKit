@@ -31,9 +31,10 @@
 #include "include/core/SkSurfaceProps.h"
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkCPUTypes.h"
-#include "include/private/base/SkDeque.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkCPUTypes.h"
+#include "include/private/SkDeque.h"
+#include "include/private/SkEnumBitMask.h"
+#include "include/private/SkTArray.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -44,11 +45,6 @@
 #ifndef SK_SUPPORT_LEGACY_GETTOTALMATRIX
 #define SK_SUPPORT_LEGACY_GETTOTALMATRIX
 #endif
-
-namespace sktext {
-class GlyphRunBuilder;
-class GlyphRunList;
-}
 
 class AutoLayerForImageFilter;
 class GrRecordingContext;
@@ -80,6 +76,12 @@ struct SkDrawShadowRec;
 
 template<typename E>
 class SkEnumBitMask;
+
+namespace sktext {
+class GlyphRunBuilder;
+class GlyphRun;
+class GlyphRunList;
+}  // namespace sktext
 
 namespace skgpu::graphite { class Recorder; }
 namespace sktext::gpu { class Slug; }
@@ -1328,11 +1330,6 @@ public:
         example: https://fiddle.skia.org/c/@Canvas_drawPoints
     */
     void drawPoints(PointMode mode, SkSpan<const SkPoint>, const SkPaint& paint);
-#ifdef SK_SUPPORT_UNSPANNED_APIS
-    void drawPoints(PointMode mode, size_t count, const SkPoint pts[], const SkPaint& paint) {
-        this->drawPoints(mode, {pts, count}, paint);
-    }
-#endif
 
     /** Draws point at (x, y) using clip, SkMatrix and SkPaint paint.
 
@@ -1915,17 +1912,6 @@ public:
     void drawGlyphs(SkSpan<const SkGlyphID> glyphs, SkSpan<const SkPoint> positions,
                     SkSpan<const uint32_t> clusters, SkSpan<const char> utf8text,
                     SkPoint origin, const SkFont& font, const SkPaint& paint);
-#ifdef SK_SUPPORT_UNSPANNED_APIS
-    void drawGlyphs(int count, const SkGlyphID glyphs[], const SkPoint positions[],
-                    const uint32_t clusters[], int textByteCount, const char utf8text[],
-                    SkPoint origin, const SkFont& font, const SkPaint& paint) {
-        this->drawGlyphs({glyphs,    count},
-                         {positions, count},
-                         {clusters,  count},
-                         {utf8text,  textByteCount},
-                         origin, font, paint);
-    }
-#endif
 
     /** Draws count glyphs, at positions relative to origin styled with font and paint.
 
@@ -1947,12 +1933,6 @@ public:
     */
     void drawGlyphs(SkSpan<const SkGlyphID> glyphs, SkSpan<const SkPoint> positions,
                     SkPoint origin, const SkFont& font, const SkPaint& paint);
-#ifdef SK_SUPPORT_UNSPANNED_APIS
-    void drawGlyphs(int count, const SkGlyphID glyphs[], const SkPoint positions[],
-                    SkPoint origin, const SkFont& font, const SkPaint& paint) {
-        this->drawGlyphs({glyphs, count}, {positions, count}, origin, font, paint);
-    }
-#endif
 
     /** Draws count glyphs, at positions relative to origin styled with font and paint.
 
@@ -1975,12 +1955,6 @@ public:
     */
     void drawGlyphsRSXform(SkSpan<const SkGlyphID> glyphs, SkSpan<const SkRSXform> xforms,
                            SkPoint origin, const SkFont& font, const SkPaint& paint);
-#ifdef SK_SUPPORT_UNSPANNED_APIS
-    void drawGlyphs(int count, const SkGlyphID glyphs[], const SkRSXform xforms[],
-                    SkPoint origin, const SkFont& font, const SkPaint& paint) {
-        this->drawGlyphsRSXform({glyphs, count}, {xforms, count}, origin, font, paint);
-    }
-#endif
 
     /** Draws SkTextBlob blob at (x, y), using clip, SkMatrix, and SkPaint paint.
 
@@ -2209,17 +2183,6 @@ public:
     void drawAtlas(const SkImage* atlas, SkSpan<const SkRSXform> xform,
                    SkSpan<const SkRect> tex, SkSpan<const SkColor> colors, SkBlendMode mode,
                    const SkSamplingOptions& sampling, const SkRect* cullRect, const SkPaint* paint);
-#ifdef SK_SUPPORT_UNSPANNED_APIS
-    void drawAtlas(const SkImage* atlas, const SkRSXform xform[], const SkRect tex[],
-                   const SkColor colors[], int count, SkBlendMode mode,
-                   const SkSamplingOptions& samp, const SkRect* cullRect, const SkPaint* paint) {
-        this->drawAtlas(atlas,
-                        {xform, count},
-                        {tex, tex ? count : 0},
-                        {colors, colors ? count : 0},
-                        mode, samp, cullRect, paint);
-    }
-#endif
 
     /** Draws SkDrawable drawable using clip and SkMatrix, concatenated with
         optional matrix.
@@ -2454,11 +2417,7 @@ private:
         kCheckForOverwrite       = 4, // Check if the draw would overwrite the entire surface
         kSkipMaskFilterAutoLayer = 8, // Do not apply mask filters in the AutoLayer
     };
-    // Inlined SK_DECL_BITMASK_OPS_FRIENDS to avoid including SkEnumBitMask.h
-    friend constexpr SkEnumBitMask<PredrawFlags> operator|(PredrawFlags, PredrawFlags);
-    friend constexpr SkEnumBitMask<PredrawFlags> operator&(PredrawFlags, PredrawFlags);
-    friend constexpr SkEnumBitMask<PredrawFlags> operator^(PredrawFlags, PredrawFlags);
-    friend constexpr SkEnumBitMask<PredrawFlags> operator~(PredrawFlags);
+    SK_DECL_BITMASK_OPS_FRIENDS(PredrawFlags)
 
     // notify our surface (if we have one) that we are about to draw, so it
     // can perform copy-on-write or invalidate any cached images
@@ -2570,12 +2529,12 @@ private:
     std::unique_ptr<SkRasterHandleAllocator> fAllocator;
 
     SkSurface_Base*  fSurfaceBase;
-    SkSurface_Base* getSurfaceBase() const { return fSurfaceBase; }
     void setSurfaceBase(SkSurface_Base* sb) {
         fSurfaceBase = sb;
     }
     friend class SkSurface_Base;
     friend class SkSurface_Ganesh;
+    friend class SkCaptureCanvas;
 
     SkIRect fClipRestrictionRect = SkIRect::MakeEmpty();
     int fClipRestrictionSaveCount = -1;
@@ -2598,6 +2557,7 @@ private:
     friend class SkRecords::Draw;
     template <typename Key>
     friend class skiatest::TestCanvas;
+    friend class AutoGlyphRunBuilder;
 
 protected:
     // For use by SkNoDrawCanvas (via SkCanvasVirtualEnforcer, which can't be a friend)
@@ -2743,7 +2703,15 @@ private:
     class AutoUpdateQRBounds;
     void validateClip() const;
 
-    std::unique_ptr<sktext::GlyphRunBuilder> fScratchGlyphRunBuilder;
+    sktext::GlyphRunBuilder* obtainGlyphRunBuilder();
+
+    void releaseGlyphRunBuilder();
+
+    /**
+     * fRunBuilders will be reused across text drawing commands
+     */
+    skia_private::STArray<1, std::unique_ptr<sktext::GlyphRunBuilder>> fRunBuilders;
+    int fRunBuildersUsed = 0;
 };
 
 /** \class SkAutoCanvasRestore

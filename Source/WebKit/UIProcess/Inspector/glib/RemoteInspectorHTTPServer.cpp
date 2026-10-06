@@ -31,8 +31,12 @@
 #include "RemoteInspectorClient.h"
 #include <wtf/FileSystem.h>
 #include <wtf/URL.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WebKit {
 
@@ -67,13 +71,9 @@ bool RemoteInspectorHTTPServer::start(GRefPtr<GSocketAddress>&& socketAddress, u
         }, this, nullptr);
 
     auto* inetAddress = g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(socketAddress.get()));
-    GUniquePtr<char> host(g_inet_address_to_string(inetAddress));
-    GUniquePtr<char> inspectorServerAddress;
-    if (g_inet_address_get_family(inetAddress) == G_SOCKET_FAMILY_IPV6)
-        inspectorServerAddress.reset(g_strdup_printf("[%s]:%u", host.get(), inspectorPort));
-    else
-        inspectorServerAddress.reset(g_strdup_printf("%s:%u", host.get(), inspectorPort));
-    m_client = makeUnique<RemoteInspectorClient>(String::fromUTF8(inspectorServerAddress.get()), *this);
+    auto host = GMallocString::unsafeAdoptFromUTF8(g_inet_address_to_string(inetAddress));
+    auto inspectorServerAddress = g_inet_address_get_family(inetAddress) == G_SOCKET_FAMILY_IPV6 ? makeString('[', host.span(), "]:"_s, inspectorPort) : makeString(host.span(), ':', inspectorPort);
+    lazyInitialize(m_client, makeUnique<RemoteInspectorClient>(WTF::move(inspectorServerAddress), *this));
 
     return true;
 }
@@ -85,15 +85,12 @@ const String& RemoteInspectorHTTPServer::inspectorServerAddress() const
 
 unsigned RemoteInspectorHTTPServer::handleRequest(const char* path, SoupMessageHeaders* responseHeaders, SoupMessageBody* responseBody) const
 {
-    IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
-    if (g_str_equal(path, "/")) {
-        auto* html = m_client->buildTargetListPage(RemoteInspectorClient::InspectorType::HTTP);
+    if (UTF8CStringView::unsafeFromUTF8(path) == "/"_s) {
+        auto html = m_client->buildTargetListPage(RemoteInspectorClient::InspectorType::HTTP).toString().utf8();
         soup_message_headers_append(responseHeaders, "Content-Type", "text/html");
-        gsize bodyLength = html->len;
-        soup_message_body_append(responseBody, SOUP_MEMORY_TAKE, g_string_free(html, FALSE), bodyLength);
+        soup_message_body_append(responseBody, SOUP_MEMORY_COPY, html.legacyCStringPointer(), html.length());
         return SOUP_STATUS_OK;
     }
-    IGNORE_CLANG_WARNINGS_END
 
     GUniquePtr<char> resourcePath(g_build_filename("/org/webkit/inspector/UserInterface", path, nullptr));
 
@@ -144,7 +141,7 @@ void RemoteInspectorHTTPServer::sendMessageToFrontend(uint64_t connectionID, uin
 
     auto utf8 = message.utf8();
     // Soup is going to copy the data immediately, so we can use g_bytes_new_static() here to avoid more data copies.
-    GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new_static(utf8.data(), utf8.length()));
+    GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new_static(utf8.legacyCStringPointer(), utf8.length()));
     soup_websocket_connection_send_message(webSocketConnection, SOUP_WEBSOCKET_DATA_TEXT, bytes.get());
 }
 

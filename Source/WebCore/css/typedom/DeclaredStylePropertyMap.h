@@ -39,13 +39,13 @@ public:
     static Ref<DeclaredStylePropertyMap> create(CSSStyleRule&);
 
     Vector<StylePropertyMapEntry> entries(ScriptExecutionContext*) const final;
-    unsigned size() const final;
+    unsigned NODELETE size() const final;
     Type type() const final { return Type::Declared; }
 
 private:
     explicit DeclaredStylePropertyMap(CSSStyleRule&);
 
-    StyleRule* styleRule() const;
+    StyleRule* NODELETE styleRule() const;
 
     void clear() final;
     RefPtr<CSSValue> propertyValue(CSSPropertyID) const final;
@@ -55,7 +55,7 @@ private:
     void removeCustomProperty(const AtomString&) final;
     bool setShorthandProperty(CSSPropertyID, const String&) final;
     bool setProperty(CSSPropertyID, Ref<CSSValue>&&) final;
-    bool setCustomProperty(Document&, const AtomString&, Ref<CSSVariableReferenceValue>&&) final;
+    bool setCustomProperty(Document&, const AtomString&, Ref<CSSSubstitutionValue>&&) final;
 
     WeakPtr<CSSStyleRule> m_ownerRule;
 };

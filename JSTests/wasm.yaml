@@ -53,20 +53,10 @@
   cmd: runV8WebAssemblySuite(:no_module, "mjsunit.js") unless parseRunCommands
 - path: wasm/branch-hints
   cmd: runWebAssemblySuite unless parseRunCommands
-- path: wasm/spec-tests
-  cmd: runWebAssemblySpecTest :normal unless parseRunCommands
-- path: wasm/simd-spec-tests
-  cmd: runWebAssemblySIMDSpecTest :normal
-- path: wasm/function-references-spec-tests
-  cmd: runWebAssemblyFunctionReferenceSpecTest :normal
-- path: wasm/gc-spec-tests
-  cmd: runWebAssemblyGCSpecTest :normal
+- path: wasm/extended-const
+  cmd: runWebAssemblySuite unless parseRunCommands
 - path: wasm/threads-spec-tests
   cmd: runWebAssemblyThreadsSpecTest :normal
-- path: wasm/tail-call-spec-tests
-  cmd: runWebAssemblyTailCallSpecTest :normal
-- path: wasm/extended-const-spec-tests
-  cmd: runWebAssemblySpecTest :normal unless parseRunCommands
 
 - path: wasm/modules/run-from-wasm.wasm
   cmd: runWebAssembly
@@ -74,3 +64,16 @@
 - path: ../PerformanceTests/JetStream2/wasm-cli.js
   cmd: runWebAssemblyJetStream2 unless parseRunCommands
 
+# Imported WPT WebAssembly tests, these are diffed against their committed -expected.txt baselines.
+# recursive: true so proposal subdirectories (core/js/gc, core/js/simd, jsapi/*, ...) are picked
+# up automatically as WPT adds them. .tentative.js tests are skipped inside run-jsc-stress-tests.
+- path: ../LayoutTests/imported/w3c/web-platform-tests/wasm/core/js
+  cmd: runWebAssemblyWPTCore unless parseRunCommands
+  recursive: true
+- path: ../LayoutTests/imported/w3c/web-platform-tests/wasm/jsapi
+  cmd: runWebAssemblyWPTJSAPI unless parseRunCommands
+  recursive: true
+# asterisk is not recognized so this has to hardcode wide-arithmetic
+- path: ../LayoutTests/imported/w3c/web-platform-tests/wasm/proposals/wide-arithmetic/core/js
+  cmd: runWebAssemblyWPTCore unless parseRunCommands
+  recursive: true

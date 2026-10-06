@@ -32,6 +32,7 @@
 IGNORE_CLANG_WARNINGS_BEGIN("non-modular-include-in-module")
 #include <webrtc/api/media_types.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <webrtc/api/media_stream_interface.h>
 #include <webrtc/api/stats/rtcstats_objects.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 IGNORE_CLANG_WARNINGS_END
@@ -67,21 +68,24 @@ enum class RTCPriorityType : uint8_t;
 enum class RTCRtpTransceiverDirection;
 
 RTCRtpParameters toRTCRtpParameters(const webrtc::RtpParameters&);
-void updateRTCRtpSendParameters(const RTCRtpSendParameters&, webrtc::RtpParameters&);
-RTCRtpSendParameters toRTCRtpSendParameters(const webrtc::RtpParameters&);
+void updateRTCRtpSendParameters(const RTCRtpSendParameters&, webrtc::RtpParameters&, webrtc::MediaType);
+RTCRtpSendParameters toRTCRtpSendParameters(const webrtc::RtpParameters&, bool isAudio);
 webrtc::RtpParameters fromRTCRtpSendParameters(const RTCRtpSendParameters&, const webrtc::RtpParameters& currentParameters);
 
 RTCRtpTransceiverDirection toRTCRtpTransceiverDirection(webrtc::RtpTransceiverDirection);
 webrtc::RtpTransceiverDirection fromRTCRtpTransceiverDirection(RTCRtpTransceiverDirection);
 webrtc::RtpTransceiverInit fromRtpTransceiverInit(const RTCRtpTransceiverInit&, webrtc::MediaType);
 
-ExceptionCode toExceptionCode(webrtc::RTCErrorType);
+ExceptionCode NODELETE toExceptionCode(webrtc::RTCErrorType);
 Exception toException(const webrtc::RTCError&);
 RefPtr<RTCError> toRTCError(const webrtc::RTCError&);
 
 RTCPriorityType toRTCPriorityType(webrtc::PriorityValue);
-RTCPriorityType toRTCPriorityType(webrtc::Priority);
-webrtc::Priority fromRTCPriorityType(RTCPriorityType);
+RTCPriorityType NODELETE toRTCPriorityType(webrtc::Priority);
+webrtc::Priority NODELETE fromRTCPriorityType(RTCPriorityType);
+
+enum class MediaStreamTrackHintValue : uint8_t;
+webrtc::VideoTrackInterface::ContentHint toWebRTCContentHint(MediaStreamTrackHintValue);
 
 inline String fromStdString(const std::string& value)
 {

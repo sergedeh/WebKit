@@ -28,13 +28,17 @@
 
 #pragma once
 
+#include <WebCore/BackForwardFrameItemIdentifier.h>
 #include <WebCore/BackForwardItemIdentifier.h>
 #include <WebCore/CrossOriginOpenerPolicy.h>
 #include <WebCore/FrameLoadRequest.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/GlobalFrameIdentifier.h>
 #include <WebCore/LayoutPoint.h>
+#include <WebCore/NavigateEventDispatchResult.h>
+#include <WebCore/NavigateEventIdentifier.h>
 #include <WebCore/NavigationRequester.h>
+#include <WebCore/PendingNavigateEventIdentifier.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SecurityOrigin.h>
@@ -52,6 +56,7 @@ class UIEventWithKeyState;
 enum class SyntheticClickType : uint8_t;
 enum class MouseButton : int8_t;
 enum class NavigationNavigationType : uint8_t;
+enum class PolicyAlreadyDecided : bool { No, Yes };
 
 // NavigationAction should never hold a strong reference to the originating document either directly
 // or indirectly as doing so prevents its destruction even after navigating away from it because
@@ -72,7 +77,7 @@ public:
     NavigationAction(NavigationAction&&);
     NavigationAction& operator=(NavigationAction&&);
 
-    const std::optional<NavigationRequester>& requester() const { return m_requester; }
+    const std::optional<NavigationRequester>& requester() const LIFETIME_BOUND { return m_requester; }
 
     struct UIEventWithKeyStateData {
         UIEventWithKeyStateData(const UIEventWithKeyState&);
@@ -92,22 +97,20 @@ public:
         SyntheticClickType syntheticClickType;
         bool buttonDown;
     };
-    const std::optional<UIEventWithKeyStateData>& keyStateEventData() const { return m_keyStateEventData; }
-    const std::optional<MouseEventData>& mouseEventData() const { return m_mouseEventData; }
+    const std::optional<UIEventWithKeyStateData>& keyStateEventData() const LIFETIME_BOUND { return m_keyStateEventData; }
+    const std::optional<MouseEventData>& mouseEventData() const LIFETIME_BOUND { return m_mouseEventData; }
 
     NavigationAction copyWithShouldOpenExternalURLsPolicy(ShouldOpenExternalURLsPolicy) const;
 
     bool isEmpty() const { return !m_requester || m_requester->url.isEmpty() || m_originalRequest.url().isEmpty(); }
 
     URL url() const { return m_originalRequest.url(); }
-    const ResourceRequest& originalRequest() const { return m_originalRequest; }
+    const ResourceRequest& originalRequest() const LIFETIME_BOUND { return m_originalRequest; }
 
     NavigationType type() const { return m_type; }
 
-    bool processingUserGesture() const { return m_userGestureToken ? m_userGestureToken->processingUserGesture() : false; }
+    bool processingUserGesture() const { return m_userGestureToken && m_userGestureToken->processingUserGesture(); }
     RefPtr<UserGestureToken> userGestureToken() const { return m_userGestureToken; }
-
-    bool treatAsSameOriginNavigation() const { return m_treatAsSameOriginNavigation; }
 
     bool hasOpenedFrames() const { return m_hasOpenedFrames; }
     void setHasOpenedFrames(bool value) { m_hasOpenedFrames = value; }
@@ -115,12 +118,8 @@ public:
     bool openedByDOMWithOpener() const { return m_openedByDOMWithOpener; }
     void setOpenedByDOMWithOpener() { m_openedByDOMWithOpener = true; }
 
-    void setTargetBackForwardItem(HistoryItem&);
-    const std::optional<BackForwardItemIdentifier>& targetBackForwardItemIdentifier() const { return m_targetBackForwardItemIdentifier; }
-
-    void setSourceBackForwardItem(HistoryItem*);
-    const std::optional<BackForwardItemIdentifier>& sourceBackForwardItemIdentifier() const { return m_sourceBackForwardItemIdentifier; }
-
+    void NODELETE setSourceBackForwardItem(HistoryItem*);
+    const std::optional<BackForwardItemIdentifier>& sourceBackForwardItemIdentifier() const LIFETIME_BOUND { return m_sourceBackForwardItemIdentifier; }
 
     const std::optional<PrivateClickMeasurement>& privateClickMeasurement() const { return m_privateClickMeasurement; };
     void setPrivateClickMeasurement(PrivateClickMeasurement&& privateClickMeasurement) { m_privateClickMeasurement = privateClickMeasurement; };
@@ -129,8 +128,47 @@ public:
     std::optional<NavigationNavigationType> navigationAPIType() const { return m_navigationAPIType; }
     void setNavigationAPIType(NavigationNavigationType navigationAPIType) { m_navigationAPIType = navigationAPIType; }
 
-    void setPendingDispatchNavigateEvent(std::function<bool()>&& function) { m_pendingDispatchNavigateEvent = WTF::move(function); }
-    std::function<bool()> takePendingDispatchNavigateEvent() { return std::exchange(m_pendingDispatchNavigateEvent, nullptr); }
+    // The NavigationHistoryBehavior which m_navigationAPIType was resolved from, so that a process taking
+    // over this navigation can resolve the navigation API type the same way.
+    WEBCORE_EXPORT NavigationHistoryBehavior navigationHistoryBehavior() const;
+
+    using DispatchNavigateEventFunction = std::function<NavigateEventDispatchResult()>;
+
+    void setPendingDispatchNavigateEvent(DispatchNavigateEventFunction&& function)
+    {
+        m_pendingDispatchNavigateEvent = PendingNavigateEvent { PendingNavigateEventIdentifier::generate(), WTF::move(function) };
+    }
+
+    Markable<PendingNavigateEventIdentifier> pendingDispatchNavigateEventIdentifier() const
+    {
+        return m_pendingDispatchNavigateEvent ? Markable { m_pendingDispatchNavigateEvent->identifier } : std::nullopt;
+    }
+
+    DispatchNavigateEventFunction takePendingDispatchNavigateEvent(PendingNavigateEventIdentifier identifier)
+    {
+        if (!m_pendingDispatchNavigateEvent || m_pendingDispatchNavigateEvent->identifier != identifier)
+            return nullptr;
+        return takePendingDispatchNavigateEvent();
+    }
+
+    DispatchNavigateEventFunction takePendingDispatchNavigateEvent()
+    {
+        auto pendingDispatchNavigateEvent = std::exchange(m_pendingDispatchNavigateEvent, std::nullopt);
+        return pendingDispatchNavigateEvent ? WTF::move(pendingDispatchNavigateEvent->dispatch) : nullptr;
+    }
+
+    // Set when the navigate and beforeunload events ran ahead of the policy check; the identifier is null if the navigation had no navigate event to dispatch.
+    bool dispatchedEventsBeforeNavigationPolicy() const { return m_dispatchedEventsBeforeNavigationPolicy; }
+    Markable<NavigateEventIdentifier> navigateEventDispatchedBeforeNavigationPolicy() const { return m_navigateEventDispatchedBeforeNavigationPolicy; }
+    void setDispatchedEventsBeforeNavigationPolicy(Markable<NavigateEventIdentifier> navigateEventIdentifier)
+    {
+        m_dispatchedEventsBeforeNavigationPolicy = true;
+        m_navigateEventDispatchedBeforeNavigationPolicy = navigateEventIdentifier;
+    }
+
+    // Whether UIProcess has already made the policy decision for this navigation.
+    PolicyAlreadyDecided policyAlreadyDecided() const { return m_policyAlreadyDecided; }
+    void setPolicyAlreadyDecided(PolicyAlreadyDecided value) { m_policyAlreadyDecided = value; }
 
 private:
     // Do not add a strong reference to the originating document or a subobject that holds the
@@ -140,17 +178,23 @@ private:
     std::optional<UIEventWithKeyStateData> m_keyStateEventData;
     std::optional<MouseEventData> m_mouseEventData;
     RefPtr<UserGestureToken> m_userGestureToken { UserGestureIndicator::currentUserGesture() };
-    std::optional<BackForwardItemIdentifier> m_targetBackForwardItemIdentifier;
     std::optional<BackForwardItemIdentifier> m_sourceBackForwardItemIdentifier;
     std::optional<PrivateClickMeasurement> m_privateClickMeasurement;
-    std::function<bool()> m_pendingDispatchNavigateEvent;
 
-    NavigationType m_type;
+    struct PendingNavigateEvent {
+        PendingNavigateEventIdentifier identifier;
+        DispatchNavigateEventFunction dispatch;
+    };
+    std::optional<PendingNavigateEvent> m_pendingDispatchNavigateEvent;
+    Markable<NavigateEventIdentifier> m_navigateEventDispatchedBeforeNavigationPolicy;
+
+    NavigationType m_type { NavigationType::Other };
     std::optional<NavigationNavigationType> m_navigationAPIType;
 
-    bool m_treatAsSameOriginNavigation { false };
     bool m_hasOpenedFrames { false };
     bool m_openedByDOMWithOpener { false };
+    bool m_dispatchedEventsBeforeNavigationPolicy { false };
+    PolicyAlreadyDecided m_policyAlreadyDecided { PolicyAlreadyDecided::No };
 };
 
 } // namespace WebCore

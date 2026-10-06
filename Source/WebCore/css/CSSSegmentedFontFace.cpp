@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,9 +37,7 @@
 namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSSegmentedFontFace);
 
-CSSSegmentedFontFace::CSSSegmentedFontFace()
-{
-}
+CSSSegmentedFontFace::CSSSegmentedFontFace() = default;
 
 CSSSegmentedFontFace::~CSSSegmentedFontFace()
 {
@@ -70,7 +68,7 @@ public:
     {
         if (!m_result || (policy == ExternalResourceDownloadPolicy::Allow
             && (m_fontFace->status() == CSSFontFace::Status::Pending || m_fontFace->status() == CSSFontFace::Status::Loading || m_fontFace->status() == CSSFontFace::Status::TimedOut))) {
-            const auto result = Ref { m_fontFace }->font(m_fontDescription, m_syntheticBold, m_syntheticItalic, policy, m_fontPaletteValues, m_fontFeatureValues);
+            const auto result = protect(m_fontFace)->font(m_fontDescription, m_syntheticBold, m_syntheticItalic, policy, m_fontPaletteValues, m_fontFeatureValues);
             if (!m_result)
                 m_result = result;
         }
@@ -88,7 +86,7 @@ private:
     {
     }
 
-    bool isLoading() const final
+    bool NODELETE isLoading() const final
     {
         return m_result && m_result.value() && m_result.value()->isInterstitial();
     }
@@ -96,7 +94,7 @@ private:
     mutable std::optional<RefPtr<Font>> m_result; // Caches nullptr too
     mutable Ref<CSSFontFace> m_fontFace;
     FontDescription m_fontDescription;
-    RefPtr<FontFeatureValues> m_fontFeatureValues;
+    const RefPtr<FontFeatureValues> m_fontFeatureValues;
     FontPaletteValues m_fontPaletteValues;
     bool m_syntheticBold;
     bool m_syntheticItalic;
@@ -130,7 +128,7 @@ FontRanges CSSSegmentedFontFace::fontRanges(const FontDescription& fontDescripti
         auto selectionCapabilities = face->fontSelectionCapabilities();
 
         bool syntheticBold = fontDescription.hasAutoFontSynthesisWeight() && !isFontWeightBold(selectionCapabilities.weight.maximum) && isFontWeightBold(desiredRequest.weight);
-        bool syntheticItalic = fontDescription.hasAutoFontSynthesisStyle() && !isItalic(selectionCapabilities.slope.maximum) && isItalic(desiredRequest.slope);
+        bool syntheticItalic = fontDescription.allowsItalicOrObliqueFontSynthesisStyle() && !isItalic(selectionCapabilities.slope.maximum) && isItalic(desiredRequest.slope);
 
         // Metrics used for layout come from FontRanges::fontForFirstRange(), which assumes that the first font is non-null.
         auto fontAccessor = CSSFontAccessor::create(face, fontDescription, fontPaletteValues, fontFeatureValues, syntheticBold, syntheticItalic);

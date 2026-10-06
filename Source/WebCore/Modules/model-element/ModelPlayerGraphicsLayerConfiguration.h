@@ -28,22 +28,28 @@
 #if ENABLE(MODEL_ELEMENT)
 
 #include <WebCore/Color.h>
+#include <WebCore/LayoutPoint.h>
 #include <WebCore/LayoutSize.h>
 #include <WebCore/Model.h>
 #include <wtf/RefPtr.h>
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+#include <WebCore/ModelPresentationMode.h>
+#endif
 
 namespace WebCore {
 
 struct ModelPlayerGraphicsLayerConfiguration {
     RefPtr<Model> model;
     LayoutSize contentSize;
+    LayoutPoint contentOrigin;
     Color backgroundColor;
     bool isInteractive;
 #if ENABLE(MODEL_ELEMENT_PORTAL)
     bool hasPortal;
 #endif
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    bool detachedForImmersive;
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    ModelPresentationMode presentationMode { ModelPresentationMode::Inline };
 #endif
 };
 

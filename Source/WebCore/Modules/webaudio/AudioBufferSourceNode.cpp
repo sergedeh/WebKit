@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010 Google Inc. All rights reserved.
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,7 +52,15 @@ constexpr double DefaultGrainDuration = 0.020; // 20ms
 // to minimize linear interpolation aliasing.
 const double MaxRate = 1024;
 
-static float computeSampleUsingLinearInterpolation(std::span<const float> source, unsigned readIndex, unsigned readIndex2, float interpolationFactor)
+// Converts a time to a sample frame, keeping any genuine sub-sample position but snapping values
+// that are only off by floating-point round-off (sampleRate * (k / sampleRate) != k for integer k).
+SUPPRESS_NODELETE static double NODELETE timeToFractionalSampleFrame(double time, double sampleRate)
+{
+    constexpr double oversampleFactor = 1024;
+    return std::round(time * sampleRate * oversampleFactor) / oversampleFactor;
+}
+
+static float NODELETE computeSampleUsingLinearInterpolation(std::span<const float> source, unsigned readIndex, unsigned readIndex2, float interpolationFactor)
 {
     if (readIndex == readIndex2 && readIndex >= 1) {
         // We're at the end of the buffer, so just linearly extrapolate from the last two samples.
@@ -100,23 +108,23 @@ AudioBufferSourceNode::~AudioBufferSourceNode()
 void AudioBufferSourceNode::process(size_t framesToProcess)
 {
     CheckedPtr firstOutput = output(0);
-    auto& outputBus = firstOutput->bus();
+    Ref outputBus = firstOutput->bus();
 
     if (!isInitialized()) {
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
 
     // The audio thread can't block on this lock, so we use tryLock() instead.
     if (!m_processLock.tryLock()) {
         // Too bad - tryLock() failed. We must be in the middle of changing buffers and were already outputting silence anyway.
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
     Locker locker { AdoptLock, m_processLock };
 
     if (!m_buffer) {
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
 
@@ -124,7 +132,7 @@ void AudioBufferSourceNode::process(size_t framesToProcess)
     // before the output bus is updated to the new number of channels because of use of tryLocks() in the context's updating system.
     // In this case, if the buffer has just been changed and we're not quite ready yet, then just output silence.
     if (numberOfChannels() != m_buffer->numberOfChannels()) {
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
 
@@ -134,20 +142,20 @@ void AudioBufferSourceNode::process(size_t framesToProcess)
     updateSchedulingInfo(framesToProcess, outputBus, quantumFrameOffset, bufferFramesToProcess, startFrameOffset);
 
     if (!bufferFramesToProcess) {
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
 
-    for (unsigned i = 0; i < outputBus.numberOfChannels(); ++i)
-        m_destinationChannels[i] = outputBus.channel(i)->mutableSpan();
+    for (unsigned i = 0; i < outputBus->numberOfChannels(); ++i)
+        m_destinationChannels[i] = outputBus->channel(i)->mutableSpan();
 
     // Render by reading directly from the buffer.
     if (!renderFromBuffer(outputBus, quantumFrameOffset, bufferFramesToProcess, startFrameOffset)) {
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
 
-    outputBus.clearSilentFlag();
+    outputBus->clearSilentFlag();
 }
 
 // Returns true if we're finished.
@@ -176,7 +184,8 @@ bool AudioBufferSourceNode::renderFromBuffer(AudioBus& bus, unsigned destination
 
     // Basic sanity checking
     ASSERT(m_buffer);
-    if (!m_buffer)
+    RefPtr buffer = m_buffer;
+    if (!buffer)
         return false;
 
     unsigned numberOfChannels = this->numberOfChannels();
@@ -209,15 +218,21 @@ bool AudioBufferSourceNode::renderFromBuffer(AudioBus& bus, unsigned destination
     // Offset the pointers to the correct offset frame.
     unsigned writeIndex = destinationFrameOffset;
 
-    size_t bufferLength = m_buffer->length();
-    double bufferSampleRate = m_buffer->sampleRate();
+    size_t bufferLength = buffer->length();
+    double bufferSampleRate = buffer->sampleRate();
     double pitchRate = totalPitchRate();
     bool reverse = pitchRate < 0;
 
+    if (!bufferLength)
+        return false;
+
     // Avoid converting from time to sample-frames twice by computing
     // the grain end time first before computing the sample frame.
+    // When looping, playback is bounded by the loop points below (and stopped
+    // via m_endTime for a grain), so the grain duration must not clamp maxFrame
+    // here; otherwise a loopStart past the grain end collapses the loop range.
     unsigned maxFrame;
-    if (m_isGrain)
+    if (m_isGrain && !m_isLooping)
         maxFrame = AudioUtilities::timeToSampleFrame(m_grainOffset + m_grainDuration, bufferSampleRate);
     else
         maxFrame = bufferLength;
@@ -226,30 +241,42 @@ bool AudioBufferSourceNode::renderFromBuffer(AudioBus& bus, unsigned destination
     if (maxFrame > bufferLength)
         maxFrame = bufferLength;
 
-    // If the .loop attribute is true, then values of m_loopStart == 0 && m_loopEnd == 0 implies
-    // that we should use the entire buffer as the loop, otherwise use the loop values in m_loopStart and m_loopEnd.
+    // Defaults to the entire buffer, which is also the fallback when the loop points below do not
+    // describe a usable range.
     double virtualMaxFrame = maxFrame;
     double virtualMinFrame = 0;
     double virtualDeltaFrames = maxFrame;
 
-    if (m_isLooping && (m_loopStart || m_loopEnd) && m_loopStart >= 0 && m_loopEnd > 0 && m_loopStart < m_loopEnd) {
-        // Convert from seconds to sample-frames.
-        double loopMinFrame = m_loopStart * m_buffer->sampleRate();
-        double loopMaxFrame = m_loopEnd * m_buffer->sampleRate();
+    // Compute the effective loop points by clamping both endpoints into the buffer, then falling
+    // back to looping the entire buffer unless what is left is a range of positive length. Clamping
+    // before validating keeps an out-of-range endpoint from producing an inverted range.
+    // https://webaudio.github.io/web-audio-api/#playback-AudioBufferSourceNode
+    if (m_isLooping) {
+        double bufferDuration = buffer->duration();
+        double loopStart = std::clamp(m_loopStart, 0.0, bufferDuration);
+        double loopEnd = m_loopEnd <= 0 ? 0 : std::min(m_loopEnd, bufferDuration);
 
-        virtualMaxFrame = std::min(loopMaxFrame, virtualMaxFrame);
-        virtualMinFrame = std::max(loopMinFrame, virtualMinFrame);
-        virtualDeltaFrames = virtualMaxFrame - virtualMinFrame;
+        if (loopStart < loopEnd) {
+            virtualMinFrame = loopStart * bufferSampleRate;
+            virtualMaxFrame = std::min(loopEnd * bufferSampleRate, virtualMaxFrame);
+            virtualDeltaFrames = virtualMaxFrame - virtualMinFrame;
+        }
     }
 
-    if (m_virtualReadIndex >= virtualMaxFrame) {
-        // Early exit to avoid going past the end of the source buffer.
-        if (!m_isLooping)
-            return false;
+    if (!reverse) {
+        if (m_virtualReadIndex >= virtualMaxFrame) {
+            // Early exit to avoid going past the end of the source buffer.
+            if (!m_isLooping)
+                return false;
 
-        // Wrap back to the beginning of the loop.
-        m_virtualReadIndex = (m_loopStart < 0) ? 0 : (m_loopStart * m_buffer->sampleRate());
-        m_virtualReadIndex = std::min(m_virtualReadIndex, static_cast<double>(bufferLength - 1));
+            // Wrap back to the beginning of the loop.
+            m_virtualReadIndex = virtualMinFrame;
+        }
+    } else if (m_isLooping && m_virtualReadIndex < virtualMinFrame) {
+        // https://webaudio.github.io/web-audio-api/#playback-AudioBufferSourceNode
+        // For a negative playback rate, only an offset before the loop start is clamped, to the
+        // loop start. An offset past the loop end is left alone so playback descends into the loop.
+        m_virtualReadIndex = virtualMinFrame;
     }
 
     // Sanity check that our playback rate isn't larger than the loop size.
@@ -259,10 +286,28 @@ bool AudioBufferSourceNode::renderFromBuffer(AudioBus& bus, unsigned destination
     // Get local copy.
     double virtualReadIndex = m_virtualReadIndex;
 
+    int framesToProcess = numberOfFrames;
+
     // Adjust the read index by the startFrameOffset (compensated by the pitch rate) because
     // we always start output on a frame boundary with interpolation if necessary.
-    if (startFrameOffset < 0 && pitchRate)
-        virtualReadIndex += std::abs(startFrameOffset * pitchRate);
+    if (startFrameOffset < 0 && pitchRate) {
+        double skippedFrames = std::abs(startFrameOffset * pitchRate);
+        virtualReadIndex += reverse ? -skippedFrames : skippedFrames;
+    }
+
+    // With a negative playback rate the playhead can start at or past the end of the buffer, since
+    // offset is only clamped to [0, duration]. Those frames are outside the buffer and so are
+    // silent; playback picks up once the playhead descends into the buffer.
+    // https://webaudio.github.io/web-audio-api/#playback-AudioBufferSourceNode
+    if (reverse) {
+        while (framesToProcess > 0 && virtualReadIndex >= bufferLength) {
+            for (unsigned i = 0; i < numberOfChannels; ++i)
+                m_destinationChannels[i][writeIndex] = 0;
+            ++writeIndex;
+            --framesToProcess;
+            virtualReadIndex += pitchRate;
+        }
+    }
 
     bool needsInterpolation = virtualReadIndex != floor(virtualReadIndex)
         || virtualDeltaFrames != floor(virtualDeltaFrames)
@@ -270,7 +315,6 @@ bool AudioBufferSourceNode::renderFromBuffer(AudioBus& bus, unsigned destination
         || virtualMinFrame != floor(virtualMinFrame);
 
     // Render loop - reading from the source buffer to the destination using linear interpolation.
-    int framesToProcess = numberOfFrames;
 
     // Optimize for the very common case of playing back with pitchRate == 1.
     // We can avoid the linear interpolation.
@@ -301,9 +345,7 @@ bool AudioBufferSourceNode::renderFromBuffer(AudioBus& bus, unsigned destination
     } else if (pitchRate == -1 && !needsInterpolation) {
         int readIndex = static_cast<int>(virtualReadIndex);
         int deltaFrames = static_cast<int>(virtualDeltaFrames);
-        int maxFrame = static_cast<int>(virtualMaxFrame);
-        if (readIndex > maxFrame)
-            readIndex = maxFrame;
+        readIndex = std::min(readIndex, static_cast<int>(bufferLength) - 1);
 
         int minFrame = static_cast<int>(virtualMinFrame) - 1;
         while (framesToProcess > 0) {
@@ -340,16 +382,19 @@ bool AudioBufferSourceNode::renderFromBuffer(AudioBus& bus, unsigned destination
         if (readIndex >= maxFrame)
             readIndex -= deltaFrames;
 
+        if (readIndex >= bufferLength)
+            return false;
+
         for (unsigned i = 0; i < numberOfChannels; ++i)
             std::ranges::fill(m_destinationChannels[i].subspan(writeIndex).first(framesToProcess), m_sourceChannels[i][readIndex]);
 
         virtualReadIndex = readIndex;
     } else if (reverse) {
         unsigned maxFrame = static_cast<unsigned>(virtualMaxFrame);
-        unsigned minFrame = static_cast<unsigned>(floorf(virtualMinFrame));
+        unsigned minFrame = static_cast<unsigned>(std::floor(virtualMinFrame));
 
         while (framesToProcess--) {
-            unsigned readIndex = static_cast<unsigned>(floorf(virtualReadIndex));
+            unsigned readIndex = static_cast<unsigned>(std::floor(virtualReadIndex));
             float interpolationFactor = virtualReadIndex - readIndex;
 
             unsigned readIndex2 = readIndex + 1;
@@ -452,7 +497,7 @@ ExceptionOr<void> AudioBufferSourceNode::setBufferForBindings(RefPtr<AudioBuffer
 
     if (buffer && m_wasBufferSet)
         return Exception { ExceptionCode::InvalidStateError, "The buffer was already set"_s };
-    
+
     if (buffer) {
         m_wasBufferSet = true;
 
@@ -460,26 +505,47 @@ ExceptionOr<void> AudioBufferSourceNode::setBufferForBindings(RefPtr<AudioBuffer
         unsigned numberOfChannels = buffer->numberOfChannels();
         ASSERT(numberOfChannels <= AudioContext::maxNumberOfChannels);
 
-        checkedOutput(0)->setNumberOfChannels(numberOfChannels);
-
         m_sourceChannels = FixedVector<std::span<const float>>(numberOfChannels);
         m_destinationChannels = FixedVector<std::span<float>>(numberOfChannels);
 
-        for (unsigned i = 0; i < numberOfChannels; ++i) 
+        for (unsigned i = 0; i < numberOfChannels; ++i)
             m_sourceChannels[i] = buffer->channelData(i)->typedSpan();
+    } else {
+        m_sourceChannels = { };
+        m_destinationChannels = { };
     }
 
     m_virtualReadIndex = 0;
     m_buffer = WTF::move(buffer);
 
+    updateOutputChannelCount();
+
     // In case the buffer gets set after playback has started, we need to clamp the grain parameters now.
     if (m_isGrain)
         adjustGrainParameters();
 
-    if (isPlayingOrScheduled())
-        acquireBufferContent();
+    acquireBufferContent();
 
     return { };
+}
+
+// https://webaudio.github.io/web-audio-api/#AudioNode-actively-processing
+// https://webaudio.github.io/web-audio-api/#AudioBufferSourceNode
+void AudioBufferSourceNode::updateOutputChannelCount()
+{
+    ASSERT(isMainThread());
+    ASSERT(m_processLock.isHeld());
+    ASSERT(context().isGraphOwner());
+
+    unsigned numberOfChannels = 1;
+    if (m_buffer && isPlayingOrScheduled())
+        numberOfChannels = m_buffer->numberOfChannels();
+
+    ASSERT(numberOfChannels <= AudioContext::maxNumberOfChannels);
+    if (numberOfChannels == output(0)->numberOfChannels())
+        return;
+
+    protect(output(0))->setNumberOfChannels(numberOfChannels);
 }
 
 unsigned AudioBufferSourceNode::numberOfChannels()
@@ -530,10 +596,15 @@ ExceptionOr<void> AudioBufferSourceNode::startPlaying(double when, double grainO
     if (grainDuration && (!std::isfinite(*grainDuration) || (*grainDuration < 0)))
         return Exception { ExceptionCode::RangeError, "duration value should be positive"_s };
 
-    context().sourceNodeWillBeginPlayback(*this);
+    Ref context = this->context();
+    context->sourceNodeWillBeginPlayback(*this);
 
-    // This synchronizes with process().
+    // This synchronizes with process(), it is important to acquire the processLock before the
+    // graphLock to avoid a deadlock given that this is the order process() acquires the locks in.
     Locker locker { m_processLock };
+
+    // Changing the number of output channels below re-configures the graph.
+    Locker contextLocker { context->graphLock() };
 
     m_isGrain = true;
     m_grainOffset = grainOffset;
@@ -542,12 +613,15 @@ ExceptionOr<void> AudioBufferSourceNode::startPlaying(double when, double grainO
 
     // If 0 is passed in for |when| or if the value is less than currentTime, then the sound will start playing immediately.
     // https://webaudio.github.io/web-audio-api/#dom-audiobuffersourcenode-start-when-offset-duration-when
-    m_startTime = std::max(when, context().currentTime());
+    m_startTime = std::max(when, context->currentTime());
 
     adjustGrainParameters();
 
     acquireBufferContent();
     m_playbackState = SCHEDULED_STATE;
+
+    // The node is now playing, so the output takes the buffer's channel count.
+    updateOutputChannelCount();
 
     return { };
 }
@@ -556,11 +630,12 @@ void AudioBufferSourceNode::adjustGrainParameters()
 {
     ASSERT(m_processLock.isHeld());
 
-    if (!m_buffer)
+    RefPtr buffer = m_buffer;
+    if (!buffer)
         return;
 
     // Do sanity checking of grain parameters versus buffer size.
-    double bufferDuration = m_buffer->duration();
+    double bufferDuration = buffer->duration();
 
     m_grainOffset = std::min(bufferDuration, m_grainOffset);
 
@@ -577,14 +652,11 @@ void AudioBufferSourceNode::adjustGrainParameters()
     } else
         m_grainDuration = clampTo(m_grainDuration, 0.0,  bufferDuration - m_grainOffset);
 
-    // We call timeToSampleFrame here since at playbackRate == 1 we don't want to go through linear interpolation
-    // at a sub-sample position since it will degrade the quality.
-    // When aligned to the sample-frame the playback will be identical to the PCM data stored in the buffer.
-    // Since playbackRate == 1 is very common, it's worth considering quality.
-    if (playbackRate().value() < 0)
-        m_virtualReadIndex = AudioUtilities::timeToSampleFrame(m_grainOffset + m_grainDuration, m_buffer->sampleRate()) - 1;
-    else
-        m_virtualReadIndex = AudioUtilities::timeToSampleFrame(m_grainOffset, m_buffer->sampleRate());
+    // The playhead starts at offset, whatever the sign of the playback rate.
+    // https://webaudio.github.io/web-audio-api/#playback-AudioBufferSourceNode
+    // A whole-frame offset stays whole so that playback at |rate| == 1 is a straight copy of the
+    // PCM data rather than a quality-degrading interpolation at a sub-sample position.
+    m_virtualReadIndex = timeToFractionalSampleFrame(m_grainOffset, buffer->sampleRate());
 }
 
 double AudioBufferSourceNode::totalPitchRate()
@@ -602,7 +674,7 @@ double AudioBufferSourceNode::totalPitchRate()
 
     totalRate = std::clamp(totalRate, -MaxRate, MaxRate);
     
-    bool isTotalRateValid = !std::isnan(totalRate) && !std::isinf(totalRate);
+    bool isTotalRateValid = std::isfinite(totalRate);
     ASSERT(isTotalRateValid);
     if (!isTotalRateValid)
         totalRate = 1.0;
@@ -628,13 +700,14 @@ float AudioBufferSourceNode::noiseInjectionMultiplier() const
 {
     Locker locker { m_processLock };
 
-    if (!m_buffer)
+    RefPtr buffer = m_buffer;
+    if (!buffer)
         return 0;
 
-    auto multiplier = m_buffer->noiseInjectionMultiplier();
+    auto multiplier = buffer->noiseInjectionMultiplier();
     if (m_isLooping && m_loopStart < m_loopEnd) {
         static constexpr auto noiseMultiplierPerLoop = 0.005;
-        auto loopCount = m_buffer->duration() / (m_loopEnd - m_loopStart);
+        auto loopCount = buffer->duration() / (m_loopEnd - m_loopStart);
         multiplier *= std::max(1.0, noiseMultiplierPerLoop * loopCount);
     }
     return multiplier;

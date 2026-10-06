@@ -29,10 +29,12 @@
 #if PLATFORM(COCOA)
 
 #import "CoreIPCTypes.h"
+#import <wtf/Lock.h>
+#import <wtf/NeverDestroyed.h>
 
 namespace WebKit {
 
-CGColorSpaceSerialization CoreIPCCGColorSpace::serializableColorSpace(CGColorSpaceRef cgColorSpace)
+static CGColorSpaceSerialization computeSerializableColorSpace(CGColorSpaceRef cgColorSpace)
 {
     if (auto colorSpace = WebCore::colorSpaceForCGColorSpace(cgColorSpace))
         return *colorSpace;
@@ -62,13 +64,55 @@ CGColorSpaceSerialization CoreIPCCGColorSpace::serializableColorSpace(CGColorSpa
                 if (lastIndex) {
                     CFNumberGetValue(lastIndex.get(), kCFNumberSInt8Type, &value);
                     RetainPtr colorSpace = CGColorSpaceGetBaseColorSpace(cgColorSpace);
-                    return IndexedColorSpace { value, makeVector(table.get()), Box<CoreIPCCGColorSpace>::create(serializableColorSpace(colorSpace.get())) };
+                    return IndexedColorSpace { value, makeVector(table.get()), Box<CoreIPCCGColorSpace>::create(CoreIPCCGColorSpace::serializableColorSpace(colorSpace.get())) };
                 }
             }
         }
     }
     // FIXME: This should be removed once we can prove only non-null cgColorSpaces.
-    return WebCore::ColorSpace::SRGB;
+    return WebCore::ColorSpaceName::SRGB;
+}
+
+struct CachedICCDataSerialization {
+    RetainPtr<CGColorSpaceRef> colorSpace;
+    ICCData iccData;
+};
+
+static Lock cachedICCDataSerializationsLock;
+
+static std::array<std::optional<CachedICCDataSerialization>, 2>& cachedICCDataSerializations() WTF_REQUIRES_LOCK(cachedICCDataSerializationsLock)
+{
+    static NeverDestroyed<std::array<std::optional<CachedICCDataSerialization>, 2>> cache;
+    return cache.get();
+}
+
+CGColorSpaceSerialization CoreIPCCGColorSpace::serializableColorSpace(CGColorSpaceRef cgColorSpace)
+{
+    if (!cgColorSpace)
+        return computeSerializableColorSpace(cgColorSpace);
+
+    {
+        Locker locker { cachedICCDataSerializationsLock };
+        auto& cache = cachedICCDataSerializations();
+        for (size_t i = 0; i < cache.size(); ++i) {
+            if (!cache[i] || cache[i]->colorSpace.get() != cgColorSpace)
+                continue;
+            if (i)
+                std::swap(cache[0], cache[i]);
+            return cache[0]->iccData;
+        }
+    }
+
+    auto serialization = computeSerializableColorSpace(cgColorSpace);
+    if (auto* iccData = std::get_if<ICCData>(&serialization)) {
+        Locker locker { cachedICCDataSerializationsLock };
+        auto& cache = cachedICCDataSerializations();
+        if (!cache[0] || cache[0]->colorSpace.get() != cgColorSpace) {
+            cache[1] = WTF::move(cache[0]);
+            cache[0] = CachedICCDataSerialization { cgColorSpace, *iccData };
+        }
+    }
+    return serialization;
 }
 
 CoreIPCCGColorSpace::CoreIPCCGColorSpace(CGColorSpaceRef cgColorSpace)
@@ -84,7 +128,7 @@ CoreIPCCGColorSpace::CoreIPCCGColorSpace(CGColorSpaceSerialization data)
 RetainPtr<CGColorSpaceRef> CoreIPCCGColorSpace::toCF() const
 {
     auto colorSpace = WTF::switchOn(m_cgColorSpace,
-    [](WebCore::ColorSpace colorSpace) -> RetainPtr<CGColorSpaceRef> {
+    [](WebCore::ColorSpaceName colorSpace) -> RetainPtr<CGColorSpaceRef> {
         return RetainPtr { cachedNullableCGColorSpaceSingleton(colorSpace) };
     },
     [](RetainPtr<CFStringRef> name) -> RetainPtr<CGColorSpaceRef> {
@@ -106,6 +150,8 @@ RetainPtr<CGColorSpaceRef> CoreIPCCGColorSpace::toCF() const
         return adoptCF(CGColorSpaceCreateWithPropertyList(propertyList.get()));
     },
     [](const IndexedColorSpace& colorSpace) -> RetainPtr<CGColorSpaceRef> {
+        if (!colorSpace.colorSpace)
+            return nullptr;
         RetainPtr innerColorSpace = colorSpace.colorSpace->toCF();
         RetainPtr innerPropertyList = adoptCF(CGColorSpaceCopyPropertyList(innerColorSpace.get()));
         RetainPtr lastIndex = adoptCF(CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt8Type, &colorSpace.index));

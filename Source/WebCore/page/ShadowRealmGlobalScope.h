@@ -46,7 +46,7 @@ public:
     ~ShadowRealmGlobalScope();
 
     ShadowRealmGlobalScope& self();
-    ScriptModuleLoader& moduleLoader();
+    ScriptModuleLoader& moduleLoader() LIFETIME_BOUND;
     JSShadowRealmGlobalScopeBase* wrapper();
 
 protected:
@@ -56,7 +56,7 @@ private:
     JSC::Weak<JSDOMGlobalObject> m_incubatingWrapper;
     ScriptModuleLoader* m_parentLoader { nullptr };
     JSC::Weak<JSShadowRealmGlobalScopeBase> m_wrapper;
-    std::unique_ptr<ScriptModuleLoader> m_moduleLoader;
+    const std::unique_ptr<ScriptModuleLoader> m_moduleLoader;
 };
 
 inline ShadowRealmGlobalScope& ShadowRealmGlobalScope::self()

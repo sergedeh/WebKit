@@ -67,7 +67,7 @@ CSSSelectorList::CSSSelectorList(MutableCSSSelectorList&& selectorVector)
                 m_selectorArray[arrayIndex].m_isFirstInComplexSelector = false;
             ++arrayIndex;
         }
-        ASSERT(m_selectorArray[arrayIndex - 1].isFirstInComplexSelector());
+        ASSERT(!m_selectorArray[arrayIndex - 1].precedingInComplexSelector());
     }
     ASSERT(flattenedSize == arrayIndex);
 }
@@ -146,7 +146,9 @@ CSSSelectorList CSSSelectorList::makeJoining(const Vector<const CSSSelectorList*
 
 unsigned CSSSelectorList::size() const
 {
-    return std::ranges::count_if(m_selectorArray, [](auto& selector) { return selector.isFirstInComplexSelector(); });
+    return std::ranges::count_if(m_selectorArray, [](auto& selector) {
+        return !selector.precedingInComplexSelector();
+    });
 }
 
 String CSSSelectorList::selectorsText() const
@@ -162,7 +164,7 @@ void CSSSelectorList::buildSelectorsText(StringBuilder& stringBuilder) const
 }
 
 template <typename Functor>
-static bool forEachTagSelector(Functor& functor, const CSSSelector* selector)
+static bool forEachTagSelector(NOESCAPE const Functor& functor, const CSSSelector* selector)
 {
     ASSERT(selector);
 
@@ -181,7 +183,7 @@ static bool forEachTagSelector(Functor& functor, const CSSSelector* selector)
 }
 
 template <typename Functor>
-static bool forEachSelector(Functor& functor, const CSSSelectorList& selectorList)
+static bool forEachSelector(NOESCAPE const Functor& functor, const CSSSelectorList& selectorList)
 {
     for (const auto& selector : selectorList) {
         if (forEachTagSelector(functor, &selector))
@@ -194,7 +196,8 @@ static bool forEachSelector(Functor& functor, const CSSSelectorList& selectorLis
 bool CSSSelectorList::hasExplicitNestingParent() const
 {
     auto functor = [](auto* selector) {
-        return selector->hasExplicitNestingParent();
+        return selector->match() == CSSSelector::Match::NestingParent
+            || selector->match() == CSSSelector::Match::ForgivingUnknownNestContaining;
     };
 
     return forEachSelector(functor, *this);

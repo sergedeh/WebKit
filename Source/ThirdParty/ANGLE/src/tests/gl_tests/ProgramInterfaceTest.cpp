@@ -6,11 +6,10 @@
 
 // ProgramInterfaceTest: Tests of program interfaces.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
 #include "common/string_utils.h"
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -236,8 +235,8 @@ void main()
         GLenum iface;
         const GLchar *resourceName;
     };
-    InterfaceProperties kInterfaceProps[kInterfaceCount] = {
-        {programTCS, GL_PROGRAM_OUTPUT, "tt[0][0]"}, {programTES, GL_PROGRAM_INPUT, "tt[0][0]"}};
+    std::array<InterfaceProperties, kInterfaceCount> kInterfaceProps = {
+        {{programTCS, GL_PROGRAM_OUTPUT, "tt[0][0]"}, {programTES, GL_PROGRAM_INPUT, "tt[0][0]"}}};
 
     // Table of queries to perform on resource.
     constexpr GLsizei kPropCount                = 3;
@@ -277,7 +276,7 @@ void main()
             EXPECT_GL_NO_ERROR();
             ASSERT_EQ((GLuint)queryResourceIndex, resourceIndex);
 
-            if (strcmp(name, kInterfaceProps[i].resourceName) == 0)
+            if (ANGLE_UNSAFE_TODO(strcmp(name, kInterfaceProps[i].resourceName)) == 0)
             {
                 GLsizei length = 0;
                 glGetProgramResourceiv(program, programInterface, resourceIndex, kPropCount,
@@ -687,7 +686,7 @@ TEST_P(ProgramInterfaceTestES31, GetUniformBlockProperties)
     GLint magic = 0xBEEF;
 
     // Tests bufSize is respected even some prop returns more than one value.
-    params[propCount] = magic;
+    ANGLE_UNSAFE_TODO(params[propCount]) = magic;
     glGetProgramResourceiv(program, GL_UNIFORM_BLOCK, index, propCount, props, propCount, &length,
                            params);
     EXPECT_GL_NO_ERROR();

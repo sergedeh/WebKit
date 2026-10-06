@@ -33,7 +33,7 @@
 #include "BufferSource.h"
 #include "CDMKeyID.h"
 #include "MediaKeyStatus.h"
-#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/RefCounted.h>
 
 namespace WebCore {
@@ -53,16 +53,16 @@ public:
 
     virtual ~MediaKeyStatusMap();
 
-    void detachSession();
+    void NODELETE detachSession();
 
-    unsigned long size();
+    unsigned long NODELETE size();
     bool has(const BufferSource&);
     JSC::JSValue get(JSC::JSGlobalObject&, const BufferSource&);
 
     class Iterator {
     public:
         explicit Iterator(MediaKeyStatusMap&);
-        std::optional<KeyValuePair<BufferSource::VariantType, MediaKeyStatus>> next();
+        std::optional<KeyValuePair<BufferSource, MediaKeyStatus>> next();
 
     private:
         const Ref<MediaKeyStatusMap> m_map;

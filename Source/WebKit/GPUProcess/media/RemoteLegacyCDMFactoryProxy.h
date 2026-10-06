@@ -70,12 +70,12 @@ public:
 
     void addSession(RemoteLegacyCDMSessionIdentifier, Ref<RemoteLegacyCDMSessionProxy>&&);
     void removeSession(RemoteLegacyCDMSessionIdentifier, CompletionHandler<void()>&&);
-    RemoteLegacyCDMSessionProxy* getSession(const RemoteLegacyCDMSessionIdentifier&) const;
+    RemoteLegacyCDMSessionProxy* NODELETE getSession(const RemoteLegacyCDMSessionIdentifier&) const;
 
     RefPtr<GPUConnectionToWebProcess> gpuConnectionToWebProcess() { return m_gpuConnectionToWebProcess.get(); }
 
-    bool allowsExitUnderMemoryPressure() const;
-    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+    bool NODELETE allowsExitUnderMemoryPressure() const;
+    std::optional<SharedPreferencesForWebProcess> NODELETE sharedPreferencesForWebProcess() const;
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const;

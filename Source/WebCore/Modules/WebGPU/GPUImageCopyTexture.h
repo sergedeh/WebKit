@@ -31,6 +31,7 @@
 #include "GPUTextureAspect.h"
 #include "WebGPUImageCopyTexture.h"
 #include <optional>
+#include <wtf/Forward.h>
 #include <wtf/RefPtr.h>
 
 namespace WebCore {
@@ -38,7 +39,6 @@ namespace WebCore {
 struct GPUImageCopyTexture {
     WebGPU::ImageCopyTexture convertToBacking() const
     {
-        ASSERT(texture);
         return {
             texture->backing(),
             mipLevel,
@@ -47,7 +47,9 @@ struct GPUImageCopyTexture {
         };
     }
 
-    WeakPtr<GPUTexture> texture;
+    Ref<JSON::Object> toJSON() const;
+
+    Ref<GPUTexture> texture;
     GPUIntegerCoordinate mipLevel { 0 };
     std::optional<GPUOrigin3D> origin;
     GPUTextureAspect aspect { GPUTextureAspect::All };

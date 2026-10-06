@@ -10,10 +10,10 @@
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/vk/VulkanMemoryAllocator.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTemplates.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrResourceProvider.h"
 #include "src/gpu/ganesh/vk/GrVkCaps.h"
@@ -86,7 +86,10 @@ sk_sp<GrVkBuffer> GrVkBuffer::Make(GrVkGpu* gpu,
     skgpu::VulkanAlloc alloc;
 
     bool isProtected = gpu->protectedContext() &&
-                       accessPattern == kStatic_GrAccessPattern;
+                       accessPattern == kStatic_GrAccessPattern &&
+                       bufferType != GrGpuBufferType::kVertex &&
+                       bufferType != GrGpuBufferType::kIndex &&
+                       bufferType != GrGpuBufferType::kDrawIndirect;
 
     // Protected memory _never_ uses mappable buffers.
     // Otherwise, the only time we don't require mappable buffers is when we have a static

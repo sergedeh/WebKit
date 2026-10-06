@@ -24,7 +24,7 @@
 #include "StyleBackgroundLayer.h"
 
 #include "CachedImage.h"
-#include "StylePrimitiveKeyword+Logging.h"
+#include "StyleKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 #include <wtf/text/TextStream.h>
 
@@ -56,7 +56,7 @@ BackgroundLayer::BackgroundLayer(CSS::Keyword::None keyword)
 {
 }
 
-BackgroundLayer::BackgroundLayer(RefPtr<StyleImage>&& image)
+BackgroundLayer::BackgroundLayer(RefPtr<Image>&& image)
     : BackgroundLayer { ImageOrNone { WTF::move(image) } }
 {
 }

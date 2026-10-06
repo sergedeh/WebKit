@@ -22,18 +22,17 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef OpenTypeTypes_h
-#define OpenTypeTypes_h
+#pragma once
 
 #if ENABLE(OPENTYPE_MATH)
-#include <WebCore/Glyph.h>
+#include "Glyph.h"
 #endif
 
-#include <WebCore/SharedBuffer.h>
+#include "SharedBuffer.h"
+#include <numeric>
 #include <wtf/StdLibExtras.h>
 
-namespace WebCore {
-namespace OpenType {
+namespace WebCore::OpenType {
 
 struct BigEndianShort {
     operator short() const { return (v & 0x00ff) << 8 | v >> 8; }
@@ -74,14 +73,14 @@ typedef UInt16 GlyphID;
 typedef uint32_t Tag;
 #define OT_MAKE_TAG(ch1, ch2, ch3, ch4) ((((uint32_t)(ch4)) << 24) | (((uint32_t)(ch3)) << 16) | (((uint32_t)(ch2)) << 8) | ((uint32_t)(ch1)))
 
-template<typename T> static const T* validateTableSingle(const RefPtr<SharedBuffer>& buffer)
+template<typename T> const T* validateTableSingle(const RefPtr<SharedBuffer>& buffer)
 {
     if (!buffer || buffer->size() < sizeof(T))
         return nullptr;
     return &reinterpretCastSpanStartTo<const T>(buffer->span());
 }
 
-template<typename T> static std::span<const T> validateTable(const RefPtr<SharedBuffer>& buffer, size_t count)
+template<typename T> std::span<const T> validateTable(const RefPtr<SharedBuffer>& buffer, size_t count)
 {
     if (!buffer || (buffer->size() / sizeof(T)) < count)
         return { };
@@ -153,7 +152,7 @@ protected:
             // We do a binary search on the glyph indexes.
             uint32_t imin = 0, imax = glyphCount;
             while (imin < imax) {
-                uint32_t imid = (imin + imax) >> 1;
+                uint32_t imid = std::midpoint(imin, imax);
                 uint16_t glyphMid = coverage1->glyphArray[imid];
                 if (glyphMid == glyph) {
                     coverageIndex = imid;
@@ -177,7 +176,7 @@ protected:
             // We do a binary search on the ranges.
             uint32_t imin = 0, imax = rangeCount;
             while (imin < imax) {
-                uint32_t imid = (imin + imax) >> 1;
+                uint32_t imid = std::midpoint(imin, imax);
                 uint16_t rStart = coverage2->ranges[imid].start;
                 uint16_t rEnd = coverage2->ranges[imid].end;
                 if (rEnd < glyph)
@@ -198,7 +197,4 @@ protected:
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
-} // namespace OpenType
-} // namespace WebCore
-
-#endif // OpenTypeTypes_h
+} // namespace WebCore::OpenType

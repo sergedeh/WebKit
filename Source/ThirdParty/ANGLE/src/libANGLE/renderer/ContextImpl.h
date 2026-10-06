@@ -195,9 +195,6 @@ class ContextImpl : public GLImplFactory
     // KHR_parallel_shader_compile
     virtual void setMaxShaderCompilerThreads(GLuint count) {}
 
-    // GL_ANGLE_texture_storage_external
-    virtual void invalidateTexture(gl::TextureType target);
-
     // EXT_shader_framebuffer_fetch_non_coherent
     virtual void framebufferFetchBarrier() {}
 
@@ -280,6 +277,7 @@ class ContextImpl : public GLImplFactory
                                           gl::TextureBarrierVector *textureBarriers);
 
     // AMD_performance_monitor
+    virtual const angle::PerfMonitorCounterGroupsInfo &getPerfMonitorCountersInfo() const;
     virtual const angle::PerfMonitorCounterGroups &getPerfMonitorCounters();
 
     // GL_ANGLE_variable_rasterization_rate_metal

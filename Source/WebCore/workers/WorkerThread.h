@@ -29,6 +29,7 @@
 #include <WebCore/ContentSecurityPolicyResponseHeaders.h>
 #include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/FetchRequestCredentials.h>
+#include <WebCore/NetworkLoadPolicy.h>
 #include <WebCore/NotificationPermission.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <WebCore/ServiceWorkerRegistrationData.h>
@@ -90,6 +91,8 @@ public:
     Markable<ScriptExecutionContextIdentifier> clientIdentifier;
     OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections;
     std::optional<uint64_t> noiseInjectionHashSalt;
+    String agentClusterID;
+    NetworkLoadPolicy networkLoadPolicy;
 
     WorkerParameters isolatedCopy() const;
 };
@@ -104,7 +107,7 @@ public:
     WorkerReportingProxy* workerReportingProxy() const { return m_workerReportingProxy.get(); }
 
     // Number of active worker threads.
-    WEBCORE_EXPORT static unsigned workerThreadCount();
+    WEBCORE_EXPORT static unsigned NODELETE workerThreadCount();
 
     JSC::RuntimeFlags runtimeFlags() const { return m_runtimeFlags; }
     bool isInStaticScriptEvaluation() const { return m_isInStaticScriptEvaluation; }
@@ -118,7 +121,7 @@ protected:
     // Factory method for creating a new worker context for the thread.
     virtual Ref<WorkerGlobalScope> createWorkerGlobalScope(const WorkerParameters&, Ref<SecurityOrigin>&&, Ref<SecurityOrigin>&& topOrigin) = 0;
 
-    WorkerGlobalScope* globalScope();
+    WorkerGlobalScope* NODELETE globalScope();
 
     IDBClient::IDBConnectionProxy* idbConnectionProxy() { return m_idbConnectionProxy.get(); }
     SocketProvider* socketProvider() { return m_socketProvider.get(); }

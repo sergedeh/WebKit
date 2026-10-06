@@ -38,16 +38,16 @@ class SVGFilterElement;
 
 class SVGFilterRenderer final : public Filter {
 public:
-    static RefPtr<SVGFilterRenderer> create(SVGElement* contextElement, SVGFilterElement&, const FilterGeometry&, OptionSet<FilterRenderingMode>, const GraphicsContext& destinationContext, std::optional<RenderingResourceIdentifier> = std::nullopt);
-    WEBCORE_EXPORT static Ref<SVGFilterRenderer> create(SVGUnitTypes::SVGUnitType primitiveUnits, SVGFilterExpression&&, FilterEffectVector&&, const FilterGeometry&, OptionSet<FilterRenderingMode>, bool showDebugOverlay, std::optional<RenderingResourceIdentifier>);
+    static RefPtr<SVGFilterRenderer> create(SVGElement* contextElement, SVGFilterElement&, const FilterGeometry&, OptionSet<FilterRenderingMode>, OptionSet<FilterRenderingOption>, const GraphicsContext& destinationContext, std::optional<RenderingResourceIdentifier> = std::nullopt);
+    WEBCORE_EXPORT static Ref<SVGFilterRenderer> create(SVGUnitTypes::SVGUnitType primitiveUnits, SVGFilterExpression&&, FilterEffectVector&&, const FilterGeometry&, OptionSet<FilterRenderingMode>, OptionSet<FilterRenderingOption>, std::optional<RenderingResourceIdentifier>);
 
     static bool isIdentity(SVGFilterElement&);
     static IntOutsets calculateOutsets(SVGFilterElement&, const FloatRect& targetBoundingBox);
 
     SVGUnitTypes::SVGUnitType primitiveUnits() const { return m_primitiveUnits; }
 
-    const SVGFilterExpression& expression() const { return m_expression; }
-    const FilterEffectVector& effects() const { return m_effects; }
+    const SVGFilterExpression& expression() const LIFETIME_BOUND { return m_expression; }
+    const FilterEffectVector& effects() const LIFETIME_BOUND { return m_effects; }
 
     FilterEffectVector effectsOfType(FilterFunction::Type) const final;
 
@@ -58,14 +58,14 @@ public:
     RefPtr<FilterImage> apply(FilterImage* sourceImage, FilterResults&) final;
     FilterStyleVector createFilterStyles(GraphicsContext&, const FilterStyle& sourceStyle) const final;
 
-    static FloatSize calculateResolvedSize(const FloatSize&, const FloatRect& targetBoundingBox, SVGUnitTypes::SVGUnitType primitiveUnits);
+    static FloatSize NODELETE calculateResolvedSize(const FloatSize&, const FloatRect& targetBoundingBox, SVGUnitTypes::SVGUnitType primitiveUnits);
 
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const final;
 
-    WEBCORE_EXPORT static bool isValidSVGFilterExpression(const SVGFilterExpression&, const FilterEffectVector&);
+    WEBCORE_EXPORT static bool NODELETE isValidSVGFilterExpression(const SVGFilterExpression&, const FilterEffectVector&);
 private:
-    SVGFilterRenderer(const FilterGeometry&, SVGUnitTypes::SVGUnitType primitiveUnits, std::optional<RenderingResourceIdentifier>);
-    SVGFilterRenderer(const FilterGeometry&, SVGUnitTypes::SVGUnitType primitiveUnits, SVGFilterExpression&&, FilterEffectVector&&, std::optional<RenderingResourceIdentifier>);
+    SVGFilterRenderer(const FilterGeometry&, SVGUnitTypes::SVGUnitType primitiveUnits, OptionSet<FilterRenderingOption>, std::optional<RenderingResourceIdentifier>);
+    SVGFilterRenderer(const FilterGeometry&, SVGUnitTypes::SVGUnitType primitiveUnits, SVGFilterExpression&&, FilterEffectVector&&, OptionSet<FilterRenderingOption>, std::optional<RenderingResourceIdentifier>);
 
     static std::optional<std::tuple<SVGFilterExpression, FilterEffectVector>> buildExpression(SVGElement* contextElement, SVGFilterElement&, const SVGFilterRenderer&, const GraphicsContext& destinationContext);
     void setExpression(SVGFilterExpression&& expression) { m_expression = WTF::move(expression); }
@@ -84,7 +84,7 @@ private:
     SVGFilterExpression m_expression;
     FilterEffectVector m_effects;
 
-    std::unique_ptr<FilterResults> m_results;
+    const std::unique_ptr<FilterResults> m_results;
 };
 
 } // namespace WebCore

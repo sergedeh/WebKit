@@ -44,7 +44,7 @@
 
 @implementation WKNavigationAction
 
-static WKNavigationType toWKNavigationType(WebCore::NavigationType navigationType)
+static WKNavigationType NODELETE toWKNavigationType(WebCore::NavigationType navigationType)
 {
     switch (navigationType) {
     case WebCore::NavigationType::LinkClicked:
@@ -86,7 +86,7 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
     if (WebCoreObjCScheduleDeallocateOnMainRunLoop(WKNavigationAction.class, self))
         return;
 
-    _navigationAction->~NavigationAction();
+    SUPPRESS_UNCOUNTED_ARG _navigationAction->~NavigationAction();
 
     [super dealloc];
 }
@@ -105,12 +105,12 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
 
 - (WKFrameInfo *)sourceFrame
 {
-    return wrapper(protect(*_navigationAction)->sourceFrame());
+    return wrapper(_navigationAction->sourceFrame());
 }
 
 - (WKFrameInfo *)targetFrame
 {
-    return wrapper(_navigationAction->protectedTargetFrame().get());
+    return wrapper(_navigationAction->targetFrame());
 }
 
 - (WKNavigationType)navigationType
@@ -128,6 +128,11 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
 - (BOOL)shouldPerformDownload
 {
     return _navigationAction->shouldPerformDownload();
+}
+
+- (WKNavigation *)mainFrameNavigation
+{
+    return wrapper(_navigationAction->mainFrameNavigation());
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -216,7 +221,7 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
 
 - (_WKUserInitiatedAction *)_userInitiatedAction
 {
-    return wrapper(_navigationAction->protectedUserInitiatedAction().get());
+    return wrapper(_navigationAction->userInitiatedAction());
 }
 
 - (BOOL)isContentRuleListRedirect
@@ -236,9 +241,8 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
 
 - (WKNavigation *)_mainFrameNavigation
 {
-    return wrapper(_navigationAction->protectedMainFrameNavigation().get());
+    return [self mainFrameNavigation];
 }
-
 
 - (void)_storeSKAdNetworkAttribution
 {

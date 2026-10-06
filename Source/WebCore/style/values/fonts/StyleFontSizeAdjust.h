@@ -50,7 +50,7 @@ struct FontSizeAdjust {
 
     Metric metric() const { return m_platform.metric; }
     std::optional<float> metricValue() const { return m_platform.value; }
-    std::optional<float> resolvedMetricValue(const RenderStyle&) const;
+    std::optional<float> resolvedMetricValue(const Style::ComputedStyle&) const;
 
     WebCore::FontSizeAdjust platform() const { return m_platform; }
 
@@ -64,17 +64,17 @@ private:
 
 template<> struct CSSValueConversion<FontSizeAdjust> { auto operator()(BuilderState&, const CSSValue&) -> FontSizeAdjust; };
 // NOTE: `FontSizeAdjust` is special-cased to allow resolution of `from-font`.
-template<> struct CSSValueCreation<FontSizeAdjust> { auto operator()(CSSValuePool&, const RenderStyle&, const FontSizeAdjust&) -> Ref<CSSValue>; };
+template<> struct CSSValueCreation<FontSizeAdjust> { auto operator()(CSSValuePool&, const Style::ComputedStyle&, const FontSizeAdjust&) -> Ref<CSSValue>; };
 
 // MARK: - Serialization
 
 // NOTE: `FontSizeAdjust` is special-cased to allow resolution of `from-font`.
-template<> struct Serialize<FontSizeAdjust> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const FontSizeAdjust&); };
+template<> struct Serialize<FontSizeAdjust> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const FontSizeAdjust&); };
 
 // MARK: - Blending
 
 template<> struct Blending<FontSizeAdjust> {
-    auto canBlend(const FontSizeAdjust&, const FontSizeAdjust&) -> bool;
+    bool NODELETE canBlend(const FontSizeAdjust&, const FontSizeAdjust&);
     auto blend(const FontSizeAdjust&, const FontSizeAdjust&, const BlendingContext&) -> FontSizeAdjust;
 };
 

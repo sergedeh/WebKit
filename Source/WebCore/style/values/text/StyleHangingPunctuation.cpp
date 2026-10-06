@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleHangingPunctuation.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -32,8 +33,8 @@ namespace Style {
 
 auto CSSValueConversion<HangingPunctuation>::operator()(BuilderState& state, const CSSValue& value) -> HangingPunctuation
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
         case CSSValueNone:
             return CSS::Keyword::None { };
         case CSSValueFirst:
@@ -50,13 +51,13 @@ auto CSSValueConversion<HangingPunctuation>::operator()(BuilderState& state, con
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue>(state, value);
     if (!list)
         return CSS::Keyword::None { };
 
     HangingPunctuationValueEnumSet result;
-    for (Ref item : *list) {
-        switch (item->valueID()) {
+    for (auto& item : *list) {
+        switch (item.valueID()) {
         case CSSValueFirst:
             result.value.add(HangingPunctuationValue::First);
             break;

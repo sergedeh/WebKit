@@ -34,6 +34,8 @@
 #include "ImageBitmapOptions.h"
 #include "ImageBuffer.h"
 #include "JSBlob.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSImageBitmap.h"
 #include "JSPhotoCapabilities.h"
 #include "JSPhotoSettings.h"
@@ -109,7 +111,7 @@ void ImageCapture::takePhoto(PhotoSettings&& settings, DOMPromiseDeferred<IDLInt
 }
 
 // FIXME: Move this routine to VideoFrame.
-static ImageOrientation videoFrameOrientation(const VideoFrame& videoFrame)
+static ImageOrientation NODELETE videoFrameOrientation(const VideoFrame& videoFrame)
 {
     switch (videoFrame.rotation()) {
     case VideoFrame::Rotation::None:
@@ -127,8 +129,7 @@ static ImageOrientation videoFrameOrientation(const VideoFrame& videoFrame)
 
 static Ref<ImageBitmap> createImageBitmapViaDrawing(Ref<ImageBuffer>&& imageBuffer, VideoFrame& videoFrame)
 {
-    bool shouldDiscardAlpha = false;
-    imageBuffer->context().drawVideoFrame(videoFrame, { { }, imageBuffer->backendSize() }, videoFrameOrientation(videoFrame), shouldDiscardAlpha);
+    imageBuffer->context().drawVideoFrame(videoFrame, { { }, imageBuffer->backendSize() }, ShouldDiscardAlpha::No, { videoFrameOrientation(videoFrame) });
 
     bool isOriginClean = true;
     return ImageBitmap::create(WTF::move(imageBuffer), isOriginClean);
@@ -147,7 +148,7 @@ static void createImageBitmap(VideoFrame& videoFrame, CompletionHandler<void(Ref
     IntSize size { static_cast<int>(videoFrame.presentationSize().width()), static_cast<int>(videoFrame.presentationSize().height()) };
     if (videoFrame.has90DegreeRotation())
         size = { size.height(), size.width() };
-    auto imageBuffer = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto imageBuffer = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!imageBuffer) {
         completionHandler({ });
         return;

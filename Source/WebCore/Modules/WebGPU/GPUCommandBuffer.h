@@ -28,7 +28,7 @@
 #include "GPUCommandEncoder.h"
 #include "WebGPUCommandBuffer.h"
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -37,20 +37,26 @@ namespace WebGPU {
 class CommandEncoder;
 }
 
-class GPUCommandBuffer : public RefCounted<GPUCommandBuffer> {
+class GPUDevice;
+
+class GPUCommandBuffer : public RefCountedAndCanMakeWeakPtr<GPUCommandBuffer> {
 public:
     static Ref<GPUCommandBuffer> create(Ref<WebGPU::CommandBuffer>&& backing, GPUCommandEncoder& encoder)
     {
         return adoptRef(*new GPUCommandBuffer(WTF::move(backing), encoder));
     }
 
-    String label() const;
+    String NODELETE label() const;
     void setLabel(String&&);
     void setOverrideLabel(String&&);
 
     WebGPU::CommandBuffer& backing() { return m_backing; }
     const WebGPU::CommandBuffer& backing() const { return m_backing; }
     void setBacking(WebGPU::CommandEncoder&, WebGPU::CommandBuffer&);
+
+    GPUDevice* device() const;
+
+    bool hasActiveInspectorCanvasCallTracer() const;
 
 private:
     GPUCommandBuffer(Ref<WebGPU::CommandBuffer>&& backing, GPUCommandEncoder& encoder)

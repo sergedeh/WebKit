@@ -33,14 +33,16 @@
 namespace JSC { namespace B3 { namespace Air {
 
 class Code;
+struct Inst;
 
 class TmpWidth {
 public:
+    class Analyzer;
+
     TmpWidth();
     TmpWidth(Code&);
     ~TmpWidth();
 
-    template <Bank bank>
     void recompute(Code&);
 
     // The width of a Tmp is the number of bits that you need to be able to track without some trivial
@@ -104,7 +106,8 @@ private:
     template <Bank bank>
     void ensureSize(Tmp);
 
-    // These are initialized at the beginning of recompute<bank>, which is called in the constructor for both values of bank.
+    void fixpointMoves(const Vector<Inst*>&);
+
     Vector<Widths> m_widthGP;
     Vector<Widths> m_widthFP;
 };

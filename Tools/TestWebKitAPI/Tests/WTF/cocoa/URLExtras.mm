@@ -25,9 +25,9 @@
 
 #import "config.h"
 
-#import "PlatformUtilities.h"
-#import "Test.h"
-#import "WTFTestUtilities.h"
+#import "Helpers/PlatformUtilities.h"
+#import "Helpers/Test.h"
+#import "Helpers/WTFTestUtilities.h"
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/_WKNSStringExtras.h>
 #import <WebKit/_WKNSURLExtras.h>
@@ -72,6 +72,11 @@ static const char* userVisibleString(NSURL *URL)
 static NSURL *literalURL(const char* literal)
 {
     return WTF::URLWithData(literalAsData(literal), nil);
+}
+
+static NSURL *literalURL(const UTF8CString& string)
+{
+    return WTF::URLWithData(toNSData(byteCast<uint8_t>(string.span())).get(), nil);
 }
 
 TEST(URLExtras, URLExtras)
@@ -174,10 +179,11 @@ TEST(URLExtras, URLExtras_Spoof)
         "xn--ikg"_s, // U+1E9C
         "xn--jkg"_s, // U+1E9D
         "xn--cng"_s, // U+1EFE or U+1EFF
+        "xn--jfa"_s, // U+0138
     };
     for (auto& host : punycodedSpoofHosts) {
         auto url = makeString("http://"_s, host, '/').utf8();
-        EXPECT_STREQ(url.data(), userVisibleString(literalURL(url.data())));
+        EXPECT_WK_STREQ(url, userVisibleString(literalURL(url)));
     }
 }
 
@@ -195,8 +201,14 @@ TEST(URLExtras, URLExtras_NotSpoofed)
     EXPECT_STREQ("https://\u0551\u0535and!$^&*()-~+={}or<>,.?\u0575\u0543.biz", userVisibleString(literalURL("https://\u0551\u0535and!$^&*()-~+={}or<>,.?\u0575\u0543.biz")));
     EXPECT_STREQ("https://\u0551%67/", userVisibleString(literalURL("https://\u0551g/")));
     EXPECT_STREQ("https://\u0581%67/", userVisibleString(literalURL("https://\u0581g/")));
-    EXPECT_STREQ("https://o%D5%95%2F", userVisibleString(literalURL("https://o\u0555/")));
-    EXPECT_STREQ("https://o%D6%85%2F", userVisibleString(literalURL("https://o\u0585/")));
+    EXPECT_STREQ("https://o%D5%95/", userVisibleString(literalURL("https://o\u0555/")));
+    EXPECT_STREQ("https://o%D6%85/", userVisibleString(literalURL("https://o\u0585/")));
+    EXPECT_STREQ("https://example.org/anything/\xD4\xB1\xD5\x8D/test", userVisibleString(literalURL("https://example.org/anything/%D4%B1%D5%8D/test")));
+    EXPECT_STREQ("https://example.\xD4\xB1\xD5\x8D:123/anything", userVisibleString(literalURL("https://example.\xD4\xB1\xD5\x8D:123/anything")));
+    EXPECT_STREQ("https://example.com:123/\xD4\xB1\xD5\x8D?query", userVisibleString(literalURL("https://example.com:123/\xD4\xB1\xD5\x8D?query")));
+    EXPECT_STREQ("https://example.com:123/?\xD5\x8D\xD4\xB1", userVisibleString(literalURL("https://example.com:123/?\xD5\x8D\xD4\xB1")));
+    EXPECT_STREQ("https://example.com:123/\xD4\xB1\xD5\x8D#fragment", userVisibleString(literalURL("https://example.com:123/\xD4\xB1\xD5\x8D#fragment")));
+    EXPECT_STREQ("https://example.com:123/#\xD5\x8D\xD4\xB1", userVisibleString(literalURL("https://example.com:123/#\xD5\x8D\xD4\xB1")));
 
     // Tamil
     EXPECT_STREQ("https://\u0BE6\u0BE7\u0BE8\u0BE9count/", userVisibleString(literalURL("https://\u0BE6\u0BE7\u0BE8\u0BE9count/")));
@@ -293,9 +305,62 @@ TEST(URLExtras, URLExtras_Space)
     EXPECT_WK_STREQ("site.com\xE3\x80\x80othersite.org", [@"site.com\xE3\x80\x80othersite.org" _wk_decodeHostName]);
 }
 
+TEST(URLExtras, URLExtras_PercentEncodedIDN)
+{
+    // Percent-encoded IDN hostnames should be decoded before UIDNA processing.
+    // m%C3%BCnchen.de should decode to münchen.de, then encode to xn--mnchen-3ya.de.
+    EXPECT_STREQ("xn--mnchen-3ya.de", [WTF::encodeHostName(@"m%C3%BCnchen.de") UTF8String]);
+    EXPECT_STREQ("http://xn--mnchen-3ya.de/", originalDataAsString(WTF::URLWithUserTypedString(@"http://m%C3%BCnchen.de/", nil)));
+}
+
+TEST(URLExtras, URLExtras_InvalidACELabel)
+{
+    // xn--8i7caa Punycode-decodes to U+FF57 U+FF57 U+FF57 (FULLWIDTH LATIN SMALL LETTER W),
+    // which has UTS#46 "mapped" status — so the post-decode label fails validation. ASCII
+    // inputs are nevertheless accepted as-is.
+
+    EXPECT_STREQ("http://xn--8i7caa.example/", originalDataAsString(WTF::URLWithUserTypedString(@"http://xn--8i7caa.example/", nil)));
+    EXPECT_STREQ("http://xn--8i7caa.example/", userVisibleString(WTF::URLWithUserTypedString(@"http://xn--8i7caa.example/", nil)));
+
+    EXPECT_STREQ("http://xn--8i7caa.example/", originalDataAsString(literalURL("http://xn--8i7caa.example/")));
+    EXPECT_STREQ("http://xn--8i7caa.example/", userVisibleString(literalURL("http://xn--8i7caa.example/")));
+
+    EXPECT_STREQ("xn--8i7caa.example", [WTF::encodeHostName(@"xn--8i7caa.example") UTF8String]);
+    EXPECT_NULL([@"xn--8i7caa.example" _wk_decodeHostName]);
+}
+
+TEST(URLExtras, URLExtras_IPv6)
+{
+    // IPv6 hosts pass through unchanged.
+    EXPECT_STREQ("http://[::1]/", originalDataAsString(WTF::URLWithUserTypedString(@"http://[::1]/", nil)));
+    EXPECT_STREQ("http://[::1]:8080/", originalDataAsString(WTF::URLWithUserTypedString(@"http://[::1]:8080/", nil)));
+
+    // IPv6 hosts in URLs containing '%' must skip IDN processing rather than be
+    // mistaken for a hostname starting with '['.
+    EXPECT_STREQ("http://[::1]/path%20x", originalDataAsString(WTF::URLWithUserTypedString(@"http://[::1]/path%20x", nil)));
+    EXPECT_STREQ("http://[::1]:8080/?q=%20", originalDataAsString(WTF::URLWithUserTypedString(@"http://[::1]:8080/?q=%20", nil)));
+    EXPECT_STREQ("http://user@[::1]/path%20x", originalDataAsString(WTF::URLWithUserTypedString(@"http://user@[::1]/path%20x", nil)));
+
+    // Same for mailto: URLs whose address is an IPv6 literal.
+    EXPECT_STREQ("mailto:user@[::1]?subject=hi%20there", originalDataAsString(WTF::URLWithUserTypedString(@"mailto:user@[::1]?subject=hi%20there", nil)));
+}
+
 TEST(URLExtras, URLExtras_File)
 {
     EXPECT_STREQ("file:///%E2%98%83", [[WTF::URLWithUserTypedString(@"file:///☃", nil) absoluteString] UTF8String]);
+}
+
+TEST(URLExtras, URLExtras_UserInfoColon)
+{
+    // A ":" in the userinfo must not be mistaken for the port separator: the host after
+    // the "@" (not the username before the ":") is what gets IDN-encoded.
+    EXPECT_STREQ("http://user:pass@xn--mnchen-3ya.de/", originalDataAsString(WTF::URLWithUserTypedString(@"http://user:pass@münchen.de/", nil)));
+
+    // The real host's port is still handled, and only the host is encoded.
+    EXPECT_STREQ("http://user:pass@xn--mnchen-3ya.de:8080/", originalDataAsString(WTF::URLWithUserTypedString(@"http://user:pass@münchen.de:8080/", nil)));
+
+    // The '%' defeats the ASCII fast path so this exercises the host-parsing code.
+    EXPECT_STREQ("http://user:pass@[::1]:8080/path%20x", originalDataAsString(WTF::URLWithUserTypedString(@"http://user:pass@[::1]:8080/path%20x", nil)));
 }
 
 TEST(URLExtras, URLExtras_ParsingError)
@@ -349,7 +414,19 @@ TEST(URLExtras, URLByRemovingUserInfo)
     URL url("https://apple.com%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40@foo.github.io/upload/test.zip"_s);
     RetainPtr cfUrl = WTF::URLByRemovingUserInfo(url.createNSURL().get());
     URL url2(cfUrl.get());
-    EXPECT_STREQ("https://foo.github.io/upload/test.zip", url2.string().utf8().data());
+    EXPECT_EQ("https://foo.github.io/upload/test.zip"_s, url2.string());
+}
+
+// isUserVisibleURL() is a fast-path guard that must return YES only when
+// userVisibleString() is guaranteed to leave the URL unchanged.
+TEST(URLExtras, IsUserVisibleURL)
+{
+    EXPECT_TRUE(WTF::isUserVisibleURL(@"http://webkit.org/path"));
+
+    EXPECT_STRNE("http://example.com/%E2%82%AC", userVisibleString(literalURL("http://example.com/%E2%82%AC")));
+    EXPECT_FALSE(WTF::isUserVisibleURL(@"http://example.com/%E2%82%AC"));
+
+    EXPECT_FALSE(WTF::isUserVisibleURL(@"http://xn--nxasmq6b.com/"));
 }
 
 } // namespace TestWebKitAPI

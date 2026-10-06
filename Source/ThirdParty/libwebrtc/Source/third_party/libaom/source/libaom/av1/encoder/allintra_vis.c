@@ -59,34 +59,41 @@ void av1_dealloc_mb_wiener_var_pred_buf(ThreadData *td) {
 
 void av1_init_mb_wiener_var_buffer(AV1_COMP *cpi) {
   AV1_COMMON *cm = &cpi->common;
+  const int current_size = cpi->frame_info.mi_rows * cpi->frame_info.mi_cols;
 
   // This block size is also used to determine number of workers in
   // multi-threading. If it is changed, one needs to change it accordingly in
   // "compute_num_ai_workers()".
   cpi->weber_bsize = BLOCK_8X8;
 
-  if (cpi->oxcf.enable_rate_guide_deltaq) {
-    if (cpi->mb_weber_stats && cpi->prep_rate_estimates &&
-        cpi->ext_rate_distribution)
-      return;
-  } else {
-    if (cpi->mb_weber_stats) return;
+  if (cpi->mb_weber_stats && cpi->mb_weber_stats_alloc_size < current_size) {
+    aom_free(cpi->mb_weber_stats);
+    cpi->mb_weber_stats = NULL;
+    aom_free(cpi->prep_rate_estimates);
+    cpi->prep_rate_estimates = NULL;
+    aom_free(cpi->ext_rate_distribution);
+    cpi->ext_rate_distribution = NULL;
+    cpi->mb_weber_stats_alloc_size = 0;
   }
 
-  CHECK_MEM_ERROR(cm, cpi->mb_weber_stats,
-                  aom_calloc(cpi->frame_info.mi_rows * cpi->frame_info.mi_cols,
-                             sizeof(*cpi->mb_weber_stats)));
+  if (!cpi->mb_weber_stats) {
+    CHECK_MEM_ERROR(cm, cpi->mb_weber_stats,
+                    aom_calloc(current_size, sizeof(*cpi->mb_weber_stats)));
+    cpi->mb_weber_stats_alloc_size = current_size;
+  }
 
   if (cpi->oxcf.enable_rate_guide_deltaq) {
-    CHECK_MEM_ERROR(
-        cm, cpi->prep_rate_estimates,
-        aom_calloc(cpi->frame_info.mi_rows * cpi->frame_info.mi_cols,
-                   sizeof(*cpi->prep_rate_estimates)));
+    if (!cpi->prep_rate_estimates) {
+      CHECK_MEM_ERROR(cm, cpi->prep_rate_estimates,
+                      aom_calloc(cpi->mb_weber_stats_alloc_size,
+                                 sizeof(*cpi->prep_rate_estimates)));
+    }
 
-    CHECK_MEM_ERROR(
-        cm, cpi->ext_rate_distribution,
-        aom_calloc(cpi->frame_info.mi_rows * cpi->frame_info.mi_cols,
-                   sizeof(*cpi->ext_rate_distribution)));
+    if (!cpi->ext_rate_distribution) {
+      CHECK_MEM_ERROR(cm, cpi->ext_rate_distribution,
+                      aom_calloc(cpi->mb_weber_stats_alloc_size,
+                                 sizeof(*cpi->ext_rate_distribution)));
+    }
   }
 }
 
@@ -349,8 +356,10 @@ void av1_calc_mb_wiener_var_row(AV1_COMP *const cpi, MACROBLOCK *x,
           xd, cm->seq_params->sb_size, cm->seq_params->enable_intra_edge_filter,
           block_size, block_size, tx_size, mode, 0, 0, FILTER_INTRA_MODES,
           mb_buffer, buf_stride, dst_buffer, dst_buffer_stride, 0, 0, 0);
-      av1_subtract_block(bd_info, block_size, block_size, src_diff, block_size,
-                         mb_buffer, buf_stride, dst_buffer, dst_buffer_stride);
+      av1_subtract_block(x, block_size, block_size, src_diff, block_size,
+                         mb_buffer, buf_stride, dst_buffer, dst_buffer_stride,
+                         PLANE_TYPE_Y, bsize, 0, 0, DCT_DCT,
+                         cpi->do_border_pad);
       av1_quick_txfm(0, tx_size, bd_info, src_diff, block_size, coeff);
       int intra_cost = aom_satd(coeff, coeff_count);
       if (intra_cost < best_intra_cost) {
@@ -363,8 +372,9 @@ void av1_calc_mb_wiener_var_row(AV1_COMP *const cpi, MACROBLOCK *x,
         xd, cm->seq_params->sb_size, cm->seq_params->enable_intra_edge_filter,
         block_size, block_size, tx_size, best_mode, 0, 0, FILTER_INTRA_MODES,
         mb_buffer, buf_stride, dst_buffer, dst_buffer_stride, 0, 0, 0);
-    av1_subtract_block(bd_info, block_size, block_size, src_diff, block_size,
-                       mb_buffer, buf_stride, dst_buffer, dst_buffer_stride);
+    av1_subtract_block(x, block_size, block_size, src_diff, block_size,
+                       mb_buffer, buf_stride, dst_buffer, dst_buffer_stride,
+                       PLANE_TYPE_Y, bsize, 0, 0, DCT_DCT, cpi->do_border_pad);
     av1_quick_txfm(0, tx_size, bd_info, src_diff, block_size, coeff);
 
     const struct macroblock_plane *const p = &x->plane[0];
@@ -771,12 +781,19 @@ int av1_get_sbq_perceptual_ai(const AV1_COMP *const cpi, BLOCK_SIZE bsize,
 
 void av1_init_mb_ur_var_buffer(AV1_COMP *cpi) {
   AV1_COMMON *cm = &cpi->common;
+  const int current_size = cpi->frame_info.mb_rows * cpi->frame_info.mb_cols;
 
-  if (cpi->mb_delta_q) return;
+  if (cpi->mb_delta_q && cpi->mb_delta_q_alloc_size < current_size) {
+    aom_free(cpi->mb_delta_q);
+    cpi->mb_delta_q = NULL;
+    cpi->mb_delta_q_alloc_size = 0;
+  }
 
-  CHECK_MEM_ERROR(cm, cpi->mb_delta_q,
-                  aom_calloc(cpi->frame_info.mb_rows * cpi->frame_info.mb_cols,
-                             sizeof(*cpi->mb_delta_q)));
+  if (!cpi->mb_delta_q) {
+    CHECK_MEM_ERROR(cm, cpi->mb_delta_q,
+                    aom_calloc(current_size, sizeof(*cpi->mb_delta_q)));
+    cpi->mb_delta_q_alloc_size = current_size;
+  }
 }
 
 #if CONFIG_TFLITE

@@ -36,6 +36,7 @@
 #include <glib/gi18n-lib.h>
 #include <unistd.h>
 #include <wtf/SafeStrerror.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/GWeakPtr.h>
@@ -245,7 +246,7 @@ static void webkit_print_operation_class_init(WebKitPrintOperationClass* printOp
      * Emitted when displaying the print dialog with webkit_print_operation_run_dialog().
      * The returned #WebKitPrintCustomWidget will be added to the print dialog and
      * it will be owned by the @print_operation. However, the object is guaranteed
-     * to be alive until the #WebKitPrintCustomWidget::apply is emitted.
+     * to be alive until the #WebKitPrintCustomWidget::apply signal is emitted.
      *
      * Returns: (transfer full): A #WebKitPrintCustomWidget that will be embedded in the dialog.
      *
@@ -281,9 +282,7 @@ static WebKitPrintOperationResponse webkitPrintOperationRunDialog(WebKitPrintOpe
     gtk_print_unix_dialog_set_manual_capabilities(printDialog, static_cast<GtkPrintCapabilities>(GTK_PRINT_CAPABILITY_NUMBER_UP
         | GTK_PRINT_CAPABILITY_NUMBER_UP_LAYOUT | GTK_PRINT_CAPABILITY_PAGE_SET | GTK_PRINT_CAPABILITY_REVERSE
         | GTK_PRINT_CAPABILITY_COPIES | GTK_PRINT_CAPABILITY_COLLATE | GTK_PRINT_CAPABILITY_SCALE
-#if USE(SKIA)
         | GTK_PRINT_CAPABILITY_GENERATE_PDF
-#endif
         ));
 
     WebKitPrintOperationPrivate* priv = printOperation->priv;
@@ -361,8 +360,8 @@ static void webkitPrintOperationFailed(WebKitPrintOperation* printOperation, GUn
 
 static void webkitPrintOperationFailed(WebKitPrintOperation* printOperation, WebCore::ResourceError&& error)
 {
-    webkitPrintOperationFailed(printOperation, GUniquePtr<GError> { g_error_new_literal(g_quark_from_string(error.domain().utf8().data()),
-        toWebKitError(error.errorCode()), error.localizedDescription().utf8().data()) });
+    webkitPrintOperationFailed(printOperation, GUniquePtr<GError> { g_error_new_literal(gQuarkFromString(error.domain().utf8()),
+        toWebKitError(error.errorCode()), error.localizedDescription().utf8().legacyCStringPointer()) });
     webkitPrintOperationFinished(printOperation);
 }
 
@@ -539,7 +538,7 @@ static void webkitPrintOperationSendPagesToPrintPortal(WebKitPrintOperation* pri
 
             auto fd = UnixFileDescriptor { open(filename.get(), O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
             if (!fd) {
-                webkitPrintOperationFailed(printOperation.get(), GUniquePtr<GError> { g_error_new(WEBKIT_PRINT_ERROR, WEBKIT_PRINT_ERROR_GENERAL, _("Error opening %s: %s"), filename.get(), safeStrerror(errno).data()) });
+                webkitPrintOperationFailed(printOperation.get(), GUniquePtr<GError> { SAFE_G_ERROR_NEW(WEBKIT_PRINT_ERROR, WEBKIT_PRINT_ERROR_GENERAL, _("Error opening %s: %s"), filename.get(), safeStrerror(errno)) });
                 return;
             }
 
@@ -620,18 +619,14 @@ static void webkitPrintOperationPreparePrint(WebKitPrintOperation* printOperatio
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token.ascii().data()));
 
-#if USE(SKIA)
     GRefPtr<GVariant> portalVersion = adoptGRef(g_dbus_proxy_get_cached_property(priv->portalProxy.get(), "version"));
     if (portalVersion && g_variant_get_uint32(portalVersion.get()) >= 3)
         g_variant_builder_add(&options, "{sv}", "supported_output_file_formats", g_variant_new_strv((const char* const[]) { "pdf" }, 1));
-#endif
 
     const char* title = _("Print Web Page");
     GRefPtr<GtkPageSetup> pageSetup = priv->pageSetup ? priv->pageSetup : adoptGRef(gtk_page_setup_new());
     GRefPtr<GtkPrintSettings> printSettings = adoptGRef(priv->printSettings ? gtk_print_settings_copy(priv->printSettings.get()) : gtk_print_settings_new());
-#if USE(SKIA)
     gtk_print_settings_set(printSettings.get(), GTK_PRINT_SETTINGS_OUTPUT_FILE_FORMAT, "pdf");
-#endif
 
     GRefPtr<GVariant> arguments(g_variant_new("(ss@a{sv}@a{sv}a{sv})", "", title, gtk_print_settings_to_gvariant(printSettings.get()), gtk_page_setup_to_gvariant(pageSetup.get()), &options));
 
@@ -752,7 +747,7 @@ GtkPrintSettings* webkit_print_operation_get_print_settings(WebKitPrintOperation
  * @print_operation: a #WebKitPrintOperation
  * @print_settings: a #GtkPrintSettings to set
  *
- *  Set the current print settings of @print_operation.
+ * Set the current print settings of @print_operation.
  *
  * Set the current print settings of @print_operation. Current print settings are used for
  * the initial values of the print dialog when webkit_print_operation_run_dialog() is called.
@@ -824,8 +819,8 @@ void webkit_print_operation_set_page_setup(WebKitPrintOperation* printOperation,
  * is returned and the print operation starts. In this case, the #WebKitPrintOperation::finished
  * signal is emitted when the operation finishes. If an error occurs while printing, the signal
  * #WebKitPrintOperation::failed is emitted before #WebKitPrintOperation::finished.
- * If the print dialog is not cancelled current print settings and page setup of @print_operation
- * are updated with options selected by the user when Print button is pressed in print dialog.
+ * If the print dialog is not cancelled, the current print settings and page setup of @print_operation
+ * are updated with the options selected by the user when the Print button is pressed in the print dialog.
  * You can get the updated print settings and page setup by calling
  * webkit_print_operation_get_print_settings() and webkit_print_operation_get_page_setup()
  * after this method.

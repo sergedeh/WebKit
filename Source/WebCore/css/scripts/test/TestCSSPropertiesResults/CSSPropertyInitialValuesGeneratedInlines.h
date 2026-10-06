@@ -2,19 +2,14 @@
 
 #pragma once
 
+#include "CSSPrimitiveValue.h"
 #include "CSSPropertyNames.h"
-#include "CSSUnits.h"
 #include "CSSValueKeywords.h"
 #include <wtf/Variant.h>
 
 namespace WebCore {
 
-struct InitialNumericValue {
-    double number;
-    CSSUnitType type { CSSUnitType::CSS_NUMBER };
-};
-
-using InitialValue = Variant<CSSValueID, InitialNumericValue>;
+using InitialValue = Variant<CSSValueID, CSSPrimitiveValue::Raw>;
 
 static constexpr InitialValue initialValueForLonghand(CSSPropertyID longhand)
 {
@@ -49,13 +44,14 @@ static constexpr InitialValue initialValueForLonghand(CSSPropertyID longhand)
     case CSSPropertyID::CSSPropertyTestUsingSharedRule:
     case CSSPropertyID::CSSPropertyTestUsingSharedRuleExported:
     case CSSPropertyID::CSSPropertyTestUsingSharedRuleWithOverrideFunction:
-        return InitialNumericValue { 0, CSSUnitType::CSS_NUMBER };
+        return CSSPrimitiveValue::Raw { CSSUnitType::Number, 0 };
     case CSSPropertyID::CSSPropertyTestColor:
     case CSSPropertyID::CSSPropertyTestColorAllowsTypesAbsolute:
     case CSSPropertyID::CSSPropertyTestColorPropertyWithVisitedLinkSupport:
         return CSSValueCurrentColor;
     case CSSPropertyID::CSSPropertyTestKeyword:
     case CSSPropertyID::CSSPropertyTestKeywordWithAliasedTo:
+    case CSSPropertyID::CSSPropertyTestRenderStyleGetterNodeleteFalse:
     case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelEnum:
     case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelRaw:
     case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelEnum:

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006, 2007, 2009 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
@@ -19,7 +19,6 @@
  */
 
 // https://html.spec.whatwg.org/multipage/dom.html#htmlelement
-
 [
     CustomToJSObject,
     ExportMacro=WEBCORE_EXPORT,
@@ -54,6 +53,10 @@
 
     [CEReactions=Needed, Reflect] attribute boolean inert;
 
+    // The headingoffset & headingreset attributes
+    [CEReactions=Needed, EnabledBySetting=HeadingOffsetEnabled, Reflect] attribute unsigned long headingOffset;
+    [CEReactions=Needed, EnabledBySetting=HeadingOffsetEnabled, Reflect] attribute boolean headingReset;
+
     // The popover API
     [EnabledBySetting=PopoverAttributeEnabled] undefined showPopover(optional ShowPopoverOptions options = {});
     [EnabledBySetting=PopoverAttributeEnabled] undefined hidePopover();
@@ -69,23 +72,21 @@
     // Non-standard: We are the only browser to support this now that Blink dropped it (http://crbug.com/688943).
     [CEReactions=Needed, Reflect] attribute DOMString webkitdropzone;
 
-    [Conditional=WRITING_SUGGESTIONS, CEReactions=Needed] attribute boolean writingsuggestions;
+    [Conditional=WRITING_SUGGESTIONS, CEReactions=Needed, ReflectSetter] attribute [AtomString] DOMString writingSuggestions;
 };
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary ShowPopoverOptions {
+// https://html.spec.whatwg.org/multipage/dom.html#showpopoveroptions
+dictionary ShowPopoverOptions {
     HTMLElement source;
 };
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary TogglePopoverOptions : ShowPopoverOptions {
+// https://html.spec.whatwg.org/multipage/dom.html#togglepopoveroptions
+dictionary TogglePopoverOptions : ShowPopoverOptions {
     boolean force;
 };
 
 HTMLElement includes GlobalEventHandlers;
 HTMLElement includes DocumentAndElementEventHandlers;
 HTMLElement includes ElementContentEditable;
-HTMLElement includes HTMLOrForeignElement;
+HTMLElement includes HTMLOrSVGOrMathMLElement;
 HTMLElement includes ElementCSSInlineStyle;

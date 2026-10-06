@@ -38,6 +38,7 @@ namespace JSC::B3 {
     macro(TypedArrayProperties) \
     macro(JSCellHeaderAndNamedProperties) \
     macro(OrderedHashTableData) \
+    macro(VM_heapState) \
 
 // macro(name, offset, mutability)
 #define FOR_EACH_ABSTRACT_FIELD(macro) \
@@ -54,25 +55,8 @@ namespace JSC::B3 {
     macro(ConcatKeyAtomStringCache_quickCache1_key, ConcatKeyAtomStringCache::offsetOfQuickCache1() + ConcatKeyAtomStringCache::CacheEntry::offsetOfKey(), Mutability::Mutable) \
     macro(ConcatKeyAtomStringCache_quickCache1_value, ConcatKeyAtomStringCache::offsetOfQuickCache1() + ConcatKeyAtomStringCache::CacheEntry::offsetOfValue(), Mutability::Mutable) \
     macro(DateInstance_internalNumber, DateInstance::offsetOfInternalNumber(), Mutability::Mutable) \
-    macro(DateInstance_data, DateInstance::offsetOfData(), Mutability::Mutable) \
-    macro(DateInstanceData_gregorianDateTimeCachedForMS, DateInstanceData::offsetOfGregorianDateTimeCachedForMS(), Mutability::Mutable) \
-    macro(DateInstanceData_gregorianDateTimeUTCCachedForMS, DateInstanceData::offsetOfGregorianDateTimeUTCCachedForMS(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTime_year, DateInstanceData::offsetOfCachedGregorianDateTime() + GregorianDateTime::offsetOfYear(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTimeUTC_year, DateInstanceData::offsetOfCachedGregorianDateTimeUTC() + GregorianDateTime::offsetOfYear(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTime_month, DateInstanceData::offsetOfCachedGregorianDateTime() + GregorianDateTime::offsetOfMonth(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTimeUTC_month, DateInstanceData::offsetOfCachedGregorianDateTimeUTC() + GregorianDateTime::offsetOfMonth(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTime_monthDay, DateInstanceData::offsetOfCachedGregorianDateTime() + GregorianDateTime::offsetOfMonthDay(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTimeUTC_monthDay, DateInstanceData::offsetOfCachedGregorianDateTimeUTC() + GregorianDateTime::offsetOfMonthDay(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTime_weekDay, DateInstanceData::offsetOfCachedGregorianDateTime() + GregorianDateTime::offsetOfWeekDay(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTimeUTC_weekDay, DateInstanceData::offsetOfCachedGregorianDateTimeUTC() + GregorianDateTime::offsetOfWeekDay(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTime_hour, DateInstanceData::offsetOfCachedGregorianDateTime() + GregorianDateTime::offsetOfHour(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTimeUTC_hour, DateInstanceData::offsetOfCachedGregorianDateTimeUTC() + GregorianDateTime::offsetOfHour(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTime_minute, DateInstanceData::offsetOfCachedGregorianDateTime() + GregorianDateTime::offsetOfMinute(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTimeUTC_minute, DateInstanceData::offsetOfCachedGregorianDateTimeUTC() + GregorianDateTime::offsetOfMinute(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTime_second, DateInstanceData::offsetOfCachedGregorianDateTime() + GregorianDateTime::offsetOfSecond(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTimeUTC_second, DateInstanceData::offsetOfCachedGregorianDateTimeUTC() + GregorianDateTime::offsetOfSecond(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTime_utcOffsetInMinute, DateInstanceData::offsetOfCachedGregorianDateTime() + GregorianDateTime::offsetOfUTCOffsetInMinute(), Mutability::Mutable) \
-    macro(DateInstanceData_cachedGregorianDateTimeUTC_utcOffsetInMinute, DateInstanceData::offsetOfCachedGregorianDateTimeUTC() + GregorianDateTime::offsetOfUTCOffsetInMinute(), Mutability::Mutable) \
+    macro(DateInstance_cachedGregorianDateTime, DateInstance::offsetOfCachedGregorianDateTime(), Mutability::Mutable) \
+    macro(DateInstance_cachedGregorianDateTimeUTC, DateInstance::offsetOfCachedGregorianDateTimeUTC(), Mutability::Mutable) \
     macro(DirectArguments_callee, DirectArguments::offsetOfCallee(), Mutability::Mutable) \
     macro(DirectArguments_length, DirectArguments::offsetOfLength(), Mutability::Mutable) \
     macro(DirectArguments_minCapacity, DirectArguments::offsetOfMinCapacity(), Mutability::Mutable) \
@@ -88,11 +72,13 @@ namespace JSC::B3 {
     macro(FunctionRareData_internalFunctionAllocationProfile_structureID, FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID(), Mutability::Mutable) \
     macro(GetterSetter_getter, GetterSetter::offsetOfGetter(), Mutability::Mutable) \
     macro(GetterSetter_setter, GetterSetter::offsetOfSetter(), Mutability::Mutable) \
+    macro(InlineWatchpointSet_data, InlineWatchpointSet::offsetOfData(), Mutability::Mutable) \
     macro(JSArrayBufferView_byteOffset, JSArrayBufferView::offsetOfByteOffset(), Mutability::Mutable) \
     macro(JSArrayBufferView_length, JSArrayBufferView::offsetOfLength(), Mutability::Mutable) \
     macro(JSArrayBufferView_mode, JSArrayBufferView::offsetOfMode(), Mutability::Mutable) \
     macro(JSArrayBufferView_vector, JSArrayBufferView::offsetOfVector(), Mutability::Mutable) \
     macro(JSBigInt_length, JSBigInt::offsetOfLength(), Mutability::Immutable) \
+    macro(JSBigInt_data, JSBigInt::offsetOfData(), Mutability::Immutable) \
     macro(JSBoundFunction_targetFunction, JSBoundFunction::offsetOfTargetFunction(), Mutability::Mutable) \
     macro(JSBoundFunction_boundThis, JSBoundFunction::offsetOfBoundThis(), Mutability::Mutable) \
     macro(JSBoundFunction_boundArg0, JSBoundFunction::offsetOfBoundArgs() + sizeof(WriteBarrier<Unknown>) * 0, Mutability::Mutable) \
@@ -117,6 +103,7 @@ namespace JSC::B3 {
     macro(JSGlobalObject_regExpGlobalData_cachedResult_result_end, JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult() + RegExpCachedResult::offsetOfResult() + OBJECT_OFFSETOF(MatchResult, end), Mutability::Mutable) \
     macro(JSGlobalObject_regExpGlobalData_cachedResult_reified, JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult() + RegExpCachedResult::offsetOfReified(), Mutability::Mutable) \
     macro(JSGlobalObject_regExpGlobalData_cachedResult_oneCharacterMatch, JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult() + RegExpCachedResult::offsetOfOneCharacterMatch(), Mutability::Mutable) \
+    macro(JSGlobalObject_canDoASCIIUCADUCETLocaleCompare, JSGlobalObject::offsetOfCanDoASCIIUCADUCETLocaleCompare(), Mutability::Mutable) \
     macro(JSGlobalProxy_target, JSGlobalProxy::targetOffset(), Mutability::Mutable) \
     macro(JSObject_butterfly, JSObject::butterflyOffset(), Mutability::Mutable) \
     macro(JSPropertyNameEnumerator_cachedInlineCapacity, JSPropertyNameEnumerator::cachedInlineCapacityOffset(), Mutability::Mutable) \
@@ -134,13 +121,14 @@ namespace JSC::B3 {
     macro(JSScope_next, JSScope::offsetOfNext(), Mutability::Immutable) \
     macro(JSSymbolTableObject_symbolTable, JSSymbolTableObject::offsetOfSymbolTable(), Mutability::Mutable) \
     macro(JSWebAssemblyArray_size, JSWebAssemblyArray::offsetOfSize(), Mutability::Immutable) \
-    macro(JSWebAssemblyInstance_cachedMemorySize, JSWebAssemblyInstance::offsetOfCachedMemorySize(), Mutability::Mutable) \
     macro(JSWebAssemblyInstance_cachedTable0Buffer, JSWebAssemblyInstance::offsetOfCachedTable0Buffer(), Mutability::Mutable) \
     macro(JSWebAssemblyInstance_cachedTable0Length, JSWebAssemblyInstance::offsetOfCachedTable0Length(), Mutability::Mutable) \
     macro(JSWebAssemblyInstance_moduleRecord, JSWebAssemblyInstance::offsetOfModuleRecord(), Mutability::Mutable) \
     macro(JSWebAssemblyInstance_vm, JSWebAssemblyInstance::offsetOfVM(), Mutability::Immutable) \
-    macro(JSWebAssemblyStruct_size, JSWebAssemblyStruct::offsetOfSize(), Mutability::Immutable) \
+    macro(JSWebAssemblyInstance_cachedMemory0Size, JSWebAssemblyInstance::offsetOfCachedMemory0Size(), Mutability::Mutable) \
     macro(NativeExecutable_asString, NativeExecutable::offsetOfAsString(), Mutability::Mutable) \
+    macro(RegExp_flags, RegExp::offsetOfFlags(), Mutability::Mutable) \
+    macro(RegExp_minimumSize, RegExp::offsetOfMinimumSize(), Mutability::Mutable) \
     macro(RegExpObject_regExpAndFlags, RegExpObject::offsetOfRegExpAndFlags(), Mutability::Mutable) \
     macro(RegExpObject_lastIndex, RegExpObject::offsetOfLastIndex(), Mutability::Mutable) \
     macro(ShadowChicken_Packet_callee, OBJECT_OFFSETOF(ShadowChicken::Packet, callee), Mutability::Mutable) \
@@ -162,7 +150,7 @@ namespace JSC::B3 {
     macro(StringImpl_length, StringImpl::lengthMemoryOffset(), Mutability::Immutable) \
     macro(Structure_bitField, Structure::bitFieldOffset(), Mutability::Mutable) \
     macro(Structure_classInfo, Structure::classInfoOffset(), Mutability::Immutable) \
-    macro(Structure_globalObject, Structure::globalObjectOffset(), Mutability::Immutable) \
+    macro(Structure_realm, Structure::realmOffset(), Mutability::Immutable) \
     macro(Structure_indexingModeIncludingHistory, Structure::indexingModeIncludingHistoryOffset(), Mutability::Immutable) \
     macro(Structure_inlineCapacity, Structure::inlineCapacityOffset(), Mutability::Immutable) \
     macro(Structure_outOfLineTypeFlags, Structure::outOfLineTypeFlagsOffset(), Mutability::Immutable) \
@@ -179,15 +167,18 @@ namespace JSC::B3 {
     macro(SpecialPropertyCache_cachedToStringTagValue, SpecialPropertyCache::offsetOfCache(CachedSpecialPropertyKey::ToStringTag) + SpecialPropertyCacheEntry::offsetOfValue(), Mutability::Mutable) \
     macro(JSMap_storage, (JSMap::offsetOfStorage()), Mutability::Mutable) \
     macro(JSSet_storage, (JSSet::offsetOfStorage()), Mutability::Mutable) \
+    macro(JSPromise_packed, JSPromise::offsetOfPacked(), Mutability::Mutable) \
+    macro(JSPromise_slot, JSPromise::offsetOfSlot(), Mutability::Mutable) \
     macro(VM_heap_barrierThreshold, VM::offsetOfHeapBarrierThreshold(), Mutability::Mutable) \
     macro(VM_heap_mutatorShouldBeFenced, VM::offsetOfHeapMutatorShouldBeFenced(), Mutability::Mutable) \
     macro(VM_exception, VM::exceptionOffset(), Mutability::Mutable) \
     macro(WatchpointSet_state, WatchpointSet::offsetOfState(), Mutability::Mutable) \
     macro(WasmFuncRefTable_functions, Wasm::FuncRefTable::offsetOfFunctions(), Mutability::Mutable) \
-    macro(WasmFuncRefTableFunction_boxedCallee, Wasm::FuncRefTable::Function::offsetOfFunction() + Wasm::WasmToWasmImportableFunction::offsetOfBoxedCallee(), Mutability::Mutable) \
-    macro(WasmFuncRefTableFunction_entrypointLoadLocation, Wasm::FuncRefTable::Function::offsetOfFunction() + Wasm::WasmToWasmImportableFunction::offsetOfEntrypointLoadLocation(), Mutability::Mutable) \
-    macro(WasmFuncRefTableFunction_rtt, Wasm::FuncRefTable::Function::offsetOfFunction() + Wasm::WasmToWasmImportableFunction::offsetOfRTT(), Mutability::Mutable) \
-    macro(WasmFuncRefTableFunction_targetInstance, Wasm::FuncRefTable::Function::offsetOfFunction() + Wasm::WasmToWasmImportableFunction::offsetOfTargetInstance(), Mutability::Mutable) \
+    macro(WasmFuncRefTable_wrappers, Wasm::FuncRefTable::offsetOfWrappers(), Mutability::Mutable) \
+    macro(WasmFuncRefTableFunction_boxedCallee, Wasm::FuncRefTable::Function::offsetOfBoxedCallee(), Mutability::Mutable) \
+    macro(WasmFuncRefTableFunction_entrypointLoadLocation, Wasm::FuncRefTable::Function::offsetOfEntrypointLoadLocation(), Mutability::Mutable) \
+    macro(WasmFuncRefTableFunction_rtt, Wasm::FuncRefTable::Function::offsetOfRTT(), Mutability::Mutable) \
+    macro(WasmFuncRefTableFunction_targetInstance, Wasm::FuncRefTable::Function::offsetOfTargetInstance(), Mutability::Mutable) \
     macro(WasmGlobal_value, Wasm::Global::offsetOfValue(), Mutability::Mutable) \
     macro(WasmGlobal_owner, Wasm::Global::offsetOfOwner(), Mutability::Immutable) \
     macro(WasmGlobalValue_owner, Wasm::Global::Value::offsetOfOwner(), Mutability::Immutable) \
@@ -196,8 +187,11 @@ namespace JSC::B3 {
     macro(WasmRTT_displaySizeExcludingThis, Wasm::RTT::offsetOfDisplaySizeExcludingThis(), Mutability::Immutable) \
     macro(WasmRTT_kind, Wasm::RTT::offsetOfKind(), Mutability::Immutable) \
     macro(WasmTable_length, Wasm::Table::offsetOfLength(), Mutability::Mutable) \
+    macro(WasmExternOrAnyRefTable_jsValues, Wasm::ExternOrAnyRefTable::offsetOfJSValues(), Mutability::Mutable) \
     macro(WeakMapImpl_capacity, WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::offsetOfCapacity(), Mutability::Mutable) \
     macro(WeakMapImpl_buffer,  WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::offsetOfBuffer(), Mutability::Mutable) \
+    macro(WeakMapImpl_keyCount, WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::offsetOfKeyCount(), Mutability::Mutable) \
+    macro(WeakMapImpl_deleteCount, WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::offsetOfDeleteCount(), Mutability::Mutable) \
     macro(WeakMapBucket_value, WeakMapBucket<WeakMapBucketDataKeyValue>::offsetOfValue(), Mutability::Mutable) \
     macro(WeakMapBucket_key, WeakMapBucket<WeakMapBucketDataKeyValue>::offsetOfKey(), Mutability::Mutable) \
     macro(WebAssemblyFunctionBase_boxedCallee, WebAssemblyFunctionBase::offsetOfBoxedCallee(), Mutability::Immutable) \
@@ -206,7 +200,9 @@ namespace JSC::B3 {
     macro(WebAssemblyFunctionBase_targetInstance, WebAssemblyFunctionBase::offsetOfTargetInstance(), Mutability::Immutable) \
     macro(WebAssemblyGCStructure_rtt, WebAssemblyGCStructure::offsetOfRTT(), Mutability::Immutable) \
     macro(WebAssemblyModuleRecord_exportsObject, WebAssemblyModuleRecord::offsetOfExportsObject(), Mutability::Mutable) \
+    macro(Symbol_description, Symbol::offsetOfDescription(), Mutability::Mutable) \
     macro(Symbol_symbolImpl, Symbol::offsetOfSymbolImpl(), Mutability::Immutable) \
+    macro(Symbol_string, Symbol::offsetOfString(), Mutability::Mutable) \
 
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP(macro) \
     macro(ArrayStorage_vector, ArrayStorage::vectorOffset(), sizeof(WriteBarrier<Unknown>)) \
@@ -228,8 +224,11 @@ namespace JSC::B3 {
     macro(variables, 0, sizeof(Register)) \
     macro(HasOwnPropertyCache, 0, sizeof(HasOwnPropertyCache::Entry)) \
     macro(SmallIntCache, 0, sizeof(NumericStrings::StringWithJSString)) \
+    macro(IntCache, 0, sizeof(NumericStrings::CacheEntryWithJSString<int>)) \
     macro(WasmRTT_data, Wasm::RTT::offsetOfData(), sizeof(RefPtr<const Wasm::RTT>)) \
-    macro(WebAssemblyGCStructure_inlinedTypeDisplays, WebAssemblyGCStructure::offsetOfInlinedTypeDisplay(), sizeof(RefPtr<const Wasm::RTT>)) \
+    macro(WasmExternOrAnyRefTable_jsValuesBuffer, 0, sizeof(WriteBarrier<Unknown>)) \
+    macro(WasmFuncRefTable_wrappersBuffer, 0, sizeof(WriteBarrier<Unknown>)) \
+    macro(WebAssemblyGCStructure_inlinedDisplay, WebAssemblyGCStructure::offsetOfInlinedDisplay(), sizeof(WriteBarrierStructureID)) \
 
 #define FOR_EACH_NUMBERED_ABSTRACT_HEAP(macro) \
     macro(properties) \
@@ -257,12 +256,14 @@ namespace JSC::B3 {
     macro(JSWebAssemblyInstance_gcObjectStructureIDs) \
     macro(JSWebAssemblyInstance_importFunctionStubs) \
     macro(JSWebAssemblyInstance_tables) \
+    macro(JSWebAssemblyInstance_functionWrappers) \
 
 // This class is meant to be cacheable between compilations, but it doesn't have to be.
 // Doing so saves on creation of nodes. But clearing it will save memory.
 
 class AbstractHeapRepository {
     WTF_MAKE_NONCOPYABLE(AbstractHeapRepository);
+    WTF_MAKE_TZONE_ALLOCATED(AbstractHeapRepository);
 public:
     AbstractHeapRepository();
     ~AbstractHeapRepository();
@@ -349,6 +350,11 @@ public:
     void decorateFencedAccess(const AbstractHeap*, Value*);
     void decorateWasmStructGet(const AbstractHeap*, Value*);
     void decorateWasmStructSet(const AbstractHeap*, Value*);
+    void decorateWasmStructNew(const AbstractHeap*, Value*);
+    void decorateWasmArrayGet(const AbstractHeap*, Value*);
+    void decorateWasmArraySet(const AbstractHeap*, Value*);
+    void decorateWasmArrayNew(const AbstractHeap*, Value*);
+    void decorateWasmArrayLength(const AbstractHeap*, Value*);
 
     void computeRangesAndDecorateInstructions();
 
@@ -379,6 +385,11 @@ private:
     Vector<HeapForValue> m_heapForFencedAccess;
     Vector<HeapForValue> m_heapForWasmStructGet;
     Vector<HeapForValue> m_heapForWasmStructSet;
+    Vector<HeapForValue> m_heapForWasmStructNew;
+    Vector<HeapForValue> m_heapForWasmArrayGet;
+    Vector<HeapForValue> m_heapForWasmArraySet;
+    Vector<HeapForValue> m_heapForWasmArrayNew;
+    Vector<HeapForValue> m_heapForWasmArrayLength;
 };
 
 } // namespace JSC::B3

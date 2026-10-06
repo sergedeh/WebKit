@@ -8,9 +8,9 @@
 #ifndef GrUniformDataManager_DEFINED
 #define GrUniformDataManager_DEFINED
 
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkTArray.h"
-#include "src/base/SkAutoMalloc.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTArray.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/gpu/ganesh/glsl/GrGLSLProgramDataManager.h"
 
 #include <cstdint>
@@ -57,10 +57,17 @@ public:
 protected:
     struct Uniform {
         uint32_t fOffset : 24;
-        SkSLType fType   : 8;
+        uint32_t fType   : 8;
         SkDEBUGCODE(
-            int  fArrayCount;
+            int32_t  fArrayCount;
         )
+
+        SkSLType type() const {
+            return static_cast<SkSLType>(fType);
+        }
+        void setType(SkSLType newType) {
+            fType = static_cast<uint32_t>(newType);
+        }
     };
 
     int copyUniforms(void* dest, const void* src, int numUniforms, SkSLType uniformType) const;

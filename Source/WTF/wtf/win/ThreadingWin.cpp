@@ -2,6 +2,7 @@
  * Copyright (C) 2007, 2008, 2015 Apple Inc. All rights reserved.
  * Copyright (C) 2009 Google Inc. All rights reserved.
  * Copyright (C) 2009 Torch Mobile, Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -86,17 +87,32 @@
 #include "config.h"
 #include <wtf/Threading.h>
 
+#include <bmalloc/BPlatform.h>
 #include <errno.h>
 #include <process.h>
 #include <windows.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
-#include <wtf/MainThread.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ThreadingPrimitives.h>
 
 namespace WTF {
+
+bool processIsShuttingDown()
+{
+    using RtlDllShutdownInProgressPtr = BOOLEAN (WINAPI *)();
+    static RtlDllShutdownInProgressPtr resolved;
+    static bool didResolve;
+
+    if (!didResolve) {
+        if (HMODULE ntdll = GetModuleHandleW(L"ntdll.dll"))
+            resolved = reinterpret_cast<RtlDllShutdownInProgressPtr>(GetProcAddress(ntdll, "RtlDllShutdownInProgress"));
+        didResolve = true;
+    }
+
+    return resolved && resolved();
+}
 
 Thread::~Thread()
 {
@@ -141,19 +157,31 @@ void Thread::initializePlatformThreading()
 {
 }
 
+void Thread::updateSchedulingAttributes(SchedulingState) const
+{
+}
+
+void Thread::initializeSchedulingAttributes()
+{
+}
+
 static unsigned __stdcall wtfThreadEntryPoint(void* data)
 {
     Thread::entryPoint(reinterpret_cast<Thread::NewThreadContext*>(data));
     return 0;
 }
 
-bool Thread::establishHandle(NewThreadContext& data, std::optional<size_t> stackSize, QOS, SchedulingPolicy)
+bool Thread::establishHandle(NewThreadContext& data, StackAllocationSpecification stackSpec, QOS, SchedulingPolicy)
 {
+    RELEASE_ASSERT(stackSpec.kind() != StackAllocationSpecification::Kind::SizeAndLocation && "Custom stacks not supported on windows");
     unsigned threadIdentifier = 0;
+    size_t stackSize = 0;
+    if (stackSpec.kind() == StackAllocationSpecification::Kind::SizeOnly)
+        stackSize = stackSpec.sizeBytes();
     unsigned initFlag = stackSize ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0;
-    HANDLE threadHandle = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, stackSize.value_or(0), wtfThreadEntryPoint, &data, initFlag, &threadIdentifier));
+    HANDLE threadHandle = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, stackSize, wtfThreadEntryPoint, &data, initFlag, &threadIdentifier));
     if (!threadHandle) {
-        LOG_ERROR("Failed to create thread at entry point %p with data %p: %ld", wtfThreadEntryPoint, &data, errno);
+        LOG_ERROR("Failed to create thread at entry point %p with data %p: %d", wtfThreadEntryPoint, &data, errno);
         return false;
     }
     establishPlatformSpecificHandle(threadHandle, threadIdentifier);
@@ -205,7 +233,7 @@ void Thread::detach()
         didBecomeDetached();
 }
 
-auto Thread::suspend(const ThreadSuspendLocker&) -> Expected<void, PlatformSuspendError>
+auto Thread::suspend(const ThreadSuspendLocker&) -> std::expected<void, PlatformSuspendError>
 {
     RELEASE_ASSERT_WITH_MESSAGE(this != &Thread::currentSingleton(), "We do not support suspending the current thread itself.");
     DWORD result = SuspendThread(m_handle);
@@ -227,11 +255,28 @@ size_t Thread::getRegisters(const ThreadSuspendLocker&, PlatformRegisters& regis
     return sizeof(CONTEXT);
 }
 
+void Thread::barrierInstructionCache()
+{
+#if CPU(X86_64)
+    // x86-64 has a coherent instruction cache, so there is nothing to publish.
+    return;
+#else
+    RELEASE_ASSERT_WITH_MESSAGE(this != &Thread::currentSingleton(), "We do not support synchronizing the current thread itself.");
+    // Suspending and then resuming the thread makes the OS run a context-synchronizing return on it
+    // as it resumes, so it re-fetches modified instructions. suspend()/resume() need the
+    // thread-suspend lock, so take it here rather than requiring it from the caller.
+    ThreadSuspendLocker locker;
+    if (!suspend(locker))
+        return;
+    resume(locker);
+#endif
+}
+
 Thread& Thread::initializeCurrentTLS()
 {
     // Not a WTF-created thread, ThreadIdentifier is not established yet.
     WTF::initialize();
-    Ref thread = adoptRef(*new Thread(SchedulingPolicy::Other));
+    Ref thread = adoptRef(*new Thread(defaultQOS, SchedulingPolicy::Other));
 
     HANDLE handle;
     bool isSuccessful = DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle, 0, FALSE, DUPLICATE_SAME_ACCESS);
@@ -259,12 +304,9 @@ void Thread::establishPlatformSpecificHandle(HANDLE handle, ThreadIdentifier thr
 struct Thread::ThreadHolder {
     ~ThreadHolder()
     {
-        // The thread_local object of the main thread is destructed
-        // after Windows terminates other threads. If the terminated
-        // thread was holding a mutex, trying to lock the mutex causes
-        // deadlock.
-        if (isMainThread())
+        if (processIsShuttingDown())
             return;
+
         if (thread) {
             thread->m_clientData = nullptr;
             thread->specificStorage().destroySlots();

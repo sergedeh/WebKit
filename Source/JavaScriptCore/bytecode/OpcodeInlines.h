@@ -49,9 +49,10 @@ inline bool isOpcodeShape(OpcodeID opcodeID)
             || opcodeID == op_call_varargs
             || opcodeID == op_call_ignore_result
             || opcodeID == op_tail_call_varargs
-            || opcodeID == op_tail_call_forward_arguments
             || opcodeID == op_iterator_open
-            || opcodeID == op_iterator_next;
+            || opcodeID == op_iterator_next
+            || opcodeID == op_async_iterator_open
+            || opcodeID == op_async_iterator_next;
     }
 
     RELEASE_ASSERT_NOT_REACHED();

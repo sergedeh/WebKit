@@ -29,6 +29,7 @@
 
 #include "AXObjectCache.h"
 #include "AccessibilityObject.h"
+#include "BitmapImage.h"
 #include "BorderShape.h"
 #include "ContainerNodeInlines.h"
 #include "Document.h"
@@ -72,10 +73,11 @@
 #include "TextIterator.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
+#include "FrameDestructionObserverInlines.h"
 
 #if ENABLE(FORM_CONTROL_REFRESH)
 #include "PathCG.h"
-#include "RenderTheme.h"
+#include "RenderThemeCocoa.h"
 #endif
 
 namespace WebCore {
@@ -84,7 +86,7 @@ InteractionRegion::~InteractionRegion() = default;
 
 class InteractionRegionPathCache {
 public:
-    static InteractionRegionPathCache& singleton();
+    static InteractionRegionPathCache& NODELETE singleton();
 
     std::optional<Path> get(const Image&, const FloatSize&);
     void add(const Image&, const FloatSize&, Path);
@@ -129,7 +131,7 @@ void InteractionRegion::clearCache()
     InteractionRegionPathCache::singleton().clear();
 }
 
-static bool hasInteractiveCursorType(Element& element)
+static bool NODELETE hasInteractiveCursorType(Element& element)
 {
     auto* renderer = element.renderer();
     auto* style = renderer ? &renderer->style() : nullptr;
@@ -144,7 +146,7 @@ static bool hasInteractiveCursorType(Element& element)
         || cursorType == CursorType::VerticalText;
 }
 
-static bool shouldAllowElement(const Element& element)
+static bool NODELETE shouldAllowElement(const Element& element)
 {
     if (is<HTMLFieldSetElement>(element))
         return false;
@@ -240,7 +242,7 @@ static bool shouldAllowNonInteractiveCursorForElement(const Element& element)
     return false;
 }
 
-static bool shouldGetOcclusion(const RenderElement& renderer)
+static bool NODELETE shouldGetOcclusion(const RenderElement& renderer)
 {
     if (auto* renderLayerModelObject = dynamicDowncast<RenderBox>(renderer)) {
         if (renderLayerModelObject->hasLayer() && renderLayerModelObject->layer()->isComposited())
@@ -256,19 +258,19 @@ static bool shouldGetOcclusion(const RenderElement& renderer)
     return false;
 }
 
-static bool hasTransparentContainerStyle(const RenderStyle& style)
+static bool hasTransparentContainerStyle(const Style::ComputedStyle& style)
 {
     return !style.hasBackground()
         && !style.hasOutline()
-        && !style.hasBoxShadow()
-        && !style.hasClipPath()
+        && style.boxShadow().isNone()
+        && style.clipPath().isNone()
         && !style.hasExplicitlySetBorderRadius()
         // No visible borders or borders that do not create a complete box.
-        && (!style.hasVisibleBorder()
+        && (!style.border().hasVisibleBorder()
             || !(style.usedBorderTopWidth() && style.usedBorderRightWidth() && style.usedBorderBottomWidth() && style.usedBorderLeftWidth()));
 }
 
-static bool canTweakShapeForStyle(const RenderStyle& style)
+static bool canTweakShapeForStyle(const Style::ComputedStyle& style)
 {
     if (!hasTransparentContainerStyle(style))
         return false;
@@ -290,7 +292,7 @@ static bool colorIsChallengingToHighlight(const Color& color)
         && ((color.luminance() < luminanceThreshold || std::abs(color.luminance() - 1) < luminanceThreshold));
 }
 
-static bool styleIsChallengingToHighlight(const RenderStyle& style)
+static bool styleIsChallengingToHighlight(const Style::ComputedStyle& style)
 {
     auto color = (style.fill().isNone() ? style.stroke() : style.fill()).tryColor();
     if (!color)
@@ -314,8 +316,8 @@ static bool isGuardContainer(const Element& element)
     if (!element.renderer())
         return false;
 
-    auto& renderer = *element.renderer();
-    return hasTransparentContainerStyle(renderer.style());
+    CheckedRef renderer = *element.renderer();
+    return hasTransparentContainerStyle(protect(renderer->style()));
 }
 
 static FloatSize boundingSize(const RenderObject& renderer, const std::optional<AffineTransform>& transform)
@@ -338,14 +340,15 @@ static bool cachedImageIsPhoto(const CachedImage& cachedImage)
     if (cachedImage.errorOccurred())
         return false;
 
-    RefPtr image = cachedImage.image();
-    if (!image || !image->isBitmapImage())
+    RefPtr bitmapImage = dynamicDowncast<BitmapImage>(cachedImage.image());
+    if (!bitmapImage)
         return false;
 
-    if (image->nativeImage() && image->nativeImage()->hasAlpha())
+    RefPtr nativeImage = bitmapImage->nativeImage();
+    if (!nativeImage)
         return false;
 
-    return true;
+    return !nativeImage->hasAlpha();
 }
 
 static RefPtr<Image> findIconImage(const RenderObject& renderer)
@@ -354,12 +357,22 @@ static RefPtr<Image> findIconImage(const RenderObject& renderer)
         if (!renderImage->cachedImage() || renderImage->cachedImage()->errorOccurred())
             return nullptr;
 
-        RefPtr image = renderImage->cachedImage()->imageForRenderer(renderImage);
+        RefPtr image = protect(*renderImage->cachedImage())->image();
         if (!image)
             return nullptr;
 
-        if (image->isSVGImageForContainer()
-            || (image->isBitmapImage() && image->nativeImage() && image->nativeImage()->hasAlpha()))
+        if (image->isSVGImage())
+            return image;
+
+        RefPtr bitmapImage = dynamicDowncast<BitmapImage>(*image);
+        if (!bitmapImage)
+            return nullptr;
+
+        RefPtr nativeImage = bitmapImage->nativeImage();
+        if (!nativeImage)
+            return nullptr;
+
+        if (nativeImage->hasAlpha())
             return image;
     }
 
@@ -370,10 +383,8 @@ static std::optional<std::pair<Ref<SVGSVGElement>, Ref<SVGGraphicsElement>>> fin
 {
     if (const auto& renderShape = dynamicDowncast<LegacyRenderSVGShape>(renderer)) {
         Ref shapeElement = renderShape->graphicsElement();
-        if (auto* owner = shapeElement->ownerSVGElement()) {
-            Ref svgSVGElement = *owner;
-            return std::make_pair(svgSVGElement, shapeElement);
-        }
+        if (RefPtr owner = shapeElement->ownerSVGElement())
+            return std::make_pair(Ref { *owner }, shapeElement.copyRef());
     }
 
     return std::nullopt;
@@ -428,22 +439,23 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
 
     if (!matchedElement->renderer())
         return std::nullopt;
-    auto& renderer = *matchedElement->renderer();
+    CheckedRef renderer = *matchedElement->renderer();
 
-    if (renderer.usedPointerEvents() == PointerEvents::None)
+    if (renderer->usedPointerEvents() == PointerEvents::None)
+        return std::nullopt;
+
+    if (renderer->style().isEffectivelyTransparent())
         return std::nullopt;
 
     bool isOriginalMatch = matchedElement == originalElement;
 
     // FIXME: Consider also allowing elements that only receive touch events.
-    bool hasListener = renderer.style().eventListenerRegionTypes().contains(EventListenerRegionType::MouseClick);
+    bool hasListener = renderer->style().eventListenerRegionTypes().contains(EventListenerRegionType::MouseClick);
     bool hasPointer = hasInteractiveCursorType(*matchedElement) || shouldAllowNonInteractiveCursorForElement(*matchedElement);
 
     RefPtr localMainFrame = dynamicDowncast<LocalFrame>(regionRenderer.document().frame()->mainFrame());
-    if (!localMainFrame) {
-        ASSERT_NOT_REACHED();
+    if (!localMainFrame)
         return std::nullopt;
-    }
     RefPtr pageView = localMainFrame->view();
     if (!pageView) {
         ASSERT_NOT_REACHED();
@@ -472,9 +484,9 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
     bool detectedHoverRules = false;
     if (!hasPointer) {
         // The hover check can be expensive (it may end up doing selector matching), so we only run it on some elements.
-        bool hasVisibleBoxDecorations = renderer.hasVisibleBoxDecorations();
+        bool hasVisibleBoxDecorations = renderer->hasVisibleBoxDecorations();
         bool nonScrollable = [&] {
-            auto* box = dynamicDowncast<RenderBox>(renderer);
+            CheckedPtr box = dynamicDowncast<RenderBox>(renderer.get());
             return !box || (!box->hasScrollableOverflowX() && !box->hasScrollableOverflowY());
         }();
         if (hasVisibleBoxDecorations && nonScrollable)
@@ -482,7 +494,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
     }
 
     if (!hasListener || !(hasPointer || detectedHoverRules) || isTooBigForInteraction) {
-        if (isOriginalMatch && shouldGetOcclusion(renderer) && !isTooBigForOcclusion) {
+        if (isOriginalMatch && shouldGetOcclusion(renderer.get()) && !isTooBigForOcclusion) {
             return { {
                 InteractionRegion::Type::Occlusion,
                 nodeIdentifier,
@@ -493,7 +505,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
         return std::nullopt;
     }
 
-    bool isInlineNonBlock = renderer.isInline() && !renderer.isBlockLevelReplacedOrAtomicInline();
+    bool isInlineNonBlock = renderer->isInline() && !renderer->isBlockLevelReplacedOrAtomicInline();
     bool isPhoto = false;
 
     float minimumContentHintArea = 200 * 200;
@@ -508,15 +520,15 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
                 if (!renderImage->cachedImage())
                     return false;
 
-                return cachedImageIsPhoto(*renderImage->cachedImage());
+                return cachedImageIsPhoto(protect(*renderImage->cachedImage()));
             }();
-        } else if (regionRenderer.style().hasBackgroundImage()) {
+        } else if (auto& backgroundLayers = regionRenderer.style().backgroundLayers(); Style::hasImageInAnyLayer(backgroundLayers)) {
             isPhoto = [&]() -> bool {
-                RefPtr backgroundImage = regionRenderer.style().backgroundLayers().usedFirst().image().tryStyleImage();
+                RefPtr backgroundImage = backgroundLayers.usedFirst().image().tryStyleImage();
                 if (!backgroundImage || !backgroundImage->cachedImage())
                     return false;
 
-                return cachedImageIsPhoto(*backgroundImage->cachedImage());
+                return cachedImageIsPhoto(protect(*backgroundImage->cachedImage()));
             }();
         }
     }
@@ -532,7 +544,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
     }
 
     // The parent will get its own InteractionRegion.
-    if (!isOriginalMatch && !matchedElementIsGuardContainer && !isPhoto && !isInlineNonBlock && !renderer.style().isDisplayTableOrTablePart())
+    if (!isOriginalMatch && !matchedElementIsGuardContainer && !isPhoto && !isInlineNonBlock && !renderer->style().display().isTableOrTablePart())
         return std::nullopt;
 
     // FIXME: Consider allowing rotation / skew - rdar://127499446.
@@ -550,14 +562,14 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
     auto rect = bounds;
     float cornerRadius = 0;
     OptionSet<InteractionRegion::CornerMask> maskedCorners { };
-    std::optional<Path> clipPath = std::nullopt;
+    std::optional<Path> clipPath;
 
-    auto& style = regionRenderer.style();
+    CheckedRef style = regionRenderer.style();
     CheckedPtr<const RenderBox> regionRendererBox;
 
-    if (auto basicShapePath = style.clipPath().tryBasicShape(); !hasRotationOrShear && originalElement && basicShapePath) {
+    if (auto basicShapePath = style->clipPath().tryBasicShape(); !hasRotationOrShear && originalElement && basicShapePath) {
         auto size = boundingSize(regionRenderer, transform);
-        auto path = Style::tryPath(*basicShapePath, TransformOperationData(FloatRect(FloatPoint(), size)));
+        auto path = Style::tryPath(*basicShapePath, TransformOperationData(FloatRect(FloatPoint(), size)), style->usedZoomForLength());
 
         if (path && !clipOffset.isZero())
             path->translate(clipOffset);
@@ -567,7 +579,8 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
         auto size = boundingSize(regionRenderer, transform);
         auto generateAndCachePath = [&] {
             LayoutRect imageRect(FloatPoint(), size);
-            Ref shape = LayoutShape::createRasterShape(iconImage.get(), 0, imageRect, imageRect, WritingMode(), 0);
+            auto iconSize = iconImage ? iconImage->size() : FloatSize { };
+            Ref shape = LayoutShape::createRasterShape(iconImage.get(), 0, imageRect, imageRect, WritingMode(), 0, ConcreteObjectSize::fixed(iconSize), iconSize);
             LayoutShape::DisplayPaths paths;
             shape->buildDisplayPaths(paths);
             auto path = paths.shape;
@@ -588,7 +601,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
         FloatSize size = svgSVGElement->currentViewportSizeExcludingZoom();
         auto viewBoxTransform = svgSVGElement->viewBoxToViewTransform(size.width(), size.height());
 
-        auto shapeBoundingBox = shapeElement->getBBox(SVGLocatable::DisallowStyleUpdate);
+        auto shapeBoundingBox = shapeElement->getBBox(StyleUpdateStrategy::Disallow);
         path.transform(viewBoxTransform);
         shapeBoundingBox = viewBoxTransform.mapRect(shapeBoundingBox);
 
@@ -608,7 +621,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
 
         clipPath = path;
     } else if ((regionRendererBox = dynamicDowncast<RenderBox>(regionRenderer))) {
-        auto borderShape = BorderShape::shapeForBorderRect(regionRendererBox->style(), regionRendererBox->borderBoxRect());
+        auto borderShape = BorderShape::shapeForBorderRect(protect(regionRendererBox->style()), regionRendererBox->borderBoxRect());
         auto borderRadii = borderShape.radii();
         auto minRadius = borderRadii.minimumRadius();
         auto maxRadius = borderRadii.maximumRadius();
@@ -636,12 +649,12 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
             if (borderRadii.bottomRight().minDimension() == maxRadius)
                 maskedCorners.add(InteractionRegion::CornerMask::MaxXMaxYCorner);
         } else
-            clipPath = borderShape.pathForOuterShape(regionRendererBox->document().deviceScaleFactor());
+            clipPath = borderShape.pathForOuterShape(protect(regionRendererBox->document())->deviceScaleFactor());
     }
 
     bool canTweakShape = !isPhoto
         && !clipPath
-        && canTweakShapeForStyle(style);
+        && canTweakShapeForStyle(style.get());
 
     auto adjustForTheme = false;
     auto useContinuousCorners = false;
@@ -657,7 +670,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
 
     adjustForTheme = regionRendererBox
         && regionRendererBox->settings().formControlRefreshEnabled()
-        && !style.hasTransformRelatedProperty();
+        && !style->hasTransformRelatedProperty();
 
     if (adjustForTheme) {
         // We only need the bounding path for the region if a clip path exists so that we can compute
@@ -677,7 +690,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
                 if (!clipOffset.isZero())
                     adjustedPath.translate(clipOffset);
 
-                RetainPtr intersectingPath = adoptCF(CGPathCreateCopyByIntersectingPath(adjustedPath.platformPath(), clipPath->platformPath(), false));
+                RetainPtr intersectingPath = adoptCF(CGPathCreateCopyByIntersectingPath(protect(adjustedPath.platformPath()), protect(clipPath->platformPath()), false));
                 clipPath = { PathCG::create(adoptCF(CGPathCreateMutableCopy(intersectingPath.get()))) };
 
                 // No need for continuous corners if we're already going to clip.

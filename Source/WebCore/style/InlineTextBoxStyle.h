@@ -28,10 +28,13 @@
 #include "InlineIteratorInlineBox.h"
 #include "InlineIteratorLineBox.h"
 #include "RenderStyleConstants.h"
+#include "StyleTextUnderlineOffset.h"
 
 namespace WebCore {
-    
-class RenderStyle;
+
+namespace Style {
+class ComputedStyle;
+}
 
 inline float wavyOffsetFromDecoration()
 {
@@ -49,21 +52,31 @@ struct WavyStrokeParameters {
     // wider as font size increases.
     float step { 0.f };
 };
-WavyStrokeParameters wavyStrokeParameters(float fontSize);
+WavyStrokeParameters NODELETE wavyStrokeParameters(float fontSize);
 
+struct InkOverflowForDecorations : RectEdges<LayoutUnit> {
+    void extendTop(float extendTo)
+    {
+        top() = std::max(top(), LayoutUnit(ceilf(extendTo)));
+    }
+
+    void extendBottom(float extendTo)
+    {
+        bottom() = std::max(bottom(), LayoutUnit(ceilf(extendTo)));
+    }
+};
 struct TextUnderlinePositionUnder {
     float textRunLogicalHeight { 0.f };
     // This offset value is the distance between the current text run's logical bottom and the lowest position of all the text runs
     // on line that belong to the same decorating box.
     float textRunOffsetFromBottomMost { 0.f };
 };
-GlyphOverflow inkOverflowForDecorations(const RenderStyle&);
-GlyphOverflow inkOverflowForDecorations(const RenderStyle&, TextUnderlinePositionUnder);
-GlyphOverflow inkOverflowForDecorations(const InlineIterator::LineBoxIterator&, const RenderText&, float textBoxLogicalTop, float textBoxLogicalBottom);
-bool isAlignedForUnder(const RenderStyle& decoratingBoxStyle);
+InkOverflowForDecorations inkOverflowForDecorations(const Style::ComputedStyle&);
+InkOverflowForDecorations inkOverflowForDecorations(const Style::ComputedStyle&, TextUnderlinePositionUnder);
+bool NODELETE isAlignedForUnder(const Style::ComputedStyle& decoratingBoxStyle);
 
-float underlineOffsetForTextBoxPainting(const InlineIterator::InlineBox&, const RenderStyle&);
-float overlineOffsetForTextBoxPainting(const InlineIterator::InlineBox&, const RenderStyle&);
-float textBoxEdgeAdjustmentForUnderline(const RenderStyle&);
+float underlineOffsetForTextBoxPainting(const InlineIterator::InlineBox&, const Style::ComputedStyle&, std::optional<Style::TextUnderlineOffset> offsetOverride);
+float overlineOffsetForTextBoxPainting(const InlineIterator::InlineBox&, const Style::ComputedStyle&);
+float textBoxEdgeAdjustmentForUnderline(const Style::ComputedStyle&);
 
 } // namespace WebCore

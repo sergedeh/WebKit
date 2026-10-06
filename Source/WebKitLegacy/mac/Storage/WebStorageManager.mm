@@ -32,9 +32,9 @@
 #import "WebStorageTrackerClient.h"
 #import <WebCore/SecurityOrigin.h>
 #import <WebCore/SecurityOriginData.h>
+#import <wtf/NeverDestroyed.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
-using namespace WebCore;
 
 NSString * const WebStorageDirectoryDefaultsKey = @"WebKitLocalStorageDatabasePathPreferenceKey";
 NSString * const WebStorageDidModifyOriginNotification = @"WebStorageDidModifyOriginNotification";
@@ -43,8 +43,8 @@ NSString * const WebStorageDidModifyOriginNotification = @"WebStorageDidModifyOr
 
 + (WebStorageManager *)sharedWebStorageManager
 {
-    static WebStorageManager *sharedManager = [[WebStorageManager alloc] init];
-    return sharedManager;
+    static NeverDestroyed<RetainPtr<WebStorageManager>> sharedManager = adoptNS([[WebStorageManager alloc] init]);
+    return sharedManager.get();
 }
 
 - (id)init
@@ -81,7 +81,7 @@ NSString * const WebStorageDidModifyOriginNotification = @"WebStorageDidModifyOr
 
 - (unsigned long long)diskUsageForOrigin:(WebSecurityOrigin *)origin
 {
-    return WebKit::StorageTracker::tracker().diskUsageForOrigin([origin _core]);
+    return WebKit::StorageTracker::tracker().diskUsageForOrigin(protect([origin _core]));
 }
 
 - (void)syncLocalStorage

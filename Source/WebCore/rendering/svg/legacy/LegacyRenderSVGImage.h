@@ -36,12 +36,13 @@ class LegacyRenderSVGImage final : public LegacyRenderSVGModelObject {
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGImage);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGImage);
 public:
-    LegacyRenderSVGImage(SVGImageElement&, RenderStyle&&);
+    LegacyRenderSVGImage(SVGImageElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGImage();
 
-    SVGImageElement& imageElement() const;
+    SVGImageElement& NODELETE imageElement() const;
 
     bool updateImageViewport();
+    IntSize imageContainerSize() const;
     void setNeedsBoundariesUpdate() override { m_needsBoundariesUpdate = true; }
     void setNeedsTransformUpdate() override { m_needsTransformUpdate = true; }
 
@@ -52,6 +53,7 @@ public:
     void paintForeground(PaintInfo&);
 
     bool isObjectBoundingBoxValid() const { return !m_objectBoundingBox.isEmpty(); }
+    bool objectBoundingBoxIsEmpty() const final { return !isObjectBoundingBoxValid(); }
 
 private:
     void willBeDestroyed() override;
@@ -61,7 +63,7 @@ private:
     ASCIILiteral renderName() const override { return "RenderSVGImage"_s; }
     bool canHaveChildren() const override { return false; }
 
-    const AffineTransform& localToParentTransform() const override { return m_localTransform; }
+    const AffineTransform& localToParentTransform() const LIFETIME_BOUND override { return m_localTransform; }
 
     void notifyFinished(CachedResource& newImage, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess) override;
 
@@ -71,7 +73,7 @@ private:
     FloatRect repaintRectInLocalCoordinates(RepaintRectCalculation = RepaintRectCalculation::Fast) const override { return m_repaintBoundingBox; }
     FloatRect decoratedBoundingBox() const override { return m_objectBoundingBox; }
 
-    void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer = 0) const override;
+    void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer = nullptr) const override;
 
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
 
@@ -84,8 +86,8 @@ private:
 
     AffineTransform localTransform() const override { return m_localTransform; }
 
-    bool m_needsBoundariesUpdate : 1;
-    bool m_needsTransformUpdate : 1;
+    bool m_needsBoundariesUpdate : 1 { true };
+    bool m_needsTransformUpdate : 1 { true };
     AffineTransform m_localTransform;
     FloatRect m_objectBoundingBox;
     FloatRect m_repaintBoundingBox;

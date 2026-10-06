@@ -38,6 +38,7 @@
 #include "SVGElementTypeHelpers.h"
 #include "SVGSVGElement.h"
 #include "Settings.h"
+#include "StyleComputedStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -49,7 +50,7 @@ using namespace MathMLNames;
 MathMLAnnotationElement::MathMLAnnotationElement(const QualifiedName& tagName, Document& document)
     : MathMLPresentationElement(tagName, document)
 {
-    ASSERT(hasTagName(annotationTag) || hasTagName(annotation_xmlTag));
+    ASSERT(hasTagName(annotationTag) || hasTagName(MathMLNames::annotation_xmlTag));
 }
 
 Ref<MathMLAnnotationElement> MathMLAnnotationElement::create(const QualifiedName& tagName, Document& document)
@@ -57,25 +58,25 @@ Ref<MathMLAnnotationElement> MathMLAnnotationElement::create(const QualifiedName
     return adoptRef(*new MathMLAnnotationElement(tagName, document));
 }
 
-RenderPtr<RenderElement> MathMLAnnotationElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition& insertionPosition)
+RenderPtr<RenderElement> MathMLAnnotationElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& insertionPosition)
 {
     if (document().settings().coreMathMLEnabled() || hasTagName(MathMLNames::annotationTag))
         return MathMLElement::createElementRenderer(WTF::move(style), insertionPosition);
 
-    ASSERT(hasTagName(annotation_xmlTag));
+    ASSERT(hasTagName(MathMLNames::annotation_xmlTag));
     return createRenderer<RenderMathMLBlock>(RenderObject::Type::MathMLBlock, *this, WTF::move(style));
 }
 
 bool MathMLAnnotationElement::childShouldCreateRenderer(const Node& child) const
 {
     if (document().settings().coreMathMLEnabled())
-        return MathMLElement::childShouldCreateRenderer(child);
+        return StyledElement::childShouldCreateRenderer(child);
 
     // For <annotation>, only text children are allowed.
     if (hasTagName(MathMLNames::annotationTag))
         return child.isTextNode();
 
-    ASSERT(hasTagName(annotation_xmlTag));
+    ASSERT(hasTagName(MathMLNames::annotation_xmlTag));
     return StyledElement::childShouldCreateRenderer(child);
 }
 

@@ -50,16 +50,19 @@ except ImportError:
         "See https://github.com/WebKit/WebKit/tree/main/Tools/Scripts/libraries/webkitcorepy"
     )
 
-version = Version(7, 0, 2)
+version = Version(7, 0, 6)
 
 AutoInstall.register(Package('fasteners', Version(0, 15, 0)))
 AutoInstall.register(Package('markupsafe', Version(3, 0, 3), pypi_name='MarkupSafe', wheel=True))
 AutoInstall.register(Package('jinja2', Version(3, 1, 4), implicit_deps=['markupsafe']))
 AutoInstall.register(Package('monotonic', Version(1, 5)))
 AutoInstall.register(Package('xmltodict', Version(0, 11, 0)))
-AutoInstall.register(Package('webkitbugspy', Version(0, 15, 1)), local=True)
+AutoInstall.register(Package('webkitbugspy', Version(0, 15, 4)), local=True)
 
-AutoInstall.register(Package('rapidfuzz', Version(3, 4, 0)))
+if sys.version_info >= (3, 10):
+    AutoInstall.register(Package('rapidfuzz', Version(3, 14, 6), wheel=True))
+else:
+    AutoInstall.register(Package('rapidfuzz', Version(3, 4, 0)))
 
 from webkitscmpy.contributor import Contributor
 from webkitscmpy.commit import Commit
@@ -68,6 +71,5 @@ from webkitscmpy.pull_request import PullRequest
 from webkitscmpy.scm_base import ScmBase
 
 from webkitscmpy import local
-from webkitscmpy import mocks
 
 name = 'webkitscmpy'

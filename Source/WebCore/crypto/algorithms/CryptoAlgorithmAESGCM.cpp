@@ -47,12 +47,12 @@ static const uint64_t PlainTextMaxLength = 549755813632ULL; // 2^39 - 256
 static constexpr std::array<uint8_t, 7> validTagLengths { 32, 64, 96, 104, 112, 120, 128 };
 }
 
-static inline bool usagesAreInvalidForCryptoAlgorithmAESGCM(CryptoKeyUsageBitmap usages)
+static inline bool NODELETE usagesAreInvalidForCryptoAlgorithmAESGCM(CryptoKeyUsageBitmap usages)
 {
     return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits);
 }
 
-static inline bool tagLengthIsValid(uint8_t tagLength)
+static inline bool NODELETE tagLengthIsValid(uint8_t tagLength)
 {
     using namespace CryptoAlgorithmAESGCMInternal;
     return std::ranges::find(validTagLengths, tagLength) != std::ranges::end(validTagLengths);
@@ -149,7 +149,7 @@ void CryptoAlgorithmAESGCM::generateKey(const CryptoAlgorithmParameters& paramet
         return;
     }
 
-    callback(WTF::move(result));
+    callback(result.releaseNonNull());
 }
 
 void CryptoAlgorithmAESGCM::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)

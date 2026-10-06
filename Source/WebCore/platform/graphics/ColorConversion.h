@@ -32,9 +32,9 @@
 
 namespace WebCore {
 
-class DestinationColorSpace;
+class ColorSpace;
 
-enum class ColorSpace : uint8_t;
+enum class ColorSpaceName : uint8_t;
 
 // Conversion function for typed colors.
 template<typename Output, typename Input> Output convertColor(const Input& color);
@@ -44,9 +44,8 @@ template<typename Output, typename Input> Output convertColor(const Input& color
 template<typename Output, typename Input> Output convertColorCarryingForwardMissing(const Input& color);
 
 // Conversion functions for raw color components with associated color spaces.
-ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpace inputColorSpace, ColorComponents<float, 4> inputColorComponents, ColorSpace outputColorSpace);
-ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpace inputColorSpace, ColorComponents<float, 4> inputColorComponents, const DestinationColorSpace& outputColorSpace);
-
+ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, ColorSpaceName outputColorSpace);
+ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, const ColorSpace& outputColorSpace);
 
 // All color types, other than XYZA or those inheriting from RGBType, must implement
 // the following conversions to and from their "Reference" color.
@@ -79,15 +78,12 @@ template<typename Output, typename Input> Output convertColor(const Input& color
 //
 // If there is no analogous component, `std::nullopt` is returned.
 template<typename Output, typename Input, unsigned IndexInInput>
-constexpr std::optional<unsigned> analogousComponentIndex()
+consteval std::optional<unsigned> analogousComponentIndex()
 {
     if constexpr (IndexInInput == 3)
         return 3; // Special case alpha, it always should carry forward.
-    else {
-        constexpr auto inputCategory = Input::Model::componentInfo[IndexInInput].category;
-        if constexpr (!inputCategory)
-            return std::nullopt;
-        else if constexpr (*inputCategory == Output::Model::componentInfo[0].category)
+    else if constexpr (constexpr auto inputCategory = Input::Model::componentInfo[IndexInInput].category) {
+        if constexpr (*inputCategory == Output::Model::componentInfo[0].category)
             return 0;
         else if constexpr (*inputCategory == Output::Model::componentInfo[1].category)
             return 1;
@@ -95,19 +91,67 @@ constexpr std::optional<unsigned> analogousComponentIndex()
             return 2;
         else
             return std::nullopt;
-    }
+    } else
+        return std::nullopt;
 }
+
+// Determines if an analogous set exists between Output and Input. An analogous set
+// is comprised of any components that don't have analogous components. So, for there
+// to be an analogous set, at least one component must not have an analogous component.
+template<typename Output, typename Input>
+consteval bool hasAnalogousSet()
+{
+    return !analogousComponentIndex<Output, Input, 0>()
+        || !analogousComponentIndex<Output, Input, 1>()
+        || !analogousComponentIndex<Output, Input, 2>()
+        || !analogousComponentIndex<Output, Input, 3>();
+}
+
+// Utility to check whether if all analogous set components are missing. When this is
+// true, the analogous set components will all be forwarded as missing.
+template<typename Output, typename Input>
+    requires (hasAnalogousSet<Output, Input>())
+constexpr bool areAllAnalogousSetComponentsMissing(ColorComponents<float, 4>& input)
+{
+    if constexpr (!analogousComponentIndex<Output, Input, 0>()) {
+        if (!std::isnan(input[0]))
+            return false;
+    }
+    if constexpr (!analogousComponentIndex<Output, Input, 1>()) {
+        if (!std::isnan(input[1]))
+            return false;
+    }
+    if constexpr (!analogousComponentIndex<Output, Input, 2>()) {
+        if (!std::isnan(input[2]))
+            return false;
+    }
+    if constexpr (!analogousComponentIndex<Output, Input, 3>()) {
+        if (!std::isnan(input[3]))
+            return false;
+    }
+    return true;
+}
+
 
 // Utility to update appropriate component in `output` if an analogous component
 // in `input` is missing (which is encoded as NaN in color types).
 template<typename Output, typename Input, unsigned IndexInInput>
-constexpr void tryToCarryForwardComponentIfMissing(const ColorComponents<float, 4>& input, ColorComponents<float, 4>& output)
+constexpr void tryToCarryForwardMissingForAnalogousComponent(const ColorComponents<float, 4>& input, ColorComponents<float, 4>& output)
 {
-    constexpr auto analogousComponentIndexInOutput = analogousComponentIndex<Output, Input, IndexInInput>();
-    if constexpr (analogousComponentIndexInOutput) {
+    if constexpr (constexpr auto analogousComponentIndexInOutput = analogousComponentIndex<Output, Input, IndexInInput>()) {
         if (std::isnan(input[IndexInInput]))
             output[*analogousComponentIndexInOutput] = std::numeric_limits<float>::quiet_NaN();
     }
+}
+
+// Utility to update appropriate component in `output` if all analogous set components
+// in `input` are missing  (which is encoded as NaN in color types) and this component
+// in `output` is part of the analogous set.
+template<typename Output, typename Input, unsigned IndexInOutput>
+constexpr void tryToCarryForwardMissingForAnalogousSetComponent(ColorComponents<float, 4>& output)
+{
+    if constexpr (!analogousComponentIndex<Input, Output, IndexInOutput>())
+        output[IndexInOutput] = std::numeric_limits<float>::quiet_NaN();
 }
 
 // Performs color space conversion followed by carrying forward missing components
@@ -123,10 +167,19 @@ template<typename Output, typename Input> Output convertColorCarryingForwardMiss
         auto input = asColorComponents(color.unresolved());
         auto output = asColorComponents(convertColor<Output>(color).unresolved());
 
-        tryToCarryForwardComponentIfMissing<Output, Input, 0>(input, output);
-        tryToCarryForwardComponentIfMissing<Output, Input, 1>(input, output);
-        tryToCarryForwardComponentIfMissing<Output, Input, 2>(input, output);
-        tryToCarryForwardComponentIfMissing<Output, Input, 3>(input, output);
+        if constexpr (hasAnalogousSet<Output, Input>()) {
+            if (areAllAnalogousSetComponentsMissing<Output, Input>(input)) {
+                tryToCarryForwardMissingForAnalogousSetComponent<Output, Input, 0>(output);
+                tryToCarryForwardMissingForAnalogousSetComponent<Output, Input, 1>(output);
+                tryToCarryForwardMissingForAnalogousSetComponent<Output, Input, 2>(output);
+                tryToCarryForwardMissingForAnalogousSetComponent<Output, Input, 3>(output);
+            }
+        }
+
+        tryToCarryForwardMissingForAnalogousComponent<Output, Input, 0>(input, output);
+        tryToCarryForwardMissingForAnalogousComponent<Output, Input, 1>(input, output);
+        tryToCarryForwardMissingForAnalogousComponent<Output, Input, 2>(input, output);
+        tryToCarryForwardMissingForAnalogousComponent<Output, Input, 3>(input, output);
 
         return makeFromComponents<Output>(output);
     }

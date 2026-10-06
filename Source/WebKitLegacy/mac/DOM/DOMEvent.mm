@@ -38,7 +38,7 @@
 #import <wtf/GetPtr.h>
 #import <wtf/URL.h>
 
-#define IMPL reinterpret_cast<WebCore::Event*>(_internal)
+#define IMPL protect(reinterpret_cast<WebCore::Event*>(_internal))
 
 @implementation DOMEvent
 
@@ -97,7 +97,7 @@
 - (DOMTimeStamp)timeStamp
 {
     WebCore::JSMainThreadNullState state;
-    return IMPL->timeStamp().approximateWallTime().secondsSinceEpoch().milliseconds();
+    return IMPL->timeStamp().approximate<WallTime>().secondsSinceEpoch().milliseconds();
 }
 
 - (BOOL)defaultPrevented
@@ -182,7 +182,7 @@ WebCore::Event* core(DOMEvent *wrapper)
     return wrapper ? reinterpret_cast<WebCore::Event*>(wrapper->_internal) : 0;
 }
 
-DOMEvent *kit(WebCore::Event* value)
+SUPPRESS_NODELETE DOMEvent *kit(WebCore::Event* value)
 {
     WebCoreThreadViolationCheckRoundOne();
     if (!value)

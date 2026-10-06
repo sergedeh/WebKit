@@ -63,7 +63,7 @@ private:
             , value(data)
         { }
         
-        bool canCoalesce(ScrollingLogEvent::EventType, uint64_t blankPixelCount) const;
+        bool NODELETE canCoalesce(ScrollingLogEvent::EventType, uint64_t blankPixelCount) const;
     };
     
     unsigned blankPixelCount(const WebCore::FloatRect& visibleRect) const;
@@ -73,9 +73,7 @@ private:
 
     const CheckedRef<RemoteLayerTreeDrawingAreaProxy> m_drawingArea;
     Vector<ScrollingLogEvent> m_events;
-#if PLATFORM(MAC)
-    uint64_t m_lastUnfilledArea;
-#endif
+    uint64_t m_lastUnfilledArea { 0 };
 };
 
 }

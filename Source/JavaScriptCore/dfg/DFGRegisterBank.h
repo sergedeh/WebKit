@@ -30,6 +30,8 @@
 #include "DFGCommon.h"
 #include "FPRInfo.h"
 #include "GPRInfo.h"
+#include "RegisterSet.h"
+#include "VirtualRegister.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -77,9 +79,9 @@ class RegisterBank {
     static constexpr SpillHint SpillHintInvalid = 0xffffffff;
 
 public:
-    static constexpr RegisterSetBuilder registersInBank()
+    static constexpr RegisterSet registersInBank()
     {
-        RegisterSetBuilder result;
+        RegisterSet result;
         for (uint32_t i = 0; i < NUM_REGS; ++i)
             result.add(BankInfo::toRegister(i), IgnoreVectors);
         return result;

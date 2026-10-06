@@ -40,7 +40,7 @@ class XRReferenceSpaceEvent : public Event {
     WTF_MAKE_TZONE_ALLOCATED(XRReferenceSpaceEvent);
 public:
     struct Init : EventInit {
-        RefPtr<WebXRReferenceSpace> referenceSpace;
+        Ref<WebXRReferenceSpace> referenceSpace;
         RefPtr<WebXRRigidTransform> transform;
     };
 
@@ -48,7 +48,7 @@ public:
     virtual ~XRReferenceSpaceEvent();
 
     const WebXRReferenceSpace& referenceSpace() const;
-    WebXRRigidTransform* transform() const;
+    WebXRRigidTransform* NODELETE transform() const;
 
 private:
     XRReferenceSpaceEvent(const AtomString&, Init&&, IsTrusted);

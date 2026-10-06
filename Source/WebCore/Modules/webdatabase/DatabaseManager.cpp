@@ -33,6 +33,7 @@
 #include "DatabaseTracker.h"
 #include "Document.h"
 #include "DocumentEventLoop.h"
+#include "DocumentPage.h"
 #include "ExceptionOr.h"
 #include "Logging.h"
 #include "Page.h"
@@ -43,6 +44,7 @@
 #include "WindowEventLoop.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -51,8 +53,8 @@ public:
     ProposedDatabase(DatabaseManager&, SecurityOrigin&, const String& name, const String& displayName, unsigned long estimatedSize);
     ~ProposedDatabase();
 
-    SecurityOrigin& origin() { return m_origin; }
-    DatabaseDetails& details() { return m_details; }
+    SecurityOrigin& NODELETE origin() { return m_origin; }
+    DatabaseDetails& NODELETE details() { return m_details; }
 
 private:
     DatabaseManager& m_manager;
@@ -112,7 +114,7 @@ Ref<DatabaseContext> DatabaseManager::databaseContext(Document& document)
 
 #if LOG_DISABLED
 
-static inline void logOpenDatabaseError(Document&, const String&)
+static inline void NODELETE logOpenDatabaseError(Document&, const String&)
 {
 }
 
@@ -120,7 +122,7 @@ static inline void logOpenDatabaseError(Document&, const String&)
 
 static void logOpenDatabaseError(Document& document, const String& name)
 {
-    LOG(StorageAPI, "Database %s for origin %s not allowed to be established", name.utf8().data(), document.securityOrigin().toString().utf8().data());
+    LOG_WITH_STREAM(StorageAPI, stream << "Database "_s << name << " for origin "_s << document.securityOrigin().toString() << " not allowed to be established"_s);
 }
 
 #endif
@@ -218,7 +220,7 @@ ExceptionOr<Ref<Database>> DatabaseManager::openDatabase(Document& document, con
     if (database->isNew() && creationCallback.get()) {
         LOG(StorageAPI, "Scheduling DatabaseCreationCallbackTask for database %p\n", database.get());
         database->setHasPendingCreationEvent(true);
-        database->m_document->checkedEventLoop()->queueTask(TaskSource::Networking, [creationCallback, database] {
+        protect(protect(database->m_document)->eventLoop())->queueTask(TaskSource::Networking, [creationCallback, database] {
             creationCallback->invoke(*database);
             database->setHasPendingCreationEvent(false);
         });
@@ -260,7 +262,7 @@ DatabaseDetails DatabaseManager::detailsForNameAndOrigin(const String& name, Sec
         Locker locker { m_proposedDatabasesLock };
         for (auto* proposedDatabase : m_proposedDatabases) {
             if (proposedDatabase->details().name() == name && proposedDatabase->origin().equal(origin)) {
-                ASSERT(&proposedDatabase->details().thread() == &Thread::currentSingleton() || isMainThread());
+                ASSERT(proposedDatabase->details().threadID() == currentThreadID() || isMainThread());
                 return proposedDatabase->details();
             }
         }

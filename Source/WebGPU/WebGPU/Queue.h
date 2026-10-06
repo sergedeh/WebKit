@@ -26,14 +26,16 @@
 #pragma once
 
 #import "Instance.h"
+#import <CoreVideo/CVPixelBuffer.h>
 #import <Metal/Metal.h>
+#import <WebGPU/WebGPUCpp.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
 #import <wtf/Ref.h>
-#import <wtf/RetainReleaseSwift.h>
+#import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
-#import <wtf/ThreadSafeRefCounted.h>
+#import <wtf/ThreadSafeWeakPtr.h>
 #import <wtf/Vector.h>
 #import <wtf/WeakPtr.h>
 
@@ -42,7 +44,7 @@ IGNORE_CLANG_WARNINGS_BEGIN("nullability-completeness")
 struct WGPUQueueImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class Buffer;
 class CommandBuffer;
@@ -51,9 +53,15 @@ class Device;
 class Texture;
 class TextureView;
 
+// A frame carries primaries of its own, which are usually neither of the two color spaces WebGPU
+// names, so both importExternalTexture() and copyExternalImageToTexture() have to convert them.
+// Row-major and applied to linear-light values; std::nullopt when the frame's primaries already are
+// the destination's, which has to stay a no-op rather than a transfer function round trip.
+std::optional<std::array<float, 9>> primariesConversionMatrixForPixelBuffer(CVPixelBufferRef, WGPUColorSpace destination);
+
 // https://gpuweb.github.io/gpuweb/#gpuqueue
 // A device owns its default queue, not the other way around.
-class Queue : public WGPUQueueImpl, public ThreadSafeRefCounted<Queue> {
+class Queue final : public WebGPU::Queue, public WGPUQueueImpl {
     WTF_MAKE_TZONE_ALLOCATED(Queue);
 public:
     static Ref<Queue> create(id<MTLCommandQueue> commandQueue, Adapter& adapter, Device& device)
@@ -68,21 +76,23 @@ public:
     ~Queue();
 
     void onSubmittedWorkDone(CompletionHandler<void(WGPUQueueWorkDoneStatus)>&& callback);
-    void submit(Vector<Ref<WebGPU::CommandBuffer>>&& commands);
+    void submit(Vector<Ref<WebGPU::Metal::CommandBuffer>>&& commands);
     void writeBuffer(Buffer&, uint64_t bufferOffset, std::span<uint8_t> data);
-    void writeBuffer(id<MTLBuffer>, uint64_t bufferOffset, std::span<uint8_t> data) HAS_SWIFTCXX_THUNK;
+    void writeBuffer(id<MTLBuffer>, uint64_t bufferOffset, std::span<uint8_t> data);
     void clearBuffer(id<MTLBuffer>, NSUInteger offset = 0, NSUInteger size = NSUIntegerMax);
-    void writeTexture(const WGPUImageCopyTexture& destination, std::span<uint8_t> data, const WGPUTextureDataLayout&, const WGPUExtent3D& writeSize, bool skipValidation = false);
-    void setLabel(String&&);
+    void writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::span<uint8_t> data, const WebGPU::TexelCopyBufferLayout&, const WebGPU::Extent3D& writeSize, bool skipValidation = false);
+    void copyExternalImageToTexture(const WebGPU::ImageCopyExternalImage& source, const WebGPU::ImageCopyTextureTagged& destination, const WebGPU::Extent3D& copySize);
+    void setLabel(String&&) final;
 
     void onSubmittedWorkScheduled(Function<void()>&&);
 
-    bool isValid() const { return m_commandQueue; }
+    bool isValid() const final { return m_commandQueue; }
     void makeInvalid();
     void setCommittedSignalEvent(id<MTLSharedEvent>, size_t frameIndex);
 
     const Device& device() const SWIFT_RETURNS_INDEPENDENT_VALUE;
-    void clearTextureIfNeeded(const WGPUImageCopyTexture&, NSUInteger);
+    void generateAValidationError(String&&);
+    void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger);
     id<MTLCommandBuffer> _Nullable commandBufferWithDescriptor(MTLCommandBufferDescriptor*);
     void commitMTLCommandBuffer(id<MTLCommandBuffer>);
     void removeMTLCommandBuffer(id<MTLCommandBuffer>);
@@ -90,7 +100,7 @@ public:
     id<MTLCommandEncoder> _Nullable encoderForBuffer(id<MTLCommandBuffer>) const;
     void clearTextureViewIfNeeded(TextureView&);
     void clearTextureViewIfNeeded(Texture&);
-    static bool writeWillCompletelyClear(WGPUTextureDimension, uint32_t widthForMetal, uint32_t logicalSizeWidth, uint32_t heightForMetal, uint32_t logicalSizeHeight, uint32_t depthForMetal, uint32_t logicalSizeDepthOrArrayLayers);
+    static bool NODELETE writeWillCompletelyClear(WGPUTextureDimension, uint32_t widthForMetal, uint32_t logicalSizeWidth, uint32_t heightForMetal, uint32_t logicalSizeHeight, uint32_t depthForMetal, uint32_t logicalSizeDepthOrArrayLayers);
     void endEncoding(id<MTLCommandEncoder>, id<MTLCommandBuffer>) const;
 
     id<MTLBlitCommandEncoder> ensureBlitCommandEncoder();
@@ -106,25 +116,38 @@ public:
     id<MTLIndirectCommandBuffer> trimICB(id<MTLIndirectCommandBuffer> dest, id<MTLIndirectCommandBuffer> src, NSUInteger newSize);
     id<MTLDevice> _Nullable metalDevice() const;
     std::pair<id<MTLBuffer>, uint64_t> newTemporaryBufferWithBytes(std::span<uint8_t> data, bool noCopy);
+    void stageBufferWrite(id<MTLBuffer>, uint64_t bufferOffset, std::span<uint8_t> data);
+    void encodeStagedCopy(id<MTLBuffer> temporaryBuffer, uint64_t temporaryBufferOffset, id<MTLBuffer>, uint64_t bufferOffset, uint64_t size, bool finalizeAfterCopy);
 
 private:
     Queue(id<MTLCommandQueue>, Adapter&, Device&);
     Queue(Adapter&, Device&);
 
-    NSString * _Nullable errorValidatingSubmit(const Vector<Ref<WebGPU::CommandBuffer>>&) const;
+    NSString * _Nullable errorValidatingSubmit(const Vector<Ref<WebGPU::Metal::CommandBuffer>>&) const;
     bool validateWriteBuffer(const Buffer&, uint64_t bufferOffset, size_t) const;
 
 
-    bool isIdle() const;
+    bool NODELETE isIdle() const;
     bool isSchedulingIdle() const { return m_submittedCommandBufferCount == m_scheduledCommandBufferCount; }
+    id<MTLComputeCommandEncoder> _Nullable ensureStagedCopyEncoder();
+    id<MTLComputePipelineState> _Nullable stagedCopyPipelineState();
     void removeMTLCommandBufferInternal(id<MTLCommandBuffer>);
     void clearTextureIfNeeded(Texture&, uint32_t mipLevelCount, uint32_t arrayLayerCount, uint32_t baseMipLevel, uint32_t baseArrayLayer);
 
-    NSString * _Nullable errorValidatingWriteTexture(const WGPUImageCopyTexture&, const WGPUTextureDataLayout&, const WGPUExtent3D&, size_t, const Texture&) const;
+    NSString * _Nullable errorValidatingWriteTexture(const WebGPU::TexelCopyTextureInfo&, const WebGPU::TexelCopyBufferLayout&, const WebGPU::Extent3D&, size_t, const Texture&) const;
+    NSString * _Nullable errorValidatingCopyExternalImageToTexture(const WebGPU::ImageCopyTextureTagged&, const WebGPU::Extent3D&, const Texture&, const Device&) const;
+    // Renders one source texel per destination texel, so the pipeline only varies by the destination's
+    // pixel format. Cached per format, because a copy per animation frame is the expected usage.
+    id<MTLRenderPipelineState> _Nullable copyExternalImagePipelineState(MTLPixelFormat);
 
     id<MTLCommandQueue> _Nullable m_commandQueue { nil };
     id<MTLCommandBuffer> _Nullable m_commandBuffer { nil };
     id<MTLBlitCommandEncoder> _Nullable m_blitCommandEncoder { nil };
+    id<MTLComputeCommandEncoder> _Nullable m_stagedCopyEncoder { nil };
+    id<MTLComputePipelineState> _Nullable m_stagedCopyPipelineState { nil };
+    bool m_stagedCopyPipelineCreationFailed { false };
+    NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> * _Nullable m_copyExternalImagePipelineStates { nil };
+    bool m_copyExternalImagePipelineCreationFailed { false };
     ThreadSafeWeakPtr<Device> m_device; // The only kind of queues that exist right now are default queues, which are owned by Devices.
     uint64_t m_submittedCommandBufferCount { 0 };
     uint64_t m_completedCommandBufferCount { 0 };
@@ -141,18 +164,20 @@ private:
     const ThreadSafeWeakPtr<Instance> m_instance;
     id<MTLBuffer> _Nullable m_temporaryBuffer;
     uint64_t m_temporaryBufferOffset;
-} SWIFT_SHARED_REFERENCE(refQueue, derefQueue) SWIFT_PRIVATE_FILEID("WebGPU/Queue.swift");
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refQueue, derefQueue) SWIFT_PRIVATE_FILEID("WebGPU/Queue.swift");
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
-inline void refQueue(WebGPU::Queue* obj)
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+inline void refQueue(WebGPU::Metal::Queue* obj)
 {
-    WTF::ref(obj);
+    obj->ref();
 }
 
-inline void derefQueue(WebGPU::Queue* obj)
+inline void derefQueue(WebGPU::Metal::Queue* obj)
 {
-    WTF::deref(obj);
+    obj->deref();
 }
+#endif
 
 IGNORE_CLANG_WARNINGS_END

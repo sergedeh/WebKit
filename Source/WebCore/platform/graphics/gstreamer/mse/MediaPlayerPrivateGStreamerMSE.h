@@ -57,7 +57,7 @@ public:
     void play() override;
     void pause() override;
     void willSeekToTarget(const MediaTime&) override;
-    void seekToTarget(const SeekTarget&) override;
+    Ref<MediaTimePromise> seekToTarget(const SeekTarget&) override;
     bool doSeek(const SeekTarget&, float rate, bool isAsync = false, bool isSegment = false) override;
 
     void updatePipelineState(GstState);
@@ -81,15 +81,17 @@ public:
     void readyStateFromMediaSourceChanged() final;
     void mediaSourceHasRetrievedAllData() final;
     void characteristicsFromMediaSourceChanged() final;
+    void seekableRangesFromMediaSourceChanged() final;
 
     void setInitialVideoSize(const FloatSize&);
 
     void didPreroll() override;
+    void didEnd() final;
 
     void startSource(const Vector<RefPtr<MediaSourceTrackGStreamer>>& tracks);
     WebKitMediaSrc* webKitMediaSrc() { return reinterpret_cast<WebKitMediaSrc*>(m_source.get()); }
 
-    void setEosWithNoBuffers(bool);
+    void rebuildPipeline();
 
 #if !RELEASE_LOG_DISABLED
     WTFLogChannel& logChannel() const final { return WebCore::LogMediaSource; }
@@ -104,6 +106,8 @@ public:
     // reported to HTMLMediaElement. We need to synchronize the enabled status of the player
     // mirror when the element one changed. Fortunately, both share the same trackId.
     void mirrorEnabledVideoTrackIfNeeded(const VideoTrackPrivateGStreamer& originalVideoTrackPrivate) final;
+
+    GstState suspendTargetState() const final { return GST_STATE_PAUSED; }
 
 private:
     explicit MediaPlayerPrivateGStreamerMSE(MediaPlayer&);
@@ -134,7 +138,6 @@ private:
     Vector<RefPtr<MediaSourceTrackGStreamer>> m_tracks;
 
     bool m_isWaitingForPreroll = true;
-    bool m_isEosWithNoBuffers = false;
     MediaPlayer::ReadyState m_mediaSourceReadyState = MediaPlayer::ReadyState::HaveNothing;
     MediaPlayer::NetworkState m_mediaSourceNetworkState = MediaPlayer::NetworkState::Empty;
 

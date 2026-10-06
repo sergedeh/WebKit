@@ -34,6 +34,11 @@
 #if USE(AVFOUNDATION)
 
 #import <AVFoundation/AVFoundation.h>
+#if USE(APPLE_INTERNAL_SDK)
+// Load private headers before their declarations are redefined as macros
+// below.
+#import <pal/spi/cocoa/AVFoundationSPI.h>
+#endif
 #import <wtf/SoftLinking.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
@@ -50,6 +55,7 @@ SOFT_LINK_CLASS_FOR_HEADER(PAL, AVAssetExportSession)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVAssetImageGenerator)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVAssetReader)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVAssetReaderSampleReferenceOutput)
+SOFT_LINK_CLASS_FOR_HEADER(PAL, AVAssetReaderTrackOutput)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVAssetResourceLoadingRequest)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVAssetWriter)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVAssetWriterInput)
@@ -81,9 +87,7 @@ SOFT_LINK_CLASS_FOR_HEADER(PAL, AVSpeechUtterance)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVStreamDataParser)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVURLAsset)
 
-#if HAVE(AVAUDIOSESSION)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVAudioSession)
-#endif
 
 #if PLATFORM(IOS_FAMILY)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVPersistableContentKeyRequest)
@@ -114,6 +118,10 @@ SOFT_LINK_CLASS_FOR_HEADER(PAL, AVCapturePhotoOutput)
 #if HAVE(AVCAPTUREDEVICEROTATIONCOORDINATOR)
 SOFT_LINK_CLASS_FOR_HEADER(PAL, AVCaptureDeviceRotationCoordinator)
 #endif
+
+#if HAVE(AVCAPTUREPHOTOOUTPUT_READINESS_COORDINATOR)
+SOFT_LINK_CLASS_FOR_HEADER(PAL, AVCapturePhotoOutputReadinessCoordinator)
+#endif
 #endif // HAVE(AVCAPTUREDEVICE)
 
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVAudioTimePitchAlgorithmSpectral, NSString *)
@@ -126,6 +134,8 @@ SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVMediaCharacteristicVisual, NS
 #define AVMediaCharacteristicVisual PAL::get_AVFoundation_AVMediaCharacteristicVisualSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVMediaCharacteristicAudible, NSString *)
 #define AVMediaCharacteristicAudible PAL::get_AVFoundation_AVMediaCharacteristicAudibleSingleton()
+SOFT_LINK_CONSTANT_MAY_FAIL_FOR_HEADER(PAL, AVFoundation, AVMediaCharacteristicMachineGenerated, NSString *)
+#define AVMediaCharacteristicMachineGenerated PAL::get_AVFoundation_AVMediaCharacteristicMachineGeneratedSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVMediaTypeClosedCaption, NSString *)
 #define AVMediaTypeClosedCaption PAL::get_AVFoundation_AVMediaTypeClosedCaptionSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVMediaTypeText, NSString *)
@@ -150,6 +160,8 @@ SOFT_LINK_CONSTANT_MAY_FAIL_FOR_HEADER(PAL, AVFoundation, AVURLAssetShouldEnable
 #define AVURLAssetShouldEnableLegacyWebKitCompatibilityModeForContentKeyRequests PAL::get_AVFoundation_AVURLAssetShouldEnableLegacyWebKitCompatibilityModeForContentKeyRequestsSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVURLAssetInheritURIQueryComponentFromReferencingURIKey, NSString *)
 #define AVURLAssetInheritURIQueryComponentFromReferencingURIKey PAL::get_AVFoundation_AVURLAssetInheritURIQueryComponentFromReferencingURIKeySingleton()
+SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVURLAssetPreferPreciseDurationAndTimingKey, NSString *)
+#define AVURLAssetPreferPreciseDurationAndTimingKey PAL::get_AVFoundation_AVURLAssetPreferPreciseDurationAndTimingKeySingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVAssetImageGeneratorApertureModeCleanAperture, NSString *)
 #define AVAssetImageGeneratorApertureModeCleanAperture PAL::get_AVFoundation_AVAssetImageGeneratorApertureModeCleanApertureSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVURLAssetReferenceRestrictionsKey, NSString *)
@@ -207,7 +219,7 @@ SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVMediaCharacteristicIsMainProg
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVMediaCharacteristicEasyToRead, NSString *)
 #define AVMediaCharacteristicEasyToRead PAL::get_AVFoundation_AVMediaCharacteristicEasyToReadSingleton()
 
-SOFT_LINK_CONSTANT_MAY_FAIL_FOR_HEADER(PAL, AVFoundation, AVURLAssetOutOfBandMIMETypeKey, NSString *)
+SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVURLAssetOutOfBandMIMETypeKey, NSString *)
 #define AVURLAssetOutOfBandMIMETypeKey PAL::get_AVFoundation_AVURLAssetOutOfBandMIMETypeKeySingleton()
 SOFT_LINK_CONSTANT_MAY_FAIL_FOR_HEADER(PAL, AVFoundation, AVURLAssetUseClientURLLoadingExclusively, NSString *)
 #define AVURLAssetUseClientURLLoadingExclusively PAL::get_AVFoundation_AVURLAssetUseClientURLLoadingExclusivelySingleton()
@@ -264,7 +276,7 @@ SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVURLAssetCacheKey, NSString *)
 #define AVURLAssetCacheKey PAL::get_AVFoundation_AVURLAssetCacheKeySingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVURLAssetOutOfBandAlternateTracksKey, NSString *)
 #define AVURLAssetOutOfBandAlternateTracksKey PAL::get_AVFoundation_AVURLAssetOutOfBandAlternateTracksKeySingleton()
-SOFT_LINK_CONSTANT_MAY_FAIL_FOR_HEADER(PAL, AVFoundation, AVAssetPrefersSandboxedParsingOptionKey, NSString *)
+SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVAssetPrefersSandboxedParsingOptionKey, NSString *)
 #define AVAssetPrefersSandboxedParsingOptionKey PAL::get_AVFoundation_AVAssetPrefersSandboxedParsingOptionKeySingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVURLAssetUsesNoPersistentCacheKey, NSString *)
 #define AVURLAssetUsesNoPersistentCacheKey PAL::get_AVFoundation_AVURLAssetUsesNoPersistentCacheKeySingleton()
@@ -409,7 +421,6 @@ SOFT_LINK_CONSTANT_MAY_FAIL_FOR_HEADER(PAL, AVFoundation, AVURLAssetExtendedMIME
 SOFT_LINK_CONSTANT_MAY_FAIL_FOR_HEADER(PAL, AVFoundation, AVURLAssetDoNotLogURLsKey, NSString *)
 #define AVURLAssetDoNotLogURLsKey PAL::get_AVFoundation_AVURLAssetDoNotLogURLsKeySingleton()
 
-#if HAVE(AVAUDIOSESSION)
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVAudioSessionPortBuiltInMic, NSString *)
 #define AVAudioSessionPortBuiltInMic PAL::get_AVFoundation_AVAudioSessionPortBuiltInMicSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVAudioSessionPortBuiltInReceiver, NSString *)
@@ -428,7 +439,6 @@ SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVAudioSessionPortLineOut, NSSt
 #define AVAudioSessionPortLineOut PAL::get_AVFoundation_AVAudioSessionPortLineOutSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVAudioSessionSpatialPlaybackCapabilitiesChangedNotification, NSString *)
 #define AVAudioSessionSpatialPlaybackCapabilitiesChangedNotification PAL::get_AVFoundation_AVAudioSessionSpatialPlaybackCapabilitiesChangedNotificationSingleton()
-#endif // HAVE(AVAUDIOSESSION)
 
 #if HAVE(AVSPEECHSYNTHESIS_VOICES_CHANGE_NOTIFICATION)
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, AVFoundation, AVSpeechSynthesisAvailableVoicesDidChangeNotification, NSString *)

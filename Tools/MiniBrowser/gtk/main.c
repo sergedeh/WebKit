@@ -27,6 +27,7 @@
 
 #include "cmakeconfig.h"
 
+#include "BrowserLoggingInputMethodContext.h"
 #include "BrowserWindow.h"
 #include "BuildRevision.h"
 #include <errno.h>
@@ -47,12 +48,15 @@
 
 static const gchar **uriArguments = NULL;
 static const gchar **ignoreHosts = NULL;
+static const gchar **userScriptsAtDocumentStart = NULL;
+static const gchar **userScriptsAtDocumentEnd = NULL;
 static WebKitAutoplayPolicy autoplayPolicy = WEBKIT_AUTOPLAY_ALLOW_WITHOUT_SOUND;
 static GdkRGBA *backgroundColor;
 static gboolean editorMode;
 static const char *sessionFile;
 static char *geometry;
 static gboolean privateMode;
+static const char* profileDirectory;
 static gboolean automationMode;
 static gboolean fullScreen;
 static gboolean ignoreTLSErrors;
@@ -64,6 +68,7 @@ static gboolean darkMode;
 static char* timeZone;
 static gboolean enableITP;
 static gboolean exitAfterLoad;
+static gboolean logInputMethod;
 static gboolean webProcessCrashed;
 static gboolean printVersion;
 static char *configFile;
@@ -109,6 +114,11 @@ static WebKitWebView *createBrowserTab(BrowserWindow *window, WebKitSettings *we
 
     if (editorMode)
         webkit_web_view_set_editable(webView, TRUE);
+
+    if (logInputMethod) {
+        g_autoptr(WebKitInputMethodContext) context = browser_logging_input_method_context_new();
+        webkit_web_view_set_input_method_context(webView, context);
+    }
 
     browser_window_append_view(window, webView);
     return webView;
@@ -157,6 +167,7 @@ static const GOptionEntry commandLineOptions[] =
     { "geometry", 'g', 0, G_OPTION_ARG_STRING, &geometry, "Unused. Kept for backwards-compatibility only", "GEOMETRY" },
     { "full-screen", 'f', 0, G_OPTION_ARG_NONE, &fullScreen, "Set the window to full-screen mode", NULL },
     { "private", 'p', 0, G_OPTION_ARG_NONE, &privateMode, "Run in private browsing mode", NULL },
+    { "profile-dir", 0, 0, G_OPTION_ARG_FILENAME, &profileDirectory, "Custom profile directory to store session data", "DIR" },
     { "automation", 0, 0, G_OPTION_ARG_NONE, &automationMode, "Run in automation mode", NULL },
     { "cookies-file", 'c', 0, G_OPTION_ARG_FILENAME, &cookiesFile, "Persistent cookie storage database file", "FILE" },
     { "cookies-policy", 0, 0, G_OPTION_ARG_STRING, &cookiesPolicy, "Cookies accept policy (always, never, no-third-party). Default: no-third-party", "POLICY" },
@@ -164,11 +175,14 @@ static const GOptionEntry commandLineOptions[] =
     { "ignore-host", 0, 0, G_OPTION_ARG_STRING_ARRAY, &ignoreHosts, "Set proxy ignore hosts", "HOSTS" },
     { "ignore-tls-errors", 0, 0, G_OPTION_ARG_NONE, &ignoreTLSErrors, "Ignore TLS errors", NULL },
     { "content-filter", 0, 0, G_OPTION_ARG_FILENAME, &contentFilter, "JSON with content filtering rules", "FILE" },
+    { "user-script-at-start", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &userScriptsAtDocumentStart, "Inject one or more user scripts at document start.", "PATH" },
+    { "user-script-at-end", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &userScriptsAtDocumentEnd, "Inject one or more user scripts at document end.", "PATH" },
     { "enable-itp", 0, 0, G_OPTION_ARG_NONE, &enableITP, "Enable Intelligent Tracking Prevention (ITP)", NULL },
 #if !GTK_CHECK_VERSION(3, 98, 0)
     { "enable-sandbox", 0, 0, G_OPTION_ARG_NONE, &enableSandbox, "Enable web process sandbox support", NULL },
 #endif
     { "exit-after-load", 0, 0, G_OPTION_ARG_NONE, &exitAfterLoad, "Quit the browser after the load finishes", NULL },
+    { "log-input-method", 0, 0, G_OPTION_ARG_NONE, &logInputMethod, "Log what WebKit reports to the input method. Disables composition", NULL },
     { "time-zone", 't', 0, G_OPTION_ARG_STRING, &timeZone, "Set time zone", "TIMEZONE" },
     { "version", 'v', 0, G_OPTION_ARG_NONE, &printVersion, "Print the WebKitGTK version", NULL },
     { "config", 'C', 0, G_OPTION_ARG_FILENAME, &configFile, "Path to a configuration file", "PATH" },
@@ -235,7 +249,17 @@ static gboolean parseOptionEntryCallback(const gchar *optionNameFull, const gcha
         break;
     }
     default:
-        g_assert_not_reached();
+        if (G_PARAM_SPEC_VALUE_TYPE(spec) == WEBKIT_TYPE_HARDWARE_ACCELERATION_POLICY) {
+            GEnumClass *enumClass = g_type_class_ref(WEBKIT_TYPE_HARDWARE_ACCELERATION_POLICY);
+            GEnumValue *enumValue = g_enum_get_value_by_nick(enumClass, value);
+            g_type_class_unref(enumClass);
+            if (!enumValue) {
+                g_set_error(error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE, "Hardware acceleration policy '%s' is not valid", value);
+                return FALSE;
+            }
+            webkit_settings_set_hardware_acceleration_policy(webSettings, enumValue->value);
+        } else
+            g_assert_not_reached();
     }
 
     return TRUE;
@@ -243,18 +267,7 @@ static gboolean parseOptionEntryCallback(const gchar *optionNameFull, const gcha
 
 static gboolean isValidParameterType(GType gParamType)
 {
-    return (gParamType == G_TYPE_BOOLEAN || gParamType == G_TYPE_STRING || gParamType == G_TYPE_INT
-            || gParamType == G_TYPE_FLOAT);
-}
-
-static WebKitFeature* findFeature(WebKitFeatureList *featureList, const char *identifier)
-{
-    for (gsize i = 0; i < webkit_feature_list_get_length(featureList); i++) {
-        WebKitFeature *feature = webkit_feature_list_get(featureList, i);
-        if (!g_ascii_strcasecmp(identifier, webkit_feature_get_identifier(feature)))
-            return feature;
-    }
-    return NULL;
+    return (gParamType == G_TYPE_BOOLEAN || gParamType == G_TYPE_STRING || gParamType == G_TYPE_INT || gParamType == G_TYPE_FLOAT || gParamType == WEBKIT_TYPE_HARDWARE_ACCELERATION_POLICY);
 }
 
 static gboolean parseFeaturesOptionCallback(const gchar *option, const gchar *value, WebKitSettings *webSettings, GError **error)
@@ -301,7 +314,7 @@ static gboolean parseFeaturesOptionCallback(const gchar *option, const gchar *va
             return FALSE;
         }
 
-        WebKitFeature *feature = findFeature(featureList, item);
+        WebKitFeature *feature = webkit_feature_list_find(featureList, item);
         if (!feature) {
             g_set_error(error, G_OPTION_ERROR, G_OPTION_ERROR_FAILED, "Feature '%s' is not available", item);
             return FALSE;
@@ -556,6 +569,7 @@ static void gotWebsiteDataCallback(WebKitWebsiteDataManager *manager, GAsyncResu
     aboutDataFillTable(result, dataRequest, dataList, "ITP data", WEBKIT_WEBSITE_DATA_ITP, pageID);
     aboutDataFillTable(result, dataRequest, dataList, "Service Worker Registratations", WEBKIT_WEBSITE_DATA_SERVICE_WORKER_REGISTRATIONS, pageID);
     aboutDataFillTable(result, dataRequest, dataList, "DOM Cache", WEBKIT_WEBSITE_DATA_DOM_CACHE, pageID);
+    aboutDataFillTable(result, dataRequest, dataList, "File System", WEBKIT_WEBSITE_DATA_FILE_SYSTEM, pageID);
 
     result = g_string_append(result, "</body></html>");
     gsize streamLength = result->len;
@@ -785,6 +799,19 @@ static void setupDarkMode(GtkSettings *settings)
     g_signal_connect_swapped(interfaceSettings, "changed::color-scheme", G_CALLBACK(colorSchemeChanged), settings);
 }
 
+static void addUserScript(WebKitUserContentManager *userContentManager, const gchar* userScriptPath, WebKitUserScriptInjectionTime injectionTime)
+{
+    g_autoptr(GFile) file = g_file_new_for_commandline_arg(userScriptPath);
+    g_autofree gchar *source;
+    g_autoptr(GError) error = 0;
+
+    if (g_file_load_contents(file, NULL, &source, NULL, NULL, &error)) {
+        webkit_user_content_manager_add_script(userContentManager, webkit_user_script_new(source,
+            WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, injectionTime, NULL, NULL));
+    } else
+        g_printerr("Failed to load user script at path '%s': %s\n", userScriptPath, error->message);
+}
+
 static void activate(GApplication *application, WebKitSettings *webkitSettings)
 {
 #if GTK_CHECK_VERSION(3, 98, 0)
@@ -798,11 +825,9 @@ static void activate(GApplication *application, WebKitSettings *webkitSettings)
     else if (privateMode)
         networkSession = webkit_network_session_new_ephemeral();
     else {
-        char *dataDirectory = g_build_filename(g_get_user_data_dir(), "webkitgtk-" WEBKITGTK_API_VERSION, "MiniBrowser", NULL);
-        char *cacheDirectory = g_build_filename(g_get_user_cache_dir(), "webkitgtk-" WEBKITGTK_API_VERSION, "MiniBrowser", NULL);
+        g_autofree char *dataDirectory = profileDirectory ? g_build_filename(profileDirectory, "data", NULL) : g_build_filename(g_get_user_data_dir(), "webkitgtk-" WEBKITGTK_API_VERSION, "MiniBrowser", NULL);
+        g_autofree char *cacheDirectory = profileDirectory ? g_build_filename(profileDirectory, "cache", NULL) : g_build_filename(g_get_user_cache_dir(), "webkitgtk-" WEBKITGTK_API_VERSION, "MiniBrowser", NULL);
         networkSession = webkit_network_session_new(dataDirectory, cacheDirectory);
-        g_free(dataDirectory);
-        g_free(cacheDirectory);
     }
 
     webkit_network_session_set_itp_enabled(networkSession, enableITP);
@@ -842,11 +867,9 @@ static void activate(GApplication *application, WebKitSettings *webkitSettings)
     if (privateMode || automationMode)
         manager = webkit_website_data_manager_new_ephemeral();
     else {
-        char *dataDirectory = g_build_filename(g_get_user_data_dir(), "webkitgtk-" WEBKITGTK_API_VERSION, "MiniBrowser", NULL);
-        char *cacheDirectory = g_build_filename(g_get_user_cache_dir(), "webkitgtk-" WEBKITGTK_API_VERSION, "MiniBrowser", NULL);
+        g_autofree char *dataDirectory = profileDirectory ? g_build_filename(profileDirectory, "data", NULL) : g_build_filename(g_get_user_data_dir(), "webkitgtk-" WEBKITGTK_API_VERSION, "MiniBrowser", NULL);
+        g_autofree char *cacheDirectory = profileDirectory ? g_build_filename(profileDirectory, "cache", NULL) : g_build_filename(g_get_user_cache_dir(), "webkitgtk-" WEBKITGTK_API_VERSION, "MiniBrowser", NULL);
         manager = webkit_website_data_manager_new("base-data-directory", dataDirectory, "base-cache-directory", cacheDirectory, NULL);
-        g_free(dataDirectory);
-        g_free(cacheDirectory);
     }
 
     webkit_website_data_manager_set_itp_enabled(manager, enableITP);
@@ -929,6 +952,15 @@ static void activate(GApplication *application, WebKitSettings *webkitSettings)
         g_clear_pointer(&saveData.filter, webkit_user_content_filter_unref);
         g_main_loop_unref(saveData.mainLoop);
         g_object_unref(contentFilterFile);
+    }
+
+    if (userScriptsAtDocumentStart) {
+        for (int i = 0; userScriptsAtDocumentStart[i]; i++)
+            addUserScript(userContentManager, userScriptsAtDocumentStart[i], WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START);
+    }
+    if (userScriptsAtDocumentEnd) {
+        for (int i = 0; userScriptsAtDocumentEnd[i]; i++)
+            addUserScript(userContentManager, userScriptsAtDocumentEnd[i], WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END);
     }
 
 #if GTK_CHECK_VERSION(3, 98, 0)

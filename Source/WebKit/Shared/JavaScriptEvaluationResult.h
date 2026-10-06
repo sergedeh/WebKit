@@ -61,13 +61,14 @@ class JavaScriptEvaluationResult {
 public:
     enum class EmptyType : bool { Undefined, Null };
     using ObjectMap = HashMap<JSObjectID, JSObjectID>;
+    using ObjectVector = Vector<JSObjectID>;
     using Value = Variant<
         EmptyType,
         bool,
         double,
         String,
         Seconds,
-        Vector<JSObjectID>,
+        ObjectVector,
         ObjectMap,
         UniqueRef<JSHandleInfo>,
         UniqueRef<WebCore::SerializedNode>
@@ -81,7 +82,7 @@ public:
     ~JavaScriptEvaluationResult();
 
     JSObjectID root() const { return m_root; }
-    const Map& map() const { return m_map; }
+    const Map& map() const LIFETIME_BOUND { return m_map; }
 
     String toString() const;
 

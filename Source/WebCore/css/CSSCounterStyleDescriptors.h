@@ -34,6 +34,8 @@ namespace WebCore {
 class CSSValue;
 class StyleProperties;
 
+enum CSSValueID : uint16_t;
+
 struct CSSCounterStyleDescriptors {
     using Name = AtomString;
     using Ranges = Vector<std::pair<int, int>>;
@@ -60,6 +62,11 @@ struct CSSCounterStyleDescriptors {
         SimplifiedChineseFormal,
         TraditionalChineseInformal,
         TraditionalChineseFormal,
+        JapaneseInformal,
+        JapaneseFormal,
+        KoreanHangulFormal,
+        KoreanHanjaInformal,
+        KoreanHanjaFormal,
         EthiopicNumeric,
         Extends
     };
@@ -97,6 +104,8 @@ struct CSSCounterStyleDescriptors {
 
     // create() is prefered here rather than a custom constructor, so that the Struct still classifies as an aggregate.
     static CSSCounterStyleDescriptors create(AtomString name, const StyleProperties&);
+    static CSSCounterStyleDescriptors createForSymbolsFunction(System, Vector<Symbol>&&);
+
     bool operator==(const CSSCounterStyleDescriptors& other) const
     {
         // Intentionally doesn't check m_isExtendedResolved.
@@ -116,8 +125,8 @@ struct CSSCounterStyleDescriptors {
             && m_explicitlySetDescriptors == other.m_explicitlySetDescriptors;
     }
     void setExplicitlySetDescriptors(const StyleProperties&);
-    bool isValid() const;
-    static bool areSymbolsValidForSystem(System, const Vector<Symbol>&, const AdditiveSymbols&);
+    bool NODELETE isValid() const;
+    WEBCORE_EXPORT static bool NODELETE areSymbolsValidForSystem(System, size_t symbolsCount, size_t additiveSymbolsCount);
 
     void setName(Name);
     void setSystem(System);
@@ -131,7 +140,7 @@ struct CSSCounterStyleDescriptors {
     void setSymbols(Vector<Symbol>);
     void setAdditiveSymbols(AdditiveSymbols);
 
-    String nameCSSText() const;
+    String NODELETE nameCSSText() const;
     String systemCSSText() const;
     String negativeCSSText() const;
     String prefixCSSText() const;
@@ -159,12 +168,13 @@ struct CSSCounterStyleDescriptors {
     bool m_isExtendedResolved { false };
 };
 
-CSSCounterStyleDescriptors::Ranges rangeFromCSSValue(Ref<CSSValue>);
-CSSCounterStyleDescriptors::AdditiveSymbols additiveSymbolsFromCSSValue(Ref<CSSValue>);
-CSSCounterStyleDescriptors::Pad padFromCSSValue(Ref<CSSValue>);
-CSSCounterStyleDescriptors::NegativeSymbols negativeSymbolsFromCSSValue(Ref<CSSValue>);
-CSSCounterStyleDescriptors::Symbol symbolFromCSSValue(RefPtr<CSSValue>);
-Vector<CSSCounterStyleDescriptors::Symbol> symbolsFromCSSValue(Ref<CSSValue>);
-CSSCounterStyleDescriptors::Name fallbackNameFromCSSValue(Ref<CSSValue>);
-CSSCounterStyleDescriptors::SystemData extractSystemDataFromCSSValue(RefPtr<CSSValue>, CSSCounterStyleDescriptors::System);
+CSSCounterStyleDescriptors::Ranges rangeFromCSSValue(const CSSValue&);
+CSSCounterStyleDescriptors::AdditiveSymbols additiveSymbolsFromCSSValue(const CSSValue&);
+CSSCounterStyleDescriptors::Pad padFromCSSValue(const CSSValue&);
+CSSCounterStyleDescriptors::NegativeSymbols negativeSymbolsFromCSSValue(const CSSValue&);
+CSSCounterStyleDescriptors::Symbol symbolFromCSSValue(const CSSValue*);
+Vector<CSSCounterStyleDescriptors::Symbol> symbolsFromCSSValue(const CSSValue&);
+CSSCounterStyleDescriptors::Name fallbackNameFromCSSValue(const CSSValue&);
+CSSCounterStyleDescriptors::SystemData extractSystemDataFromCSSValue(const CSSValue*, CSSCounterStyleDescriptors::System);
+
 } // namespace WebCore

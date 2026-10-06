@@ -93,7 +93,6 @@ HLSLTextureGroup TextureGroup(const TBasicType type, TLayoutImageInternalFormat 
     switch (type)
     {
         case EbtSampler2D:
-        case EbtSamplerVideoWEBGL:
             return HLSL_TEXTURE_2D;
         case EbtSamplerCube:
             return HLSL_TEXTURE_CUBE;
@@ -277,51 +276,6 @@ HLSLTextureGroup TextureGroup(const TBasicType type, TLayoutImageInternalFormat 
                 case EiifRGBA8UI:
                 case EiifR32UI:
                     return HLSL_TEXTURE_2D_ARRAY_UINT4;
-                default:
-                    UNREACHABLE();
-                    return HLSL_TEXTURE_UNKNOWN;
-            }
-        }
-        case EbtImageBuffer:
-        {
-            switch (imageInternalFormat)
-            {
-                case EiifRGBA32F:
-                case EiifRGBA16F:
-                case EiifR32F:
-                    return HLSL_TEXTURE_BUFFER;
-                case EiifRGBA8:
-                    return HLSL_TEXTURE_BUFFER_UNORM;
-                case EiifRGBA8_SNORM:
-                    return HLSL_TEXTURE_BUFFER_SNORM;
-                default:
-                    UNREACHABLE();
-                    return HLSL_TEXTURE_UNKNOWN;
-            }
-        }
-        case EbtUImageBuffer:
-        {
-            switch (imageInternalFormat)
-            {
-                case EiifRGBA32UI:
-                case EiifRGBA16UI:
-                case EiifRGBA8UI:
-                case EiifR32UI:
-                    return HLSL_TEXTURE_BUFFER_UINT4;
-                default:
-                    UNREACHABLE();
-                    return HLSL_TEXTURE_UNKNOWN;
-            }
-        }
-        case EbtIImageBuffer:
-        {
-            switch (imageInternalFormat)
-            {
-                case EiifRGBA32I:
-                case EiifRGBA16I:
-                case EiifRGBA8I:
-                case EiifR32I:
-                    return HLSL_TEXTURE_BUFFER_INT4;
                 default:
                     UNREACHABLE();
                     return HLSL_TEXTURE_UNKNOWN;
@@ -702,51 +656,6 @@ HLSLRWTextureGroup RWTextureGroup(const TBasicType type,
             }
             break;
         }
-        case EbtImageBuffer:
-        {
-            switch (imageInternalFormat)
-            {
-                case EiifRGBA32F:
-                case EiifRGBA16F:
-                case EiifR32F:
-                    return HLSL_RWTEXTURE_BUFFER_FLOAT4;
-                case EiifRGBA8:
-                    return HLSL_RWTEXTURE_BUFFER_UNORM;
-                case EiifRGBA8_SNORM:
-                    return HLSL_RWTEXTURE_BUFFER_SNORM;
-                default:
-                    UNREACHABLE();
-            }
-            break;
-        }
-        case EbtIImageBuffer:
-        {
-            switch (imageInternalFormat)
-            {
-                case EiifRGBA32I:
-                case EiifRGBA16I:
-                case EiifRGBA8I:
-                case EiifR32I:
-                    return HLSL_RWTEXTURE_BUFFER_INT4;
-                default:
-                    UNREACHABLE();
-            }
-            break;
-        }
-        case EbtUImageBuffer:
-        {
-            switch (imageInternalFormat)
-            {
-                case EiifRGBA32UI:
-                case EiifRGBA16UI:
-                case EiifRGBA8UI:
-                case EiifR32UI:
-                    return HLSL_RWTEXTURE_BUFFER_UINT4;
-                default:
-                    UNREACHABLE();
-            }
-            break;
-        }
         default:
             UNREACHABLE();
     }
@@ -787,16 +696,6 @@ const char *RWTextureString(const HLSLRWTextureGroup RWTextureGroup)
             return "RWTexture2DArray<int4>";
         case HLSL_RWTEXTURE_3D_INT4:
             return "RWTexture3D<int4>";
-        case HLSL_RWTEXTURE_BUFFER_FLOAT4:
-            return "RWBuffer<float4>";
-        case HLSL_RWTEXTURE_BUFFER_UNORM:
-            return "RWBuffer<unorm float4>";
-        case HLSL_RWTEXTURE_BUFFER_SNORM:
-            return "RWBuffer<snorm float4>";
-        case HLSL_RWTEXTURE_BUFFER_UINT4:
-            return "RWBuffer<uint4>";
-        case HLSL_RWTEXTURE_BUFFER_INT4:
-            return "RWBuffer<int4>";
         default:
             UNREACHABLE();
     }
@@ -843,16 +742,6 @@ const char *RWTextureGroupSuffix(const HLSLRWTextureGroup type)
             return "RW2DArray_int4_";
         case HLSL_RWTEXTURE_3D_INT4:
             return "RW3D_int4_";
-        case HLSL_RWTEXTURE_BUFFER_FLOAT4:
-            return "RWBuffer_float4_";
-        case HLSL_RWTEXTURE_BUFFER_UNORM:
-            return "RWBuffer_unorm_float4_";
-        case HLSL_RWTEXTURE_BUFFER_SNORM:
-            return "RWBuffer_snorm_float4_";
-        case HLSL_RWTEXTURE_BUFFER_UINT4:
-            return "RWBuffer_uint4_";
-        case HLSL_RWTEXTURE_BUFFER_INT4:
-            return "RWBuffer_int4_";
         default:
             UNREACHABLE();
     }
@@ -951,6 +840,7 @@ TString Decorate(const ImmutableString &string)
 
 TString DecorateVariableIfNeeded(const TVariable &variable)
 {
+    const TQualifier qualifier = variable.getType().getQualifier();
     if (variable.symbolType() == SymbolType::AngleInternal ||
         variable.symbolType() == SymbolType::BuiltIn || variable.symbolType() == SymbolType::Empty)
     {
@@ -964,9 +854,11 @@ TString DecorateVariableIfNeeded(const TVariable &variable)
     // For user defined variables, combine variable name with unique id
     // so variables of the same name in different scopes do not get overwritten.
     else if (variable.symbolType() == SymbolType::UserDefined &&
-             variable.getType().getQualifier() == EvqTemporary)
+             (qualifier == EvqTemporary || qualifier == EvqGlobal || qualifier == EvqConst ||
+              qualifier == EvqParamIn || qualifier == EvqParamOut || qualifier == EvqParamInOut ||
+              qualifier == EvqParamConst))
     {
-        return Decorate(variable.name()) + str(variable.uniqueId().get());
+        return Decorate(variable.name()) + '_' + str(variable.uniqueId().get());
     }
     else
     {
@@ -995,14 +887,8 @@ TString TypeString(const TType &type)
     const TStructure *structure = type.getStruct();
     if (structure)
     {
-        if (structure->symbolType() != SymbolType::Empty)
-        {
-            return StructNameString(*structure);
-        }
-        else  // Nameless structure, define in place
-        {
-            return StructureHLSL::defineNameless(*structure);
-        }
+        ASSERT(structure->symbolType() != SymbolType::Empty);
+        return StructNameString(*structure);
     }
     else if (type.isMatrix())
     {
@@ -1077,11 +963,6 @@ TString TypeString(const TType &type)
                 return "samplerCUBE";
             case EbtSamplerExternalOES:
                 return "sampler2D";
-            case EbtSamplerVideoWEBGL:
-                return "sampler2D";
-            case EbtAtomicCounter:
-                // Multiple atomic_uints will be implemented as a single RWByteAddressBuffer
-                return "RWByteAddressBuffer";
             default:
                 break;
         }
@@ -1093,10 +974,7 @@ TString TypeString(const TType &type)
 
 TString StructNameString(const TStructure &structure)
 {
-    if (structure.symbolType() == SymbolType::Empty)
-    {
-        return "";
-    }
+    ASSERT(structure.symbolType() != SymbolType::Empty);
 
     // For structures at global scope we use a consistent
     // translation so that we can link between shader stages.
@@ -1113,10 +991,7 @@ TString QualifiedStructNameString(const TStructure &structure,
                                   bool useStd140Packing,
                                   bool forcePadding)
 {
-    if (structure.symbolType() == SymbolType::Empty)
-    {
-        return "";
-    }
+    ASSERT(structure.symbolType() != SymbolType::Empty);
 
     TString prefix = "";
 

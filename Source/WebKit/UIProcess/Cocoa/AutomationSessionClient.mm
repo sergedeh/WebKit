@@ -62,6 +62,8 @@ AutomationSessionClient::AutomationSessionClient(id <_WKAutomationSessionDelegat
     m_delegateMethods.loadWebExtensionWithOptions = [delegate respondsToSelector:@selector(_automationSession:loadWebExtensionWithOptions:resource:completionHandler:)];
     m_delegateMethods.unloadWebExtension = [delegate respondsToSelector:@selector(_automationSession:unloadWebExtensionWithIdentifier:completionHandler:)];
 #endif
+    m_delegateMethods.performApplicationCommand = [delegate respondsToSelector:@selector(_automationSession:performCommandForWebView:commandName:arguments:completionHandler:)];
+    m_delegateMethods.shouldEnableInspectorTesting = [delegate respondsToSelector:@selector(_automationSessionShouldEnableInspectorTesting:)];
 }
 
 void AutomationSessionClient::didDisconnectFromRemote(WebAutomationSession& session)
@@ -70,7 +72,7 @@ void AutomationSessionClient::didDisconnectFromRemote(WebAutomationSession& sess
         [m_delegate.get() _automationSessionDidDisconnectFromRemote:RetainPtr { wrapper(session) }.get()];
 }
 
-static inline _WKAutomationSessionBrowsingContextOptions toAPI(API::AutomationSessionBrowsingContextOptions options)
+static inline _WKAutomationSessionBrowsingContextOptions NODELETE toAPI(API::AutomationSessionBrowsingContextOptions options)
 {
     uint16_t wkOptions = 0;
 
@@ -81,7 +83,7 @@ static inline _WKAutomationSessionBrowsingContextOptions toAPI(API::AutomationSe
 }
 
 #if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
-static inline _WKAutomationSessionWebExtensionResourceOptions toAPI(API::AutomationSessionWebExtensionResourceOptions options)
+static inline _WKAutomationSessionWebExtensionResourceOptions NODELETE toAPI(API::AutomationSessionWebExtensionResourceOptions options)
 {
     uint16_t wkOptions = 0;
 
@@ -164,6 +166,28 @@ void AutomationSessionClient::unloadWebExtension(WebKit::WebAutomationSession& s
 }
 #endif
 
+void AutomationSessionClient::performApplicationCommand(WebAutomationSession& session, WebPageProxy& page, const String& commandName, const String& arguments, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    if (!m_delegateMethods.performApplicationCommand) {
+        completionHandler(nullString());
+        return;
+    }
+
+    if (auto webView = page.cocoaView()) {
+        [m_delegate.get() _automationSession:RetainPtr { wrapper(session) }.get() performCommandForWebView:webView.get() commandName:commandName.createNSString().get() arguments:arguments.createNSString().get() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](NSString *result) mutable {
+            completionHandler(result);
+        }).get()];
+    } else
+        completionHandler(nullString());
+}
+
+bool AutomationSessionClient::shouldEnableInspectorTesting(WebAutomationSession& session)
+{
+    if (!m_delegateMethods.shouldEnableInspectorTesting)
+        return false;
+    return [m_delegate.get() _automationSessionShouldEnableInspectorTesting:RetainPtr { wrapper(session) }];
+}
+
 bool AutomationSessionClient::isShowingJavaScriptDialogOnPage(WebAutomationSession& session, WebPageProxy& page)
 {
     if (auto webView = page.cocoaView(); webView && m_delegateMethods.isShowingJavaScriptDialogForWebView)
@@ -214,7 +238,7 @@ void AutomationSessionClient::setUserInputForCurrentJavaScriptPromptOnPage(WebAu
         [m_delegate.get() _automationSession:RetainPtr { wrapper(session) }.get() setUserInput:value.createNSString().get() forCurrentJavaScriptDialogForWebView:webView.get()];
 }
 
-static std::optional<API::AutomationSessionClient::JavaScriptDialogType> toImpl(_WKAutomationSessionJavaScriptDialogType type)
+static std::optional<API::AutomationSessionClient::JavaScriptDialogType> NODELETE toImpl(_WKAutomationSessionJavaScriptDialogType type)
 {
     switch (type) {
     case _WKAutomationSessionJavaScriptDialogTypeNone:
@@ -228,7 +252,7 @@ static std::optional<API::AutomationSessionClient::JavaScriptDialogType> toImpl(
     }
 }
 
-static API::AutomationSessionClient::BrowsingContextPresentation toImpl(_WKAutomationSessionBrowsingContextPresentation presentation)
+static API::AutomationSessionClient::BrowsingContextPresentation NODELETE toImpl(_WKAutomationSessionBrowsingContextPresentation presentation)
 {
     switch (presentation) {
     case _WKAutomationSessionBrowsingContextPresentationTab:

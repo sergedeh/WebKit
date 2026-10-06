@@ -31,7 +31,6 @@
 #include "GPUDevice.h"
 #include "WebGPUXRBinding.h"
 #include "WebGPUXREye.h"
-#include "WebGPUXRView.h"
 #include "WebXRFrame.h"
 #include "WebXRView.h"
 #include "XRCompositionLayer.h"
@@ -90,7 +89,7 @@ ExceptionOr<Ref<XRProjectionLayer>> XRGPUBinding::createProjectionLayer(ScriptEx
         return Exception { ExceptionCode::AbortError };
 
     m_init = init;
-    return XRProjectionLayer::create(scriptExecutionContext, projectionLayer.releaseNonNull());
+    return XRProjectionLayer::create(scriptExecutionContext, *m_session, projectionLayer.releaseNonNull(), { });
 }
 
 double XRGPUBinding::nativeProjectionScaleFactor() const
@@ -113,15 +112,15 @@ ExceptionOr<Ref<XRGPUSubImage>> XRGPUBinding::getSubImage(XRProjectionLayer& pro
         return Exception { ExceptionCode::AbortError, "Layer setup or texture data is missing"_s };
 
     unsigned eyeIndex = eye == XREye::Right ? 1 : 0;
-    auto physicalSize = setupData->physicalSize[eyeIndex];
-    if (!physicalSize[0] || !physicalSize[1])
-        physicalSize = setupData->physicalSize[0];
+    auto actualSize = setupData->actualSize[eyeIndex];
+    if (!actualSize[0] || !actualSize[1])
+        actualSize = setupData->actualSize[0];
     auto viewport = setupData->viewports[eyeIndex];
     if (eyeIndex)
         viewport.move(-setupData->viewports[0].width(), 0);
 
     RefPtr subImage = m_backing->getViewSubImage(static_cast<WebGPU::XRProjectionLayer&>(projectionLayer.backing()));
-    return XRGPUSubImage::create(subImage.releaseNonNull(), convertToBacking(eye), WTF::move(physicalSize), WTF::move(viewport), m_device);
+    return XRGPUSubImage::create(subImage.releaseNonNull(), convertToBacking(eye), WTF::move(actualSize), WTF::move(viewport), m_device);
 }
 
 ExceptionOr<Ref<XRGPUSubImage>> XRGPUBinding::getSubImage(XRProjectionLayer& projectionLayer, WebXRFrame&, std::optional<XREye> eye)

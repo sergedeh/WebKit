@@ -25,35 +25,34 @@
 
 #pragma once
 
-#include <WebCore/CSSValue.h>
-#include <wtf/text/WTFString.h>
+#include "CSSCustomIdent.h"
+#include "CSSValue.h"
 
 namespace WebCore {
 
-class StyleImage;
-
 namespace Style {
 class BuilderState;
+class Image;
 }
 
 class CSSNamedImageValue final : public CSSValue {
 public:
-    static Ref<CSSNamedImageValue> create(String name)
+    static Ref<CSSNamedImageValue> create(CSS::CustomIdent&& name)
     {
         return adoptRef(*new CSSNamedImageValue(WTF::move(name)));
     }
     ~CSSNamedImageValue();
 
     String customCSSText(const CSS::SerializationContext&) const;
-    bool equals(const CSSNamedImageValue&) const;
+    bool NODELETE equals(const CSSNamedImageValue&) const;
 
-    RefPtr<StyleImage> createStyleImage(const Style::BuilderState&) const;
+    RefPtr<Style::Image> createStyleImage(const Style::BuilderState&) const;
 
 private:
-    explicit CSSNamedImageValue(String&&);
+    explicit CSSNamedImageValue(CSS::CustomIdent&&);
 
-    String m_name;
-    mutable RefPtr<StyleImage> m_cachedStyleImage;
+    CSS::CustomIdent m_name;
+    mutable RefPtr<Style::Image> m_cachedStyleImage;
 };
 
 } // namespace WebCore

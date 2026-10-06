@@ -29,7 +29,7 @@ namespace WebCore {
 
 template<>
 struct SVGPropertyTraits<ColorMatrixType> {
-    static unsigned highestEnumValue() { return enumToUnderlyingType(ColorMatrixType::FECOLORMATRIX_TYPE_LUMINANCETOALPHA); }
+    static unsigned highestEnumValue() { return std::to_underlying(ColorMatrixType::FECOLORMATRIX_TYPE_LUMINANCETOALPHA); }
 
     static String toString(ColorMatrixType type)
     {
@@ -72,7 +72,7 @@ public:
 
     String in1() const { return m_in1->currentValue(); }
     ColorMatrixType type() const { return m_type->currentValue<ColorMatrixType>(); }
-    const SVGNumberList& values() const { return m_values->currentValue(); }
+    const SVGNumberList& values() const LIFETIME_BOUND { return m_values->currentValue(); }
 
     SVGAnimatedString& in1Animated() { return m_in1; }
     SVGAnimatedEnumeration& typeAnimated() { return m_type; }
@@ -83,8 +83,6 @@ public:
 private:
     SVGFEColorMatrixElement(const QualifiedName&, Document&);
 
-    bool isInvalidValuesLength() const;
-
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
 
@@ -92,9 +90,9 @@ private:
     Vector<AtomString> filterEffectInputsNames() const override { return { AtomString { in1() } }; }
     RefPtr<FilterEffect> createFilterEffect(const FilterEffectVector&, const GraphicsContext& destinationContext) const override;
 
-    Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
-    Ref<SVGAnimatedEnumeration> m_type { SVGAnimatedEnumeration::create(this, ColorMatrixType::FECOLORMATRIX_TYPE_MATRIX) };
-    Ref<SVGAnimatedNumberList> m_values { SVGAnimatedNumberList::create(this) };
+    const Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedEnumeration> m_type { SVGAnimatedEnumeration::create(this, ColorMatrixType::FECOLORMATRIX_TYPE_MATRIX) };
+    const Ref<SVGAnimatedNumberList> m_values { SVGAnimatedNumberList::create(this) };
 };
 
 } // namespace WebCore

@@ -51,10 +51,10 @@ extern NSString *WebPageCacheEntryDateKey;
 extern NSString *WebPageCacheDataSourceKey;
 extern NSString *WebPageCacheDocumentViewKey;
 
-extern NSString *WebFrameMainDocumentError;
-extern NSString *WebFrameHasPlugins;
-extern NSString *WebFrameHasUnloadListener;
-extern NSString *WebFrameUsesDatabases;
+extern NSString * const WebFrameMainDocumentError;
+extern NSString * const WebFrameHasPlugins;
+extern NSString * const WebFrameHasUnloadListener;
+extern NSString * const WebFrameUsesDatabases;
 extern NSString *WebFrameUsesGeolocation;
 extern NSString *WebFrameCanSuspendActiveDOMObjects;
 
@@ -291,5 +291,7 @@ typedef enum {
 - (NSURL *)_unreachableURL;
 
 - (void)_generateTestReport:(NSString *) message withGroup:(NSString *)group;
+
+- (NSString *)_plainTextForTesting;
 
 @end

@@ -27,13 +27,9 @@
 #include "RenderSVGInlineText.h"
 #include "RenderSVGText.h"
 #include "SVGTextPositioningElement.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
-
-SVGTextLayoutAttributesBuilder::SVGTextLayoutAttributesBuilder()
-    : m_textLength(0)
-{
-}
 
 void SVGTextLayoutAttributesBuilder::buildLayoutAttributesForTextRenderer(RenderSVGInlineText& text)
 {
@@ -57,7 +53,7 @@ void SVGTextLayoutAttributesBuilder::buildLayoutAttributesForTextRenderer(Render
     m_metricsBuilder.buildMetricsAndLayoutAttributes(*textRoot, &text, m_characterDataMap);
 }
 
-bool SVGTextLayoutAttributesBuilder::buildLayoutAttributesForForSubtree(RenderSVGText& textRoot)
+bool SVGTextLayoutAttributesBuilder::buildLayoutAttributesForSubtree(RenderSVGText& textRoot)
 {
     m_characterDataMap.clear();
 
@@ -80,18 +76,28 @@ void SVGTextLayoutAttributesBuilder::rebuildMetricsForSubtree(RenderSVGText& tex
     m_metricsBuilder.measureTextRenderer(text, nullptr);
 }
 
-static inline void processRenderSVGInlineText(const RenderSVGInlineText& text, unsigned& atCharacter, bool& lastCharacterWasSpace)
+static inline void NODELETE processRenderSVGInlineText(const RenderSVGInlineText& text, unsigned& atCharacter, bool& lastCharacterWasSpace)
 {
     auto& string = text.text();
     auto length = string.length();
+
+    // The value list position advances once per character (code point), so a non-BMP character
+    // encoded as a UTF-16 surrogate pair must count once, not once per code unit. This keeps the
+    // value list keys consistent with the per-character lookup in measureTextRendererWithIterator().
     if (text.style().whiteSpaceCollapse() == WhiteSpaceCollapse::Preserve) {
-        atCharacter += length;
+        for (unsigned i = 0; i < length;) {
+            U16_FWD_1(string, i, length);
+            ++atCharacter;
+        }
+        if (length)
+            lastCharacterWasSpace = string[length - 1] == ' ';
         return;
     }
 
     // FIXME: This is not a complete whitespace collapsing implementation; it doesn't handle newlines or tabs.
-    for (unsigned i = 0; i < length; ++i) {
-        char16_t character = string[i];
+    for (unsigned i = 0; i < length;) {
+        char32_t character;
+        U16_NEXT(string, i, length, character);
         if (character == ' ' && lastCharacterWasSpace)
             continue;
 
@@ -105,7 +111,7 @@ void SVGTextLayoutAttributesBuilder::collectTextPositioningElements(RenderBoxMod
     ASSERT(!is<RenderSVGText>(start) || m_textPositions.isEmpty());
 
     for (auto& child : childrenOfType<RenderObject>(start)) {
-        if (CheckedPtr inlineText = dynamicDowncast<RenderSVGInlineText>(child)) {
+        if (auto* inlineText = dynamicDowncast<RenderSVGInlineText>(child)) {
             processRenderSVGInlineText(*inlineText, m_textLength, lastCharacterWasSpace);
             continue;
         }
@@ -165,27 +171,27 @@ void SVGTextLayoutAttributesBuilder::buildCharacterDataMap(RenderSVGText& textRo
 void SVGTextLayoutAttributesBuilder::fillCharacterDataMap(const TextPosition& position)
 {
     RefPtr element = position.element.get();
-    const auto& xList = element->x();
-    const auto& yList = element->y();
-    const auto& dxList = element->dx();
-    const auto& dyList = element->dy();
-    const auto& rotateList = element->rotate();
+    Ref xList = element->x();
+    Ref yList = element->y();
+    Ref dxList = element->dx();
+    Ref dyList = element->dy();
+    Ref rotateList = element->rotate();
 
-    unsigned xListSize = xList.size();
-    unsigned yListSize = yList.size();
-    unsigned dxListSize = dxList.size();
-    unsigned dyListSize = dyList.size();
-    unsigned rotateListSize = rotateList.items().size();
+    unsigned xListSize = xList->size();
+    unsigned yListSize = yList->size();
+    unsigned dxListSize = dxList->size();
+    unsigned dyListSize = dyList->size();
+    unsigned rotateListSize = rotateList->items().size();
     if (!xListSize && !yListSize && !dxListSize && !dyListSize && !rotateListSize)
         return;
 
     SVGLengthContext lengthContext(element.get());
     for (unsigned i = 0; i < position.length; ++i) {
-        const SVGLengthList* xListPtr = i < xListSize ? &xList : nullptr;
-        const SVGLengthList* yListPtr = i < yListSize ? &yList : nullptr;
-        const SVGLengthList* dxListPtr = i < dxListSize ? &dxList : nullptr;
-        const SVGLengthList* dyListPtr = i < dyListSize ? &dyList : nullptr;
-        const SVGNumberList* rotateListPtr = rotateListSize ? &rotateList : nullptr;
+        const SVGLengthList* xListPtr = i < xListSize ? xList.ptr() : nullptr;
+        const SVGLengthList* yListPtr = i < yListSize ? yList.ptr() : nullptr;
+        const SVGLengthList* dxListPtr = i < dxListSize ? dxList.ptr() : nullptr;
+        const SVGLengthList* dyListPtr = i < dyListSize ? dyList.ptr() : nullptr;
+        const SVGNumberList* rotateListPtr = rotateListSize ? rotateList.ptr() : nullptr;
         if (!xListPtr && !yListPtr && !dxListPtr && !dyListPtr && !rotateListPtr)
             break;
 
@@ -194,17 +200,17 @@ void SVGTextLayoutAttributesBuilder::fillCharacterDataMap(const TextPosition& po
         }).iterator->value;
 
         if (xListPtr)
-            data.x = xList.items()[i]->value().value(lengthContext);
+            data.x = xList->items()[i]->value().value(lengthContext);
         if (yListPtr)
-            data.y = yList.items()[i]->value().value(lengthContext);
+            data.y = yList->items()[i]->value().value(lengthContext);
         if (dxListPtr)
-            data.dx = dxList.items()[i]->value().value(lengthContext);
+            data.dx = dxList->items()[i]->value().value(lengthContext);
         if (dyListPtr)
-            data.dy = dyList.items()[i]->value().value(lengthContext);
+            data.dy = dyList->items()[i]->value().value(lengthContext);
 
         if (rotateListPtr) {
             unsigned rotateIndex = std::min(i, rotateListSize - 1);
-            data.rotate = rotateList.items()[rotateIndex]->value();
+            data.rotate = rotateList->items()[rotateIndex]->value();
         }
     }
 }

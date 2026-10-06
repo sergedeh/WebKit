@@ -49,11 +49,11 @@ public:
     void expandToEncompassFragmentedFlowContentsIfNeeded();
 
 protected:
-    RenderFragmentContainerSet(Type, Document&, RenderStyle&&, RenderFragmentedFlow&);
+    RenderFragmentContainerSet(Type, Document&, Style::ComputedStyle&&, RenderFragmentedFlow&);
     virtual ~RenderFragmentContainerSet();
 
 private:
-    void installFragmentedFlow() final;
+    void NODELETE installFragmentedFlow() final;
 
     ASCIILiteral renderName() const override = 0;
     

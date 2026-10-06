@@ -75,7 +75,7 @@ void TextExtractionFilter::initializeModelIfNeeded()
         return;
 
     RetainPtr compiledModelName = [[[modelURL lastPathComponent] stringByDeletingPathExtension] stringByAppendingPathExtension:@"mlmodelc"];
-    RetainPtr compiledModelURL = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:compiledModelName.get()];
+    RetainPtr compiledModelURL = [[NSURL fileURLWithPath:protect(NSTemporaryDirectory())] URLByAppendingPathComponent:compiledModelName.get()];
 
     auto needsRecompile = [&] -> bool {
         if (![[NSFileManager defaultManager] fileExistsAtPath:[compiledModelURL path]])
@@ -105,7 +105,7 @@ void TextExtractionFilter::initializeModelIfNeeded()
     [configuration setComputeUnits:MLComputeUnitsAll];
 
     m_model = [MLModel modelWithContentsOfURL:compiledModelURL.get() configuration:configuration.get() error:&error];
-    m_tokenizer = adoptNS([[NLTokenizer alloc] initWithUnit:NLTokenUnitWord]);
+    lazyInitialize(m_tokenizer, adoptNS([[NLTokenizer alloc] initWithUnit:NLTokenUnitWord]));
     m_failedInitialization = !m_model || !m_tokenizer;
 }
 

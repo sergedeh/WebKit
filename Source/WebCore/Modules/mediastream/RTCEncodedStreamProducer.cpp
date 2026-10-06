@@ -31,9 +31,14 @@
 
 #include "EventLoop.h"
 #include "FrameRateMonitor.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertNumbers.h"
+#include "JSDOMConvertUnion.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSRTCEncodedAudioFrame.h"
 #include "JSRTCEncodedVideoFrame.h"
 #include "Logging.h"
+#include "RTCRtpScriptTransformer.h"
 #include "ReadableStreamSource.h"
 #include "ScriptExecutionContextInlines.h"
 #include "Settings.h"
@@ -48,7 +53,7 @@ RTCEncodedStreamProducer::~RTCEncodedStreamProducer() = default;
 
 ExceptionOr<Ref<RTCEncodedStreamProducer>> RTCEncodedStreamProducer::create(ScriptExecutionContext& context)
 {
-    auto* globalObject = JSC::jsCast<JSDOMGlobalObject*>(context.globalObject());
+    auto* globalObject = downcast<JSDOMGlobalObject>(context.globalObject());
     if (!globalObject)
         return Exception { ExceptionCode::InvalidStateError };
 
@@ -90,7 +95,7 @@ std::optional<Exception> RTCEncodedStreamProducer::initialize(JSDOMGlobalObject&
     return { };
 }
 
-void RTCEncodedStreamProducer::start(Ref<RTCRtpTransformBackend>&& transformBackend, bool isVideo)
+void RTCEncodedStreamProducer::start(Ref<RTCRtpTransformBackend>&& transformBackend, bool isVideo, RTCRtpScriptTransformer* transformer)
 {
     transformBackend->setTransformableFrameCallback([weakThis = WeakPtr { *this }, contextIdentifer = m_contextIdentifier](Ref<RTCRtpTransformableFrame>&& frame) mutable {
         ScriptExecutionContext::postTaskTo(contextIdentifer, [weakThis, frame = WTF::move(frame)](auto&) mutable {
@@ -100,6 +105,8 @@ void RTCEncodedStreamProducer::start(Ref<RTCRtpTransformBackend>&& transformBack
     });
     m_transformBackend = WTF::move(transformBackend);
     m_isVideo = isVideo;
+    m_hasTransformer = !!transformer;
+    m_transformer = transformer;
 }
 
 void RTCEncodedStreamProducer::enqueueFrame(Ref<RTCRtpTransformableFrame>&& frame)
@@ -108,7 +115,7 @@ void RTCEncodedStreamProducer::enqueueFrame(Ref<RTCRtpTransformableFrame>&& fram
     if (!context)
         return;
 
-    auto* globalObject = JSC::jsCast<JSDOMGlobalObject*>(context->globalObject());
+    auto* globalObject = downcast<JSDOMGlobalObject>(context->globalObject());
     if (!globalObject)
         return;
 
@@ -124,14 +131,15 @@ void RTCEncodedStreamProducer::enqueueFrame(Ref<RTCRtpTransformableFrame>&& fram
 #if !RELEASE_LOG_DISABLED
     if (m_enableAdditionalLogging && m_isVideo) {
         if (!m_readableFrameRateMonitor) {
-            m_readableFrameRateMonitor = makeUnique<FrameRateMonitor>([identifier = m_identifier](auto info) {
+            lazyInitialize(m_readableFrameRateMonitor, makeUnique<FrameRateMonitor>([identifier = m_identifier](auto info) {
                 RELEASE_LOG(WebRTC, "RTCEncodedStreamProducer readable %" PRIu64 ", frame at %f, previous frame was at %f, observed frame rate is %f, delay since last frame is %f ms, frame count is %lu", identifier.toUInt64(), info.frameTime.secondsSinceEpoch().value(), info.lastFrameTime.secondsSinceEpoch().value(), info.observedFrameRate, ((info.frameTime - info.lastFrameTime) * 1000).value(), info.frameCount);
-            });
+            }));
         }
         m_readableFrameRateMonitor->update();
     }
 #endif
 
+    frame->setTransformer(m_transformer);
     auto value = m_isVideo ? toJS(globalObject, globalObject, RTCEncodedVideoFrame::create(WTF::move(frame))) : toJS(globalObject, globalObject, RTCEncodedAudioFrame::create(WTF::move(frame)));
 
     m_readableSource->enqueue(value);
@@ -154,12 +162,20 @@ ExceptionOr<void> RTCEncodedStreamProducer::writeFrame(ScriptExecutionContext& c
     if (frameConversionResult.hasException(scope)) [[unlikely]]
         return Exception { ExceptionCode::ExistingExceptionError };
 
+    bool isVideo = false;
     auto frame = frameConversionResult.releaseReturnValue();
-    auto rtcFrame = WTF::switchOn(frame, [&](RefPtr<RTCEncodedAudioFrame>& value) {
-        return value->rtcFrame(vm);
-    }, [&](RefPtr<RTCEncodedVideoFrame>& value) {
-        return value->rtcFrame(vm);
-    });
+    auto rtcFrame = WTF::switchOn(frame,
+        [&](Ref<RTCEncodedAudioFrame>& value) {
+            return value->rtcFrame(vm);
+        },
+        [&](Ref<RTCEncodedVideoFrame>& value) {
+            isVideo = true;
+            return value->rtcFrame(vm);
+        }
+    );
+
+    if (m_isVideo != isVideo || (m_hasTransformer && !rtcFrame->isFromTransformer(m_transformer.get())))
+        return { };
 
     // If no data, skip the frame since there is nothing to packetize or decode.
     if (rtcFrame->data().data())
@@ -177,7 +193,7 @@ void RTCEncodedStreamProducer::generateKeyFrame(ScriptExecutionContext& context,
         return;
 
     if (!backend->requestKeyFrame(rid)) {
-        context.checkedEventLoop()->queueTask(TaskSource::Networking, [promise = WTF::move(promise)]() mutable {
+        protect(context.eventLoop())->queueTask(TaskSource::Networking, [promise = WTF::move(promise)]() mutable {
             promise->reject(Exception { ExceptionCode::NotFoundError, "rid was not found or is empty"_s });
         });
         return;

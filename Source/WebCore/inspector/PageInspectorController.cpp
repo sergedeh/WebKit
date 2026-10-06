@@ -35,7 +35,7 @@
 #include "CommandLineAPIHost.h"
 #include "CommonVM.h"
 #include "DOMWrapperWorld.h"
-#include "EventTargetInlines.h"
+#include "FrameInspectorController.h"
 #include "GraphicsContext.h"
 #include "InspectorAnimationAgent.h"
 #include "InspectorBackendClient.h"
@@ -44,6 +44,7 @@
 #include "InspectorDOMAgent.h"
 #include "InspectorDOMStorageAgent.h"
 #include "InspectorFrontendClient.h"
+#include "InspectorIdentifierRegistry.h"
 #include "InspectorIndexedDBAgent.h"
 #include "InspectorInstrumentation.h"
 #include "InspectorLayerTreeAgent.h"
@@ -58,6 +59,7 @@
 #include "Page.h"
 #include "PageAuditAgent.h"
 #include "PageCanvasAgent.h"
+#include "PageConsoleAgent.h"
 #include "PageDOMDebuggerAgent.h"
 #include "PageDebugger.h"
 #include "PageDebuggerAgent.h"
@@ -98,8 +100,15 @@ PageInspectorController::PageInspectorController(Page& page, std::unique_ptr<Ins
     , m_overlay(makeUniqueRefWithoutRefCountedCheck<InspectorOverlay>(*this, inspectorBackendClient.get()))
     , m_executionStopwatch(Stopwatch::create())
     , m_inspectorBackendClient(WTF::move(inspectorBackendClient))
+    , m_identifierRegistry(Inspector::LegacyIdentifierRegistry::create())
 {
     ASSERT_ARG(inspectorBackendClient, m_inspectorBackendClient);
+
+    auto pageContext = pageAgentContext();
+
+    auto consoleAgent = makeUniqueRef<PageConsoleAgent>(pageContext);
+    m_instrumentingAgents->setWebConsoleAgent(protect(consoleAgent).ptr());
+    m_agents.append(WTF::move(consoleAgent));
 }
 
 PageInspectorController::~PageInspectorController()
@@ -122,7 +131,7 @@ PageAgentContext PageInspectorController::pageAgentContext()
 {
     AgentContext baseContext = {
         *this,
-        m_injectedScriptManager,
+        m_injectedScriptManager.get(),
         m_frontendRouter.get(),
         m_backendDispatcher
     };
@@ -147,6 +156,10 @@ void PageInspectorController::createLazyAgents()
 
     m_didCreateLazyAgents = true;
 
+    // Under site isolation, debugging is handled per-frame by FrameDebugger instead of
+    // a single PageDebugger for the whole page. The PageDebugger is still created so that
+    // PageDebuggerAgent can register the Debugger domain, but it will not attach to any
+    // frames (see PageDebugger::attachDebugger).
     m_debugger = makeUnique<PageDebugger>(m_page);
 
     auto pageContext = pageAgentContext();
@@ -157,7 +170,7 @@ void PageInspectorController::createLazyAgents()
     m_agents.append(makeUniqueRef<PageRuntimeAgent>(pageContext));
 
     auto debuggerAgent = makeUniqueRef<PageDebuggerAgent>(pageContext);
-    auto debuggerAgentPtr = debuggerAgent.ptr();
+    CheckedPtr debuggerAgentPtr = debuggerAgent.ptr();
     m_agents.append(WTF::move(debuggerAgent));
 
     m_agents.append(makeUniqueRef<PageNetworkAgent>(pageContext, m_inspectorBackendClient.get()));
@@ -170,7 +183,7 @@ void PageInspectorController::createLazyAgents()
     m_agents.append(makeUniqueRef<InspectorIndexedDBAgent>(pageContext));
 
     auto scriptProfilerAgent = makeUniqueRef<InspectorScriptProfilerAgent>(pageContext);
-    m_instrumentingAgents->setPersistentScriptProfilerAgent(scriptProfilerAgent.ptr());
+    m_instrumentingAgents->setPersistentScriptProfilerAgent(protect(scriptProfilerAgent).ptr());
     m_agents.append(WTF::move(scriptProfilerAgent));
 
 #if ENABLE(RESOURCE_USAGE)
@@ -182,6 +195,11 @@ void PageInspectorController::createLazyAgents()
     m_agents.append(makeUniqueRef<PageCanvasAgent>(pageContext));
     m_agents.append(makeUniqueRef<PageTimelineAgent>(pageContext));
     m_agents.append(makeUniqueRef<InspectorAnimationAgent>(pageContext));
+}
+
+void PageInspectorController::siteIsolationFirstEnabled()
+{
+    m_identifierRegistry = Inspector::BackendIdentifierRegistry::create();
 }
 
 void PageInspectorController::inspectedPageDestroyed()
@@ -315,6 +333,23 @@ void PageInspectorController::disconnectAllFrontends()
     m_inspectorBackendClient->frontendCountChanged(m_frontendRouter->frontendCount());
 }
 
+void PageInspectorController::connectRemoteInstrumentation()
+{
+    // Called before any frontend connects to this WebProcess. The UIProcess has an
+    // active frontend on the web-page target and needs this WebProcess to participate
+    // in instrumentation (e.g., network events) before connectFrontend() is called.
+    // frontendCreated() / registerInstrumentingAgents() make InspectorInstrumentation
+    // hooks active so that FrameNetworkAgentProxy can observe early page loads.
+    InspectorInstrumentation::frontendCreated();
+    InspectorInstrumentation::registerInstrumentingAgents(m_instrumentingAgents.get());
+}
+
+void PageInspectorController::disconnectRemoteInstrumentation()
+{
+    InspectorInstrumentation::unregisterInstrumentingAgents(m_instrumentingAgents.get());
+    InspectorInstrumentation::frontendDeleted();
+}
+
 void PageInspectorController::show()
 {
     ASSERT(!hasRemoteFrontend());
@@ -388,11 +423,6 @@ Page& PageInspectorController::inspectedPage() const
     return m_page;
 }
 
-Ref<Page> PageInspectorController::protectedInspectedPage() const
-{
-    return inspectedPage();
-}
-
 void PageInspectorController::dispatchMessageFromFrontend(const String& message)
 {
     m_backendDispatcher->dispatch(message);
@@ -463,11 +493,11 @@ bool PageInspectorController::canAccessInspectedScriptState(JSC::JSGlobalObject*
 {
     JSLockHolder lock(lexicalGlobalObject);
 
-    auto* inspectedWindow = jsDynamicCast<JSDOMWindow*>(lexicalGlobalObject);
+    auto* inspectedWindow = dynamicDowncast<JSDOMWindow>(lexicalGlobalObject);
     if (!inspectedWindow)
         return false;
 
-    return BindingSecurity::shouldAllowAccessToDOMWindow(lexicalGlobalObject, inspectedWindow->protectedWrapped(), DoNotReportSecurityError);
+    return BindingSecurity::shouldAllowAccessToDOMWindow(lexicalGlobalObject, protect(inspectedWindow->wrapped()), DoNotReportSecurityError);
 }
 
 InspectorFunctionCallHandler PageInspectorController::functionCallHandler() const
@@ -484,7 +514,7 @@ void PageInspectorController::frontendInitialized()
 {
     if (m_pauseAfterInitialization) {
         m_pauseAfterInitialization = false;
-        if (auto* debuggerAgent = m_instrumentingAgents->enabledPageDebuggerAgent())
+        if (CheckedPtr debuggerAgent = m_instrumentingAgents->enabledPageDebuggerAgent())
             std::ignore = debuggerAgent->pause();
     }
 }
@@ -498,6 +528,17 @@ JSC::Debugger* PageInspectorController::debugger()
 {
     ASSERT_IMPLIES(m_didCreateLazyAgents, m_debugger);
     return m_debugger.get();
+}
+
+void PageInspectorController::forEachDebugger(NOESCAPE const Function<void(JSC::Debugger&)>& functor)
+{
+    if (m_debugger)
+        functor(*m_debugger);
+
+    protect(m_page)->forEachLocalFrame([&](LocalFrame& frame) {
+        if (auto* frameDebugger = protect(frame.inspectorController())->debugger())
+            functor(*frameDebugger);
+    });
 }
 
 JSC::VM& PageInspectorController::vm()

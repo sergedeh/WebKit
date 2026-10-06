@@ -92,9 +92,9 @@ public:
     void setEncoding(StringView);
     void setDataType(const String& dataType) { m_dataType = dataType; }
 
-    const URL& url() { return m_urlForReading; }
+    const URL& url() LIFETIME_BOUND { return m_urlForReading; }
 
-    bool isCompleted() const;
+    bool NODELETE isCompleted() const;
 
 private:
     // If client is given, do the loading asynchronously. Otherwise, load synchronously.
@@ -107,10 +107,8 @@ private:
     void convertToDataURL();
     bool processResponse(const ResourceResponse&);
 
-    static ExceptionCode httpStatusCodeToErrorCode(int);
-    static ExceptionCode toErrorCode(BlobResourceHandle::Error);
-
-    RefPtr<JSC::ArrayBuffer> protectedRawData() const { return m_rawData; }
+    static ExceptionCode NODELETE httpStatusCodeToErrorCode(int);
+    static ExceptionCode NODELETE toErrorCode(BlobResourceHandle::Error);
 
     ReadType m_readType;
     WeakPtr<FileReaderLoaderClient> m_client;
@@ -124,10 +122,9 @@ private:
     bool m_isRawDataConverted;
 
     String m_stringResult;
-    RefPtr<Blob> m_blobResult;
 
     // The decoder used to decode the text data.
-    RefPtr<TextResourceDecoder> m_decoder;
+    const RefPtr<TextResourceDecoder> m_decoder;
 
     bool m_variableLength;
     unsigned m_bytesLoaded;

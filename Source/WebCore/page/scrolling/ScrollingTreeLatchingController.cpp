@@ -37,7 +37,7 @@
 namespace WebCore {
 
 // See also ScrollLatchingController.cpp
-static const Seconds resetLatchedStateTimeout { 100_ms };
+static const Seconds scrollingTreeResetLatchedStateTimeout { 100_ms };
 
 ScrollingTreeLatchingController::ScrollingTreeLatchingController() = default;
 
@@ -47,7 +47,7 @@ void ScrollingTreeLatchingController::receivedWheelEvent(const PlatformWheelEven
         return;
 
     Locker locker { m_latchedNodeLock };
-    if (wheelEvent.isGestureStart() && !latchedNodeIsRelevant()) {
+    if (wheelEvent.isGestureStart() && !latchedNodeHasRecentInteraction()) {
         if (m_latchedNodeAndSteps) {
             LOG_WITH_STREAM(ScrollLatching, stream << "ScrollingTreeLatchingController " << this << " receivedWheelEvent - " << (MonotonicTime::now() - m_lastLatchedNodeInterationTime).milliseconds() << "ms since last event, clearing latched node");
             m_latchedNodeAndSteps.reset();
@@ -63,13 +63,14 @@ std::optional<ScrollingTreeLatchingController::ScrollingNodeAndProcessingSteps> 
 
     Locker locker { m_latchedNodeLock };
 
-    // If we have a latched node, use it.
-    if (wheelEvent.useLatchedEventElement() && m_latchedNodeAndSteps && latchedNodeIsRelevant()) {
-        LOG_WITH_STREAM(ScrollLatching, stream << "ScrollingTreeLatchingController " << this << " latchedNodeForEvent: returning " << m_latchedNodeAndSteps->scrollingNodeID);
-        return m_latchedNodeAndSteps;
-    }
+    if (!wheelEvent.useLatchedEventElement() || !m_latchedNodeAndSteps)
+        return std::nullopt;
 
-    return std::nullopt;
+    if (wheelEvent.isGestureStart() && !latchedNodeHasRecentInteraction())
+        return std::nullopt;
+
+    LOG_WITH_STREAM(ScrollLatching, stream << "ScrollingTreeLatchingController " << this << " latchedNodeForEvent: returning " << m_latchedNodeAndSteps->scrollingNodeID);
+    return m_latchedNodeAndSteps;
 }
 
 std::optional<ScrollingNodeID> ScrollingTreeLatchingController::latchedNodeID() const
@@ -103,6 +104,7 @@ void ScrollingTreeLatchingController::nodeDidHandleEvent(ScrollingNodeID scrolli
     }
 
     auto shouldLatch = [&]() {
+        locker.assertIsHolding(m_latchedNodeLock);
         if (wheelEvent.delta().isZero())
             return false;
 
@@ -142,10 +144,10 @@ void ScrollingTreeLatchingController::clearLatchedNode()
     m_latchedNodeAndSteps.reset();
 }
 
-bool ScrollingTreeLatchingController::latchedNodeIsRelevant() const
+bool ScrollingTreeLatchingController::latchedNodeHasRecentInteraction() const
 {
     auto secondsSinceLastInteraction = MonotonicTime::now() - m_lastLatchedNodeInterationTime;
-    return secondsSinceLastInteraction < resetLatchedStateTimeout;
+    return secondsSinceLastInteraction < scrollingTreeResetLatchedStateTimeout;
 }
 
 } // namespace WebCore

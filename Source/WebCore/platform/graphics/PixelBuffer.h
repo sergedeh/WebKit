@@ -29,7 +29,7 @@
 #include <WebCore/PixelBufferFormat.h>
 #include <optional>
 #include <span>
-#include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
 
 namespace WTF {
 class TextStream;
@@ -39,23 +39,23 @@ namespace WebCore {
 
 // Type for holding pixel buffers data.
 // For functions that source pixel buffers, see PixelBufferSourceView.
-class PixelBuffer : public RefCounted<PixelBuffer> {
+class PixelBuffer : public ThreadSafeRefCounted<PixelBuffer> {
     WTF_MAKE_NONCOPYABLE(PixelBuffer);
 public:
     static constexpr uint32_t bytesPerPixelComponent(PixelFormat);
     static constexpr uint32_t componentsPerPixel(PixelFormat);
     static constexpr uint32_t bytesPerPixel(PixelFormat);
 
-    static CheckedUint32 computePixelCount(const IntSize&);
-    static CheckedUint32 computePixelComponentCount(PixelFormat, const IntSize&);
-    WEBCORE_EXPORT static CheckedUint32 computeBufferSize(PixelFormat, const IntSize&);
+    static CheckedUint32 NODELETE computePixelCount(const IntSize&);
+    static CheckedUint32 NODELETE computePixelComponentCount(PixelFormat, const IntSize&);
+    WEBCORE_EXPORT static CheckedUint32 NODELETE computeBufferSize(PixelFormat, const IntSize&);
 
-    WEBCORE_EXPORT static bool supportedPixelFormat(PixelFormat);
+    WEBCORE_EXPORT static bool NODELETE supportedPixelFormat(PixelFormat);
 
-    WEBCORE_EXPORT virtual ~PixelBuffer();
+    virtual ~PixelBuffer() = default;
 
-    const PixelBufferFormat& format() const { return m_format; }
-    const IntSize& size() const { return m_size; }
+    const PixelBufferFormat& format() const LIFETIME_BOUND { return m_format; }
+    const IntSize& size() const LIFETIME_BOUND { return m_size; }
 
     std::span<uint8_t> bytes() const { return m_bytes; }
 
@@ -64,25 +64,29 @@ public:
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
         Float16Array,
 #endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+        Uint16Array,
+#endif
         Other
     };
-    virtual Type type() const { return Type::Other; }
+    virtual Type type() const = 0;
     virtual RefPtr<PixelBuffer> createScratchPixelBuffer(const IntSize&) const = 0;
 
-    bool setRange(std::span<const uint8_t> data, size_t byteOffset);
+    bool NODELETE setRange(std::span<const uint8_t> data, size_t byteOffset);
     WEBCORE_EXPORT bool zeroRange(size_t byteOffset, size_t rangeByteLength);
     void zeroFill() { zeroRange(0, bytes().size()); }
 
-    WEBCORE_EXPORT uint8_t item(size_t index) const;
+    WEBCORE_EXPORT uint8_t NODELETE item(size_t index) const;
     void set(size_t index, double value);
 
 protected:
     WEBCORE_EXPORT PixelBuffer(const PixelBufferFormat&, const IntSize&, std::span<uint8_t> bytes);
 
-    PixelBufferFormat m_format;
-    IntSize m_size;
+private:
+    const PixelBufferFormat m_format;
+    const IntSize m_size;
 
-    std::span<uint8_t> m_bytes;
+    const std::span<uint8_t> m_bytes;
 };
 
 // Type to use for functions that use the PixelBuffer data as source during the call, but do not store a reference to the object or modify the data.
@@ -104,7 +108,7 @@ public:
         return PixelBufferSourceView(format, size, bytes);
     }
 
-    const PixelBufferFormat& format() const { return m_format; }
+    const PixelBufferFormat& format() const LIFETIME_BOUND { return m_format; }
     IntSize size() const { return m_size; }
     std::span<const uint8_t> bytes() const LIFETIME_BOUND { return m_bytes; }
 
@@ -116,19 +120,25 @@ private:
     {
     }
 
-    PixelBufferFormat m_format;
-    IntSize m_size;
-    std::span<const uint8_t> m_bytes;
+    const PixelBufferFormat m_format;
+    const IntSize m_size;
+    const std::span<const uint8_t> m_bytes;
 };
 
 constexpr uint32_t PixelBuffer::bytesPerPixelComponent(PixelFormat pixelFormat)
 {
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-    return (pixelFormat == PixelFormat::RGBA16F) ? 2 : 1;
-#else
-    UNUSED_PARAM(pixelFormat);
-    return 1;
+    if (pixelFormat == PixelFormat::RGBA16F)
+        return 2;
 #endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    if (pixelFormat == PixelFormat::RGBA16)
+        return 2;
+#endif
+#if !ENABLE(PIXEL_FORMAT_RGBA16F) && !ENABLE(PIXEL_FORMAT_RGBA16)
+    UNUSED_PARAM(pixelFormat);
+#endif
+    return 1;
 }
 
 constexpr uint32_t PixelBuffer::componentsPerPixel(PixelFormat)

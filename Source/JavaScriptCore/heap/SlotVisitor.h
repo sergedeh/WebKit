@@ -26,7 +26,6 @@
 #pragma once
 
 #include <JavaScriptCore/AbstractSlotVisitor.h>
-#include <JavaScriptCore/HandleTypes.h>
 #include <wtf/Forward.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/MonotonicTime.h>
@@ -34,6 +33,7 @@
 
 namespace JSC {
 
+class Collector;
 class GCThreadSharedData;
 class HeapCell;
 class HeapAnalyzer;
@@ -42,7 +42,11 @@ class MarkingConstraintSolver;
 
 typedef uint32_t HeapVersion;
 
-class SlotVisitor final : public AbstractSlotVisitor {
+// Visitors should not share cachelines: each marking thread writes its own visitor for every
+// cell it visits. 128 satisfies 64-byte lines too.
+static constexpr size_t slotVisitorAlignment = 128;
+
+class alignas(slotVisitorAlignment) SlotVisitor final : public AbstractSlotVisitor {
     WTF_MAKE_NONCOPYABLE(SlotVisitor);
     WTF_MAKE_TZONE_ALLOCATED(SlotVisitor);
 
@@ -86,7 +90,7 @@ public:
 #endif
     };
 
-    SlotVisitor(Heap&, CString codeName);
+    SlotVisitor(Collector&, ASCIICString codeName);
     ~SlotVisitor();
 
     void append(const ConservativeRoots&) final;
@@ -125,8 +129,8 @@ public:
     bool isMarked(MarkedBlock&, HeapCell*) const final;
     bool isMarked(PreciseAllocation&, HeapCell*) const final;
 
-    void didStartMarking();
-    void reset();
+    void NODELETE didStartMarking(CollectionScope, HeapVersion markingVersion, HeapAnalyzer*);
+    void NODELETE reset();
     void clearMarkStacks();
 
     size_t bytesVisited() const { return m_bytesVisited; }
@@ -141,8 +145,6 @@ public:
 
     SharedDrainResult drainInParallel(MonotonicTime timeout = MonotonicTime::infinity());
     SharedDrainResult drainInParallelPassively(MonotonicTime timeout = MonotonicTime::infinity());
-    
-    SharedDrainResult waitForTermination(MonotonicTime timeout = MonotonicTime::infinity());
 
     // Attempts to perform an increment of draining that involves only walking `bytes` worth of data. This
     // is likely to accidentally walk more or less than that. It will usually mark more than bytes. It may
@@ -165,18 +167,18 @@ public:
 
     bool mutatorIsStopped() const final { return m_mutatorIsStopped; }
     
-    Lock& rightToRun() WTF_RETURNS_LOCK(m_rightToRun) { return m_rightToRun; }
+    Lock& rightToRun() LIFETIME_BOUND WTF_RETURNS_LOCK(m_rightToRun) { return m_rightToRun; }
     
-    void updateMutatorIsStopped(const AbstractLocker&);
+    void NODELETE updateMutatorIsStopped(const AbstractLocker&);
     void updateMutatorIsStopped();
     
-    bool hasAcknowledgedThatTheMutatorIsResumed() const;
-    bool mutatorIsStoppedIsUpToDate() const;
+    bool NODELETE hasAcknowledgedThatTheMutatorIsResumed() const;
+    bool NODELETE mutatorIsStoppedIsUpToDate() const;
     
-    void optimizeForStoppedMutator();
+    void NODELETE optimizeForStoppedMutator();
     
     void didRace(const VisitRaceKey&) final;
-    void didRace(JSCell* cell, const char* reason) { didRace(VisitRaceKey(cell, reason)); }
+    inline void didRace(JSCell* cell, const char* reason); // Defined in SlotVisitorInlines.h
     
     void visitAsConstraint(const JSCell*) final;
     
@@ -216,13 +218,13 @@ private:
 
     void donateAll(const AbstractLocker&);
 
-    bool hasWork(const AbstractLocker&);
+    bool NODELETE hasWork(const AbstractLocker&);
     bool didReachTermination(const AbstractLocker&);
 
     template<typename Func>
-    IterationStatus forEachMarkStack(const Func&);
+    IterationStatus forEachMarkStack(NOESCAPE const Func&);
 
-    MarkStackArray& correspondingGlobalStack(MarkStackArray&);
+    MarkStackArray& NODELETE correspondingGlobalStack(MarkStackArray&);
 
     HeapVersion m_markingVersion;
 
@@ -230,16 +232,13 @@ private:
     size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
     CheckedSize m_extraMemorySize { 0 };
 
-    HeapAnalyzer* m_heapAnalyzer { nullptr };
     JSCell* m_currentCell { nullptr };
     bool m_isFirstVisit { false };
     bool m_mutatorIsStopped { false };
     bool m_canOptimizeForStoppedMutator { false };
     bool m_isInParallelMode { false };
     Lock m_rightToRun;
-    
-    // Put padding here to mitigate false sharing between multiple SlotVisitors.
-    char padding[64];
+
 #if ASSERT_ENABLED
     bool m_isCheckingForDefaultMarkViolation { false };
 #endif

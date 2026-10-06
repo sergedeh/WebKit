@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "Logging.h"
+#include <wtf/Logging.h>
 
 namespace WTF {
 
@@ -40,4 +40,4 @@ DEFINE_LOG_CHANNEL(NativePromise);
 
 #endif // !LOG_DISABLED || !RELEASE_LOG_DISABLED
 
-} // namespace WebCore
+} // namespace WTF

@@ -39,37 +39,43 @@ PAS_BEGIN_EXTERN_C;
 struct pas_baseline_allocator;
 struct pas_enumerable_range_list;
 struct pas_heap_config;
-struct pas_large_map_hashtable;
-struct pas_large_map_hashtable_in_flux_stash;
+struct pas_large_map;
 struct pas_red_black_tree;
 struct pas_red_black_tree_jettisoned_nodes;
 struct pas_root;
-struct pas_small_large_map_hashtable;
-struct pas_small_large_map_hashtable_in_flux_stash;
 struct pas_thread_local_cache_node;
-struct pas_tiny_large_map_hashtable;
-struct pas_tiny_large_map_hashtable_in_flux_stash;
-struct pas_tiny_large_map_second_level_hashtable_in_flux_stash;
 struct pas_ptr_hash_map;
 struct pas_ptr_hash_map_in_flux_stash;
 typedef struct pas_baseline_allocator pas_baseline_allocator;
 typedef struct pas_enumerable_range_list pas_enumerable_range_list;
 typedef struct pas_heap_config pas_heap_config;
-typedef struct pas_large_map_hashtable pas_large_map_hashtable;
-typedef struct pas_large_map_hashtable_in_flux_stash pas_large_map_hashtable_in_flux_stash;
+typedef struct pas_large_map pas_large_map;
 typedef struct pas_red_black_tree pas_red_black_tree;
 typedef struct pas_red_black_tree_jettisoned_nodes pas_red_black_tree_jettisoned_nodes;
 typedef struct pas_root pas_root;
-typedef struct pas_small_large_map_hashtable pas_small_large_map_hashtable;
-typedef struct pas_small_large_map_hashtable_in_flux_stash pas_small_large_map_hashtable_in_flux_stash;
 typedef struct pas_thread_local_cache_node pas_thread_local_cache_node;
 typedef struct pas_thread_local_cache_layout_segment pas_thread_local_cache_layout_segment;
-typedef struct pas_tiny_large_map_hashtable pas_tiny_large_map_hashtable;
-typedef struct pas_tiny_large_map_hashtable_in_flux_stash pas_tiny_large_map_hashtable_in_flux_stash;
-typedef struct pas_tiny_large_map_second_level_hashtable_in_flux_stash pas_tiny_large_map_second_level_hashtable_in_flux_stash;
 typedef struct pas_ptr_hash_map pas_ptr_hash_map;
 typedef struct pas_ptr_hash_map_in_flux_stash pas_ptr_hash_map_in_flux_stash;
 
+/* This structure is ABI: if some process A attempts to enumerate
+ * the heap-data of a second process B, and that second process uses libpas,
+ * then it will eventually call into pas_root_enumerate_for_libmalloc,
+ * which relies on the layout of this structure.
+ * It is possible for the two processes to have different layouts for this
+ * structure: e.g. if process A is ReportCrash and was built with the system's
+ * WebKit.framework, while process B is a locally built Safari using a
+ * tip-of-tree build of WebKit.framework, the two structs could be different.
+ *
+ * If A's version is older than B's, this can be made safe by only appending
+ * fields to this struct (and its descendents).
+ * However, if B's version is older than A's, then that would be unsafe.
+ *
+ * As such, pas_crash_report_version should be incremented whenever the
+ * layout of this structure, or those of its child structures as visible
+ * to the enumerator, are modified.
+ * This includes the per-heap roots, e.g. pas_basic_heap_config_root_data
+ */
 struct pas_root {
     uintptr_t magic;
     uintptr_t* compact_heap_reservation_base;
@@ -85,13 +91,8 @@ struct pas_root {
     pas_heap** all_heaps_first_heap;
     pas_heap** static_heaps;
     size_t num_static_heaps;
-    pas_large_map_hashtable* large_map_hashtable_instance;
-    pas_large_map_hashtable_in_flux_stash* large_map_hashtable_instance_in_flux_stash;
-    pas_small_large_map_hashtable* small_large_map_hashtable_instance;
-    pas_small_large_map_hashtable_in_flux_stash* small_large_map_hashtable_instance_in_flux_stash;
-    pas_tiny_large_map_hashtable* tiny_large_map_hashtable_instance;
-    pas_tiny_large_map_hashtable_in_flux_stash* tiny_large_map_hashtable_instance_in_flux_stash;
-    pas_tiny_large_map_second_level_hashtable_in_flux_stash* tiny_large_map_second_level_hashtable_in_flux_stash_instance;
+    pas_large_map* large_maps;
+    unsigned num_large_map_variants;
     const pas_heap_config** heap_configs;
     unsigned num_heap_configs;
     pas_red_black_tree* large_sharing_tree;
@@ -105,6 +106,7 @@ struct pas_root {
     unsigned pas_crash_report_version;
 #endif
     bool* probabilistic_guard_malloc_has_been_used;
+    size_t* compact_heap_reservation_top_bump;
 };
 
 #define PAS_ROOT_MAGIC 0xbeeeeeeeefllu

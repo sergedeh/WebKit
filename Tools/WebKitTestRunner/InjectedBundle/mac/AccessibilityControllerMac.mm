@@ -28,14 +28,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#import "config.h"
 #import "AccessibilityController.h"
 
 #import "AccessibilityCommonCocoa.h"
 #import "AccessibilityNotificationHandler.h"
+#import "AccessibilityUIElementClientMac.h"
 #import "InjectedBundle.h"
 #import "InjectedBundlePage.h"
 #import "JSBasics.h"
+#import "WebCoreTestSupport.h"
 #import <JavaScriptCore/JSStringRefCF.h>
 #import <WebKit/WKBundle.h>
 #import <WebKit/WKBundleFramePrivate.h>
@@ -79,6 +80,10 @@ bool AccessibilityController::addNotificationListener(JSContextRef context, JSVa
     if (m_globalNotificationHandler)
         return false;
 
+    // Ensure the accessibility tree is built before we start observing
+    // notifications, otherwise notifications may never be posted.
+    _WKAccessibilityRootObjectForTesting(WKBundleFrameForJavaScriptContext(context));
+
     m_globalNotificationHandler = adoptNS([[AccessibilityNotificationHandler alloc] initWithContext:context]);
     [m_globalNotificationHandler.get() setCallback:functionCallback];
     [m_globalNotificationHandler.get() startObserving];
@@ -100,6 +105,22 @@ void AccessibilityController::resetToConsistentState()
 {
     if (m_globalNotificationHandler)
         removeNotificationListener();
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    // Clear any queued AX thread functions from the previous test and wait
+    // for any in-flight function to finish. This avoids running functions
+    // from one test in another.
+    if (m_accessibilityIsolatedTreeMode) {
+        AXThread::clearQueuedFunctions();
+        // Wait for any currently-executing function to complete.
+        std::atomic<bool> complete = false;
+        AXThread::dispatch([&complete] {
+            complete = true;
+        });
+        while (!complete)
+            spinMainRunLoop();
+    }
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 }
 
 static id findAccessibleObjectById(id obj, NSString *idAttribute)
@@ -123,6 +144,25 @@ static id findAccessibleObjectById(id obj, NSString *idAttribute)
     return nil;
 }
 
+static RefPtr<AccessibilityUIElement> findElementByIdRecursive(AccessibilityUIElement* element, const String& targetId)
+{
+    if (!element || !element->isValid())
+        return nullptr;
+
+    if (RefPtr domId = element->domIdentifier()) {
+        if (toWTFString(domId.get()) == targetId)
+            return element;
+    }
+
+    unsigned count = element->childrenCount();
+    for (unsigned i = 0; i < count; i++) {
+        if (RefPtr<AccessibilityUIElement> found = findElementByIdRecursive(element->childAtIndex(i).get(), targetId))
+            return found;
+    }
+
+    return nullptr;
+}
+
 void AccessibilityController::injectAccessibilityPreference(JSStringRef domain, JSStringRef key, JSStringRef value)
 {
     auto page = InjectedBundle::singleton().page()->page();
@@ -134,11 +174,17 @@ void AccessibilityController::injectAccessibilityPreference(JSStringRef domain, 
 
 RefPtr<AccessibilityUIElement> AccessibilityController::accessibleElementById(JSContextRef context, JSStringRef idAttribute)
 {
-    PlatformUIElement root = static_cast<PlatformUIElement>(_WKAccessibilityRootObjectForTesting(WKBundleFrameForJavaScriptContext(context)));
+    if (m_enableClientAccessibilityMode) {
+        auto root = AccessibilityUIElementClientMac::createForUIProcess();
+        return findElementByIdRecursive(root.ptr(), toWTFString(idAttribute));
+    }
+
+    WKRetainPtr<WKBundleFrameRef> frame = WKBundleFrameForJavaScriptContext(context);
 
     NSString *attributeName = [NSString stringWithJSStringRef:idAttribute];
     RetainPtr<id> result;
-    executeOnAXThreadAndWait([&root, &attributeName, &result] {
+    executeOnAXThreadAndWait([&frame, &attributeName, &result] {
+        PlatformUIElement root = static_cast<PlatformUIElement>(_WKAccessibilityRootObjectForTesting(frame.get()));
         result = findAccessibleObjectById(root, attributeName);
     });
 
@@ -147,7 +193,7 @@ RefPtr<AccessibilityUIElement> AccessibilityController::accessibleElementById(JS
     return nullptr;
 }
 
-JSRetainPtr<JSStringRef> AccessibilityController::platformName()
+RefPtr<OpaqueJSString> AccessibilityController::platformName()
 {
     return WTR::createJSString("mac");
 }
@@ -155,6 +201,7 @@ JSRetainPtr<JSStringRef> AccessibilityController::platformName()
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 void AccessibilityController::updateIsolatedTreeMode()
 {
+    WebCoreTestSupport::setAccessibilityIsolatedTreeEnabled(m_accessibilityIsolatedTreeMode);
     _AXSSetIsolatedTreeMode(m_accessibilityIsolatedTreeMode ? AXSIsolatedTreeModeSecondaryThread : AXSIsolatedTreeModeOff);
 }
 #endif
@@ -212,6 +259,16 @@ void AXThread::threadRunLoopSourceCallback()
     @autoreleasepool {
         dispatchFunctionsFromAXThread();
     }
+}
+
+void AccessibilityController::platformInitializeClientAccessibility()
+{
+    setIsolatedTreeMode(true);
+
+    _WKAccessibilityAllowAuthenticationForTesting(true);
+
+    // This triggers WebKit's normal accessibility initialization flow via IPC
+    WTR::postSynchronousMessage("InitializeWebProcessAccessibility");
 }
 
 } // namespace WTR

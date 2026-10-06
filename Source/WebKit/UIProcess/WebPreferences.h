@@ -30,7 +30,7 @@
 #include "WebPreferencesDefinitions.h"
 #include "WebPreferencesStore.h"
 #include <wtf/RefPtr.h>
-#include <wtf/RetainReleaseSwift.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 
@@ -65,7 +65,7 @@ public:
     void addPage(WebPageProxy&);
     void removePage(WebPageProxy&);
 
-    const WebPreferencesStore& store() const { return m_store; }
+    const WebPreferencesStore& store() const LIFETIME_BOUND { return m_store; }
 
     // Implemented in generated file WebPreferencesGetterSetters.cpp.
     FOR_EACH_WEBKIT_PREFERENCE(DECLARE_PREFERENCE_GETTER_AND_SETTERS)
@@ -93,10 +93,11 @@ public:
     void setStringValueForKey(const String&, const String& value, bool ephemeral);
     void forceUpdate() { update(); }
 
-    void startBatchingUpdates();
+    void NODELETE startBatchingUpdates();
     void endBatchingUpdates();
 
-    static void forceSiteIsolationAlwaysOnForTesting();
+    static void NODELETE forceSiteIsolationAlwaysOnForTesting();
+    static bool NODELETE forcedSiteIsolationAlwaysOnForTesting();
 
 private:
     void platformInitializeStore();
@@ -152,19 +153,21 @@ private:
     bool m_needUpdateAfterBatch { false };
 
     FOR_EACH_WEBKIT_PREFERENCE_WITH_INSPECTOR_OVERRIDE(DECLARE_INSPECTOR_OVERRIDE_STORE)
-} SWIFT_SHARED_REFERENCE(refPrefs, derefPrefs);
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refPrefs, derefPrefs);
 
 } // namespace WebKit
 
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
 inline void refPrefs(WebKit::WebPreferences* WTF_NONNULL obj)
 {
-    WTF::ref(obj);
+    obj->ref();
 }
 
 inline void derefPrefs(WebKit::WebPreferences* WTF_NONNULL obj)
 {
-    WTF::deref(obj);
+    obj->deref();
 }
+#endif
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebPreferences)
 static bool isType(const API::Object& object) { return object.type() == API::Object::Type::Preferences; }

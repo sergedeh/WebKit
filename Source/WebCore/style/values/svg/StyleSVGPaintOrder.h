@@ -50,7 +50,7 @@ struct SVGPaintOrder {
 
     constexpr bool isNormal() const { return m_type == Type::Normal; }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -97,7 +97,7 @@ struct SVGPaintOrder {
     {
         return SVGPaintOrder { static_cast<Type>(rawValue) } ;
     }
-    constexpr uint8_t toRaw() const { return enumToUnderlyingType(m_type); }
+    constexpr uint8_t toRaw() const { return std::to_underlying(m_type); }
 
 private:
     Type m_type { Type::Normal };
@@ -105,7 +105,7 @@ private:
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<SVGPaintOrder> { auto operator()(BuilderState&, const CSSValue&) -> SVGPaintOrder; };
+template<> struct CSSValueConversion<SVGPaintOrder> { SVGPaintOrder NODELETE operator()(BuilderState&, const CSSValue&); };
 
 } // namespace Style
 } // namespace WebCore

@@ -43,9 +43,8 @@ enum class WebKit::TextAlignment : uint8_t {
 
 struct WebKit::EditorState {
     WebKit::EditorStateIdentifier identifier;
+    WebCore::SelectionType selectionType;
     bool shouldIgnoreSelectionChanges;
-    bool selectionIsNone;
-    bool selectionIsRange;
     bool selectionIsRangeInsideImageOverlay;
     bool selectionIsRangeInAutoFilledAndViewableField;
     bool isContentEditable;
@@ -57,6 +56,7 @@ struct WebKit::EditorState {
 #if PLATFORM(MAC)
     bool canEnableAutomaticSpellingCorrection;
     bool inputMethodUsesCorrectKeyEventOrder;
+    bool inputMethodMustUseCompositionEvents;
 #endif
     std::optional<WebKit::EditorState::PostLayoutData> postLayoutData;
     std::optional<WebKit::EditorState::VisualData> visualData;
@@ -74,6 +74,7 @@ using WebCore::ScrollOffset = WebCore::IntPoint;
     WebCore::WritingDirection baseWritingDirection;
     bool selectionIsTransparentOrFullyClipped;
     bool canEnableWritingSuggestions;
+    bool insideFixedPosition;
 #endif
 #if PLATFORM(IOS_FAMILY)
     String markedText;
@@ -89,7 +90,6 @@ using WebCore::ScrollOffset = WebCore::IntPoint;
     bool isReplaceAllowed;
     bool hasContent;
     bool isStableStateUpdate;
-    bool insideFixedPosition;
     bool hasPlainText;
     WebCore::Color caretColor;
     bool hasCaretColorAuto;
@@ -116,24 +116,29 @@ using WebCore::ScrollOffset = WebCore::IntPoint;
 };
 
 [Nested] struct WebKit::EditorState::VisualData {
-#if PLATFORM(IOS_FAMILY) || PLATFORM(GTK) || PLATFORM(WPE)
+    Markable<WebCore::FrameIdentifier> rootFrameID;
+#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
     WebCore::IntRect caretRectAtStart;
+#endif
+#if PLATFORM(COCOA)
+    Vector<WebCore::SelectionGeometry> selectionGeometries;
+    Vector<WebCore::PlatformLayerIdentifier> intersectingLayerIDs;
+        WebCore::IntRect caretRectAtEnd;
 #endif
 #if PLATFORM(IOS_FAMILY)
     WebCore::IntRect selectionClipRect;
     WebCore::IntRect editableRootBounds;
-    WebCore::IntRect caretRectAtEnd;
-    Vector<WebCore::SelectionGeometry> selectionGeometries;
     Vector<WebCore::SelectionGeometry> markedTextRects;
     WebCore::IntRect markedTextCaretRectAtStart;
     WebCore::IntRect markedTextCaretRectAtEnd;
     std::optional<WebCore::PlatformLayerIdentifier> enclosingLayerID;
-    Vector<WebCore::PlatformLayerIdentifier> intersectingLayerIDs;
     std::optional<WebCore::ScrollingNodeID> enclosingScrollingNodeID;
     std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtStart;
     std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtEnd;
     WebCore::ScrollOffset enclosingScrollOffset;
     bool enclosingLayerUsesContentsLayer;
+    bool needsHideSelectionDuringOverflowScrollQuirk;
+    bool shouldAllowTouchMoveToChangeSelectionQuirk;
 #endif
 };
 
@@ -162,9 +167,39 @@ using WebCore::ScrollOffset = WebCore::IntPoint;
     AtomString identifier;
 };
 
+header: <WebCore/CSSCounterStyleDescriptors.h>
+[Nested, CustomHeader] enum class WebCore::CSSCounterStyleDescriptors::System : uint8_t {
+    Cyclic,
+    Numeric,
+    Alphabetic,
+    Symbolic,
+    Additive,
+    Fixed,
+    DisclosureClosed,
+    DisclosureOpen,
+    SimplifiedChineseInformal,
+    SimplifiedChineseFormal,
+    TraditionalChineseInformal,
+    TraditionalChineseFormal,
+    JapaneseInformal,
+    JapaneseFormal,
+    KoreanHangulFormal,
+    KoreanHanjaInformal,
+    KoreanHanjaFormal,
+    EthiopicNumeric,
+    Extends
+};
+
+[CustomHeader, Nested] struct WebCore::Style::ListStyleType::SymbolsFunctionData {
+    # `symbols()` only ever produces one of these five systems; reject anything else.
+    [Validator='system == WebCore::CSSCounterStyleDescriptors::System::Cyclic || system == WebCore::CSSCounterStyleDescriptors::System::Numeric || system == WebCore::CSSCounterStyleDescriptors::System::Alphabetic || system == WebCore::CSSCounterStyleDescriptors::System::Symbolic || system == WebCore::CSSCounterStyleDescriptors::System::Fixed'] WebCore::CSSCounterStyleDescriptors::System system;
+    # Matches WebCore::CSSCounterStyleDescriptors::areSymbolsValidForSystem().
+    [Validator='WebCore::CSSCounterStyleDescriptors::areSymbolsValidForSystem(*system, symbols->size(), 0)'] Vector<String> symbols;
+};
+
 header: <WebCore/StyleListStyleType.h>
 [CustomHeader, Nested] struct WebCore::Style::ListStyleType {
-    Variant<WebCore::Style::ListStyleType::NoneData, WebCore::Style::ListStyleType::StringData, WebCore::Style::ListStyleType::CounterStyleData> ipcData()
+    Variant<WebCore::Style::ListStyleType::NoneData, WebCore::Style::ListStyleType::StringData, WebCore::Style::ListStyleType::CounterStyleData, WebCore::Style::ListStyleType::SymbolsFunctionData> ipcData()
 };
 
 header: <WebCore/FontAttributes.h>

@@ -49,22 +49,22 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<E
     return createWrapper<EventTarget>(globalObject, WTF::move(value));
 }
 
-EventTarget* JSEventTarget::toWrapped(VM&, JSValue value)
+EventTarget* NODELETE JSEventTarget::toWrapped(VM&, JSValue value)
 {
-    if (value.inherits<JSWindowProxy>())
-        return &jsCast<JSWindowProxy*>(asObject(value))->wrapped();
-    if (value.inherits<JSDOMWindow>())
-        return &jsCast<JSDOMWindow*>(asObject(value))->wrapped();
-    if (value.inherits<JSWorkerGlobalScope>())
-        return &jsCast<JSWorkerGlobalScope*>(asObject(value))->wrapped();
-    if (value.inherits<JSEventTarget>())
-        return &jsCast<JSEventTarget*>(asObject(value))->wrapped();
+    if (auto* windowProxy = dynamicDowncast<JSWindowProxy>(value))
+        return &windowProxy->wrapped();
+    if (auto* window = dynamicDowncast<JSDOMWindow>(value))
+        return &window->wrapped();
+    if (auto* workerGlobalScope = dynamicDowncast<JSWorkerGlobalScope>(value))
+        return &workerGlobalScope->wrapped();
+    if (auto* eventTarget = dynamicDowncast<JSEventTarget>(value))
+        return &eventTarget->wrapped();
     return nullptr;
 }
 
 JSEventTargetWrapper jsEventTargetCast(VM& vm, JSValue thisValue)
 {
-    if (auto* target = jsDynamicCast<JSEventTarget*>(thisValue))
+    if (auto* target = dynamicDowncast<JSEventTarget>(thisValue))
         return { target->wrapped(), *target };
     if (auto* window = toJSDOMGlobalObject<JSDOMWindow>(vm, thisValue))
         return { window->wrapped(), *window };
@@ -74,11 +74,11 @@ JSEventTargetWrapper jsEventTargetCast(VM& vm, JSValue thisValue)
 }
 
 template<typename Visitor>
-void JSEventTarget::visitAdditionalChildren(Visitor& visitor)
+void JSEventTarget::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().visitJSEventListeners(visitor);
+    wrapped().visitJSEventListenersInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSEventTarget);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSEventTarget);
 
 } // namespace WebCore

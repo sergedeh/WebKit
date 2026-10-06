@@ -28,7 +28,7 @@
 
 #include "pas_aligned_allocation_result.h"
 #include "pas_alignment.h"
-#include "pas_mmap_capability.h"
+#include "pas_page_flags.h"
 #include "pas_utils.h"
 
 PAS_BEGIN_EXTERN_C;
@@ -39,6 +39,10 @@ PAS_API extern size_t pas_page_malloc_cached_alignment_shift;
 #if PAS_OS(DARWIN)
 PAS_API extern bool pas_page_malloc_decommit_zero_fill;
 #endif /* PAS_OS(DARWIN) */
+
+/* Writes one byte per page so that the physical memory is in place before anyone reads or writes
+   the range for real. */
+PAS_API void pas_page_malloc_populate(void* base, size_t size);
 
 PAS_API PAS_NEVER_INLINE size_t pas_page_malloc_alignment_slow(void);
 
@@ -60,7 +64,7 @@ static inline size_t pas_page_malloc_alignment_shift(void)
 
 PAS_API pas_aligned_allocation_result
 pas_page_malloc_try_allocate_without_deallocating_padding(
-    size_t size, pas_alignment alignment, bool may_contain_small_or_medium);
+    size_t size, pas_alignment alignment, bool is_mte);
 
 PAS_API void pas_page_malloc_deallocate(void* base, size_t size);
 
@@ -68,17 +72,21 @@ PAS_API void pas_page_malloc_zero_fill(void* base, size_t size);
 
 /* This even works if size < pas_page_malloc_alignment so long as the range [base, base+size) is
    entirely within a page according to pas_page_malloc_alignment. */
-PAS_API void pas_page_malloc_commit(void* base, size_t size, pas_mmap_capability mmap_capability);
-PAS_API void pas_page_malloc_decommit(void* base, size_t size, pas_mmap_capability mmap_capability);
+PAS_API void pas_page_malloc_commit(void* base, size_t size, pas_page_flags page_flags);
+PAS_API void pas_page_malloc_decommit(void* base, size_t size, pas_page_flags page_flags);
 
 /* In testing mode, we have commit/decommit mprotect the memory as a way of helping us see if we are
    accidentally reading or writing that memory. But sometimes we use commit/decommit in a way that prevents
    us from making such assertions, like if we allow some reads and writes to decommitted memory in rare
-   cases. */
+   cases.
+
+   The is_symmetric flag controls whether the OS primitive is strictly symmetric (commit/decommit must be
+   paired; reads after decommit fault) or asymmetric (reads after decommit zero-fill via the page-fault
+   handler). Only usable when PAS_USE_SYMMETRIC_PAGE_ALLOCATION is true */
 PAS_API void pas_page_malloc_commit_without_mprotect(
-    void* base, size_t size, pas_mmap_capability mmap_capability);
+    void* base, size_t size, bool is_symmetric, pas_page_flags page_flags);
 PAS_API void pas_page_malloc_decommit_without_mprotect(
-    void* base, size_t size, pas_mmap_capability mmap_capability);
+    void* base, size_t size, bool is_symmetric, pas_page_flags page_flags);
 
 PAS_END_EXTERN_C;
 

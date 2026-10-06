@@ -70,7 +70,8 @@ RepetitionCount WEBPImageDecoder::repetitionCount() const
 
 ScalableImageDecoderFrame* WEBPImageDecoder::frameBufferAtIndex(size_t index)
 {
-    if (index >= frameCount())
+    assertIsHeld(m_lock);
+    if (index >= decodeIfNeededAndGetFrameCount())
         return 0;
 
     // The size of m_frameBufferCache may be smaller than the index requested. This can happen
@@ -81,11 +82,17 @@ ScalableImageDecoderFrame* WEBPImageDecoder::frameBufferAtIndex(size_t index)
 
     decode(index, isAllDataReceived());
 
+    // decode() leaves the cache untouched when it bails out early, and m_frameCount comes from a
+    // demuxer that may since have rejected the file.
+    if (index >= m_frameBufferCache.size())
+        return nullptr;
+
     return &m_frameBufferCache[index];
 }
 
 size_t WEBPImageDecoder::findFirstRequiredFrameToDecode(size_t frameIndex, WebPDemuxer* demuxer)
 {
+    assertIsHeld(m_lock);
     // The first frame doesn't depend on any other.
     if (!frameIndex)
         return 0;
@@ -124,6 +131,7 @@ size_t WEBPImageDecoder::findFirstRequiredFrameToDecode(size_t frameIndex, WebPD
 
 void WEBPImageDecoder::decode(size_t frameIndex, bool allDataReceived)
 {
+    assertIsHeld(m_lock);
     if (failed())
         return;
 
@@ -157,6 +165,7 @@ void WEBPImageDecoder::decode(size_t frameIndex, bool allDataReceived)
 
 void WEBPImageDecoder::decodeFrame(size_t frameIndex, WebPDemuxer* demuxer)
 {
+    assertIsHeld(m_lock);
     if (failed())
         return;
 
@@ -219,7 +228,8 @@ void WEBPImageDecoder::decodeFrame(size_t frameIndex, WebPDemuxer* demuxer)
 
 bool WEBPImageDecoder::initFrameBuffer(size_t frameIndex, const WebPIterator* webpFrame)
 {
-    if (frameIndex >= frameCount())
+    assertIsHeld(m_lock);
+    if (frameIndex >= decodeIfNeededAndGetFrameCount())
         return false;
 
     auto& buffer = m_frameBufferCache[frameIndex];
@@ -258,32 +268,34 @@ bool WEBPImageDecoder::initFrameBuffer(size_t frameIndex, const WebPIterator* we
 
 void WEBPImageDecoder::applyPostProcessing(size_t frameIndex, WebPIDecoder* decoder, WebPDecBuffer& decoderBuffer, bool blend)
 {
+    assertIsHeld(m_lock);
     auto& buffer = m_frameBufferCache[frameIndex];
     int decodedWidth = 0;
-    int decodedHeight = 0;
-    if (!WebPIDecGetRGB(decoder, &decodedHeight, &decodedWidth, 0, 0))
+    int decodedRows = 0;
+    if (!WebPIDecGetRGB(decoder, &decodedRows, &decodedWidth, 0, 0))
         return; // See also https://bugs.webkit.org/show_bug.cgi?id=74062
-    if (decodedHeight <= 0)
+    if (decodedRows <= 0)
         return;
 
     const IntRect& frameRect = buffer.backingStore()->frameRect();
-    ASSERT_WITH_SECURITY_IMPLICATION(decodedWidth == frameRect.width());
-    ASSERT_WITH_SECURITY_IMPLICATION(decodedHeight <= frameRect.height());
     const int left = frameRect.x();
     const int top = frameRect.y();
 
-    for (int y = 0; y < decodedHeight; y++) {
+    const int copyWidth = std::min(decodedWidth, frameRect.width());
+    const int copyRows = std::min(decodedRows, frameRect.height());
+
+    for (int y = 0; y < copyRows; y++) {
         const int canvasY = top + y;
-        for (int x = 0; x < decodedWidth; x++) {
+        for (int x = 0; x < copyWidth; x++) {
             const int canvasX = left + x;
             auto& destinationPixel = buffer.backingStore()->pixelAt(canvasX, canvasY);
             WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // non-Apple ports
-            uint8_t* sourcePixels = decoderBuffer.u.RGBA.rgba + (y * frameRect.width() + x) * sizeof(uint32_t);
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            uint8_t* sourcePixels = decoderBuffer.u.RGBA.rgba + y * decoderBuffer.u.RGBA.stride + x * sizeof(uint32_t);
             if (blend && (sourcePixels[3] < 255))
                 buffer.backingStore()->blendPixel(destinationPixel, sourcePixels[0], sourcePixels[1], sourcePixels[2], sourcePixels[3]);
             else
                 buffer.backingStore()->setPixel(destinationPixel, sourcePixels[0], sourcePixels[1], sourcePixels[2], sourcePixels[3]);
+            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         }
     }
 }
@@ -337,8 +349,9 @@ void WEBPImageDecoder::parseHeader()
     WebPDemuxDelete(demuxer);
 }
 
-void WEBPImageDecoder::clearFrameBufferCache(size_t clearBeforeFrame)
+void WEBPImageDecoder::clearDecodedPixelDataIfNeeded(size_t clearBeforeFrame)
 {
+    assertIsHeld(m_lock);
     if (m_frameBufferCache.isEmpty())
         return;
 

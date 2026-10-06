@@ -29,6 +29,7 @@
 
 #import "config.h"
 #import "WebExtensionAPIDeclarativeNetRequest.h"
+#import "WebExtensionAPIKeys.h"
 
 #import "CocoaHelpers.h"
 #import "JSWebExtensionWrapper.h"
@@ -51,45 +52,7 @@
 
 namespace WebKit {
 
-static NSString * const disableRulesetsKey = @"disableRulesetIds";
-static NSString * const enableRulesetsKey = @"enableRulesetIds";
-
-static NSString * const regexKey = @"regex";
-static NSString * const regexIsCaseSensitiveKey = @"isCaseSensitive";
-static NSString * const regexRequireCapturingKey = @"requireCapturing";
-
-static NSString * const actionCountDisplayActionCountAsBadgeTextKey = @"displayActionCountAsBadgeText";
-static NSString * const actionCountTabUpdateKey = @"tabUpdate";
-static NSString * const actionCountTabIDKey = @"tabId";
-static NSString * const actionCountIncrementKey = @"increment";
-
-static NSString * const getMatchedRulesTabIDKey = @"tabId";
-static NSString * const getMatchedRulesMinTimeStampKey = @"minTimeStamp";
-
-static NSString * const getDynamicOrSessionRulesRuleIDsKey = @"ruleIds";
-
-static NSString * const addRulesKey = @"addRules";
-static NSString * const removeRulesKey = @"removeRuleIds";
-
 #if ENABLE(DNR_ON_RULE_MATCHED_DEBUG)
-static NSString * const requestKey = @"request";
-static NSString * const documentIdKey = @"documentId";
-static NSString * const documentLifecycleKey = @"documentLifecycle";
-static NSString * const frameIdKey = @"frameId";
-static NSString * const frameTypeKey = @"frameType";
-static NSString * const initiatorKey = @"initiator";
-static NSString * const methodKey = @"method";
-static NSString * const parentDocumentIdKey = @"parentDocumentId";
-static NSString * const parentFrameIdKey = @"parentFrameId";
-static NSString * const requestIdKey = @"requestId";
-static NSString * const tabIdKey = @"tabId";
-static NSString * const typeKey = @"type";
-static NSString * const urlKey = @"url";
-
-static NSString * const ruleKey = @"rule";
-static NSString * const extensionIdKey = @"extensionId";
-static NSString * const ruleIdKey = @"ruleId";
-static NSString * const rulesetIdKey = @"rulesetId";
 
 static inline NSDictionary *toWebAPI(const WebCore::ContentRuleListMatchedRule& matchedRuleInfo)
 {
@@ -145,7 +108,7 @@ void WebExtensionAPIDeclarativeNetRequest::updateEnabledRulesets(NSDictionary *o
     Vector<String> rulesetsToEnable = makeVector<String>(objectForKey<NSArray>(options, enableRulesetsKey, true, NSString.class));
     Vector<String> rulesetsToDisable = makeVector<String>(objectForKey<NSArray>(options, disableRulesetsKey, true, NSString.class));
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestUpdateEnabledRulesets(rulesetsToEnable, rulesetsToDisable), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestUpdateEnabledRulesets(rulesetsToEnable, rulesetsToDisable), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -179,7 +142,7 @@ void WebExtensionAPIDeclarativeNetRequest::updateDynamicRules(NSDictionary *opti
     for (NSDictionary *ruleDictionary in rulesToAdd) {
         if (![[_WKWebExtensionDeclarativeNetRequestRule  alloc] initWithDictionary:ruleDictionary rulesetID:dynamicRulesetID errorString:&ruleErrorString]) {
             ASSERT(ruleErrorString);
-            *outExceptionString = toErrorString(nullString(), addRulesKey, @"an error with rule at index %lu: %@", index, ruleErrorString).createNSString().autorelease();
+            *outExceptionString = toErrorString(nullString(), addRulesKey, makeString("an error with rule at index "_s, index, ": "_s, String(ruleErrorString))).createNSString().autorelease();
             return;
         }
 
@@ -196,7 +159,7 @@ void WebExtensionAPIDeclarativeNetRequest::updateDynamicRules(NSDictionary *opti
             ruleIDsToRemove.append(ruleIDToRemove.doubleValue);
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestUpdateDynamicRules(WTF::move(rulesToAddJSON), WTF::move(ruleIDsToRemove)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestUpdateDynamicRules(WTF::move(rulesToAddJSON), WTF::move(ruleIDsToRemove)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -223,7 +186,7 @@ void WebExtensionAPIDeclarativeNetRequest::getDynamicRules(NSDictionary *filter,
     for (NSNumber *ruleID in filter[getDynamicOrSessionRulesRuleIDsKey])
         ruleIDs.append(ruleID.doubleValue);
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestGetDynamicRules(WTF::move(ruleIDs)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<String, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestGetDynamicRules(WTF::move(ruleIDs)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<String, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -250,7 +213,7 @@ void WebExtensionAPIDeclarativeNetRequest::updateSessionRules(NSDictionary *opti
     for (NSDictionary *ruleDictionary in rulesToAdd) {
         if (![[_WKWebExtensionDeclarativeNetRequestRule  alloc] initWithDictionary:ruleDictionary rulesetID:sessionRulesetID errorString:&ruleErrorString]) {
             ASSERT(ruleErrorString);
-            *outExceptionString = toErrorString(nullString(), addRulesKey, @"an error with rule at index %lu: %@", index, ruleErrorString).createNSString().autorelease();
+            *outExceptionString = toErrorString(nullString(), addRulesKey, makeString("an error with rule at index "_s, index, ": "_s, String(ruleErrorString))).createNSString().autorelease();
             return;
         }
 
@@ -267,7 +230,7 @@ void WebExtensionAPIDeclarativeNetRequest::updateSessionRules(NSDictionary *opti
             ruleIDsToRemove.append(ruleIDToRemove.doubleValue);
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestUpdateSessionRules(WTF::move(rulesToAddJSON), WTF::move(ruleIDsToRemove)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestUpdateSessionRules(WTF::move(rulesToAddJSON), WTF::move(ruleIDsToRemove)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -294,7 +257,7 @@ void WebExtensionAPIDeclarativeNetRequest::getSessionRules(NSDictionary *filter,
     for (NSNumber *ruleID in filter[getDynamicOrSessionRulesRuleIDsKey])
         ruleIDs.append(ruleID.doubleValue);
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestGetSessionRules(WTF::move(ruleIDs)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<String, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestGetSessionRules(WTF::move(ruleIDs)), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<String, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -346,7 +309,7 @@ void WebExtensionAPIDeclarativeNetRequest::getMatchedRules(NSDictionary *filter,
     NSNumber *tabID = objectForKey<NSNumber>(filter, getMatchedRulesTabIDKey);
     auto optionalTabIdentifier = tabID ? toWebExtensionTabIdentifier(tabID.doubleValue) : std::nullopt;
     if (tabID && !isValid(optionalTabIdentifier)) {
-        *outExceptionString = toErrorString(nullString(), getMatchedRulesTabIDKey, @"%@ is not a valid tab identifier", tabID).createNSString().autorelease();
+        *outExceptionString = toErrorString(nullString(), getMatchedRulesTabIDKey, makeString(String([tabID description]), " is not a valid tab identifier"_s)).createNSString().autorelease();
         return;
     }
 
@@ -355,7 +318,7 @@ void WebExtensionAPIDeclarativeNetRequest::getMatchedRules(NSDictionary *filter,
     if (minTimeStamp)
         optionalTimeStamp = WallTime::fromRawSeconds(Seconds::fromMilliseconds(minTimeStamp.doubleValue).value());
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestGetMatchedRules(optionalTabIdentifier, optionalTimeStamp), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<Vector<WebExtensionMatchedRuleParameters>, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestGetMatchedRules(optionalTabIdentifier, optionalTimeStamp), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<Vector<WebExtensionMatchedRuleParameters>, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -377,15 +340,16 @@ void WebExtensionAPIDeclarativeNetRequest::isRegexSupported(NSDictionary *option
         return;
 
     NSString *regexString = objectForKey<NSString>(options, regexKey);
-    if (![WKContentRuleList _supportsRegularExpression:regexString])
+    if (![WKContentRuleList _supportsRegularExpression:regexString]) {
         callback->call(fromObject(callback->globalContext(), {
-            { "isSupported"_s, JSValueMakeBoolean(callback->globalContext(), false) },
-            { "reason"_s, JSValueMakeString(callback->globalContext(), toJSString("syntaxError"_s).get()) }
+            { "isSupported"_s, Protected(callback->globalContext(), JSValueMakeBoolean(callback->globalContext(), false)) },
+            { "reason"_s, Protected(callback->globalContext(), JSValueMakeString(callback->globalContext(), toJSString("syntaxError"_s).get())) }
         }));
-    else
+    } else {
         callback->call(fromObject(callback->globalContext(), {
-            { "isSupported"_s, JSValueMakeBoolean(callback->globalContext(), true) }
+            { "isSupported"_s, Protected(callback->globalContext(), JSValueMakeBoolean(callback->globalContext(), true)) }
         }));
+    }
 }
 
 void WebExtensionAPIDeclarativeNetRequest::setExtensionActionOptions(NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
@@ -410,11 +374,11 @@ void WebExtensionAPIDeclarativeNetRequest::setExtensionActionOptions(NSDictionar
         NSNumber *tabID = objectForKey<NSNumber>(tabUpdateDictionary, actionCountTabIDKey);
         auto tabIdentifier = toWebExtensionTabIdentifier(tabID.doubleValue);
         if (!isValid(tabIdentifier)) {
-            *outExceptionString = toErrorString(nullString(), actionCountTabIDKey, @"%@ is not a valid tab identifier", tabID).createNSString().autorelease();
+            *outExceptionString = toErrorString(nullString(), actionCountTabIDKey, makeString(String([tabID description]), " is not a valid tab identifier"_s)).createNSString().autorelease();
             return;
         }
 
-        WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestIncrementActionCount(tabIdentifier.value(), objectForKey<NSNumber>(tabUpdateDictionary, actionCountIncrementKey).doubleValue), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+        WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestIncrementActionCount(tabIdentifier.value(), objectForKey<NSNumber>(tabUpdateDictionary, actionCountIncrementKey).doubleValue), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
             if (!result) {
                 callback->reportError(result.error().createNSString().get());
                 return;
@@ -425,7 +389,7 @@ void WebExtensionAPIDeclarativeNetRequest::setExtensionActionOptions(NSDictionar
         return;
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestDisplayActionCountAsBadgeText(objectForKey<NSNumber>(options, actionCountDisplayActionCountAsBadgeTextKey).boolValue), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestDisplayActionCountAsBadgeText(objectForKey<NSNumber>(options, actionCountDisplayActionCountAsBadgeTextKey).boolValue), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -439,7 +403,7 @@ void WebExtensionAPIDeclarativeNetRequest::setExtensionActionOptions(NSDictionar
 WebExtensionAPIEvent& WebExtensionAPIDeclarativeNetRequest::onRuleMatchedDebug()
 {
     if (!m_onRuleMatchedDebug)
-        m_onRuleMatchedDebug = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DeclarativeNetRequestOnRuleMatchedDebug);
+        lazyInitialize(m_onRuleMatchedDebug, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DeclarativeNetRequestOnRuleMatchedDebug));
 
     return *m_onRuleMatchedDebug;
 }

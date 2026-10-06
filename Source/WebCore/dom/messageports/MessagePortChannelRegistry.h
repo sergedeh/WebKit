@@ -30,6 +30,7 @@
 #include <WebCore/MessagePortIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <wtf/CheckedRef.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -47,17 +48,26 @@ public:
     WEBCORE_EXPORT void didCreateMessagePortChannel(const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
     WEBCORE_EXPORT void didEntangleLocalToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, ProcessIdentifier);
     WEBCORE_EXPORT void didDisentangleMessagePort(const MessagePortIdentifier& local);
-    WEBCORE_EXPORT void didCloseMessagePort(const MessagePortIdentifier& local);
-    WEBCORE_EXPORT bool didPostMessageToRemote(MessageWithMessagePorts&&, const MessagePortIdentifier& remoteTarget);
+    WEBCORE_EXPORT void didCloseMessagePort(const MessagePortIdentifier& local, MessagePortStatus);
+    WEBCORE_EXPORT bool didPostMessageToRemote(MessageWithMessagePorts&&, const MessagePortIdentifier& remoteTarget, CompletionHandlerCallingScope&& blobURLsInFlight = { });
     WEBCORE_EXPORT void takeAllMessagesForPort(const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&);
 
-    WEBCORE_EXPORT MessagePortChannel* existingChannelContainingPort(const MessagePortIdentifier&);
+    WEBCORE_EXPORT MessagePortChannel* NODELETE existingChannelContainingPort(const MessagePortIdentifier&);
 
     WEBCORE_EXPORT void messagePortChannelCreated(MessagePortChannel&);
     WEBCORE_EXPORT void messagePortChannelDestroyed(MessagePortChannel&);
 
+    // Used by the Networking process to accurately track the current owner of a given port.
+    // Necessary to accurately MESSAGE_CHECK many messages related to ports.
+    WEBCORE_EXPORT void recordPendingTransferOrigin(const MessagePortIdentifier&, ProcessIdentifier);
+    WEBCORE_EXPORT bool claimPendingTransferOrigin(const MessagePortIdentifier&, ProcessIdentifier expected);
+    WEBCORE_EXPORT void recordPendingTransferDestination(const MessagePortIdentifier&, ProcessIdentifier);
+    WEBCORE_EXPORT bool claimPendingTransferDestination(const MessagePortIdentifier&, ProcessIdentifier expected);
+
 private:
     HashMap<MessagePortIdentifier, WeakRef<MessagePortChannel>> m_openChannels;
+    HashMap<MessagePortIdentifier, ProcessIdentifier> m_pendingTransferOrigins;
+    HashMap<MessagePortIdentifier, ProcessIdentifier> m_pendingTransferDestinations;
 };
 
 } // namespace WebCore

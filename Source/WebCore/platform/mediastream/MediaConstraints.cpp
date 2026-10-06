@@ -119,9 +119,9 @@ void StringConstraint::merge(const StringConstraint& other)
     }
 }
 
-void MediaTrackConstraintSetMap::forEach(NOESCAPE Function<void(MediaConstraintType, const MediaConstraint&)>&& callback) const
+void MediaTrackConstraintSetMap::forEach(NOESCAPE const Function<void(MediaConstraintType, const MediaConstraint&)>& callback) const
 {
-    filter([callback = WTF::move(callback)] (auto type, auto& constraint) mutable {
+    filter([&callback](auto type, auto& constraint) {
         callback(type, constraint);
         return false;
     });
@@ -663,6 +663,32 @@ void MediaConstraints::setDefaultAudioConstraints()
     }
 }
 
+bool MediaConstraints::willUseEchoCancellation() const
+{
+    // Echo cancellation is enabled by default, so we only expect it to be off if it is explicitly asked for.
+    auto requestedValue = [](const MediaTrackConstraintSetMap& constraintSet) -> std::optional<bool> {
+        auto& constraint = constraintSet.echoCancellation();
+        if (!constraint)
+            return { };
+
+        bool value;
+        if (constraint->getExact(value) || constraint->getIdeal(value))
+            return value;
+
+        return { };
+    };
+
+    if (auto value = requestedValue(mandatoryConstraints))
+        return *value;
+
+    for (auto& advancedConstraint : advancedConstraints) {
+        if (auto value = requestedValue(advancedConstraint))
+            return *value;
+    }
+
+    return true;
+}
+
 void MediaConstraints::setDefaultVideoConstraints()
 {
     // 640x480, 30fps camera
@@ -728,7 +754,7 @@ MediaConstraints MediaConstraints::isolatedCopy() const
     return { crossThreadCopy(mandatoryConstraints), crossThreadCopy(advancedConstraints), isValid };
 }
 
-static bool isAllowedRequiredConstraintForDeviceSelection(MediaConstraints::DeviceType deviceType, MediaConstraintType type)
+static bool NODELETE isAllowedRequiredConstraintForDeviceSelection(MediaConstraints::DeviceType deviceType, MediaConstraintType type)
 {
     // https://w3c.github.io/mediacapture-main/#dfn-allowed-required-constraints-for-device-selection
     if (type <= MediaConstraintType::GroupId)
@@ -737,7 +763,7 @@ static bool isAllowedRequiredConstraintForDeviceSelection(MediaConstraints::Devi
     if (deviceType == MediaConstraints::DeviceType::Microphone)
         return true;
 
-    return deviceType == MediaConstraints::DeviceType::Microphone || type == MediaConstraintType::DisplaySurface || type == MediaConstraintType::LogicalSurface;
+    return type == MediaConstraintType::DisplaySurface || type == MediaConstraintType::LogicalSurface;
 }
 
 bool MediaConstraints::hasDisallowedRequiredConstraintForDeviceSelection(DeviceType deviceType) const

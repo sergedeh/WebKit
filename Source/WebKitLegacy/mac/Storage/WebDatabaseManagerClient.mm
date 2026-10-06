@@ -37,7 +37,6 @@
 #import <WebCore/WebCoreThread.h>
 #endif
 
-using namespace WebCore;
 
 #if PLATFORM(IOS_FAMILY)
 static const CFStringRef WebDatabaseOriginWasAddedNotification = CFSTR("com.apple.MobileSafariSettings.WebDatabaseOriginWasAddedNotification");
@@ -82,7 +81,7 @@ static void onDatabaseOriginDeleted(CFNotificationCenterRef, void* observer, CFS
 WebDatabaseManagerClient::WebDatabaseManagerClient()
 {
 #if PLATFORM(IOS_FAMILY)
-    CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter(); 
+    RetainPtr center = CFNotificationCenterGetDarwinNotifyCenter();
     CFNotificationCenterAddObserver(center, this, onNewDatabaseOriginAdded, WebDatabaseOriginWasAddedNotification, 0, CFNotificationSuspensionBehaviorDeliverImmediately);
     CFNotificationCenterAddObserver(center, this, onDatabaseDeleted, WebDatabaseWasDeletedNotification, 0, CFNotificationSuspensionBehaviorDeliverImmediately);
     CFNotificationCenterAddObserver(center, this, onDatabaseOriginDeleted, WebDatabaseOriginWasDeletedNotification, 0, CFNotificationSuspensionBehaviorDeliverImmediately);    
@@ -92,14 +91,14 @@ WebDatabaseManagerClient::WebDatabaseManagerClient()
 WebDatabaseManagerClient::~WebDatabaseManagerClient()
 {
 #if PLATFORM(IOS_FAMILY)
-    CFNotificationCenterRemoveObserver(CFNotificationCenterGetDarwinNotifyCenter(), this, 0, 0);
+    CFNotificationCenterRemoveObserver(protect(CFNotificationCenterGetDarwinNotifyCenter()), this, 0, 0);
 #endif
 }
 
 class DidModifyOriginData {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(DidModifyOriginData);
 public:
-    static void dispatchToMainThread(WebDatabaseManagerClient& client, const SecurityOriginData& origin)
+    static void dispatchToMainThread(WebDatabaseManagerClient& client, const WebCore::SecurityOriginData& origin)
     {
         auto context = makeUnique<DidModifyOriginData>(client, origin);
         callOnMainThread([context = WTF::move(context)] {
@@ -107,7 +106,7 @@ public:
         });
     }
 
-    DidModifyOriginData(WebDatabaseManagerClient& client, const SecurityOriginData& origin)
+    DidModifyOriginData(WebDatabaseManagerClient& client, const WebCore::SecurityOriginData& origin)
         : client(client)
         , origin(origin.isolatedCopy())
     {
@@ -115,10 +114,10 @@ public:
 
 private:
     WeakRef<WebDatabaseManagerClient> client;
-    SecurityOriginData origin;
+    WebCore::SecurityOriginData origin;
 };
 
-void WebDatabaseManagerClient::dispatchDidModifyOrigin(const SecurityOriginData& origin)
+void WebDatabaseManagerClient::dispatchDidModifyOrigin(const WebCore::SecurityOriginData& origin)
 {
     if (!isMainThread()) {
         DidModifyOriginData::dispatchToMainThread(*this, origin);
@@ -130,7 +129,7 @@ void WebDatabaseManagerClient::dispatchDidModifyOrigin(const SecurityOriginData&
     [[NSNotificationCenter defaultCenter] postNotificationName:WebDatabaseDidModifyOriginNotification object:webSecurityOrigin.get()];
 }
 
-void WebDatabaseManagerClient::dispatchDidModifyDatabase(const SecurityOriginData& origin, const String& databaseIdentifier)
+void WebDatabaseManagerClient::dispatchDidModifyDatabase(const WebCore::SecurityOriginData& origin, const String& databaseIdentifier)
 {
     if (!isMainThread()) {
         DidModifyOriginData::dispatchToMainThread(*this, origin);
@@ -148,21 +147,21 @@ void WebDatabaseManagerClient::dispatchDidAddNewOrigin()
 {    
     m_isHandlingNewDatabaseOriginNotification = true;
     // Send a notification to all apps that a new origin has been added, so other apps with opened database can refresh their origin maps.
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), WebDatabaseOriginWasAddedNotification, nullptr, nullptr, true);
+    CFNotificationCenterPostNotification(protect(CFNotificationCenterGetDarwinNotifyCenter()), WebDatabaseOriginWasAddedNotification, nullptr, nullptr, true);
 }
 
 void WebDatabaseManagerClient::dispatchDidDeleteDatabase()
 {
     m_isHandlingDeleteDatabaseNotification = true;
     // Send a notification to all apps that a database has been deleted, so other apps with the deleted database open will close it properly.
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), WebDatabaseWasDeletedNotification, nullptr, nullptr, true);
+    CFNotificationCenterPostNotification(protect(CFNotificationCenterGetDarwinNotifyCenter()), WebDatabaseWasDeletedNotification, nullptr, nullptr, true);
 }
 
 void WebDatabaseManagerClient::dispatchDidDeleteDatabaseOrigin()
 {
     m_isHandlingDeleteDatabaseOriginNotification = true;
     // Send a notification to all apps that an origin has been deleted, so other apps can update their origin maps.
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), WebDatabaseOriginWasDeletedNotification, nullptr, nullptr, true);
+    CFNotificationCenterPostNotification(protect(CFNotificationCenterGetDarwinNotifyCenter()), WebDatabaseOriginWasDeletedNotification, nullptr, nullptr, true);
 }
 
 void WebDatabaseManagerClient::newDatabaseOriginWasAdded()
@@ -192,7 +191,7 @@ void WebDatabaseManagerClient::databaseWasDeleted()
         return;
     }
     
-    DatabaseTracker::singleton().removeDeletedOpenedDatabases();
+    WebCore::DatabaseTracker::singleton().removeDeletedOpenedDatabases();
 }
 
 void WebDatabaseManagerClient::databaseOriginWasDeleted()
@@ -214,7 +213,7 @@ void WebDatabaseManagerClient::databaseOriginsDidChange()
 {
     // Send a notification (within the app) about the origins change.  If an app needs to update its UI when the origins change
     // (such as Safari Settings), it can listen for that notification.
-    CFNotificationCenterPostNotification(CFNotificationCenterGetLocalCenter(), WebDatabaseOriginsDidChangeNotification, 0, 0, true);
+    CFNotificationCenterPostNotification(protect(CFNotificationCenterGetLocalCenter()), WebDatabaseOriginsDidChangeNotification, 0, 0, true);
 }
 
 #endif // PLATFORM(IOS_FAMILY)

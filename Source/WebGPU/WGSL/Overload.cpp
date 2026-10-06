@@ -49,7 +49,7 @@ inline void logLn(Arguments&&... arguments)
 }
 
 AbstractPointer::AbstractPointer(AbstractValue addressSpace, AbstractType element)
-    : AbstractPointer(addressSpace, WTF::move(element), WTF::enumToUnderlyingType(defaultAccessModeForAddressSpace(static_cast<AddressSpace>(std::get<unsigned>(addressSpace)))))
+    : AbstractPointer(addressSpace, WTF::move(element), std::to_underlying(defaultAccessModeForAddressSpace(static_cast<AddressSpace>(std::get<unsigned>(addressSpace)))))
 {
 }
 
@@ -82,12 +82,12 @@ private:
     bool unify(const TypeVariable*, const Type*);
     bool unify(const AbstractType&, const Type*);
     bool assign(TypeVariable, const Type*);
-    const Type* resolve(TypeVariable) const;
+    const Type* NODELETE resolve(TypeVariable) const;
     const Type* materialize(const AbstractType&) const;
 
     bool unify(const AbstractValue&, unsigned);
     void assign(ValueVariable, unsigned);
-    std::optional<unsigned> resolve(ValueVariable) const;
+    std::optional<unsigned> NODELETE resolve(ValueVariable) const;
     unsigned materialize(const AbstractValue&) const;
 
     TypeStore& m_types;
@@ -111,7 +111,7 @@ OverloadResolver::OverloadResolver(TypeStore& types, const Vector<OverloadCandid
 std::optional<SelectedOverload> OverloadResolver::resolve()
 {
     auto candidates = considerCandidates();
-    std::optional<ViableOverload> selectedCandidate = std::nullopt;
+    std::optional<ViableOverload> selectedCandidate;
 
     for (auto& candidate : candidates) {
         if (!candidate.has_value())
@@ -420,9 +420,9 @@ bool OverloadResolver::unify(const AbstractType& parameter, const Type* argument
         auto* referenceArgument = std::get_if<Types::Reference>(argumentType);
         if (!referenceArgument)
             return false;
-        if (!unify(referenceParameter->addressSpace, WTF::enumToUnderlyingType(referenceArgument->addressSpace)))
+        if (!unify(referenceParameter->addressSpace, std::to_underlying(referenceArgument->addressSpace)))
             return false;
-        if (!unify(referenceParameter->accessMode, WTF::enumToUnderlyingType(referenceArgument->accessMode)))
+        if (!unify(referenceParameter->accessMode, std::to_underlying(referenceArgument->accessMode)))
             return false;
         return unify(referenceParameter->element, referenceArgument->element);
     }
@@ -431,9 +431,9 @@ bool OverloadResolver::unify(const AbstractType& parameter, const Type* argument
         auto* pointerArgument = std::get_if<Types::Pointer>(argumentType);
         if (!pointerArgument)
             return false;
-        if (!unify(pointerParameter->addressSpace, WTF::enumToUnderlyingType(pointerArgument->addressSpace)))
+        if (!unify(pointerParameter->addressSpace, std::to_underlying(pointerArgument->addressSpace)))
             return false;
-        if (!unify(pointerParameter->accessMode, WTF::enumToUnderlyingType(pointerArgument->accessMode)))
+        if (!unify(pointerParameter->accessMode, std::to_underlying(pointerArgument->accessMode)))
             return false;
         return unify(pointerParameter->element, pointerArgument->element);
     }
@@ -479,9 +479,9 @@ bool OverloadResolver::unify(const AbstractType& parameter, const Type* argument
             return false;
         if (textureStorageParameter->kind != textureStorageArgument->kind)
             return false;
-        if (!unify(textureStorageParameter->format, WTF::enumToUnderlyingType(textureStorageArgument->format)))
+        if (!unify(textureStorageParameter->format, std::to_underlying(textureStorageArgument->format)))
             return false;
-        return unify(textureStorageParameter->access, WTF::enumToUnderlyingType(textureStorageArgument->access));
+        return unify(textureStorageParameter->access, std::to_underlying(textureStorageArgument->access));
     }
 
     if (auto* channelFormat = std::get_if<AbstractChannelFormat>(parameter.get())) {

@@ -95,17 +95,6 @@ function from(items /*, mapFn, thisArg */)
     return result;
 }
 
-function isArray(array)
-{
-    "use strict";
-
-    if (@isJSArray(array) || @isDerivedArray(array))
-        return true;
-    if (!@isProxyObject(array))
-        return false;
-    return @isArraySlow(array);
-}
-
 @linkTimeConstant
 @visibility=PrivateRecursive
 async function defaultAsyncFromAsyncIterator(iterator, mapFn, thisArg)
@@ -197,7 +186,7 @@ function fromAsync(asyncItems  /*, mapFn, thisArg */)
 
         if (!@isUndefinedOrNull(usingSyncIterator)) {
             var iterator = usingSyncIterator.@call(asyncItems);
-            return @defaultAsyncFromAsyncIterator.@call(this, @createAsyncFromSyncIterator(iterator, iterator.next), mapFn, thisArg);
+            return @defaultAsyncFromAsyncIterator.@call(this, @asyncFromSyncIteratorCreate(iterator), mapFn, thisArg);
         }
 
         return @defaultAsyncFromAsyncArrayLike.@call(this, asyncItems, mapFn, thisArg);

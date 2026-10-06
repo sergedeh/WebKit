@@ -30,6 +30,7 @@
 
 #include "WebProcessMessages.h"
 #include "WebProcessPool.h"
+#include <WebCore/LegacySchemeRegistry.h>
 #include <WebCore/LocalizedStrings.h>
 #include <WebCore/PublicSuffixStore.h>
 #include <wtf/HashMap.h>
@@ -85,7 +86,7 @@ bool WebExtensionMatchPattern::patternsMatchPattern(const MatchPatternSet& match
     return false;
 }
 
-static HashMap<String, RefPtr<WebExtensionMatchPattern>>& patternCache()
+static HashMap<String, RefPtr<WebExtensionMatchPattern>>& NODELETE patternCache()
 {
     static MainRunLoopNeverDestroyed<HashMap<String, RefPtr<WebExtensionMatchPattern>>> cache;
     return cache;
@@ -99,6 +100,8 @@ void WebExtensionMatchPattern::registerCustomURLScheme(String urlScheme)
     extensionSchemes().addVoid(canonicalScheme.value());
     validSchemes().addVoid(canonicalScheme.value());
     supportedSchemes().addVoid(canonicalScheme.value());
+
+    LegacySchemeRegistry::registerURLSchemeAsAllowingServiceWorkerClients(canonicalScheme.value());
 
     for (auto& pool : WebProcessPool::allProcessPools())
         pool->sendToAllProcesses(Messages::WebProcess::RegisterURLSchemeAsWebExtension(urlScheme));
@@ -198,7 +201,7 @@ WebExtensionMatchPattern::WebExtensionMatchPattern(const String& patternString, 
     UserContentURLPattern pattern { patternString };
 
     if (!pattern.scheme().isEmpty() && !isValidScheme(pattern.scheme())) {
-        outError = createError(Error::InvalidScheme, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because the scheme \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidScheme description for invalid scheme in the pattern", patternString.utf8().data(), pattern.scheme().utf8().data()));
+        outError = createError(Error::InvalidScheme, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because the scheme \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidScheme description for invalid scheme in the pattern", patternString.utf8(), pattern.scheme().utf8()));
         return;
     }
 
@@ -210,19 +213,19 @@ WebExtensionMatchPattern::WebExtensionMatchPattern(const String& patternString, 
             break;
 
         case UserContentURLPattern::Error::MissingScheme:
-            outError = createError(Error::InvalidScheme, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because it doesn't have a scheme.", "WKWebExtensionMatchPatternErrorInvalidScheme description for missing scheme in the pattern", patternString.utf8().data()));
+            outError = createError(Error::InvalidScheme, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because it doesn't have a scheme.", "WKWebExtensionMatchPatternErrorInvalidScheme description for missing scheme in the pattern", patternString.utf8()));
             break;
 
         case UserContentURLPattern::Error::MissingHost:
-            outError = createError(Error::InvalidHost, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because it doesn't have a host.", "WKWebExtensionMatchPatternErrorInvalidHost description for missing host in the pattern", patternString.utf8().data()));
+            outError = createError(Error::InvalidHost, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because it doesn't have a host.", "WKWebExtensionMatchPatternErrorInvalidHost description for missing host in the pattern", patternString.utf8()));
             break;
 
         case UserContentURLPattern::Error::InvalidHost:
-            outError = createError(Error::InvalidHost, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because the host \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidHost description for invalid host in the pattern", patternString.utf8().data(), pattern.host().utf8().data()));
+            outError = createError(Error::InvalidHost, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because the host \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidHost description for invalid host in the pattern", patternString.utf8(), pattern.host().utf8()));
             break;
 
         case UserContentURLPattern::Error::MissingPath:
-            outError = createError(Error::InvalidPath, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because it doesn't have a path.", "WKWebExtensionMatchPatternErrorInvalidPath description for missing path in the pattern", patternString.utf8().data()));
+            outError = createError(Error::InvalidPath, WEB_UI_FORMAT_STRING("\"%s\" cannot be parsed because it doesn't have a path.", "WKWebExtensionMatchPatternErrorInvalidPath description for missing path in the pattern", patternString.utf8()));
             break;
         }
 
@@ -247,7 +250,7 @@ WebExtensionMatchPattern::WebExtensionMatchPattern(const String& scheme, const S
     outError = nullptr;
 
     if (!isValidScheme(scheme)) {
-        outError = createError(Error::InvalidScheme, WEB_UI_FORMAT_STRING("Scheme \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidScheme description for invalid scheme", scheme.utf8().data()));
+        outError = createError(Error::InvalidScheme, WEB_UI_FORMAT_STRING("Scheme \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidScheme description for invalid scheme", scheme.utf8()));
         return;
     }
 
@@ -261,16 +264,16 @@ WebExtensionMatchPattern::WebExtensionMatchPattern(const String& scheme, const S
             break;
 
         case UserContentURLPattern::Error::MissingScheme:
-            outError = createError(Error::InvalidScheme, WEB_UI_FORMAT_STRING("Scheme \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidScheme description for missing scheme", scheme.utf8().data()));
+            outError = createError(Error::InvalidScheme, WEB_UI_FORMAT_STRING("Scheme \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidScheme description for missing scheme", scheme.utf8()));
             break;
 
         case UserContentURLPattern::Error::MissingHost:
         case UserContentURLPattern::Error::InvalidHost:
-            outError = createError(Error::InvalidHost, WEB_UI_FORMAT_STRING("Host \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidHost description for invalid or missing host", host.utf8().data()));
+            outError = createError(Error::InvalidHost, WEB_UI_FORMAT_STRING("Host \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidHost description for invalid or missing host", host.utf8()));
             break;
 
         case UserContentURLPattern::Error::MissingPath:
-            outError = createError(Error::InvalidPath, WEB_UI_FORMAT_STRING("Path \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidPath description for missing path", path.utf8().data()));
+            outError = createError(Error::InvalidPath, WEB_UI_FORMAT_STRING("Path \"%s\" is invalid.", "WKWebExtensionMatchPatternErrorInvalidPath description for missing path", path.utf8()));
             break;
         }
 
@@ -284,7 +287,7 @@ WebExtensionMatchPattern::WebExtensionMatchPattern(const String& scheme, const S
 
 bool WebExtensionMatchPattern::isSupported() const
 {
-    return isValid() && (m_matchesAllURLs || supportedSchemes().contains(scheme()));
+    return isValid() && (m_matchesAllURLs || supportedSchemes().contains(scheme()) || scheme() == "file"_s);
 }
 
 bool WebExtensionMatchPattern::operator==(const WebExtensionMatchPattern& other) const
@@ -334,17 +337,22 @@ String WebExtensionMatchPattern::stringWithScheme(const String& differentScheme)
     return makeString(differentScheme.isEmpty() ? scheme() : differentScheme, "://"_s, host(), path());
 }
 
-Vector<String> WebExtensionMatchPattern::expandedStrings() const
+Vector<String> WebExtensionMatchPattern::expandedStrings(OptionSet<Options> options) const
 {
     if (!isValid())
         return { };
 
     if (m_matchesAllURLs) {
-        return compactMap(supportedSchemes(), [&](auto& scheme) -> std::optional<String> {
+        auto strings = compactMap(supportedSchemes(), [&](auto& scheme) -> std::optional<String> {
             if (scheme == "*"_s)
                 return std::nullopt;
             return makeString(scheme, "://*/*"_s);
         });
+
+        if (options.contains(Options::AllowFileScheme))
+            strings.append("file://*/*"_s);
+
+        return strings;
     }
 
     return { string() };
@@ -367,8 +375,11 @@ bool WebExtensionMatchPattern::matchesURL(const URL& urlToMatch, OptionSet<Optio
     if (!isValid() || !urlToMatch.isValid())
         return false;
 
-    if (m_matchesAllURLs)
+    if (m_matchesAllURLs) {
+        if (urlToMatch.protocolIsFile())
+            return options.contains(Options::AllowFileScheme);
         return supportedSchemes().contains(urlToMatch.protocol().toString());
+    }
 
     if (!options.contains(Options::IgnoreSchemes) && !pattern().matchesScheme(urlToMatch))
         return false;
@@ -390,8 +401,12 @@ bool WebExtensionMatchPattern::matchesPattern(const WebExtensionMatchPattern& pa
     if (*this == patternToMatch)
         return true;
 
-    auto compareAllURLs = [](const WebExtensionMatchPattern& a, const WebExtensionMatchPattern& b) {
-        return a.matchesAllURLs() && (b.matchesAllURLs() || supportedSchemes().contains(b.scheme()));
+    auto compareAllURLs = [&options](const WebExtensionMatchPattern& a, const WebExtensionMatchPattern& b) {
+        if (!a.matchesAllURLs())
+            return false;
+        if (b.matchesAllURLs() || supportedSchemes().contains(b.scheme()))
+            return true;
+        return options.contains(Options::AllowFileScheme) && b.scheme() == "file"_s;
     };
 
     if (compareAllURLs(*this, patternToMatch))

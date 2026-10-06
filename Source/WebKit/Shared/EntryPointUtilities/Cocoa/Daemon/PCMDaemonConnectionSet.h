@@ -42,18 +42,18 @@ namespace PCM {
 
 class DaemonConnectionSet {
 public:
-    static DaemonConnectionSet& singleton();
+    static DaemonConnectionSet& NODELETE singleton();
     
     void add(xpc_connection_t);
     void remove(xpc_connection_t);
 
     void setConnectedNetworkProcessHasDebugModeEnabled(const Daemon::Connection&, bool);
-    bool debugModeEnabled() const;
+    bool NODELETE debugModeEnabled() const;
     void broadcastConsoleMessage(JSC::MessageLevel, const String&);
     
 private:
     enum class DebugModeEnabled : bool { No, Yes };
-    HashMap<XPCObjectPtr<xpc_connection_t>, DebugModeEnabled> m_connections;
+    HashMap<OSObjectPtr<xpc_connection_t>, DebugModeEnabled> m_connections;
     size_t m_connectionsWithDebugModeEnabled { 0 };
 };
 

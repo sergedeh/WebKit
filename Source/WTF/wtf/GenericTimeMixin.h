@@ -49,6 +49,9 @@ public:
 
     constexpr Seconds secondsSinceEpoch() const { return Seconds(m_value); }
 
+    // Newer versions of Swift's C++ interop importer fail to synthesize a `bool`
+    // conversion for an `operator bool` inherited from a dependent template base,
+    // so each `DerivedTime` subclass re-declares this with `using` (rdar://181622867).
     explicit constexpr operator bool() const { return !!m_value; }
 
     constexpr DerivedTime operator+(Seconds other) const
@@ -100,6 +103,22 @@ public:
         if (relativeTimeFromNow.isInfinity())
             return DerivedTime::fromRawSeconds(relativeTimeFromNow.value());
         return DerivedTime::now() + relativeTimeFromNow;
+    }
+
+    template<typename TargetTime>
+        requires (std::is_same_v<TargetTime, DerivedTime>)
+    inline DerivedTime approximate() const
+    {
+        return *reinterpret_cast<const DerivedTime*>(this);
+    }
+
+    template<typename TargetTime>
+        requires (std::derived_from<TargetTime, GenericTimeMixin<TargetTime>> && !std::is_same_v<TargetTime, DerivedTime>)
+    TargetTime approximate() const
+    {
+        if (isInfinity())
+            return TargetTime::fromRawSeconds(m_value);
+        return *reinterpret_cast<const DerivedTime*>(this) - DerivedTime::now() + TargetTime::now();
     }
 
 protected:

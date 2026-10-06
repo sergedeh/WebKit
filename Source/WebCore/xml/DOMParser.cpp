@@ -22,7 +22,6 @@
 #include "CommonAtomStrings.h"
 #include "ExceptionOr.h"
 #include "HTMLDocument.h"
-#include "NodeInlines.h"
 #include "SVGDocument.h"
 #include "SecurityOriginPolicy.h"
 #include "Settings.h"
@@ -44,9 +43,9 @@ Ref<DOMParser> DOMParser::create(Document& contextDocument)
     return adoptRef(*new DOMParser(contextDocument));
 }
 
-ExceptionOr<Ref<Document>> DOMParser::parseFromString(Variant<RefPtr<TrustedHTML>, String>&& string, const AtomString& contentType)
+ExceptionOr<Ref<Document>> DOMParser::parseFromString(Variant<Ref<TrustedHTML>, String>&& string, const AtomString& contentType)
 {
-    auto stringValueHolder = trustedTypeCompliantString(protectedContextDocument()->protectedContextDocument(), WTF::move(string), "DOMParser parseFromString"_s);
+    auto stringValueHolder = trustedTypeCompliantString(protect(m_contextDocument->contextDocument()), WTF::move(string), "DOMParser parseFromString"_s);
 
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
@@ -68,7 +67,7 @@ ExceptionOr<Ref<Document>> DOMParser::parseFromString(Variant<RefPtr<TrustedHTML
         document->setContextDocument(*m_contextDocument.get());
     document->setMarkupUnsafe(stringValueHolder.releaseReturnValue(), { });
     if (m_contextDocument) {
-        document->setURL(URL { m_contextDocument->url() });
+        document->setURL(URL { protect(m_contextDocument)->url() });
         document->setSecurityOriginPolicy(m_contextDocument->securityOriginPolicy());
     }
     return document.releaseNonNull();

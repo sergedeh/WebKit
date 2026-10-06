@@ -34,6 +34,7 @@
 #include "AudioUtilities.h"
 #include "Document.h"
 #include "JSAudioBuffer.h"
+#include "JSDOMConvertInterface.h"
 #include "JSDOMPromiseDeferred.h"
 #include "OfflineAudioCompletionEvent.h"
 #include "OfflineAudioContextOptions.h"
@@ -97,9 +98,16 @@ void OfflineAudioContext::increaseNoiseMultiplierIfNeeded()
     if (!target)
         return;
 
+    // The graph may contain feedback cycles (which are legal in Web Audio as long as a
+    // DelayNode breaks the loop), and non-tree topologies may reach the same node via
+    // multiple paths. Track visited nodes so we neither loop forever nor double-count a
+    // node's noise multiplier.
+    HashSet<CheckedPtr<AudioNode>> visited;
     Vector<AudioConnectionRef<AudioNode>, 1> remainingNodes;
-    for (auto& node : referencedSourceNodes())
-        remainingNodes.append(node.copyRef());
+    for (auto& node : referencedSourceNodes()) {
+        if (visited.add(node.ptr()).isNewEntry)
+            remainingNodes.append(node.copyRef());
+    }
 
     while (!remainingNodes.isEmpty()) {
         auto node = remainingNodes.takeLast();
@@ -110,7 +118,8 @@ void OfflineAudioContext::increaseNoiseMultiplierIfNeeded()
                 continue;
 
             output->forEachInputNode([&](auto& inputNode) {
-                remainingNodes.append(inputNode);
+                if (visited.add(&inputNode).isNewEntry)
+                    remainingNodes.append(inputNode);
             });
         }
     }
@@ -146,7 +155,7 @@ void OfflineAudioContext::startRendering(Ref<DeferredPromise>&& promise)
 
     lazyInitialize();
 
-    protectedDestination()->startRendering([promise = WTF::move(promise), pendingActivity = makePendingActivity(*this)](std::optional<Exception>&& exception) mutable {
+    protect(destination())->startRendering([promise = WTF::move(promise), pendingActivity = makePendingActivity(*this)](std::optional<Exception>&& exception) mutable {
         if (exception) {
             promise->reject(WTF::move(*exception));
             return;
@@ -207,7 +216,7 @@ void OfflineAudioContext::resumeRendering(Ref<DeferredPromise>&& promise)
     }
     ASSERT(state() == AudioContextState::Suspended);
 
-    protectedDestination()->startRendering([promise = WTF::move(promise), pendingActivity = makePendingActivity(*this)](std::optional<Exception>&& exception) mutable {
+    protect(destination())->startRendering([promise = WTF::move(promise), pendingActivity = makePendingActivity(*this)](std::optional<Exception>&& exception) mutable {
         if (exception) {
             promise->reject(WTF::move(*exception));
             return;

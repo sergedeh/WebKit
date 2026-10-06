@@ -61,7 +61,7 @@ static const String& functionParameters(bool shouldUseSVGEventName)
     return shouldUseSVGEventName ? evtString : eventString;
 }
 
-static TextPosition convertZeroToOne(const TextPosition& position)
+static TextPosition NODELETE convertZeroToOne(const TextPosition& position)
 {
     // A JSLazyEventListener can be created with a line number of zero when it is created with
     // a setAttribute call from JavaScript, so make the line number 1 in that case.
@@ -78,7 +78,7 @@ JSLazyEventListener::JSLazyEventListener(CreationArguments&& arguments, const UR
     , m_sourceURL(sourceURL)
     , m_sourcePosition(convertZeroToOne(sourcePosition))
     , m_originalNode(WTF::move(arguments.node))
-    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintedOriginFromStack(arguments.document.vm(), arguments.document.vm().topCallFrame))
+    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintedOriginFromStack(protect(arguments.document)->vm(), protect(arguments.document)->vm().topCallFrame))
 {
 }
 
@@ -104,9 +104,7 @@ void JSLazyEventListener::checkValidityForEventTarget(EventTarget& eventTarget)
 }
 #endif
 
-JSLazyEventListener::~JSLazyEventListener()
-{
-}
+JSLazyEventListener::~JSLazyEventListener() = default;
 
 JSObject* JSLazyEventListener::initializeJSFunction(ScriptExecutionContext& executionContext) const
 {
@@ -121,7 +119,7 @@ JSObject* JSLazyEventListener::initializeJSFunction(ScriptExecutionContext& exec
         return nullptr;
 
     RefPtr element = dynamicDowncast<Element>(m_originalNode.get());
-    if (!document->checkedContentSecurityPolicy()->allowInlineEventHandlers(m_sourceURL.string(), m_sourcePosition.m_line, m_code, element.get()))
+    if (!protect(document->contentSecurityPolicy())->allowInlineEventHandlers(m_sourceURL.string(), m_sourcePosition.m_line, m_code, element.get()))
         return nullptr;
 
     RefPtr frame = document->frame();
@@ -140,7 +138,7 @@ JSObject* JSLazyEventListener::initializeJSFunction(ScriptExecutionContext& exec
     if (!isolatedWorld) [[unlikely]]
         return nullptr;
 
-    auto* globalObject = toJSDOMWindow(*executionContextDocument->protectedFrame(), *isolatedWorld);
+    auto* globalObject = toJSDOMWindow(*protect(executionContextDocument->frame()), *isolatedWorld);
     if (!globalObject)
         return nullptr;
 
@@ -174,14 +172,13 @@ JSObject* JSLazyEventListener::initializeJSFunction(ScriptExecutionContext& exec
         if (!wrapper()) {
             // Ensure that 'node' has a JavaScript wrapper to mark the event listener we're creating.
             // FIXME: Should pass the global object associated with the node
-            setWrapperWhenInitializingJSFunction(vm, asObject(toJS(lexicalGlobalObject, globalObject, *m_originalNode)));
+            setWrapperWhenInitializingJSFunction(vm, asObject(toJS(lexicalGlobalObject, globalObject, protect(*m_originalNode))));
         }
 
         if (listenerHasEventHandlerScope) {
-            ASSERT(wrapper()->inherits<JSHTMLElement>());
             // Add the event's home element to the scope (and the document, and the form - see JSHTMLElement::eventHandlerScope)
-            JSFunction* listenerAsFunction = jsCast<JSFunction*>(jsFunction);
-            listenerAsFunction->setScope(vm, jsCast<JSHTMLElement*>(wrapper())->pushEventHandlerScope(lexicalGlobalObject, listenerAsFunction->scope()));
+            JSFunction* listenerAsFunction = downcast<JSFunction>(jsFunction);
+            listenerAsFunction->setScope(vm, uncheckedDowncast<JSHTMLElement>(wrapper())->pushEventHandlerScope(lexicalGlobalObject, listenerAsFunction->scope()));
         }
     }
 
@@ -196,14 +193,14 @@ RefPtr<JSLazyEventListener> JSLazyEventListener::create(CreationArguments&& argu
     // FIXME: We should be able to provide source information for frameless documents too (e.g. for importing nodes from XMLHttpRequest.responseXML).
     TextPosition position;
     URL sourceURL;
-    if (auto* frame = arguments.document.frame()) {
+    if (RefPtr frame = arguments.document.frame()) {
         if (!frame->script().canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToCreateEventListener))
             return nullptr;
         position = frame->script().eventHandlerPosition();
         sourceURL = arguments.document.url();
     }
 
-    JSLockHolder locker(arguments.document.vm());
+    JSLockHolder locker(protect(arguments.document)->vm());
     return adoptRef(*new JSLazyEventListener(WTF::move(arguments), sourceURL, position));
 }
 
@@ -224,7 +221,7 @@ RefPtr<JSLazyEventListener> JSLazyEventListener::create(LocalDOMWindow& window, 
     ASSERT(window.document());
     CheckedRef document = *window.document();
     ASSERT(document->frame());
-    return create({ attributeName, attributeValue, document, nullptr, toJSDOMWindow(document->frame(), mainThreadNormalWorldSingleton()), document->isSVGDocument() });
+    return create({ attributeName, attributeValue, document, nullptr, toJSDOMWindow(protect(document->frame()), mainThreadNormalWorldSingleton()), document->isSVGDocument() });
 }
 
 } // namespace WebCore

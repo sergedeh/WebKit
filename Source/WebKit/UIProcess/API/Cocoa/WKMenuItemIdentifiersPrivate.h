@@ -50,7 +50,7 @@ WK_EXTERN NSString * const _WKMenuItemIdentifierRevealImage WK_API_AVAILABLE(mac
 WK_EXTERN NSString * const _WKMenuItemIdentifierSearchWeb WK_API_AVAILABLE(macos(10.12), ios(10.0));
 WK_EXTERN NSString * const _WKMenuItemIdentifierShowHideMediaControls WK_API_AVAILABLE(macos(10.12), ios(10.0));
 WK_EXTERN NSString * const _WKMenuItemIdentifierShowHideMediaStats WK_API_AVAILABLE(macos(13.3), ios(16.4));
-WK_EXTERN NSString * const _WKMenuItemIdentifierToggleEnhancedFullScreen WK_API_AVAILABLE(macos(10.14), ios(12.0));
+WK_EXTERN NSString * const _WKMenuItemIdentifierTogglePictureInPicture WK_API_AVAILABLE(macos(10.14), ios(12.0));
 WK_EXTERN NSString * const _WKMenuItemIdentifierToggleVideoViewer WK_API_AVAILABLE(macos(15.0), ios(18.0));
 WK_EXTERN NSString * const _WKMenuItemIdentifierToggleFullScreen WK_API_AVAILABLE(macos(10.12), ios(10.0));
 
@@ -77,3 +77,11 @@ WK_EXTERN NSString * const _WKMenuItemIdentifierPlayAllAnimations WK_API_AVAILAB
 WK_EXTERN NSString * const _WKMenuItemIdentifierPauseAllAnimations WK_API_AVAILABLE(macos(13.3), ios(16.4));
 WK_EXTERN NSString * const _WKMenuItemIdentifierPlayAnimation  WK_API_AVAILABLE(macos(14.0), ios(17.0));
 WK_EXTERN NSString * const _WKMenuItemIdentifierPauseAnimation  WK_API_AVAILABLE(macos(14.0), ios(17.0));
+
+WK_EXTERN NSString * const _WKMenuItemIdentifierSubstitutionsMenu WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
+WK_EXTERN NSString * const _WKMenuItemIdentifierShowSubstitutions WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
+WK_EXTERN NSString * const _WKMenuItemIdentifierSmartCopyPaste WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
+WK_EXTERN NSString * const _WKMenuItemIdentifierSmartQuotes WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
+WK_EXTERN NSString * const _WKMenuItemIdentifierSmartDashes WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
+WK_EXTERN NSString * const _WKMenuItemIdentifierSmartLinks WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
+WK_EXTERN NSString * const _WKMenuItemIdentifierTextReplacement WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));

@@ -31,6 +31,7 @@
 #import "WebPageProxy.h"
 #import "_WKFrameHandleInternal.h"
 #import <WebCore/WebCoreObjCExtras.h>
+#import <wtf/URL.h>
 
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
 
@@ -41,14 +42,19 @@
     if (WebCoreObjCScheduleDeallocateOnMainRunLoop(_WKHitTestResult.class, self))
         return;
 
-    _hitTestResult->~HitTestResult();
+    SUPPRESS_UNCOUNTED_ARG _hitTestResult->~HitTestResult();
 
     [super dealloc];
 }
 
 static NSURL *URLFromString(const WTF::String& urlString)
 {
-    return urlString.isEmpty() ? nil : [NSURL URLWithString:urlString.createNSString().get()];
+    // Avoid +[NSURL URLWithString:], which re-encodes the path when it contains characters
+    // that WebCore's URL parser leaves literal (e.g. '[' and ']'), double-encoding the
+    // existing %XX sequences. CFURLCreateAbsoluteURLWithBytes preserves them.
+    if (urlString.isEmpty())
+        return nil;
+    return WTF::URL { urlString }.createNSURL().autorelease();
 }
 
 - (NSURL *)absoluteImageURL
@@ -79,6 +85,11 @@ static NSURL *URLFromString(const WTF::String& urlString)
 - (NSURL *)absoluteMediaURL
 {
     return URLFromString(_hitTestResult->absoluteMediaURL());
+}
+
+- (NSURL *)absoluteModelURL
+{
+    return URLFromString(_hitTestResult->absoluteModelURL());
 }
 
 - (NSString *)linkLabel
@@ -154,7 +165,7 @@ static NSURL *URLFromString(const WTF::String& urlString)
 - (NSURLResponse *)linkLocalResourceResponse
 {
     if (auto& response = _hitTestResult->linkLocalResourceResponse())
-        return response->protectedNSURLResponse().autorelease();
+        return protect(response->nsURLResponse()).autorelease();
     return nil;
 }
 

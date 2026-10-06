@@ -68,7 +68,7 @@ void RemoteLayerBackingStoreCollection::deref() const
 
 void RemoteLayerBackingStoreCollection::prepareBackingStoresForDisplay(RemoteLayerTreeTransaction& transaction)
 {
-    Ref remoteRenderingBackend = protectedLayerTreeContext()->ensureRemoteRenderingBackendProxy();
+    Ref remoteRenderingBackend = protect(layerTreeContext())->ensureRemoteRenderingBackendProxy();
     remoteRenderingBackend->startPreparingImageBufferSetsForDisplay();
 
     for (CheckedRef backingStore : m_backingStoresNeedingDisplay) {
@@ -89,6 +89,8 @@ bool RemoteLayerBackingStoreCollection::paintReachableBackingStoreContents()
             anyNonEmptyDirtyRegion = true;
         backingStore->paintContents();
     }
+    for (CheckedRef backingStore : m_backingStoresNeedingDisplay)
+        backingStore->flush();
     return anyNonEmptyDirtyRegion;
 }
 
@@ -152,7 +154,7 @@ bool RemoteLayerBackingStoreCollection::updateUnreachableBackingStores()
     }
 
     for (auto& backingStore : newlyUnreachableBackingStore)
-        backingStoreBecameUnreachable(*backingStore);
+        backingStoreBecameUnreachable(protect(*backingStore));
 
     return !newlyUnreachableBackingStore.isEmpty();
 }
@@ -300,8 +302,10 @@ void RemoteLayerBackingStoreCollection::markBackingStoreVolatileAfterReachabilit
 
         sendMarkBuffersVolatile(WTF::move(identifiers), [weakThis = WeakPtr { *this }](bool succeeded) {
             LOG_WITH_STREAM(RemoteLayerBuffers, stream << "RemoteLayerBackingStoreCollection::markBackingStoreVolatileAfterReachabilityChange - succeeded " << succeeded);
-            if (!succeeded && weakThis)
-                weakThis->scheduleVolatilityTimer();
+            if (!succeeded) {
+                if (RefPtr protectedThis = weakThis)
+                    protectedThis->scheduleVolatilityTimer();
+            }
         });
     } else {
         CheckedRef inProcessBackingStore = downcast<RemoteLayerWithInProcessRenderingBackingStore>(backingStore);
@@ -447,7 +451,7 @@ bool RemoteLayerBackingStoreCollection::collectAllRemoteRenderingBufferIdentifie
 
 void RemoteLayerBackingStoreCollection::sendMarkBuffersVolatile(Vector<std::pair<Ref<RemoteImageBufferSetProxy>, OptionSet<BufferInSetType>>>&& identifiers, CompletionHandler<void(bool)>&& completionHandler, bool forcePurge)
 {
-    Ref remoteRenderingBackend = protectedLayerTreeContext()->ensureRemoteRenderingBackendProxy();
+    Ref remoteRenderingBackend = protect(layerTreeContext())->ensureRemoteRenderingBackendProxy();
 
     remoteRenderingBackend->markSurfacesVolatile(WTF::move(identifiers), [completionHandler = WTF::move(completionHandler)](bool markedAllVolatile) mutable {
         LOG_WITH_STREAM(RemoteLayerBuffers, stream << "RemoteLayerBackingStoreCollection::sendMarkBuffersVolatile: marked all volatile " << markedAllVolatile);
@@ -458,11 +462,6 @@ void RemoteLayerBackingStoreCollection::sendMarkBuffersVolatile(Vector<std::pair
 RemoteLayerTreeContext& RemoteLayerBackingStoreCollection::layerTreeContext() const
 {
     return m_layerTreeContext.get();
-}
-
-Ref<RemoteLayerTreeContext> RemoteLayerBackingStoreCollection::protectedLayerTreeContext() const
-{
-    return layerTreeContext();
 }
 
 } // namespace WebKit

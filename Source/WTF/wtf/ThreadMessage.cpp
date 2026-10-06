@@ -26,12 +26,10 @@
 #include "config.h"
 #include <wtf/ThreadMessage.h>
 
-#include <wtf/Lock.h>
-#include <wtf/Locker.h>
 
 namespace WTF {
 
-MessageStatus sendMessageScoped(const ThreadSuspendLocker& locker, Thread& thread, const ThreadMessage& message)
+MessageStatus sendMessageScoped(const ThreadSuspendLocker& locker, Thread& thread, NOESCAPE const ThreadMessage& message)
 {
     auto result = thread.suspend(locker);
     if (!result)

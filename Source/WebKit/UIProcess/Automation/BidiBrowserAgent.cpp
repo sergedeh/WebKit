@@ -38,6 +38,7 @@
 #include "WebsiteDataStore.h"
 #include <pal/SessionID.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/HexNumber.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/text/StringBuilder.h>
@@ -112,6 +113,17 @@ void BidiBrowserAgent::willClosePage(const WebPageProxy& page)
 
     it->value->callback({ });
     m_userContextsPendingDeletion.remove(it);
+}
+
+bool BidiBrowserAgent::isValidUserContext(const String& userContextID) const
+{
+    if (userContextID.isEmpty())
+        return false;
+
+    if (userContextID == defaultUserContextID())
+        return true;
+
+    return m_userContexts.contains(userContextID);
 }
 
 // MARK: Inspector::BidiBrowserDispatcherHandler methods.

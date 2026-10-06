@@ -38,16 +38,16 @@ class RenderMathMLUnderOver final : public RenderMathMLScripts {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLUnderOver);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLUnderOver);
 public:
-    RenderMathMLUnderOver(MathMLUnderOverElement&, RenderStyle&&);
+    RenderMathMLUnderOver(MathMLUnderOverElement&, Style::ComputedStyle&&);
     virtual ~RenderMathMLUnderOver();
 
 private:
     bool isRenderMathMLScripts() const final { return false; }
     bool isMathContentCentered() const final { return !shouldMoveLimits(); }
     ASCIILiteral renderName() const final { return "RenderMathMLUnderOver"_s; }
-    MathMLUnderOverElement& element() const;
+    MathMLUnderOverElement& NODELETE element() const;
 
-    void computePreferredLogicalWidths() final;
+    void computeIntrinsicLogicalWidthContributions() final;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
 
     void stretchHorizontalOperatorsAndLayoutChildren();

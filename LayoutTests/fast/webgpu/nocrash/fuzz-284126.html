@@ -145,7 +145,6 @@ let device0 = await adapter0.requestDevice({
     minUniformBufferOffsetAlignment: 256,
     maxUniformBufferBindingSize: 111657663,
     maxStorageBufferBindingSize: 167601739,
-    maxInterStageShaderComponents: 64,
   },
 });
 let commandEncoder0 = device0.createCommandEncoder();
@@ -16048,6 +16047,7 @@ videoFrame27.close();
 videoFrame28.close();
 videoFrame29.close();
 videoFrame30.close();
+videoFrame1.close();
 }
 async function window1() {
 let adapter0 = await navigator.gpu.requestAdapter({});
@@ -34463,6 +34463,7 @@ videoFrame16.close();
 videoFrame17.close();
 videoFrame19.close();
 videoFrame20.close();
+videoFrame9.close();
 }
 
 onload = async () => {

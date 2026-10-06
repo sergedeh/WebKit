@@ -26,16 +26,28 @@
 #pragma once
 
 #include <wtf/Platform.h>
+
 #if PLATFORM(COCOA)
 
 #include <WebCore/HEVCUtilities.h>
+#include <wtf/Forward.h>
+#include <wtf/Vector.h>
+
+typedef struct opaqueCMSampleBuffer *CMSampleBufferRef;
 
 namespace WebCore {
 
-struct MediaCapabilitiesInfo;
+struct PlatformMediaCapabilitiesInfo;
+class VideoInfo;
 
-WEBCORE_EXPORT std::optional<MediaCapabilitiesInfo> validateHEVCParameters(const HEVCParameters&, bool hasAlphaChannel, bool hdrSupport);
-std::optional<MediaCapabilitiesInfo> validateDoViParameters(const DoViParameters&, bool hasAlphaChannel, bool hdrSupport);
+WEBCORE_EXPORT std::optional<PlatformMediaCapabilitiesInfo> validateHEVCParameters(const HEVCParameters&, bool hasAlphaChannel, bool hdrSupport);
+std::optional<PlatformMediaCapabilitiesInfo> validateDoViParameters(const DoViParameters&, bool hasAlphaChannel, bool hdrSupport);
+
+WEBCORE_EXPORT Vector<uint8_t> convertHEVCCMSampleBufferToAnnexB(CMSampleBufferRef, bool isKeyframe);
+WEBCORE_EXPORT RefPtr<VideoInfo> createVideoInfoFromHEVCAnnexBStream(std::span<const uint8_t>, const Vector<NaluIndex>&);
+
+WEBCORE_EXPORT Vector<uint8_t> convertHEVCAnnexBToLengthPrefixed(std::span<const uint8_t>, const Vector<NaluIndex>&);
+WEBCORE_EXPORT RefPtr<VideoInfo> createVideoInfoFromHVCC(const HVCCParameterSets&);
 
 }
 

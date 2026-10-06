@@ -52,6 +52,14 @@
 /**
  * WPEDisplayHeadless:
  *
+ * A headless [class@WPEPlatform.Display] implementation.
+ *
+ * [class@DisplayHeadless] is the built-in [class@WPEPlatform.Display]
+ * implementation that does not connect to any native display. It renders to
+ * offscreen buffers and is useful for testing or for running web content
+ * without showing it on screen. Use [ctor@DisplayHeadless.new] to create a
+ * new instance, or [ctor@DisplayHeadless.new_for_device] to back it by a
+ * specific DRM device.
  */
 struct _WPEDisplayHeadlessPrivate {
     std::optional<GRefPtr<WPEDRMDevice>> drmDevice;
@@ -62,7 +70,7 @@ struct _WPEDisplayHeadlessPrivate {
 };
 WEBKIT_DEFINE_FINAL_TYPE_WITH_CODE(WPEDisplayHeadless, wpe_display_headless, WPE_TYPE_DISPLAY, WPEDisplay,
     wpeEnsureExtensionPointsRegistered();
-    g_io_extension_point_implement(WPE_DISPLAY_EXTENSION_POINT_NAME, g_define_type_id, "wpe-display-headless", -100))
+    g_io_extension_point_implement(WPE_DISPLAY_EXTENSION_POINT_NAME, g_define_type_id, "headless", -100))
 
 static void wpeDisplayHeadlessDispose(GObject* object)
 {

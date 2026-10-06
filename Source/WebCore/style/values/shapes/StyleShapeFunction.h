@@ -32,6 +32,9 @@
 #include <WebCore/StyleWindRuleComputation.h>
 
 namespace WebCore {
+
+struct AcceleratedEffectShapeFunction;
+
 namespace Style {
 
 struct Path;
@@ -159,15 +162,17 @@ struct HLineCommand {
     static constexpr auto name = CSSValueHline;
     struct To {
         static constexpr CommandAffinity affinity = CSS::Keyword::To { };
+        using Offset = TwoComponentPositionHorizontal;
 
-        TwoComponentPositionHorizontal offset;
+        Offset offset;
 
         bool operator==(const To&) const = default;
     };
     struct By {
         static constexpr CommandAffinity affinity = CSS::Keyword::By { };
+        using Offset = LengthPercentage<>;
 
-        LengthPercentage<> offset;
+        Offset offset;
 
         bool operator==(const By&) const = default;
     };
@@ -191,15 +196,17 @@ struct VLineCommand {
     static constexpr auto name = CSSValueVline;
     struct To {
         static constexpr CommandAffinity affinity = CSS::Keyword::To { };
+        using Offset = TwoComponentPositionVertical;
 
-        TwoComponentPositionVertical offset;
+        Offset offset;
 
         bool operator==(const To&) const = default;
     };
     struct By {
         static constexpr CommandAffinity affinity = CSS::Keyword::By { };
+        using Offset = LengthPercentage<>;
 
-        LengthPercentage<> offset;
+        Offset offset;
 
         bool operator==(const By&) const = default;
     };
@@ -381,7 +388,14 @@ struct Shape {
     Position startingPoint;
     Commands commands;
 
-    bool operator==(const Shape&) const = default;
+    Shape(std::optional<FillRule>, Position&&, Commands&&);
+    Shape(Shape&&);
+    Shape(const Shape&);
+    Shape& operator=(Shape&&);
+    Shape& operator=(const Shape&);
+    ~Shape();
+
+    bool operator==(const Shape&) const;
 };
 using ShapeFunction = FunctionNotation<CSSValueShape, Shape>;
 
@@ -397,8 +411,8 @@ template<size_t I> const auto& get(const Shape& value)
 
 DEFINE_TYPE_MAPPING(CSS::Shape, Shape)
 
-template<> struct PathComputation<Shape> { WebCore::Path operator()(const Shape&, const FloatRect&); };
-template<> struct WindRuleComputation<Shape> { WebCore::WindRule operator()(const Shape&); };
+template<> struct PathComputation<Shape> { WebCore::Path operator()(const Shape&, const FloatRect&, ZoomFactor); };
+template<> struct WindRuleComputation<Shape> { WebCore::WindRule NODELETE operator()(const Shape&); };
 
 template<> struct Blending<Shape> {
     auto canBlend(const Shape&, const Shape&) -> bool;
@@ -411,6 +425,14 @@ bool canBlendShapeWithPath(const Shape&, const Path&);
 
 // Makes a `Shape` representation of `Path`. Returns `std::nullopt` if the path cannot be parsed.
 std::optional<Shape> makeShapeFromPath(const Path&);
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+template<> struct Evaluation<ShapeFunction, AcceleratedEffectShapeFunction> { AcceleratedEffectShapeFunction operator()(const ShapeFunction&, const FloatRect&, ZoomFactor); };
+
+#endif
 
 } // namespace Style
 } // namespace WebCore

@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <wtf/JSONValues.h>
 #include <wtf/text/MakeString.h>
 
@@ -221,6 +221,23 @@ TEST(JSONArray, Basic)
     EXPECT_TRUE(it == array->end());
 }
 
+TEST(JSONArray, Set)
+{
+    Ref array = JSON::Array::create();
+    for (unsigned i = 0; i < 7; ++i)
+        array->pushValue(JSON::Value::null());
+
+    array->setBoolean(0, true);
+    array->setInteger(1, 1);
+    array->setDouble(2, 1.5);
+    array->setString(3, "webkit"_s);
+    array->setValue(4, JSON::Value::null());
+    array->setObject(5, JSON::Object::create());
+    array->setArray(6, JSON::Array::create());
+
+    EXPECT_EQ(array->toJSONString(), "[true,1,1.5,\"webkit\",null,{},[]]"_s);
+}
+
 TEST(JSONArrayOf, Basic)
 {
     Ref<JSON::ArrayOf<JSON::Value>> array = JSON::ArrayOf<JSON::Value>::create();
@@ -303,6 +320,23 @@ TEST(JSONArrayOf, Basic)
     EXPECT_TRUE(value->type() == JSON::Value::Type::Array);
     ++it;
     EXPECT_TRUE(it == array->end());
+}
+
+TEST(JSONArrayOf, Set)
+{
+    Ref array = JSON::ArrayOf<JSON::Value>::create();
+    for (unsigned i = 0; i < 7; ++i)
+        array->addItem(JSON::Value::null());
+
+    array->setItem(0, true);
+    array->setItem(1, 1);
+    array->setItem(2, 1.5);
+    array->setItem(3, makeString("webkit"_s));
+    array->setItem(4, JSON::Value::null());
+    array->setItem(5, JSON::Object::create());
+    array->setItem(6, JSON::Array::create());
+
+    EXPECT_EQ(array->toJSONString(), "[true,1,1.5,\"webkit\",null,{},[]]"_s);
 }
 
 TEST(JSONObject, Basic)
@@ -664,6 +698,54 @@ TEST(JSONValue, ParseJSON)
         EXPECT_FALSE(JSON::Value::parseJSON("\"\\u123"_s));
         EXPECT_FALSE(JSON::Value::parseJSON("\"\\u123\""_s));
         EXPECT_FALSE(JSON::Value::parseJSON("\"\\u123 \""_s));
+    }
+}
+
+TEST(JSONValue, ParseJSONAllowTrailingCommas)
+{
+    {
+        auto value = JSON::Value::parseJSON("[1,]"_s, JSON::Value::ParsingMode::AllowTrailingCommas);
+        EXPECT_TRUE(value);
+        auto array = value->asArray();
+        EXPECT_TRUE(array);
+        EXPECT_EQ(array->length(), 1U);
+    }
+
+    {
+        auto value = JSON::Value::parseJSON("[1, 2, 3,]"_s, JSON::Value::ParsingMode::AllowTrailingCommas);
+        EXPECT_TRUE(value);
+        auto array = value->asArray();
+        EXPECT_TRUE(array);
+        EXPECT_EQ(array->length(), 3U);
+    }
+
+    {
+        auto value = JSON::Value::parseJSON("{\"foo\": \"bar\",}"_s, JSON::Value::ParsingMode::AllowTrailingCommas);
+        EXPECT_TRUE(value);
+        auto object = value->asObject();
+        EXPECT_TRUE(object);
+        EXPECT_EQ(object->size(), 1U);
+        EXPECT_EQ(object->getString("foo"_s), "bar"_s);
+    }
+
+    {
+        auto value = JSON::Value::parseJSON("[{\"foo\":\"bar\"},{\"baz\":false},]"_s, JSON::Value::ParsingMode::AllowTrailingCommas);
+        EXPECT_TRUE(value);
+        auto array = value->asArray();
+        EXPECT_TRUE(array);
+        EXPECT_EQ(array->length(), 2U);
+    }
+
+    {
+        EXPECT_FALSE(JSON::Value::parseJSON("[1,]"_s, JSON::Value::ParsingMode::Strict));
+        EXPECT_FALSE(JSON::Value::parseJSON("{\"foo\": \"bar\",}"_s, JSON::Value::ParsingMode::Strict));
+    }
+
+    {
+        EXPECT_FALSE(JSON::Value::parseJSON("[,]"_s, JSON::Value::ParsingMode::AllowTrailingCommas));
+        EXPECT_FALSE(JSON::Value::parseJSON("{,}"_s, JSON::Value::ParsingMode::AllowTrailingCommas));
+        EXPECT_FALSE(JSON::Value::parseJSON("[1,,2]"_s, JSON::Value::ParsingMode::AllowTrailingCommas));
+        EXPECT_FALSE(JSON::Value::parseJSON("{\"foo\":bar}"_s, JSON::Value::ParsingMode::AllowTrailingCommas));
     }
 }
 

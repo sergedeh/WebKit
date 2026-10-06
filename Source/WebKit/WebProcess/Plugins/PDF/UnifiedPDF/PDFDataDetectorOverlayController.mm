@@ -71,18 +71,13 @@ PDFDataDetectorOverlayController::PDFDataDetectorOverlayController(UnifiedPDFPlu
 
 PDFDataDetectorOverlayController::~PDFDataDetectorOverlayController() = default;
 
-RefPtr<UnifiedPDFPlugin> PDFDataDetectorOverlayController::protectedPlugin() const
-{
-    return m_plugin.get();
-}
-
 Ref<PageOverlay> PDFDataDetectorOverlayController::installProtectedOverlayIfNeeded()
 {
     if (m_overlay)
         return *m_overlay;
 
     m_overlay = PageOverlay::create(*this, PageOverlay::OverlayType::Document);
-    protectedPlugin()->installDataDetectorOverlay(Ref { *m_overlay });
+    protect(m_plugin)->installDataDetectorOverlay(Ref { *m_overlay });
 
     return *m_overlay;
 }
@@ -135,7 +130,7 @@ RetainPtr<DDHighlightRef> PDFDataDetectorOverlayController::createPlatformDataDe
     return ::WebKit::createPlatformDataDetectorHighlight(Vector<FloatRect>::from(WTF::move(rectForSelectionInMainFrameContentsSpace)), mainFrameView->visibleContentRect());
 }
 
-bool PDFDataDetectorOverlayController::handleMouseEvent(const WebMouseEvent& event, PDFDocumentLayout::PageIndex pageIndex)
+bool PDFDataDetectorOverlayController::handleMouseEvent(const WebCore::PlatformMouseEvent& event, PDFDocumentLayout::PageIndex pageIndex)
 {
     RefPtr plugin = m_plugin.get();
     if (!plugin)
@@ -162,7 +157,7 @@ bool PDFDataDetectorOverlayController::handleMouseEvent(const WebMouseEvent& eve
     if (auto iterator = m_pdfDataDetectorItemsWithHighlightsMap.find(pageIndex); iterator != m_pdfDataDetectorItemsWithHighlightsMap.end()) {
         for (auto& [dataDetectorItem, coreHighlight] : iterator->value) {
             Boolean isOverButton = NO;
-            if (!PAL::softLink_DataDetectors_DDHighlightPointIsOnHighlight(coreHighlight->protectedHighlight().get(), mousePositionInMainFrameContentsSpace, &isOverButton))
+            if (!PAL::softLink_DataDetectors_DDHighlightPointIsOnHighlight(protect(coreHighlight->highlight()).get(), mousePositionInMainFrameContentsSpace, &isOverButton))
                 continue;
 
             mouseIsOverActiveHighlightButton = isOverButton;
@@ -180,14 +175,14 @@ bool PDFDataDetectorOverlayController::handleMouseEvent(const WebMouseEvent& eve
             previousActiveHighlight->fadeOut();
 
         if (activeHighlight) {
-            installProtectedOverlayIfNeeded()->protectedLayer()->addChild(activeHighlight->layer());
+            protect(installProtectedOverlayIfNeeded()->layer())->addChild(activeHighlight->layer());
             activeHighlight->fadeIn();
         }
 
         didInvalidateHighlightOverlayRects(pageIndex, ShouldUpdatePlatformHighlightData::No, ActiveHighlightChanged::Yes);
     }
 
-    if (event.type() == WebEventType::MouseDown && mouseIsOverActiveHighlightButton)
+    if (event.type() == WebCore::PlatformEventType::MousePressed && mouseIsOverActiveHighlightButton)
         return handleDataDetectorAction(flooredIntPoint(mousePositionInWindowSpace), Ref { *m_activeDataDetectorItemWithHighlight.first });
 
     return false;

@@ -42,6 +42,7 @@
 #include "B3ValueInlines.h"
 #include "B3Variable.h"
 #include "JITOpaqueByproducts.h"
+#include <wtf/GraphOrdering.h>
 #include <wtf/ListDump.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -54,9 +55,10 @@ Procedure::Procedure(bool usesSIMD)
     : m_cfg(new CFG(*this))
     , m_lastPhaseName("initial")
     , m_byproducts(makeUnique<OpaqueByproducts>())
+    , m_heaps(makeUniqueRef<AbstractHeapRepository>())
 {
     if (usesSIMD)
-        setUsessSIMD();
+        setUsesSIMD();
     // Initialize all our fields before constructing Air::Code since
     // it looks into our fields.
     m_code = std::unique_ptr<Air::Code>(new Air::Code(*this));
@@ -285,17 +287,28 @@ void Procedure::dump(PrintStream& out) const
 
 Vector<BasicBlock*> Procedure::blocksInPreOrder()
 {
-    return B3::blocksInPreOrder(at(0));
+    Vector<BasicBlock*> result;
+    result.reserveInitialCapacity(size());
+    appendNodesInOrder(cfg(), GraphOrder::PreOrder, result);
+    return result;
 }
 
 Vector<BasicBlock*> Procedure::blocksInPostOrder()
 {
-    return B3::blocksInPostOrder(at(0));
+    Vector<BasicBlock*> result;
+    result.reserveInitialCapacity(size());
+    appendNodesInOrder(cfg(), GraphOrder::PostOrder, result);
+    return result;
 }
 
 void Procedure::deleteVariable(Variable* variable)
 {
     m_variables.remove(variable);
+}
+
+void Procedure::deleteAllVariables()
+{
+    m_variables.clearAll();
 }
 
 void Procedure::deleteValue(Value* value)
@@ -441,7 +454,7 @@ void Procedure::setWasmBoundsCheckGenerator(RefPtr<WasmBoundsCheckGenerator> gen
     code().setWasmBoundsCheckGenerator(generator);
 }
 
-RegisterSetBuilder Procedure::mutableGPRs()
+RegisterSet Procedure::mutableGPRs()
 {
     return code().mutableGPRs();
 }
@@ -559,7 +572,7 @@ void Procedure::appendIonGraphPass(ASCIILiteral passName)
                 value->dumpMeta(comma, stream);
                 auto effects = value->effects();
                 {
-                    CString string = toCString(effects);
+                    auto string = toUTF8CString(effects);
                     if (string.length())
                         stream.print(comma, string);
                 }

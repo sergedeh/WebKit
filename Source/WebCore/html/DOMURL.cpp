@@ -104,11 +104,11 @@ String DOMURL::createObjectURL(ScriptExecutionContext& scriptExecutionContext, B
 
 String DOMURL::createPublicURL(ScriptExecutionContext& scriptExecutionContext, URLRegistrable& registrable)
 {
-    URL publicURL = BlobURL::createPublicURL(scriptExecutionContext.protectedSecurityOrigin().get());
+    URL publicURL = BlobURL::createPublicURL(protect(scriptExecutionContext.securityOrigin()).get());
     if (publicURL.isEmpty())
         return String();
 
-    scriptExecutionContext.protectedPublicURLManager()->registerURL(publicURL, registrable);
+    protect(scriptExecutionContext.publicURLManager())->registerURL(publicURL, registrable);
 
     return publicURL.string();
 }
@@ -116,7 +116,7 @@ String DOMURL::createPublicURL(ScriptExecutionContext& scriptExecutionContext, U
 URLSearchParams& DOMURL::searchParams()
 {
     if (!m_searchParams)
-        m_searchParams = URLSearchParams::create(search(), this);
+        lazyInitialize(m_searchParams, URLSearchParams::create(search(), this));
     return *m_searchParams;
 }
 
@@ -124,11 +124,11 @@ void DOMURL::revokeObjectURL(ScriptExecutionContext& scriptExecutionContext, con
 {
     URL url { urlString };
     ResourceRequest request(WTF::move(url));
-    request.setDomainForCachePartition(scriptExecutionContext.domainForCachePartition());
+    request.setShouldBlockThirdPartyStorage(scriptExecutionContext.shouldBlockThirdPartyStorage());
 
     MemoryCache::removeRequestFromSessionCaches(scriptExecutionContext, request);
 
-    scriptExecutionContext.protectedPublicURLManager()->revoke(request.url());
+    protect(scriptExecutionContext.publicURLManager())->revoke(request.url());
 }
 
 } // namespace WebCore

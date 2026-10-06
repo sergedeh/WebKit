@@ -29,12 +29,14 @@
 #if ENABLE(B3_JIT)
 
 #include "AllowMacroScratchRegisterUsage.h"
+#include "AllowMacroScratchRegisterUsageIf.h"
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3BlockInsertionSet.h"
 #include "B3CCallValue.h"
 #include "B3CaseCollectionInlines.h"
 #include "B3CheckValue.h"
+#include "B3ConstDoubleValue.h"
 #include "B3ConstPtrValue.h"
 #include "B3FenceValue.h"
 #include "B3InsertionSetInlines.h"
@@ -46,6 +48,10 @@
 #include "B3UpsilonValue.h"
 #include "B3UseCounts.h"
 #include "B3ValueInlines.h"
+#include "B3WasmArrayGetValue.h"
+#include "B3WasmArrayLengthValue.h"
+#include "B3WasmArrayNewValue.h"
+#include "B3WasmArraySetValue.h"
 #include "B3WasmRefTypeCheckValue.h"
 #include "B3WasmStructGetValue.h"
 #include "B3WasmStructNewValue.h"
@@ -55,6 +61,8 @@
 #include "JSCJSValueInlines.h"
 #include "JSCell.h"
 #include "JSObject.h"
+#include "JSWebAssemblyArray.h"
+#include "JSWebAssemblyArrayInlines.h"
 #include "JSWebAssemblyStruct.h"
 #include "LinkBuffer.h"
 #include "MarkedSpace.h"
@@ -65,7 +73,6 @@
 #include "WasmTypeDefinition.h"
 #include "WebAssemblyFunctionBase.h"
 #include "WebAssemblyGCStructure.h"
-#include <cmath>
 #include <numeric>
 #include <wtf/BitVector.h>
 
@@ -88,7 +95,6 @@ public:
     bool run()
     {
         RELEASE_ASSERT(!m_proc.hasQuirks());
-        
         for (BasicBlock* block : m_proc) {
             m_block = block;
             processCurrentBlock();
@@ -106,15 +112,6 @@ public:
     }
     
 private:
-    template <class Fn>
-    void replaceWithBinaryCall(Fn &&function)
-    {
-        Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(function));
-        Value* result = m_insertionSet.insert<CCallValue>(m_index, m_value->type(), m_origin, Effects::none(), functionAddress, m_value->child(0), m_value->child(1));
-        m_value->replaceWithIdentity(result);
-        m_changed = true;
-    }
-
     void processCurrentBlock()
     {
         for (m_index = 0; m_index < m_block->size(); ++m_index) {
@@ -137,14 +134,14 @@ private:
                         Value* multipliedBack = normalModCase->appendNew<Value>(m_proc, Mul, m_origin, divResult, m_value->child(1));
                         Value* result = normalModCase->appendNew<Value>(m_proc, Sub, m_origin, m_value->child(0), multipliedBack);
                         UpsilonValue* normalResult = normalModCase->appendNew<UpsilonValue>(m_proc, m_origin, result);
-                        normalModCase->appendNew<Value>(m_proc, Jump, m_origin);
                         normalModCase->setSuccessors(FrequentedBlock(m_block));
+                        normalModCase->appendNew<Value>(m_proc, Jump, m_origin);
 
                         UpsilonValue* zeroResult = zeroDenCase->appendNew<UpsilonValue>(
                             m_proc, m_origin,
                             zeroDenCase->appendIntConstant(m_proc, m_value, 0));
-                        zeroDenCase->appendNew<Value>(m_proc, Jump, m_origin);
                         zeroDenCase->setSuccessors(FrequentedBlock(m_block));
+                        zeroDenCase->appendNew<Value>(m_proc, Jump, m_origin);
 
                         Value* phi = m_insertionSet.insert<Value>(m_index, Phi, m_value->type(), m_origin);
                         normalResult->setPhi(phi);
@@ -156,17 +153,116 @@ private:
                         makeDivisionChill(Mod);
                     break;
                 }
-                
+
                 if (m_value->type() == Double) {
-                    Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::fmodDouble));
-                    Value* result = m_insertionSet.insert<CCallValue>(m_index, Double, m_origin,
+                    if constexpr (!isARM64()) {
+                        // Non-ARM64: just call fmod directly.
+                        Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::fmodDouble));
+                        Value* result = m_insertionSet.insert<CCallValue>(m_index, Double, m_origin,
+                            Effects::none(),
+                            functionAddress,
+                            m_value->child(0),
+                            m_value->child(1));
+                        m_value->replaceWithIdentity(result);
+                        m_changed = true;
+                        break;
+                    }
+
+                    BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
+                    BasicBlock* fastCase = m_blockInsertionSet.insertBefore(m_block);
+                    BasicBlock* slowCase = m_blockInsertionSet.insertBefore(m_block);
+
+                    Value* left = m_value->child(0);
+                    Value* right = m_value->child(1);
+
+                    // Replace the Jump added by splitForward so we can add our own control flow.
+                    before->replaceLastWithNew<Value>(m_proc, Nop, m_origin);
+
+                    Value* zero = before->appendNew<ConstDoubleValue>(m_proc, m_origin, 0.0);
+
+                    // Check integrality and int32 range for inputs. Use
+                    // roundTowardZeroInt32Double (frint32z) when available — it checks
+                    // both in a single instruction. Otherwise, fall back to
+                    // truncateDoubleToInt32 (fcvtzs) + IToD (scvtf) round-trip.
+                    auto emitInt32RoundTrip = [&](BasicBlock* block, Value* input) -> Value* {
+#if CPU(ARM64)
+                        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat()) {
+                            PatchpointValue* patchpoint = block->appendNew<PatchpointValue>(m_proc, Double, m_origin);
+                            patchpoint->append(input, ValueRep::SomeRegister);
+                            patchpoint->effects = Effects::none();
+                            patchpoint->setGenerator(
+                                [](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                                    jit.roundTowardZeroInt32Double(params[1].fpr(), params[0].fpr());
+                                });
+                            return patchpoint;
+                        }
+#endif
+                        PatchpointValue* patchpoint = block->appendNew<PatchpointValue>(m_proc, Int32, m_origin);
+                        patchpoint->append(input, ValueRep::SomeRegister);
+                        patchpoint->effects = Effects::none();
+                        patchpoint->setGenerator(
+                            [](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                                jit.truncateDoubleToInt32(params[1].fpr(), params[0].gpr());
+                            });
+                        return block->appendNew<Value>(m_proc, IToD, m_origin, patchpoint);
+                    };
+
+                    // Check left is a positive integer in int32 range.
+                    Value* leftRoundTrip = emitInt32RoundTrip(before, left);
+                    Value* leftIsInt = before->appendNew<Value>(m_proc, Equal, m_origin, left, leftRoundTrip);
+                    Value* leftIsPositive = before->appendNew<Value>(m_proc, GreaterThan, m_origin, left, zero);
+                    Value* leftOk = before->appendNew<Value>(m_proc, BitAnd, m_origin, leftIsInt, leftIsPositive);
+
+                    // Check right is a positive integer in int32 range.
+                    Value* rightRoundTrip = emitInt32RoundTrip(before, right);
+                    Value* rightIsInt = before->appendNew<Value>(m_proc, Equal, m_origin, right, rightRoundTrip);
+                    Value* rightIsPositive = before->appendNew<Value>(m_proc, GreaterThan, m_origin, right, zero);
+                    Value* rightOk = before->appendNew<Value>(m_proc, BitAnd, m_origin, rightIsInt, rightIsPositive);
+
+                    Value* bothOk = before->appendNew<Value>(m_proc, BitAnd, m_origin, leftOk, rightOk);
+                    before->setSuccessors(
+                        FrequentedBlock(fastCase, FrequencyClass::Normal),
+                        FrequentedBlock(slowCase, FrequencyClass::Rare));
+                    before->appendNew<Value>(m_proc, Branch, m_origin, bothOk);
+
+                    // Fast case: remainder = left - trunc(left / right) * right
+                    Value* divResult = fastCase->appendNew<Value>(m_proc, Div, m_origin, left, right);
+                    Value* divTrunc = fastCase->appendNew<Value>(m_proc, FTrunc, m_origin, divResult);
+                    Value* mulBack = fastCase->appendNew<Value>(m_proc, Mul, m_origin, divTrunc, right);
+                    Value* remainder = fastCase->appendNew<Value>(m_proc, Sub, m_origin, left, mulBack);
+
+                    // Validate: remainder >= 0 && remainder < right
+                    Value* remNonNeg = fastCase->appendNew<Value>(m_proc, GreaterEqual, m_origin, remainder, zero);
+                    Value* remLessThanRight = fastCase->appendNew<Value>(m_proc, LessThan, m_origin, remainder, right);
+                    Value* fastValid = fastCase->appendNew<Value>(m_proc, BitAnd, m_origin, remNonNeg, remLessThanRight);
+                    UpsilonValue* fastResult = fastCase->appendNew<UpsilonValue>(m_proc, m_origin, remainder);
+                    fastCase->setSuccessors(
+                        FrequentedBlock(m_block, FrequencyClass::Normal),
+                        FrequentedBlock(slowCase, FrequencyClass::Rare));
+                    fastCase->appendNew<Value>(m_proc, Branch, m_origin, fastValid);
+
+                    // Slow case: call fmod
+                    Value* functionAddress = slowCase->appendNew<ConstPtrValue>(m_proc, m_origin, tagCFunction<OperationPtrTag>(Math::fmodDouble));
+                    Value* slowResult = slowCase->appendNew<CCallValue>(m_proc, Double, m_origin,
                         Effects::none(),
                         functionAddress,
-                        m_value->child(0),
-                        m_value->child(1));
-                    m_value->replaceWithIdentity(result);
+                        left,
+                        right);
+                    UpsilonValue* slowUpsilon = slowCase->appendNew<UpsilonValue>(m_proc, m_origin, slowResult);
+                    slowCase->setSuccessors(FrequentedBlock(m_block));
+                    slowCase->appendNew<Value>(m_proc, Jump, m_origin);
+
+                    // Continuation: phi merging fast and slow results
+                    Value* phi = m_insertionSet.insert<Value>(m_index, Phi, Double, m_origin);
+                    fastResult->setPhi(phi);
+                    slowUpsilon->setPhi(phi);
+                    m_value->replaceWithIdentity(phi);
+                    before->updatePredecessorsAfter();
                     m_changed = true;
-                } else if (m_value->type() == Float) {
+                    break;
+                }
+
+                if (m_value->type() == Float) {
                     Value* numeratorAsDouble = m_insertionSet.insert<Value>(m_index, FloatToDouble, m_origin, m_value->child(0));
                     Value* denominatorAsDouble = m_insertionSet.insert<Value>(m_index, FloatToDouble, m_origin, m_value->child(1));
                     Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::fmodDouble));
@@ -178,29 +274,21 @@ private:
                     Value* result = m_insertionSet.insert<Value>(m_index, DoubleToFloat, m_origin, doubleMod);
                     m_value->replaceWithIdentity(result);
                     m_changed = true;
-                } else if constexpr (isARM_THUMB2()) {
-                    if (m_value->type() == Int64)
-                        replaceWithBinaryCall(Math::i64_rem_s);
-                    else
-                        replaceWithBinaryCall(Math::i32_rem_s);
-                } else if (isARM64()) {
+                    break;
+                }
+
+                if (isARM64()) {
                     Value* divResult = m_insertionSet.insert<Value>(m_index, chill(Div), m_origin, m_value->child(0), m_value->child(1));
                     Value* multipliedBack = m_insertionSet.insert<Value>(m_index, Mul, m_origin, divResult, m_value->child(1));
                     Value* result = m_insertionSet.insert<Value>(m_index, Sub, m_origin, m_value->child(0), multipliedBack);
                     m_value->replaceWithIdentity(result);
                     m_changed = true;
+                    break;
                 }
                 break;
             }
 
             case UMod: {
-                if constexpr (isARM_THUMB2()) {
-                    if (m_value->child(0)->type() == Int64)
-                        replaceWithBinaryCall(Math::i64_rem_u);
-                    else
-                        replaceWithBinaryCall(Math::i32_rem_u);
-                    break;
-                }
                 if (isARM64()) {
                     Value* divResult = m_insertionSet.insert<Value>(m_index, UDiv, m_origin, m_value->child(0), m_value->child(1));
                     Value* multipliedBack = m_insertionSet.insert<Value>(m_index, Mul, m_origin, divResult, m_value->child(1));
@@ -211,18 +299,9 @@ private:
                 break;
             }
 
-            case UDiv: {
-                if constexpr (!isARM_THUMB2())
-                    break;
-                if (m_value->type() == Int64)
-                    replaceWithBinaryCall(Math::i64_div_u);
-                else
-                    replaceWithBinaryCall(Math::i32_div_u);
-                break;
-            }
             case FMax:
             case FMin: {
-                if (isX86() || isARM_THUMB2()) {
+                if (isX86()) {
                     bool isMax = m_value->opcode() == FMax;
 
                     Value* a = m_value->child(0);
@@ -244,32 +323,32 @@ private:
                     before->setSuccessors(FrequentedBlock(isEqual), FrequentedBlock(notEqual));
 
                     Value* lessThanValue = notEqual->appendNew<Value>(m_proc, LessThan, m_origin, a, b);
-                    notEqual->appendNew<Value>(m_proc, Branch, m_origin, lessThanValue);
                     notEqual->setSuccessors(FrequentedBlock(isLessThan), FrequentedBlock(notLessThan));
+                    notEqual->appendNew<Value>(m_proc, Branch, m_origin, lessThanValue);
 
                     Value* greaterThanValue = notLessThan->appendNew<Value>(m_proc, GreaterThan, m_origin, a, b);
-                    notLessThan->appendNew<Value>(m_proc, Branch, m_origin, greaterThanValue);
                     notLessThan->setSuccessors(FrequentedBlock(isGreaterThan), FrequentedBlock(isNaN));
+                    notLessThan->appendNew<Value>(m_proc, Branch, m_origin, greaterThanValue);
 
                     UpsilonValue* isLessThanResult = isLessThan->appendNew<UpsilonValue>(
                         m_proc, m_origin, isMax ? b : a);
-                    isLessThan->appendNew<Value>(m_proc, Jump, m_origin);
                     isLessThan->setSuccessors(FrequentedBlock(m_block));
+                    isLessThan->appendNew<Value>(m_proc, Jump, m_origin);
 
                     UpsilonValue* isGreaterThanResult = isGreaterThan->appendNew<UpsilonValue>(
                         m_proc, m_origin, isMax ? a : b);
-                    isGreaterThan->appendNew<Value>(m_proc, Jump, m_origin);
                     isGreaterThan->setSuccessors(FrequentedBlock(m_block));
+                    isGreaterThan->appendNew<Value>(m_proc, Jump, m_origin);
 
                     UpsilonValue* isEqualResult = isEqual->appendNew<UpsilonValue>(
                         m_proc, m_origin, isEqual->appendNew<Value>(m_proc, isMax ? BitAnd : BitOr, m_origin, a, b));
-                    isEqual->appendNew<Value>(m_proc, Jump, m_origin);
                     isEqual->setSuccessors(FrequentedBlock(m_block));
+                    isEqual->appendNew<Value>(m_proc, Jump, m_origin);
 
                     UpsilonValue* isNaNResult = isNaN->appendNew<UpsilonValue>(
                         m_proc, m_origin, isNaN->appendNew<Value>(m_proc, Add, m_origin, a, b));
-                    isNaN->appendNew<Value>(m_proc, Jump, m_origin);
                     isNaN->setSuccessors(FrequentedBlock(m_block));
+                    isNaN->appendNew<Value>(m_proc, Jump, m_origin);
 
                     Value* phi = m_insertionSet.insert<Value>(
                         m_index, Phi, m_value->type(), m_origin);
@@ -288,15 +367,6 @@ private:
             case Div: {
                 if (m_value->isChill())
                     makeDivisionChill(Div);
-                else if (isARM_THUMB2() && (m_value->type() == Int64 || m_value->type() == Int32)) {
-                    BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index);
-                    before->replaceLastWithNew<Value>(m_proc, Nop, m_origin);
-                    Value* result = callDivModHelper(before, Div, m_value->child(0), m_value->child(1));
-                    before->appendNew<Value>(m_proc, Jump, m_origin);
-                    before->setSuccessors(FrequentedBlock(m_block));
-                    m_value->replaceWithIdentity(result);
-                    m_changed = true;
-                }
                 break;
             }
 
@@ -554,31 +624,11 @@ private:
                 if (isX86() && m_value->as<SIMDValue>()->simdLane() == SIMDLane::i64x2)
                     invertedComparisonByXor(VectorGreaterThan, m_value->child(0), m_value->child(1));
                 break;
-            case VectorShr:
-            case VectorShl: {
-                if constexpr (!isARM64())
-                    break;
-                SIMDValue* value = m_value->as<SIMDValue>();
-                SIMDLane lane = value->simdLane();
-
-                int32_t mask = (elementByteSize(lane) * CHAR_BIT) - 1;
-                Value* shiftAmount = m_insertionSet.insert<Value>(m_index, BitAnd, m_origin, value->child(1), m_insertionSet.insertIntConstant(m_index, m_origin, Int32, mask));
-                if (value->opcode() == VectorShr) {
-                    // ARM64 doesn't have a version of this instruction for right shift. Instead, if the input to
-                    // left shift is negative, it's a right shift by the absolute value of that amount.
-                    shiftAmount = m_insertionSet.insert<Value>(m_index, Neg, m_origin, shiftAmount);
-                }
-                Value* shiftVector = m_insertionSet.insert<SIMDValue>(m_index, m_origin, VectorSplat, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, shiftAmount);
-                Value* result = m_insertionSet.insert<SIMDValue>(m_index, m_origin, VectorShiftByVector, B3::V128, value->simdInfo(), value->child(0), shiftVector);
-                m_value->replaceWithIdentity(result);
-                m_changed = true;
-                break;
-            }
 
             case WasmStructGet: {
                 WasmStructGetValue* structGet = m_value->as<WasmStructGetValue>();
                 Value* structPtr = structGet->child(0);
-                SUPPRESS_UNCOUNTED_LOCAL const Wasm::StructType* structType = structGet->structType();
+                Ref structType = structGet->rtt();
                 Wasm::StructFieldCount fieldIndex = structGet->fieldIndex();
                 auto fieldType = structType->field(fieldIndex).type;
                 bool canTrap = structGet->kind().traps();
@@ -607,7 +657,7 @@ private:
                     ASSERT(fieldType.is<Wasm::Type>());
                     auto unpacked = fieldType.unpacked();
                     Type b3Type;
-                    switch (unpacked.kind) {
+                    switch (unpacked.kind()) {
                     case Wasm::TypeKind::I32:
                         b3Type = Int32;
                         break;
@@ -641,7 +691,7 @@ private:
                 WasmStructSetValue* structSet = m_value->as<WasmStructSetValue>();
                 Value* structPtr = structSet->child(0);
                 Value* value = structSet->child(1);
-                SUPPRESS_UNCOUNTED_LOCAL const Wasm::StructType* structType = structSet->structType();
+                Ref structType = structSet->rtt();
                 Wasm::StructFieldCount fieldIndex = structSet->fieldIndex();
                 auto fieldType = structType->field(fieldIndex).type;
                 bool canTrap = structSet->kind().traps();
@@ -676,109 +726,47 @@ private:
                 WasmStructNewValue* structNew = m_value->as<WasmStructNewValue>();
                 Value* instance = structNew->instance();
                 Value* structureID = structNew->structureID();
-                SUPPRESS_UNCOUNTED_LOCAL const Wasm::StructType* structType = structNew->structType();
+                Ref rtt = structNew->rtt();
                 uint32_t typeIndex = structNew->typeIndex();
                 int32_t allocatorsBaseOffset = structNew->allocatorsBaseOffset();
 
-                size_t allocationSize = JSWebAssemblyStruct::allocationSize(structType->instancePayloadSize());
+                size_t sizeInBytes = JSWebAssemblyStruct::allocationSize(rtt->instancePayloadSize());
 
                 static_assert(!(MarkedSpace::sizeStep & (MarkedSpace::sizeStep - 1)), "MarkedSpace::sizeStep must be a power of two.");
-                unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
-                size_t sizeClass = (allocationSize + MarkedSpace::sizeStep - 1) >> stepShift;
-                bool useFastPath = (sizeClass <= (MarkedSpace::largeCutoff >> stepShift));
+                size_t sizeClassIndex = MarkedSpace::sizeClassToIndex(sizeInBytes);
 
                 BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
                 BasicBlock* slowPath = m_blockInsertionSet.insertBefore(m_block);
 
                 UpsilonValue* fastUpsilon = nullptr;
-                if (useFastPath) {
+                if (sizeInBytes <= MarkedSpace::largeCutoff) {
                     BasicBlock* fastPathContinuation = m_blockInsertionSet.insertBefore(m_block);
 
                     // Replace the Jump added by splitForward with Nop so we can add our own control flow
                     before->replaceLastWithNew<Value>(m_proc, Nop, m_origin);
 
                     // The Instance constructor initializes all the allocators on creation, thus it is never nullptr.
-                    int32_t allocatorOffset = allocatorsBaseOffset + static_cast<int32_t>(sizeClass * sizeof(Allocator));
+                    int32_t allocatorOffset = allocatorsBaseOffset + static_cast<int32_t>(sizeClassIndex * sizeof(Allocator));
                     Value* allocator = before->appendNew<MemoryValue>(m_proc, Load, pointerType(), m_origin, instance, allocatorOffset);
 
-                    PatchpointValue* patchpoint = before->appendNew<PatchpointValue>(m_proc, pointerType(), m_origin);
-                    if (isARM64()) {
-                        // emitAllocateWithNonNullAllocator uses the scratch registers on ARM.
-                        patchpoint->clobber(RegisterSetBuilder::macroClobberedGPRs());
-                    }
-                    patchpoint->effects.terminal = true;
-                    patchpoint->appendSomeRegisterWithClobber(allocator);
-                    patchpoint->numGPScratchRegisters++;
-                    patchpoint->resultConstraints = { ValueRep::SomeEarlyRegister };
-
-                    patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
-                        AllowMacroScratchRegisterUsage allowScratch(jit);
-                        CCallHelpers::JumpList jumpToSlowPath;
-
-                        GPRReg allocatorGPR = params[1].gpr();
-
-                        // We use a patchpoint to emit the allocation path because whenever we mess with
-                        // allocation paths, we already reason about them at the machine code level. We know
-                        // exactly what instruction sequence we want. We're confident that no compiler
-                        // optimization could make this code better. So, it's best to have the code in
-                        // AssemblyHelpers::emitAllocate(). That way, the same optimized path is shared by
-                        // all of the compiler tiers.
-                        jit.emitAllocateWithNonNullAllocator(
-                            params[0].gpr(), JITAllocator::variableNonNull(), allocatorGPR, params.gpScratch(0),
-                            jumpToSlowPath, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
-
-                        CCallHelpers::Jump jumpToSuccess;
-                        if (!params.fallsThroughToSuccessor(0))
-                            jumpToSuccess = jit.jump();
-
-                        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
-
-                        params.addLatePath([=](CCallHelpers& jit) {
-                            jumpToSlowPath.linkTo(*labels[1], &jit);
-                            if (jumpToSuccess.isSet())
-                                jumpToSuccess.linkTo(*labels[0], &jit);
-                        });
-                    });
-
-                    before->setSuccessors({ fastPathContinuation, FrequencyClass::Normal }, { slowPath, FrequencyClass::Rare });
-
-                    // Header initialization happens in fastPathContinuation, not in fastPath
-                    Value* cell = patchpoint;
-                    Value* typeInfo = fastPathContinuation->appendNew<Const32Value>(m_proc, m_origin, JSWebAssemblyStruct::typeInfoBlob().blob());
-                    fastPathContinuation->appendNew<MemoryValue>(m_proc, Store, m_origin, structureID, cell, static_cast<int32_t>(JSCell::structureIDOffset()));
-                    fastPathContinuation->appendNew<MemoryValue>(m_proc, Store, m_origin, typeInfo, cell, static_cast<int32_t>(JSCell::indexingTypeAndMiscOffset()));
-                    fastPathContinuation->appendNew<MemoryValue>(m_proc, Store, m_origin, fastPathContinuation->appendIntConstant(m_proc, m_origin, pointerType(), 0), cell, static_cast<int32_t>(JSObject::butterflyOffset()));
+                    Value* cell = emitWasmGCAllocationPatchpoint(before, allocator, fastPathContinuation, slowPath, MarkedSpace::s_sizeClassForSizeStep[sizeClassIndex]);
+                    emitWasmGCCellInit(fastPathContinuation, cell, structureID, JSWebAssemblyStruct::typeInfoBlob().blob());
 
                     fastUpsilon = fastPathContinuation->appendNew<UpsilonValue>(m_proc, m_origin, cell);
+                    fastPathContinuation->setSuccessors(FrequentedBlock(m_block));
                     fastPathContinuation->appendNew<Value>(m_proc, Jump, m_origin);
-                    fastPathContinuation->setSuccessors(m_block);
                 } else {
                     // Just redirect the Jump added by splitForward to slowPath
                     before->setSuccessors(slowPath);
                 }
 
-                Value* slowFunctionAddress = slowPath->appendNew<ConstPtrValue>(m_proc, m_origin, tagCFunction<OperationPtrTag>(Wasm::operationWasmStructNewEmpty));
-                Value* typeIndexValue = slowPath->appendNew<Const32Value>(m_proc, m_origin, typeIndex);
-                Value* slowResult = slowPath->appendNew<CCallValue>(m_proc, Int64, m_origin, Effects::forCall(), slowFunctionAddress, instance, typeIndexValue);
-
-                // Null check for slow path result
-                Value* isNull = slowPath->appendNew<Value>(m_proc, Equal, m_origin, slowResult, slowPath->appendNew<Const64Value>(m_proc, m_origin, JSValue::encode(jsNull())));
-                CheckValue* check = slowPath->appendNew<CheckValue>(m_proc, Check, m_origin, isNull);
-                check->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams&) {
-                    jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(Wasm::ExceptionType::BadStructNew)), GPRInfo::argumentGPR1);
-                    jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(Wasm::Thunks::singleton().stub(Wasm::throwExceptionFromOMGThunkGenerator).code()));
-                });
-
-                UpsilonValue* slowUpsilon = slowPath->appendNew<UpsilonValue>(m_proc, m_origin, slowResult);
-                slowPath->appendNew<Value>(m_proc, Jump, m_origin);
-                slowPath->setSuccessors(m_block);
+                UpsilonValue* slowUpsilon = emitWasmGCSlowPath(slowPath, m_block, instance, typeIndex,
+                    tagCFunction<OperationPtrTag>(Wasm::operationWasmStructNewEmpty), Wasm::ExceptionType::BadStructNew);
 
                 Value* phi = m_insertionSet.insert<Value>(m_index, Phi, pointerType(), m_origin);
                 if (fastUpsilon)
                     fastUpsilon->setPhi(phi);
                 slowUpsilon->setPhi(phi);
-
-                m_insertionSet.insert<MemoryValue>(m_index, Store, m_origin, m_insertionSet.insert<Const32Value>(m_index, m_origin, structType->instancePayloadSize()), phi, static_cast<int32_t>(JSWebAssemblyStruct::offsetOfSize()));
 
                 m_value->replaceWithIdentity(phi);
                 before->updatePredecessorsAfter();
@@ -786,7 +774,259 @@ private:
                 break;
             }
 
-#if USE(JSVALUE64)
+            case WasmArrayLength: {
+                Value* arrayPtr = m_value->child(0);
+                bool canTrap = m_value->kind().traps();
+
+                B3::Kind loadKind = canTrap ? trapping(Load) : B3::Kind(Load);
+                auto* result = m_insertionSet.insert<MemoryValue>(m_index, loadKind, Int32, m_origin, arrayPtr, safeCast<int32_t>(JSWebAssemblyArray::offsetOfSize()));
+                result->setReadsMutability(Mutability::Immutable);
+                m_value->replaceWithIdentity(result);
+                m_changed = true;
+                break;
+            }
+
+            case WasmArrayGet: {
+                WasmArrayGetValue* arrayGet = m_value->as<WasmArrayGetValue>();
+                Value* arrayPtr = arrayGet->child(0);
+                Value* indexValue = arrayGet->child(1);
+                Ref arrayType = arrayGet->rtt();
+                auto elementType = arrayType->elementType().type;
+                HeapRange range = arrayGet->range();
+                Mutability mutability = arrayGet->mutability();
+
+                Value* indexedAddress = wasmArrayIndexedAddress(arrayPtr, elementType, indexValue);
+
+                Value* result;
+                if (elementType.is<Wasm::PackedType>()) {
+                    switch (elementType.as<Wasm::PackedType>()) {
+                    case Wasm::PackedType::I8:
+                        result = m_insertionSet.insert<MemoryValue>(m_index, Load8Z, Int32, m_origin, indexedAddress, 0, range);
+                        break;
+                    case Wasm::PackedType::I16:
+                        result = m_insertionSet.insert<MemoryValue>(m_index, Load16Z, Int32, m_origin, indexedAddress, 0, range);
+                        break;
+                    default:
+                        RELEASE_ASSERT_NOT_REACHED();
+                        result = nullptr;
+                        break;
+                    }
+                } else {
+                    ASSERT(elementType.is<Wasm::Type>());
+                    auto unpacked = elementType.unpacked();
+                    Type b3Type;
+                    switch (unpacked.kind()) {
+                    case Wasm::TypeKind::I32:
+                        b3Type = Int32;
+                        break;
+                    case Wasm::TypeKind::I64:
+                        b3Type = Int64;
+                        break;
+                    case Wasm::TypeKind::F32:
+                        b3Type = Float;
+                        break;
+                    case Wasm::TypeKind::F64:
+                        b3Type = Double;
+                        break;
+                    case Wasm::TypeKind::V128:
+                        b3Type = V128;
+                        break;
+                    default:
+                        // Reference types stored as Int64 (pointer-sized)
+                        b3Type = Int64;
+                        break;
+                    }
+                    result = m_insertionSet.insert<MemoryValue>(m_index, Load, b3Type, m_origin, indexedAddress, 0, range);
+                }
+
+                result->as<MemoryValue>()->setReadsMutability(mutability);
+                m_value->replaceWithIdentity(result);
+                m_changed = true;
+                break;
+            }
+
+            case WasmArraySet: {
+                WasmArraySetValue* arraySet = m_value->as<WasmArraySetValue>();
+                Value* arrayPtr = arraySet->child(0);
+                Value* indexValue = arraySet->child(1);
+                Value* value = arraySet->child(2);
+                Ref arrayType = arraySet->rtt();
+                auto elementType = arrayType->elementType().type;
+                HeapRange range = arraySet->range();
+
+                Value* indexedAddress = wasmArrayIndexedAddress(arrayPtr, elementType, indexValue);
+
+                if (elementType.is<Wasm::PackedType>()) {
+                    switch (elementType.as<Wasm::PackedType>()) {
+                    case Wasm::PackedType::I8:
+                        m_insertionSet.insert<MemoryValue>(m_index, Store8, m_origin, value, indexedAddress, 0, range);
+                        break;
+                    case Wasm::PackedType::I16:
+                        m_insertionSet.insert<MemoryValue>(m_index, Store16, m_origin, value, indexedAddress, 0, range);
+                        break;
+                    default:
+                        RELEASE_ASSERT_NOT_REACHED();
+                        break;
+                    }
+                } else
+                    m_insertionSet.insert<MemoryValue>(m_index, Store, m_origin, value, indexedAddress, 0, range);
+
+                m_value->replaceWithNop();
+                m_changed = true;
+                break;
+            }
+
+            case WasmArrayNew: {
+                WasmArrayNewValue* arrayNew = m_value->as<WasmArrayNewValue>();
+                Value* instance = arrayNew->instance();
+                Value* structureID = arrayNew->structureID();
+                Value* size = arrayNew->size();
+                Ref rtt = arrayNew->rtt();
+                uint32_t typeIndex = arrayNew->typeIndex();
+                int32_t allocatorsBaseOffset = arrayNew->allocatorsBaseOffset();
+
+                size_t elementSize = rtt->elementType().type.elementSize();
+                ASSERT(hasOneBitSet(elementSize));
+
+                static_assert(!(MarkedSpace::sizeStep & (MarkedSpace::sizeStep - 1)), "MarkedSpace::sizeStep must be a power of two.");
+                unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
+                size_t largeCutoffClass = MarkedSpace::largeCutoff >> stepShift;
+
+                // When the element count is known, so is the size class, so we can skip computing it
+                // at runtime and hand the allocator a constant cell size. A constant size needing a
+                // precise allocation has no fast path at all and always goes to the slow path.
+                bool isConstantSize = size->hasInt32();
+                std::optional<unsigned> constantSizeInBytes;
+                if (isConstantSize)
+                    constantSizeInBytes = JSWebAssemblyArray::allocationSizeInBytes(rtt->elementType(), static_cast<unsigned>(size->asInt32()));
+                bool hasFastPath = !isConstantSize || (constantSizeInBytes && constantSizeInBytes.value() <= MarkedSpace::largeCutoff);
+
+                BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
+                BasicBlock* slowPath = m_blockInsertionSet.insertBefore(m_block);
+                BasicBlock* fastAlloc = hasFastPath ? m_blockInsertionSet.insertBefore(m_block) : nullptr;
+                BasicBlock* fastInit = hasFastPath ? m_blockInsertionSet.insertBefore(m_block) : nullptr;
+                BasicBlock* mergeBlock = m_blockInsertionSet.insertBefore(m_block);
+
+                before->replaceLastWithNew<Value>(m_proc, Nop, m_origin);
+
+                Value* sizeClassIndex = nullptr;
+                if (isConstantSize) {
+                    if (hasFastPath)
+                        sizeClassIndex = before->appendNew<ConstPtrValue>(m_proc, m_origin, MarkedSpace::sizeClassToIndex(constantSizeInBytes.value()));
+                    before->setSuccessors(hasFastPath ? fastAlloc : slowPath);
+                    before->appendNew<Value>(m_proc, Jump, m_origin);
+                } else {
+                    auto* extSize = before->appendNew<Value>(m_proc, ZExt32, Int64, m_origin, size);
+                    auto* shifted = before->appendNew<Value>(m_proc, Shl, pointerType(), m_origin, extSize, before->appendNew<Const32Value>(m_proc, m_origin, getLSBSet(elementSize)));
+                    auto* sizeInBytes = before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, shifted, before->appendNew<ConstPtrValue>(m_proc, m_origin, JSWebAssemblyArray::allocationMetadataSize(elementSize)));
+
+                    auto* rounded = before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, sizeInBytes, before->appendNew<ConstPtrValue>(m_proc, m_origin, MarkedSpace::sizeStep - 1));
+                    sizeClassIndex = before->appendNew<Value>(m_proc, ZShr, pointerType(), m_origin, rounded, before->appendNew<Const32Value>(m_proc, m_origin, stepShift));
+
+                    auto* isLarge = before->appendNew<Value>(m_proc, Above, m_origin, sizeClassIndex, before->appendNew<ConstPtrValue>(m_proc, m_origin, largeCutoffClass));
+                    before->setSuccessors({ slowPath, FrequencyClass::Rare }, { fastAlloc, FrequencyClass::Normal });
+                    before->appendNew<Value>(m_proc, B3::Branch, m_origin, isLarge);
+                }
+
+                UpsilonValue* fastUpsilon = nullptr;
+                if (hasFastPath) {
+                    auto* sizeClassOffset = fastAlloc->appendNew<Value>(m_proc, Mul, pointerType(), m_origin, sizeClassIndex, fastAlloc->appendNew<ConstPtrValue>(m_proc, m_origin, sizeof(Allocator)));
+                    auto* allocatorBaseAddr = fastAlloc->appendNew<Value>(m_proc, Add, pointerType(), m_origin, instance, fastAlloc->appendNew<ConstPtrValue>(m_proc, m_origin, allocatorsBaseOffset));
+                    auto* allocatorAddr = fastAlloc->appendNew<Value>(m_proc, Add, pointerType(), m_origin, allocatorBaseAddr, sizeClassOffset);
+                    auto* allocator = fastAlloc->appendNew<MemoryValue>(m_proc, Load, pointerType(), m_origin, allocatorAddr, 0);
+                    allocator->setControlDependent(false);
+
+                    std::optional<unsigned> constantCellSize;
+                    if (isConstantSize)
+                        constantCellSize = MarkedSpace::s_sizeClassForSizeStep[MarkedSpace::sizeClassToIndex(constantSizeInBytes.value())];
+                    auto* cell = emitWasmGCAllocationPatchpoint(fastAlloc, allocator, fastInit, slowPath, constantCellSize);
+
+                    emitWasmGCCellInit(fastInit, cell, structureID, JSWebAssemblyArray::typeInfoBlob().blob());
+
+                    fastUpsilon = fastInit->appendNew<UpsilonValue>(m_proc, m_origin, cell);
+                    fastInit->setSuccessors(mergeBlock);
+                    fastInit->appendNew<Value>(m_proc, Jump, m_origin);
+                }
+
+                auto* slowUpsilon = emitWasmGCSlowPath(slowPath, mergeBlock, instance, typeIndex,
+                    tagCFunction<OperationPtrTag>(Wasm::operationWasmArrayNewEmpty), Wasm::ExceptionType::BadArrayNew, size);
+
+                auto* phi = mergeBlock->appendNew<Value>(m_proc, Phi, pointerType(), m_origin);
+                if (fastUpsilon)
+                    fastUpsilon->setPhi(phi);
+                slowUpsilon->setPhi(phi);
+                mergeBlock->appendNew<MemoryValue>(m_proc, Store, m_origin, size, phi, static_cast<int32_t>(JSWebAssemblyArray::offsetOfSize()));
+
+                if (arrayNew->hasInitValue()) {
+                    auto* initValue = arrayNew->initValue();
+                    Wasm::StorageType storageType = rtt->elementType().type;
+
+                    // Compute payloadBase directly in mergeBlock rather than using wasmArrayPayload(),
+                    // because wasmArrayPayload() inserts into m_block (the loop exit), but payloadBase
+                    // is used inside the loop body. m_block doesn't dominate the loop body.
+                    Value* payloadBase;
+                    if (JSWebAssemblyArray::needsV128AlignmentMask(storageType)) {
+                        payloadBase = mergeBlock->appendNew<Value>(m_proc, BitAnd, pointerType(), m_origin,
+                            mergeBlock->appendNew<Value>(m_proc, Add, pointerType(), m_origin,
+                                phi, mergeBlock->appendNew<ConstPtrValue>(m_proc, m_origin, JSWebAssemblyArray::offsetOfData() + 15)),
+                            mergeBlock->appendNew<ConstPtrValue>(m_proc, m_origin, static_cast<intptr_t>(-16)));
+                    } else {
+                        payloadBase = mergeBlock->appendNew<Value>(m_proc, Add, pointerType(), m_origin,
+                            phi, mergeBlock->appendNew<ConstPtrValue>(m_proc, m_origin, JSWebAssemblyArray::alignedOffsetOfData(elementSize)));
+                    }
+
+                    // Fill loop
+                    {
+                        BasicBlock* header = m_blockInsertionSet.insertBefore(m_block);
+                        BasicBlock* body = m_blockInsertionSet.insertBefore(m_block);
+
+                        auto* extSizeMerge = mergeBlock->appendNew<Value>(m_proc, ZExt32, Int64, m_origin, size);
+                        UpsilonValue* initialRemainingUpsilon = mergeBlock->appendNew<UpsilonValue>(m_proc, m_origin, extSizeMerge);
+                        mergeBlock->setSuccessors(header);
+                        mergeBlock->appendNew<Value>(m_proc, Jump, m_origin);
+
+                        // loop header
+                        auto* remaining = header->appendNew<Value>(m_proc, Phi, pointerType(), m_origin);
+                        initialRemainingUpsilon->setPhi(remaining);
+
+                        auto* isZero = header->appendNew<Value>(m_proc, Equal, m_origin, remaining, header->appendNew<ConstPtrValue>(m_proc, m_origin, 0));
+                        header->setSuccessors({ m_block, FrequencyClass::Normal }, { body, FrequencyClass::Normal });
+                        header->appendNew<Value>(m_proc, Branch, m_origin, isZero);
+
+                        // loop body
+                        auto* decremented = body->appendNew<Value>(m_proc, Sub, pointerType(), m_origin, remaining, body->appendNew<ConstPtrValue>(m_proc, m_origin, 1));
+
+                        auto* offset = body->appendNew<Value>(m_proc, Mul, pointerType(), m_origin, decremented, body->appendNew<ConstPtrValue>(m_proc, m_origin, elementSize));
+                        auto* addr = body->appendNew<Value>(m_proc, Add, pointerType(), m_origin, payloadBase, offset);
+
+                        if (storageType.is<Wasm::PackedType>()) {
+                            switch (storageType.as<Wasm::PackedType>()) {
+                            case Wasm::PackedType::I8:
+                                body->appendNew<MemoryValue>(m_proc, Store8, m_origin, initValue, addr);
+                                break;
+                            case Wasm::PackedType::I16:
+                                body->appendNew<MemoryValue>(m_proc, Store16, m_origin, initValue, addr);
+                                break;
+                            }
+                        } else
+                            body->appendNew<MemoryValue>(m_proc, Store, m_origin, initValue, addr);
+
+                        auto* loopUpsilon = body->appendNew<UpsilonValue>(m_proc, m_origin, decremented);
+                        loopUpsilon->setPhi(remaining);
+                        body->setSuccessors(header);
+                        body->appendNew<Value>(m_proc, Jump, m_origin);
+                    }
+                } else {
+                    mergeBlock->setSuccessors(m_block);
+                    mergeBlock->appendNew<Value>(m_proc, Jump, m_origin);
+                }
+
+                m_value->replaceWithIdentity(phi);
+                before->updatePredecessorsAfter();
+                m_changed = true;
+                break;
+            }
+
             case WasmRefCast:
             case WasmRefTest: {
                 WasmRefTypeCheckValue* typeCheck = m_value->as<WasmRefTypeCheckValue>();
@@ -798,7 +1038,6 @@ private:
                 m_changed = true;
                 break;
             }
-#endif
 
             default:
                 break;
@@ -819,30 +1058,6 @@ private:
         m_changed = true;
     }
 
-#if USE(JSVALUE32_64)
-    Value* callDivModHelper(BasicBlock* block, Opcode nonChillOpcode, Value* num, Value* den)
-    {
-        Type type = num->type();
-        Value* functionAddress;
-        if (nonChillOpcode == Div) {
-            if (m_value->type() == Int64)
-                functionAddress = block->appendNew<ConstPtrValue>(m_proc, m_origin, tagCFunction<OperationPtrTag>(Math::i64_div_s));
-            else
-                functionAddress = block->appendNew<ConstPtrValue>(m_proc, m_origin, tagCFunction<OperationPtrTag>(Math::i32_div_s));
-        } else {
-            if (m_value->type() == Int64)
-                functionAddress = block->appendNew<ConstPtrValue>(m_proc, m_origin, tagCFunction<OperationPtrTag>(Math::i64_rem_s));
-            else
-                functionAddress = block->appendNew<ConstPtrValue>(m_proc, m_origin, tagCFunction<OperationPtrTag>(Math::i32_rem_s));
-        }
-        return block->appendNew<CCallValue>(m_proc, type, m_origin, Effects::none(), functionAddress, num, den);
-    }
-#else
-    Value* callDivModHelper(BasicBlock*, Opcode, Value*, Value*)
-    {
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-#endif
     void makeDivisionChill(Opcode nonChillOpcode)
     {
         ASSERT(nonChillOpcode == Div || nonChillOpcode == Mod);
@@ -889,27 +1104,23 @@ private:
             FrequentedBlock(normalDivCase, FrequencyClass::Normal),
             FrequentedBlock(shadyDenCase, FrequencyClass::Rare));
 
-        Value* innerResult;
-        if (isARM_THUMB2() && (m_value->type() == Int64 || m_value->type() == Int32))
-            innerResult = callDivModHelper(normalDivCase, nonChillOpcode, num, den);
-        else
-            innerResult = normalDivCase->appendNew<Value>(m_proc, nonChillOpcode, m_origin, num, den);
+        Value* innerResult = normalDivCase->appendNew<Value>(m_proc, nonChillOpcode, m_origin, num, den);
         UpsilonValue* normalResult = normalDivCase->appendNew<UpsilonValue>(
             m_proc, m_origin,
             innerResult);
-        normalDivCase->appendNew<Value>(m_proc, Jump, m_origin);
         normalDivCase->setSuccessors(FrequentedBlock(m_block));
+        normalDivCase->appendNew<Value>(m_proc, Jump, m_origin);
 
-        shadyDenCase->appendNew<Value>(m_proc, Branch, m_origin, den);
         shadyDenCase->setSuccessors(
             FrequentedBlock(neg1DenCase, FrequencyClass::Normal),
             FrequentedBlock(zeroDenCase, FrequencyClass::Rare));
+        shadyDenCase->appendNew<Value>(m_proc, Branch, m_origin, den);
 
         UpsilonValue* zeroResult = zeroDenCase->appendNew<UpsilonValue>(
             m_proc, m_origin,
             zeroDenCase->appendIntConstant(m_proc, m_value, 0));
-        zeroDenCase->appendNew<Value>(m_proc, Jump, m_origin);
         zeroDenCase->setSuccessors(FrequentedBlock(m_block));
+        zeroDenCase->appendNew<Value>(m_proc, Jump, m_origin);
 
         int64_t badNumeratorConst = 0;
         switch (m_value->type().kind()) {
@@ -938,8 +1149,8 @@ private:
         Value* intMinResult = nonChillOpcode == Div ? badNumerator : intMinCase->appendIntConstant(m_proc, m_value, 0);
         UpsilonValue* intMinResultUpsilon = intMinCase->appendNew<UpsilonValue>(
             m_proc, m_origin, intMinResult);
-        intMinCase->appendNew<Value>(m_proc, Jump, m_origin);
         intMinCase->setSuccessors(FrequentedBlock(m_block));
+        intMinCase->appendNew<Value>(m_proc, Jump, m_origin);
 
         Value* phi = m_insertionSet.insert<Value>(
             m_index, Phi, m_value->type(), m_origin);
@@ -967,87 +1178,62 @@ private:
         const unsigned minCasesForTable = 7;
         const unsigned densityLimit = 4;
         if (end - start >= minCasesForTable) {
-            int64_t firstValue = cases[start].caseValue();
-            int64_t lastValue = cases[end - 1].caseValue();
-            if ((lastValue - firstValue + 1) / (end - start) < densityLimit) {
-                BasicBlock* switchBlock = m_blockInsertionSet.insertAfter(m_block);
-                Value* index = before->appendNew<Value>(
-                    m_proc, Sub, m_origin, child,
-                    before->appendIntConstant(m_proc, m_origin, type, firstValue));
-                before->appendNew<Value>(
-                    m_proc, Branch, m_origin,
-                    before->appendNew<Value>(
-                        m_proc, Above, m_origin, index,
-                        before->appendIntConstant(m_proc, m_origin, type, lastValue - firstValue)));
-                before->setSuccessors(fallThrough, FrequentedBlock(switchBlock));
-                
-                size_t tableSize = lastValue - firstValue + 1;
-                
-                if (index->type() != pointerType() && index->type() == Int32)
-                    index = switchBlock->appendNew<Value>(m_proc, ZExt32, m_origin, index);
-                
-                PatchpointValue* patchpoint =
-                    switchBlock->appendNew<PatchpointValue>(m_proc, Void, m_origin);
+            CheckedInt64 firstValue = cases[start].caseValue();
+            CheckedInt64 lastValue = cases[end - 1].caseValue();
+            CheckedInt64 range = lastValue - firstValue + 1;
+            if (!range.hasOverflowed() && static_cast<uint64_t>(range.value()) / (end - start) < densityLimit) {
+                size_t tableSize = static_cast<size_t>(range.value()) + 1; // + 1 for fallthrough
+                Value* index = before->appendNew<Value>(m_proc, Sub, m_origin, child, before->appendIntConstant(m_proc, m_origin, type, firstValue.value()));
+                Value* fallthroughIndex = before->appendIntConstant(m_proc, m_origin, type, tableSize - 1);
+                index = before->appendNew<B3::Value>(m_proc, Select, m_origin, before->appendNew<Value>(m_proc, AboveEqual, m_origin, index, fallthroughIndex), fallthroughIndex, index);
 
-                // Even though this loads from the jump table, the jump table is immutable. For the
-                // purpose of alias analysis, reading something immutable is like reading nothing.
+                if (index->type() != pointerType() && index->type() == Int32)
+                    index = before->appendNew<Value>(m_proc, ZExt32, m_origin, index);
+
+                using JumpTableCodePtr = CodePtr<JSSwitchPtrTag>;
+                JumpTableCodePtr* jumpTable = static_cast<JumpTableCodePtr*>(m_proc.addDataSection(sizeof(JumpTableCodePtr) * tableSize));
+                auto* tableValue = before->appendIntConstant(m_proc, m_origin, pointerType(), std::bit_cast<uintptr_t>(jumpTable));
+                auto* shifted = before->appendNew<Value>(m_proc, Shl, m_origin, index, before->appendIntConstant(m_proc, m_origin, Int32, getLSBSet(sizeof(JumpTableCodePtr))));
+                auto* address = before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, shifted, tableValue);
+                auto* load = before->appendNew<MemoryValue>(m_proc, Load, pointerType(), m_origin, address);
+                load->setControlDependent(false);
+                load->setReadsMutability(B3::Mutability::Immutable);
+                PatchpointValue* patchpoint = before->appendNew<PatchpointValue>(m_proc, Void, m_origin, cloningForbidden(Patchpoint));
+
                 patchpoint->effects = Effects();
                 patchpoint->effects.terminal = true;
-                
-                patchpoint->appendSomeRegister(index);
-                patchpoint->numGPScratchRegisters = 2;
-                // Technically, we don't have to clobber macro registers on X86_64. This is probably
-                // OK though.
-                patchpoint->clobber(RegisterSetBuilder::macroClobberedGPRs());
-                
+                patchpoint->appendSomeRegister(load);
+                // Technically, we don't have to clobber macro registers on X86_64. This is probably OK though.
+                patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+
+                before->clearSuccessors();
                 BitVector handledIndices;
                 for (unsigned i = start; i < end; ++i) {
                     FrequentedBlock block = cases[i].target();
                     int64_t value = cases[i].caseValue();
-                    switchBlock->appendSuccessor(block);
-                    size_t index = value - firstValue;
+                    before->appendSuccessor(block);
+                    size_t index = value - firstValue.value();
                     ASSERT(!handledIndices.get(index));
                     handledIndices.set(index);
                 }
-                
-                bool hasUnhandledIndex = false;
-                for (unsigned i = 0; i < tableSize; ++i) {
-                    if (!handledIndices.get(i)) {
-                        hasUnhandledIndex = true;
-                        break;
-                    }
-                }
-                
-                if (hasUnhandledIndex)
-                    switchBlock->appendSuccessor(fallThrough);
+                before->appendSuccessor(fallThrough);
 
                 patchpoint->setGenerator(
-                    [=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
+                    [=](CCallHelpers& jit, const StackmapGenerationParams& params) {
                         AllowMacroScratchRegisterUsage allowScratch(jit);
 
-                        using JumpTableCodePtr = CodePtr<JSSwitchPtrTag>;
-                        JumpTableCodePtr* jumpTable = static_cast<JumpTableCodePtr*>(
-                            params.proc().addDataSection(sizeof(JumpTableCodePtr) * tableSize));
-
-                        GPRReg index = params[0].gpr();
-                        GPRReg scratch = params.gpScratch(0);
-
-                        jit.move(CCallHelpers::TrustedImmPtr(jumpTable), scratch);
-                        jit.loadPtr(CCallHelpers::BaseIndex(scratch, index, CCallHelpers::ScalePtr), scratch);
-                        jit.farJump(scratch, JSSwitchPtrTag);
+                        GPRReg target = params[0].gpr();
+                        jit.farJump(target, JSSwitchPtrTag);
 
                         // These labels are guaranteed to be populated before either late paths or
                         // link tasks run.
                         Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
-                        
+
                         jit.addLinkTask(
                             [=] (LinkBuffer& linkBuffer) {
-                                if (hasUnhandledIndex) {
-                                    JumpTableCodePtr fallThrough = linkBuffer.locationOf<JSSwitchPtrTag>(*labels.last());
-                                    for (unsigned i = tableSize; i--;)
-                                        jumpTable[i] = fallThrough;
-                                }
-                                
+                                JumpTableCodePtr fallThrough = linkBuffer.locationOf<JSSwitchPtrTag>(*labels.last());
+                                for (unsigned i = 0; i < tableSize; ++i)
+                                    jumpTable[i] = fallThrough;
                                 unsigned labelIndex = 0;
                                 for (unsigned tableIndex : handledIndices)
                                     jumpTable[tableIndex] = linkBuffer.locationOf<JSSwitchPtrTag>(*labels[labelIndex++]);
@@ -1095,11 +1281,8 @@ private:
                 before = nextCheck;
             }
 
+            before->setSuccessors(allConsecutive ? cases[end - 1].target() : fallThrough);
             before->appendNew<Value>(m_proc, Jump, m_origin);
-            if (allConsecutive)
-                before->setSuccessors(cases[end - 1].target());
-            else
-                before->setSuccessors(fallThrough);
             return;
         }
 
@@ -1121,7 +1304,6 @@ private:
         recursivelyBuildSwitch(cases, fallThrough, medianIndex, true, end, right);
     }
 
-#if USE(JSVALUE64)
     Value* emitRefTestOrCast(WasmRefTypeCheckValue* typeCheck, BasicBlock* before, BasicBlock* continuation)
     {
         enum class CastKind { Cast, Test };
@@ -1133,7 +1315,7 @@ private:
         bool referenceIsNullable = typeCheck->referenceIsNullable();
         bool definitelyIsCellOrNull = typeCheck->definitelyIsCellOrNull();
         bool definitelyIsWasmGCObjectOrNull = typeCheck->definitelyIsWasmGCObjectOrNull();
-        SUPPRESS_UNCOUNTED_LOCAL const Wasm::RTT* targetRTT = typeCheck->targetRTT();
+        RefPtr targetRTT = typeCheck->targetRTT();
         bool isCast = typeCheck->kind().opcode() == WasmRefCast;
         CastKind castKind = isCast ? CastKind::Cast : CastKind::Test;
         bool shouldNegate = typeCheck->shouldNegate();
@@ -1145,8 +1327,8 @@ private:
         BasicBlock* trueBlock = nullptr;
         BasicBlock* falseBlock = nullptr;
         if (!isCast) {
-            trueBlock = m_proc.addBlock();
-            falseBlock = m_proc.addBlock();
+            trueBlock = m_proc.addBlock(m_block->frequency());
+            falseBlock = m_proc.addBlock(m_block->frequency());
         }
 
         auto castFailure = [=](CCallHelpers& jit, const StackmapGenerationParams&) {
@@ -1161,7 +1343,7 @@ private:
             if (allowNull)
                 return std::nullopt;
 
-            if (Wasm::typeIndexIsType(static_cast<Wasm::TypeIndex>(toHeapType)))
+            if (!Wasm::isTypeIndexHeapType(toHeapType))
                 return std::nullopt;
 
             if (targetRTT->kind() == Wasm::RTTKind::Function)
@@ -1200,26 +1382,15 @@ private:
             }
         };
 
-        auto decodeNonNullStructure = [&](Value* structureID) -> Value* {
-            return currentBlock->appendNew<Value>(m_proc, B3::BitOr, m_origin, currentBlock->appendNew<Value>(m_proc, ZExt32, m_origin, structureID), constant(Int64, structureIDBase()));
-        };
-
-        auto emitLoadRTTFromObject = [&](Value* reference) -> Value* {
-            Value* structureID = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int32, m_origin, reference, safeCast<int32_t>(JSCell::structureIDOffset()));
-            Value* structure = decodeNonNullStructure(structureID);
-            auto* rtt = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), m_origin, structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfRTT()));
-            rtt->setControlDependent(false);
-            return rtt;
-        };
-
         auto emitCheckOrBranchForCast = [&](CastKind kind, Value* condition, const auto& generator, BasicBlock* falseBlock) {
             if (kind == CastKind::Cast) {
                 CheckValue* check = currentBlock->appendNew<CheckValue>(m_proc, Check, m_origin, condition);
                 check->setGenerator(generator);
             } else {
                 ASSERT(falseBlock);
-                BasicBlock* success = m_proc.addBlock();
-                currentBlock->appendNewControlValue(m_proc, B3::Branch, m_origin, condition, FrequentedBlock(falseBlock), FrequentedBlock(success));
+                BasicBlock* success = m_proc.addBlock(m_block->frequency());
+                currentBlock->setSuccessors(FrequentedBlock(falseBlock), FrequentedBlock(success));
+                currentBlock->appendNew<Value>(m_proc, B3::Branch, m_origin, condition);
                 falseBlock->addPredecessor(currentBlock);
                 success->addPredecessor(currentBlock);
                 currentBlock = success;
@@ -1227,12 +1398,12 @@ private:
         };
 
         {
-            BasicBlock* nullCase = m_proc.addBlock();
-            BasicBlock* nonNullCase = m_proc.addBlock();
+            BasicBlock* nullCase = m_proc.addBlock(m_block->frequency());
+            BasicBlock* nonNullCase = m_proc.addBlock(m_block->frequency());
 
             Value* isNull = nullptr;
             if (referenceIsNullable) {
-                if (auto offset = castAccessOffset(); offset && offset.value() <= Wasm::maxAcceptableOffsetForNullReference()) {
+                if (auto offset = castAccessOffset(); Options::useWasmFaultSignalHandler() && offset && offset.value() <= Wasm::maxAcceptableOffsetForNullReference()) {
                     isNull = constant(Int32, 0);
                     canTrap = true;
                 } else
@@ -1240,7 +1411,8 @@ private:
             } else
                 isNull = constant(Int32, 0);
 
-            currentBlock->appendNewControlValue(m_proc, B3::Branch, m_origin, isNull, FrequentedBlock(nullCase), FrequentedBlock(nonNullCase));
+            currentBlock->setSuccessors(FrequentedBlock(nullCase), FrequentedBlock(nonNullCase));
+            currentBlock->appendNew<Value>(m_proc, B3::Branch, m_origin, isNull);
             nullCase->addPredecessor(currentBlock);
             nonNullCase->addPredecessor(currentBlock);
 
@@ -1250,7 +1422,8 @@ private:
                     B3::PatchpointValue* throwException = currentBlock->appendNew<B3::PatchpointValue>(m_proc, B3::Void, m_origin);
                     throwException->setGenerator(castFailure);
                 }
-                currentBlock->appendNewControlValue(m_proc, Jump, m_origin, continuation);
+                currentBlock->setSuccessors(continuation);
+                currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
                 continuation->addPredecessor(currentBlock);
             } else {
                 BasicBlock* nextBlock;
@@ -1258,14 +1431,15 @@ private:
                     nextBlock = falseBlock;
                 else
                     nextBlock = trueBlock;
-                currentBlock->appendNewControlValue(m_proc, Jump, m_origin, nextBlock);
+                currentBlock->setSuccessors(nextBlock);
+                currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
                 nextBlock->addPredecessor(currentBlock);
             }
 
             currentBlock = nonNullCase;
         }
 
-        if (Wasm::typeIndexIsType(static_cast<Wasm::TypeIndex>(toHeapType))) {
+        if (!Wasm::isTypeIndexHeapType(toHeapType)) {
             switch (static_cast<Wasm::TypeKind>(toHeapType)) {
             case Wasm::TypeKind::Funcref:
             case Wasm::TypeKind::Externref:
@@ -1282,22 +1456,24 @@ private:
                     B3::PatchpointValue* throwException = currentBlock->appendNew<B3::PatchpointValue>(m_proc, B3::Void, m_origin);
                     throwException->setGenerator(castFailure);
                 } else {
-                    currentBlock->appendNewControlValue(m_proc, Jump, m_origin, falseBlock);
+                    currentBlock->setSuccessors(falseBlock);
+                    currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
                     falseBlock->addPredecessor(currentBlock);
-                    currentBlock = m_proc.addBlock();
+                    currentBlock = m_proc.addBlock(m_block->frequency());
                 }
                 break;
             case Wasm::TypeKind::Eqref: {
                 auto nop = [] (CCallHelpers&, const B3::StackmapGenerationParams&) { };
                 BasicBlock* endBlock = isCast ? continuation : trueBlock;
-                BasicBlock* checkObject = m_proc.addBlock();
+                BasicBlock* checkObject = m_proc.addBlock(m_block->frequency());
 
                 // The eqref case chains together checks for i31, array, and struct with disjunctions so the control flow is more complicated, and requires some extra basic blocks to be created.
                 emitCheckOrBranchForCast(CastKind::Test, currentBlock->appendNew<Value>(m_proc, Below, m_origin, value, constant(Int64, JSValue::NumberTag)), nop, checkObject);
                 Value* untagged = currentBlock->appendNew<Value>(m_proc, Trunc, m_origin, value);
                 emitCheckOrBranchForCast(CastKind::Test, currentBlock->appendNew<Value>(m_proc, GreaterThan, m_origin, untagged, constant(Int32, Wasm::maxI31ref)), nop, checkObject);
                 emitCheckOrBranchForCast(CastKind::Test, currentBlock->appendNew<Value>(m_proc, LessThan, m_origin, untagged, constant(Int32, Wasm::minI31ref)), nop, checkObject);
-                currentBlock->appendNewControlValue(m_proc, Jump, m_origin, endBlock);
+                currentBlock->setSuccessors(endBlock);
+                currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
                 checkObject->addPredecessor(currentBlock);
                 endBlock->addPredecessor(currentBlock);
 
@@ -1327,7 +1503,10 @@ private:
 
                     emitCheckOrBranchForCast(castKind, currentBlock->appendNew<Value>(m_proc, NotEqual, m_origin, jsType, constant(Int32, JSType::WebAssemblyGCObjectType)), castFailure, falseBlock);
                 }
-                Value* rtt = emitLoadRTTFromObject(value);
+                Value* structureID = currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, value, safeCast<int32_t>(JSCell::structureIDOffset()));
+                Value* structure = currentBlock->appendNew<Value>(m_proc, ZExt32, m_origin, structureID);
+                structure = currentBlock->appendNew<Value>(m_proc, BitOr, m_origin, structure, currentBlock->appendIntConstant(m_proc, m_origin, Int64, structureIDBase()));
+                Value* rtt = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), m_origin, structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfRTT()));
                 auto* kind = currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, m_origin, rtt, safeCast<int32_t>(Wasm::RTT::offsetOfKind()));
                 kind->setControlDependent(false);
 
@@ -1339,8 +1518,8 @@ private:
             }
         } else {
             ([&] {
-                Value* structure = nullptr;
                 MemoryValue* rtt;
+                auto* targetRTTPointer = constant(Int64, std::bit_cast<uintptr_t>(targetRTT.get()));
                 if (targetRTT->kind() == Wasm::RTTKind::Function)
                     rtt = currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(B3::Load), Int64, m_origin, value, safeCast<int32_t>(WebAssemblyFunctionBase::offsetOfRTT()));
                 else {
@@ -1352,30 +1531,59 @@ private:
                         auto* jsType = currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load8Z), Int32, m_origin, value, safeCast<int32_t>(JSCell::typeInfoTypeOffset()));
                         emitCheckOrBranchForCast(castKind, currentBlock->appendNew<Value>(m_proc, NotEqual, m_origin, jsType, constant(Int32, JSType::WebAssemblyGCObjectType)), castFailure, falseBlock);
                     }
-                    Value* structureID = currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(B3::Load), Int32, m_origin, value, safeCast<int32_t>(JSCell::structureIDOffset()));
-                    structure = decodeNonNullStructure(structureID);
-                    if (targetRTT->displaySizeExcludingThis() < WebAssemblyGCStructure::inlinedTypeDisplaySize) {
-                        auto* targetRTTPointer = constant(Int64, std::bit_cast<uintptr_t>(targetRTT));
-                        auto* pointer = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int64, m_origin, structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfInlinedTypeDisplay() + targetRTT->displaySizeExcludingThis() * sizeof(RefPtr<const Wasm::RTT>)));
+
+                    if (typeCheck->hasTargetStructureID()) {
+                        if (targetRTT->isFinalType()) {
+                            Value* objectStructureID = currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, value, safeCast<int32_t>(JSCell::structureIDOffset()));
+                            Value* targetStructureID = typeCheck->targetStructureIDValue();
+                            emitCheckOrBranchForCast(castKind, currentBlock->appendNew<Value>(m_proc, NotEqual, m_origin, objectStructureID, targetStructureID), castFailure, falseBlock);
+                            return;
+                        }
+
+                        if (targetRTT->displaySizeExcludingThis() < WebAssemblyGCStructure::inlinedDisplaySize) {
+                            Value* objectStructureID = currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, value, safeCast<int32_t>(JSCell::structureIDOffset()));
+                            Value* structure = currentBlock->appendNew<Value>(m_proc, ZExt32, m_origin, objectStructureID);
+                            structure = currentBlock->appendNew<Value>(m_proc, BitOr, m_origin, structure, currentBlock->appendIntConstant(m_proc, m_origin, Int64, structureIDBase()));
+                            auto* ancestorStructureID = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int32, m_origin, structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfInlinedDisplay() + targetRTT->displaySizeExcludingThis() * sizeof(WriteBarrierStructureID)));
+                            ancestorStructureID->setReadsMutability(B3::Mutability::Immutable);
+                            ancestorStructureID->setControlDependent(false);
+
+                            Value* targetStructureID = typeCheck->targetStructureIDValue();
+                            emitCheckOrBranchForCast(castKind, currentBlock->appendNew<Value>(m_proc, NotEqual, m_origin, ancestorStructureID, targetStructureID), castFailure, falseBlock);
+                            return;
+                        }
+                    }
+
+                    {
+                        Value* structureID = currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, value, safeCast<int32_t>(JSCell::structureIDOffset()));
+                        Value* structure = currentBlock->appendNew<Value>(m_proc, ZExt32, m_origin, structureID);
+                        structure = currentBlock->appendNew<Value>(m_proc, BitOr, m_origin, structure, currentBlock->appendIntConstant(m_proc, m_origin, Int64, structureIDBase()));
+                        rtt = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), m_origin, structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfRTT()));
+                    }
+                    if (targetRTT->isFinalType()) {
+                        // If signature is final type and pointer equality failed, this value must not be a subtype.
+                        emitCheckOrBranchForCast(castKind, currentBlock->appendNew<Value>(m_proc, NotEqual, m_origin, rtt, targetRTTPointer), castFailure, falseBlock);
+                        return;
+                    }
+
+                    if (targetRTT->displaySizeExcludingThis() < Wasm::RTT::inlinedDisplaySize) {
+                        auto* pointer = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int64, m_origin, rtt, safeCast<int32_t>(Wasm::RTT::offsetOfData() + targetRTT->displaySizeExcludingThis() * sizeof(RefPtr<const Wasm::RTT>)));
                         pointer->setReadsMutability(B3::Mutability::Immutable);
                         pointer->setControlDependent(false);
 
                         emitCheckOrBranchForCast(castKind, currentBlock->appendNew<Value>(m_proc, NotEqual, m_origin, pointer, targetRTTPointer), castFailure, falseBlock);
                         return;
                     }
-
-                    rtt = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int64, m_origin, structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfRTT()));
-                    rtt->setControlDependent(false);
                 }
 
-                auto* targetRTTPointer = constant(Int64, std::bit_cast<uintptr_t>(targetRTT));
                 BasicBlock* equalBlock;
                 if (isCast)
                     equalBlock = continuation;
                 else
                     equalBlock = trueBlock;
-                BasicBlock* slowPath = m_proc.addBlock();
-                currentBlock->appendNewControlValue(m_proc, B3::Branch, m_origin, currentBlock->appendNew<Value>(m_proc, Equal, m_origin, rtt, targetRTTPointer), FrequentedBlock(equalBlock), FrequentedBlock(slowPath));
+                BasicBlock* slowPath = m_proc.addBlock(m_block->frequency());
+                currentBlock->setSuccessors(FrequentedBlock(equalBlock), FrequentedBlock(slowPath));
+                currentBlock->appendNew<Value>(m_proc, B3::Branch, m_origin, currentBlock->appendNew<Value>(m_proc, Equal, m_origin, rtt, targetRTTPointer));
                 equalBlock->addPredecessor(currentBlock);
                 slowPath->addPredecessor(currentBlock);
 
@@ -1384,10 +1592,12 @@ private:
                     // If signature is final type and pointer equality failed, this value must not be a subtype.
                     emitCheckOrBranchForCast(castKind, constant(Int32, 1), castFailure, falseBlock);
                 } else {
-                    auto* displaySizeExcludingThis = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int32, m_origin, rtt, safeCast<int32_t>(Wasm::RTT::offsetOfDisplaySizeExcludingThis()));
-                    displaySizeExcludingThis->setControlDependent(false);
+                    if (targetRTT->displaySizeExcludingThis() >= Wasm::RTT::inlinedDisplaySize) {
+                        auto* displaySizeExcludingThis = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int32, m_origin, rtt, safeCast<int32_t>(Wasm::RTT::offsetOfDisplaySizeExcludingThis()));
+                        displaySizeExcludingThis->setControlDependent(false);
 
-                    emitCheckOrBranchForCast(castKind, currentBlock->appendNew<Value>(m_proc, BelowEqual, m_origin, displaySizeExcludingThis, constant(Int32, targetRTT->displaySizeExcludingThis())), castFailure, falseBlock);
+                        emitCheckOrBranchForCast(castKind, currentBlock->appendNew<Value>(m_proc, BelowEqual, m_origin, displaySizeExcludingThis, constant(Int32, targetRTT->displaySizeExcludingThis())), castFailure, falseBlock);
+                    }
 
                     auto* pointer = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int64, m_origin, rtt, safeCast<int32_t>(Wasm::RTT::offsetOfData() + targetRTT->displaySizeExcludingThis() * sizeof(RefPtr<const Wasm::RTT>)));
                     pointer->setReadsMutability(B3::Mutability::Immutable);
@@ -1399,20 +1609,24 @@ private:
         }
 
         if (isCast) {
-            currentBlock->appendNewControlValue(m_proc, Jump, m_origin, continuation);
+            currentBlock->setSuccessors(continuation);
+            currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
             continuation->addPredecessor(currentBlock);
             currentBlock = continuation;
         } else {
-            currentBlock->appendNewControlValue(m_proc, Jump, m_origin, trueBlock);
+            currentBlock->setSuccessors(trueBlock);
+            currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
             trueBlock->addPredecessor(currentBlock);
             currentBlock = trueBlock;
             UpsilonValue* trueUpsilon = currentBlock->appendNew<UpsilonValue>(m_proc, m_origin, constant(B3::Int32, shouldNegate ? 0 : 1));
-            currentBlock->appendNewControlValue(m_proc, Jump, m_origin, continuation);
+            currentBlock->setSuccessors(continuation);
+            currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
             continuation->addPredecessor(currentBlock);
 
             currentBlock = falseBlock;
             UpsilonValue* falseUpsilon = currentBlock->appendNew<UpsilonValue>(m_proc, m_origin, constant(B3::Int32, shouldNegate ? 1 : 0));
-            currentBlock->appendNewControlValue(m_proc, Jump, m_origin, continuation);
+            currentBlock->setSuccessors(continuation);
+            currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
             continuation->addPredecessor(currentBlock);
 
             currentBlock = continuation;
@@ -1424,12 +1638,112 @@ private:
 
         return result;
     }
-#endif
+
+    PatchpointValue* emitWasmGCAllocationPatchpoint(BasicBlock* allocBlock, Value* allocator, BasicBlock* fastInit, BasicBlock* slowPath, std::optional<unsigned> constantCellSize = std::nullopt)
+    {
+        PatchpointValue* patchpoint = allocBlock->appendNew<PatchpointValue>(m_proc, pointerType(), m_origin);
+        if (isARM64()) {
+            // emitAllocateWithNonNullAllocator uses the scratch registers on ARM.
+            patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        }
+        patchpoint->effects.terminal = true;
+        patchpoint->appendSomeRegisterWithClobber(allocator);
+        patchpoint->numGPScratchRegisters++;
+        patchpoint->resultConstraints = { ValueRep::SomeEarlyRegister };
+
+        patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsageIf allowScratchIf(jit, isARM64());
+            CCallHelpers::JumpList jumpToSlowPath;
+
+            GPRReg allocatorGPR = params[1].gpr();
+
+            // We use a patchpoint to emit the allocation path because whenever we mess with
+            // allocation paths, we already reason about them at the machine code level. We know
+            // exactly what instruction sequence we want. We're confident that no compiler
+            // optimization could make this code better. So, it's best to have the code in
+            // AssemblyHelpers::emitAllocate(). That way, the same optimized path is shared by
+            // all of the compiler tiers.
+            jit.emitAllocateWithNonNullAllocator(
+                params[0].gpr(), constantCellSize ? JITAllocator::variableNonNullWithConstantCellSize(*constantCellSize) : JITAllocator::variableNonNull(),
+                allocatorGPR, params.gpScratch(0),
+                jumpToSlowPath, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+
+            CCallHelpers::Jump jumpToSuccess;
+            if (!params.fallsThroughToSuccessor(0))
+                jumpToSuccess = jit.jump();
+
+            Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+
+            params.addLatePath([=](CCallHelpers& jit) {
+                jumpToSlowPath.linkTo(*labels[1], &jit);
+                if (jumpToSuccess.isSet())
+                    jumpToSuccess.linkTo(*labels[0], &jit);
+            });
+        });
+
+        allocBlock->setSuccessors({ fastInit, FrequencyClass::Normal }, { slowPath, FrequencyClass::Rare });
+        return patchpoint;
+    }
+
+    void emitWasmGCCellInit(BasicBlock* initBlock, Value* cell, Value* structureID, uint32_t typeInfoBlob)
+    {
+        Value* typeInfo = initBlock->appendNew<Const32Value>(m_proc, m_origin, typeInfoBlob);
+        initBlock->appendNew<MemoryValue>(m_proc, Store, m_origin, structureID, cell, static_cast<int32_t>(JSCell::structureIDOffset()));
+        initBlock->appendNew<MemoryValue>(m_proc, Store, m_origin, typeInfo, cell, static_cast<int32_t>(JSCell::indexingTypeAndMiscOffset()));
+    }
+
+    template<typename SlowFunctionType>
+    UpsilonValue* emitWasmGCSlowPath(BasicBlock* slowPathBlock, BasicBlock* mergeBlock, Value* instance, uint32_t typeIndex,
+        SlowFunctionType slowFunction, Wasm::ExceptionType exnType, Value* extraArg = nullptr)
+    {
+        Value* slowFunctionAddress = slowPathBlock->appendNew<ConstPtrValue>(m_proc, m_origin, slowFunction);
+        Value* typeIndexValue = slowPathBlock->appendNew<Const32Value>(m_proc, m_origin, typeIndex);
+        Value* slowResult;
+        if (extraArg)
+            slowResult = slowPathBlock->appendNew<CCallValue>(m_proc, Int64, m_origin, Effects::forCall(), slowFunctionAddress, instance, typeIndexValue, extraArg);
+        else
+            slowResult = slowPathBlock->appendNew<CCallValue>(m_proc, Int64, m_origin, Effects::forCall(), slowFunctionAddress, instance, typeIndexValue);
+
+        Value* isNull = slowPathBlock->appendNew<Value>(m_proc, Equal, m_origin, slowResult, slowPathBlock->appendNew<Const64Value>(m_proc, m_origin, JSValue::encode(jsNull())));
+        CheckValue* check = slowPathBlock->appendNew<CheckValue>(m_proc, Check, m_origin, isNull);
+        check->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams&) {
+            jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(exnType)), GPRInfo::argumentGPR1);
+            jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(Wasm::Thunks::singleton().stub(Wasm::throwExceptionFromOMGThunkGenerator).code()));
+        });
+
+        UpsilonValue* slowUpsilon = slowPathBlock->appendNew<UpsilonValue>(m_proc, m_origin, slowResult);
+        slowPathBlock->setSuccessors(FrequentedBlock(mergeBlock));
+        slowPathBlock->appendNew<Value>(m_proc, Jump, m_origin);
+        return slowUpsilon;
+    }
+
+    Value* wasmArrayPayload(Value* arrayPtr, const Wasm::StorageType& elementType)
+    {
+        size_t elementSize = elementType.elementSize();
+        if (JSWebAssemblyArray::needsV128AlignmentMask(elementType)) {
+            return m_insertionSet.insert<Value>(m_index, BitAnd, pointerType(), m_origin,
+                m_insertionSet.insert<Value>(m_index, Add, pointerType(), m_origin,
+                    arrayPtr, m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, JSWebAssemblyArray::offsetOfData() + 15)),
+                m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, static_cast<intptr_t>(-16)));
+        }
+        return m_insertionSet.insert<Value>(m_index, Add, pointerType(), m_origin, arrayPtr, m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, JSWebAssemblyArray::alignedOffsetOfData(elementSize)));
+    }
+
+    Value* wasmArrayIndexedAddress(Value* arrayPtr, const Wasm::StorageType& elementType, Value* indexValue)
+    {
+        auto* payloadBase = wasmArrayPayload(arrayPtr, elementType);
+        size_t elementSize = elementType.elementSize();
+        Value* extIndex = m_insertionSet.insert<Value>(m_index, ZExt32, Int64, m_origin, indexValue);
+        return m_insertionSet.insert<Value>(m_index, Add, pointerType(), m_origin,
+            payloadBase,
+            m_insertionSet.insert<Value>(m_index, Mul, pointerType(), m_origin,
+                extIndex, m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, elementSize)));
+    }
 
     Procedure& m_proc;
     BlockInsertionSet m_blockInsertionSet;
     InsertionSet m_insertionSet;
-    UseCounts m_useCounts;
+    UseCountsWithoutUsingInstructions m_useCounts;
     BasicBlock* m_block;
     unsigned m_index;
     Value* m_value;

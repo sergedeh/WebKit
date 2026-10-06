@@ -45,8 +45,13 @@ namespace LLInt {
 // Gives you a PC that you can tell the interpreter to go to, which when advanced
 // between 1 and 9 slots will give you an "instruction" that threads to the
 // interpreter's exception handler.
-JSInstruction* returnToThrow(VM&);
+JSInstruction* NODELETE returnToThrow(VM&);
 
+// A slow path reports a pending exception to its LLInt caller by returning this
+// in the second result register in place of a meaningful second result.
+// restoreStateAfterCCall() tests for it and branches to the throw trampoline
+// instead of rebuilding PC.
+inline void* exceptionSignal() { return std::bit_cast<void*>(static_cast<uintptr_t>(-1)); }
 // Use this when you're throwing to a call thunk.
 MacroAssemblerCodeRef<ExceptionHandlerPtrTag> callToThrow(VM&);
 

@@ -36,16 +36,20 @@ class RenderSVGImage final : public RenderSVGModelObject {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGImage);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGImage);
 public:
-    RenderSVGImage(SVGImageElement&, RenderStyle&&);
+    RenderSVGImage(SVGImageElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGImage();
 
-    SVGImageElement& imageElement() const;
-    Ref<SVGImageElement> protectedImageElement() const;
+    SVGImageElement& NODELETE imageElement() const;
 
     RenderImageResource& imageResource() { return m_imageResource; }
     const RenderImageResource& imageResource() const { return m_imageResource; }
 
     bool updateImageViewport();
+    IntSize imageContainerSize() const;
+
+    bool isObjectBoundingBoxValid() const { return !m_objectBoundingBox.isEmpty(); }
+
+    bool objectBoundingBoxIsEmpty() const final { return !isObjectBoundingBoxValid(); }
 
 private:
     void willBeDestroyed() final;
@@ -67,7 +71,7 @@ private:
     void paint(PaintInfo&, const LayoutPoint&) final;
 
     void paintForeground(PaintInfo&, const LayoutPoint&);
-    ImageDrawResult paintIntoRect(PaintInfo&, const FloatRect&, const FloatRect&);
+    ImageDrawResult paintIntoRect(PaintInfo&, const FloatRect&, const FloatRect& sourceRect, FloatSize imageRenderingSize);
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) final;
 
@@ -77,7 +81,7 @@ private:
 
     bool needsHasSVGTransformFlags() const final;
 
-    void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const final;
+    void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const final;
 
     CachedImage* cachedImage() const { return imageResource().cachedImage(); }
 

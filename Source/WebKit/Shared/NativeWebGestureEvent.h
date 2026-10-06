@@ -35,14 +35,42 @@ OBJC_CLASS NSView;
 namespace WebKit {
 
 class NativeWebGestureEvent final : public WebGestureEvent {
+    WTF_MAKE_TZONE_ALLOCATED(NativeWebGestureEvent);
 public:
-    static std::optional<NativeWebGestureEvent> create(NSEvent *, NSView *);
+    // Distinguishes magnify from rotate without needing a backing NSEvent.
+    enum class Kind : uint8_t { Magnification, Rotation };
 
+    struct Init {
+        Kind kind;
+        Phase phase;
+        WebCore::FloatPoint locationInWindow;
+        float gestureScale { 0 };
+        float gestureRotation { 0 };
+        MonotonicTime timestamp;
+        bool allowsNativeZoom { true };
+        WebEventInputSource inputSource { WebEventInputSource::UserDriven };
+    };
+
+    // Null when the gesture phase does not map to a WebEventType.
+    static RefPtr<NativeWebGestureEvent> create(NSEvent *, NSView *);
+    static RefPtr<NativeWebGestureEvent> create(const Init&, NSView *);
+
+    bool allowsNativeZoom() const { return m_allowsNativeZoom; }
+    Kind kind() const { return m_kind; }
     NSEvent *nativeEvent() const { return m_nativeEvent.get(); }
 
+    // position() is rewritten into the target frame's coordinate space when the event is
+    // re-sent to a remote frame's process, so keep the original for the native zoom fallback.
+    WebCore::IntPoint positionInRootView() const { return m_positionInRootView; }
+
 private:
-    explicit NativeWebGestureEvent(WebEventType, NSEvent *, NSView *);
-    RetainPtr<NSEvent> m_nativeEvent;
+    static RefPtr<NativeWebGestureEvent> create(const Init&, NSView *, NSEvent *);
+    NativeWebGestureEvent(WebEventType, const Init&, NSView *, NSEvent *);
+
+    bool m_allowsNativeZoom { true };
+    Kind m_kind;
+    const RetainPtr<NSEvent> m_nativeEvent;
+    WebCore::IntPoint m_positionInRootView;
 };
 
 } // namespace WebKit

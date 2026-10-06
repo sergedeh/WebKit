@@ -31,13 +31,38 @@
 #include "CachedScript.h"
 #include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentPage.h"
 #include "DocumentResourceLoader.h"
+#include "FetchOptions.h"
 #include "FrameLoader.h"
+#include "HTTPHeaderMap.h"
 #include "InspectorResourceType.h"
+#include "InspectorThreadableLoaderClient.h"
+#include "InstrumentingAgents.h"
+#include "JSExecState.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "MIMETypeRegistry.h"
 #include "MemoryCache.h"
+#include "NetworkLoadMetrics.h"
+#include "Page.h"
+#include "ResourceLoaderOptions.h"
+#include "ResourceRequest.h"
+#include "ScriptExecutionContext.h"
+#include "ScriptableDocumentParser.h"
 #include "SharedBuffer.h"
+#include "ThreadableLoader.h"
+#include <JavaScriptCore/AsyncStackTrace.h>
+#include <JavaScriptCore/ContentSearchUtilities.h>
+#include <JavaScriptCore/InspectorProtocolObjects.h>
+#include <JavaScriptCore/ScriptCallStack.h>
+#include <JavaScriptCore/ScriptCallStackFactory.h>
+#include <limits>
+#include <ranges>
+#include <wtf/MainThread.h>
+#include <wtf/RefPtr.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/URL.h>
 
 namespace Inspector {
 
@@ -111,8 +136,8 @@ Vector<CachedResource*> cachedResourcesForFrame(LocalFrame* frame)
 {
     Vector<CachedResource*> result;
 
-    for (auto& cachedResourceHandle : frame->document()->cachedResourceLoader().allCachedResources().values()) {
-        auto* cachedResource = cachedResourceHandle.get();
+    for (auto& cachedResourceHandle : protect(frame->document())->cachedResourceLoader().allCachedResources().values()) {
+        RefPtr cachedResource = cachedResourceHandle;
         if (cachedResource->resourceRequest().hiddenFromInspector())
             continue;
 
@@ -138,10 +163,10 @@ Vector<CachedResource*> cachedResourcesForFrame(LocalFrame* frame)
 
 bool mainResourceContent(LocalFrame* frame, bool withBase64Encode, String* result)
 {
-    RefPtr<FragmentedSharedBuffer> buffer = frame->loader().documentLoader()->mainResourceData();
+    RefPtr<FragmentedSharedBuffer> buffer = protect(frame->loader().documentLoader())->mainResourceData();
     if (!buffer)
         return false;
-    return dataContent(buffer->makeContiguous()->span(), frame->document()->encoding(), withBase64Encode, result);
+    return dataContent(buffer->makeContiguous()->span(), protect(frame->document())->encoding(), withBase64Encode, result);
 }
 
 void resourceContent(Inspector::Protocol::ErrorString& errorString, LocalFrame* frame, const URL& url, String* result, bool* base64Encoded)
@@ -158,12 +183,57 @@ void resourceContent(Inspector::Protocol::ErrorString& errorString, LocalFrame* 
     }
 
     if (!success) {
-        if (auto* resource = cachedResource(frame, url))
+        if (RefPtr resource = cachedResource(frame, url))
             success = cachedResourceContent(*resource, result, base64Encoded);
     }
 
     if (!success)
         errorString = "Missing resource for given url"_s;
+}
+
+Ref<JSON::ArrayOf<Inspector::Protocol::Page::FrameResource>> buildResourceObjectsForFrame(LocalFrame& frame)
+{
+    auto resources = JSON::ArrayOf<Inspector::Protocol::Page::FrameResource>::create();
+    for (auto& resource : buildResourceDataForFrame(frame))
+        resources->addItem(buildResourceObject(resource));
+    return resources;
+}
+
+Vector<Inspector::FrameResource> buildResourceDataForFrame(LocalFrame& frame)
+{
+    Vector<Inspector::FrameResource> resources;
+    for (RefPtr cachedResource : cachedResourcesForFrame(&frame)) {
+        Inspector::FrameResource resource;
+        resource.url = cachedResource->url().string();
+        resource.type = inspectorResourceType(*cachedResource);
+        resource.mimeType = cachedResource->response().mimeType();
+        if (cachedResource->wasCanceled())
+            resource.canceled = true;
+        else if (cachedResource->status() == CachedResource::LoadError || cachedResource->status() == CachedResource::DecodeError)
+            resource.failed = true;
+        resource.sourceMapURL = sourceMapURLForResource(cachedResource.get());
+        resource.targetId = cachedResource->resourceRequest().initiatorIdentifier();
+        resources.append(WTF::move(resource));
+    }
+    return resources;
+}
+
+Ref<Inspector::Protocol::Page::FrameResource> buildResourceObject(const Inspector::FrameResource& resource)
+{
+    auto resourceObject = Inspector::Protocol::Page::FrameResource::create()
+        .setUrl(resource.url)
+        .setType(resourceTypeToProtocol(resource.type))
+        .setMimeType(resource.mimeType)
+        .release();
+    if (resource.canceled)
+        resourceObject->setCanceled(true);
+    else if (resource.failed)
+        resourceObject->setFailed(true);
+    if (!resource.sourceMapURL.isEmpty())
+        resourceObject->setSourceMapURL(resource.sourceMapURL);
+    if (!resource.targetId.isEmpty())
+        resourceObject->setTargetId(resource.targetId);
+    return resourceObject;
 }
 
 String sourceMapURLForResource(CachedResource* cachedResource)
@@ -191,15 +261,18 @@ String sourceMapURLForResource(CachedResource* cachedResource)
     return String();
 }
 
-CachedResource* cachedResource(const LocalFrame* frame, const URL& url)
+RefPtr<CachedResource> cachedResource(const LocalFrame* frame, const URL& url)
 {
     if (url.isNull())
         return nullptr;
 
-    CachedResource* cachedResource = frame->document()->cachedResourceLoader().cachedResource(MemoryCache::removeFragmentIdentifierIfNeeded(url));
+    RefPtr cachedResource = protect(protect(frame->document())->cachedResourceLoader())->cachedResource(MemoryCache::removeFragmentIdentifierIfNeeded(url));
     if (!cachedResource) {
         ResourceRequest request(URL { url });
-        request.setDomainForCachePartition(frame->document()->domainForCachePartition());
+        if (RefPtr document = frame->document()) {
+            request.setShouldBlockThirdPartyStorage(document->shouldBlockThirdPartyStorage());
+            request.setFirstPartyForCookies(document->firstPartyForCookies());
+        }
         cachedResource = MemoryCache::singleton().resourceForRequest(request, frame->page()->sessionID());
     }
 
@@ -220,6 +293,7 @@ Inspector::ResourceType inspectorResourceType(CachedResource::Type type)
     case CachedResource::Type::CSSStyleSheet:
         return ResourceType::StyleSheet;
     case CachedResource::Type::JSON: // FIXME: Add ResourceType::JSON.
+    case CachedResource::Type::Text:
     case CachedResource::Type::Script:
         return ResourceType::Script;
     case CachedResource::Type::MainResource:
@@ -273,7 +347,7 @@ LocalFrame* findFrameWithSecurityOrigin(Page& page, const String& originRawStrin
         SUPPRESS_UNCOUNTED_LOCAL auto* localFrame = dynamicDowncast<LocalFrame>(frame);
         if (!localFrame)
             continue;
-        if (localFrame->document()->securityOrigin().toRawString() == originRawString)
+        if (protect(protect(localFrame->document())->securityOrigin())->toRawString() == originRawString)
             return localFrame;
     }
     return nullptr;
@@ -343,10 +417,16 @@ bool cachedResourceContent(CachedResource& resource, String* result, bool* base6
     switch (resource.type()) {
     case CachedResource::Type::CSSStyleSheet:
         *base64Encoded = false;
-        *result = downcast<CachedCSSStyleSheet>(resource).sheetText();
-        // The above can return a null String if the MIME type is invalid.
-        return !result->isNull();
+
+        if (auto sheetText = downcast<CachedCSSStyleSheet>(resource).sheetText()) {
+            *result = WTF::move(*sheetText);
+            return true;
+        }
+
+        *result = nullString();
+        return false;
     case CachedResource::Type::JSON:
+    case CachedResource::Type::Text:
     case CachedResource::Type::Script:
         *base64Encoded = false;
         *result = downcast<CachedScript>(resource).script().toString();
@@ -367,6 +447,275 @@ bool cachedResourceContent(CachedResource& resource, String* result, bool* base6
         *result = base64EncodeToString(buffer->makeContiguous()->span());
         return true;
     }
+}
+
+void loadResource(ScriptExecutionContext& context, const String& urlString, LoadResourceCompletionHandler&& completionHandler)
+{
+    // Backs Network.loadResource: load a URL in a document's context on behalf of the inspector,
+    // bypassing cross-origin checks (e.g. to fetch a source map).
+    URL url = context.encodingParseURL(urlString);
+    ResourceRequest request(WTF::move(url));
+    request.setHTTPMethod("GET"_s);
+    request.setHiddenFromInspector(true);
+
+    ThreadableLoaderOptions options;
+    options.sendLoadCallbacks = SendCallbackPolicy::SendCallbacks; // So InspectorNetworkAgent's willSendRequest/loadingFinished hooks still fire for this hidden request, letting it track and untrack it.
+    options.defersLoadingPolicy = DefersLoadingPolicy::DisallowDefersLoading; // So the request is never deferred.
+    options.mode = FetchOptions::Mode::NoCors;
+    options.credentials = FetchOptions::Credentials::SameOrigin;
+    options.contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::DoNotEnforce;
+
+    Ref client = InspectorThreadableLoaderClient::create(WTF::move(completionHandler));
+    RefPtr loader = ThreadableLoader::create(context, client.get(), WTF::move(request), options);
+    if (!loader) {
+        client->failWithMessage("Could not load requested resource."_s);
+        return;
+    }
+
+    // If the load already finished synchronously the client has disposed itself; only retain the
+    // loader while the load is still in flight.
+    if (client->isActive())
+        client->setLoader(WTF::move(loader));
+}
+
+Ref<Inspector::Protocol::Network::Headers> buildObjectForHeaders(const HTTPHeaderMap& headers)
+{
+    auto headersValue = Inspector::Protocol::Network::Headers::create().release();
+    auto headersObject = headersValue->asObject();
+    for (const auto& header : headers)
+        headersObject->setString(header.key, header.value);
+    return headersValue;
+}
+
+static Inspector::Protocol::Network::Metrics::Priority NODELETE toProtocol(NetworkLoadPriority priority)
+{
+    switch (priority) {
+    case NetworkLoadPriority::Low:
+        return Inspector::Protocol::Network::Metrics::Priority::Low;
+    case NetworkLoadPriority::Medium:
+        return Inspector::Protocol::Network::Metrics::Priority::Medium;
+    case NetworkLoadPriority::High:
+        return Inspector::Protocol::Network::Metrics::Priority::High;
+    case NetworkLoadPriority::Unknown:
+        break;
+    }
+
+    ASSERT_NOT_REACHED();
+    return Inspector::Protocol::Network::Metrics::Priority::Medium;
+}
+
+Ref<Inspector::Protocol::Network::Metrics> buildObjectForMetrics(const NetworkLoadMetrics& networkLoadMetrics)
+{
+    auto metrics = Inspector::Protocol::Network::Metrics::create().release();
+
+    if (!networkLoadMetrics.protocol.isNull())
+        metrics->setProtocol(networkLoadMetrics.protocol);
+
+    // The additional metrics are only captured while an inspector is attached
+    // (InspectorInstrumentation::firstFrontendCreated enables it in the NetworkProcess).
+    if (RefPtr additionalMetrics = networkLoadMetrics.additionalNetworkLoadMetricsForWebInspector) {
+        if (additionalMetrics->priority != NetworkLoadPriority::Unknown)
+            metrics->setPriority(toProtocol(additionalMetrics->priority));
+        if (!additionalMetrics->remoteAddress.isNull())
+            metrics->setRemoteAddress(additionalMetrics->remoteAddress);
+        if (!additionalMetrics->connectionIdentifier.isNull())
+            metrics->setConnectionIdentifier(additionalMetrics->connectionIdentifier);
+        if (!additionalMetrics->requestHeaders.isEmpty())
+            metrics->setRequestHeaders(buildObjectForHeaders(additionalMetrics->requestHeaders));
+        if (additionalMetrics->requestHeaderBytesSent != std::numeric_limits<uint64_t>::max())
+            metrics->setRequestHeaderBytesSent(additionalMetrics->requestHeaderBytesSent);
+        if (additionalMetrics->requestBodyBytesSent != std::numeric_limits<uint64_t>::max())
+            metrics->setRequestBodyBytesSent(additionalMetrics->requestBodyBytesSent);
+        if (additionalMetrics->responseHeaderBytesReceived != std::numeric_limits<uint64_t>::max())
+            metrics->setResponseHeaderBytesReceived(additionalMetrics->responseHeaderBytesReceived);
+        metrics->setIsProxyConnection(additionalMetrics->isProxyConnection);
+    }
+
+    if (networkLoadMetrics.responseBodyBytesReceived != std::numeric_limits<uint64_t>::max())
+        metrics->setResponseBodyBytesReceived(networkLoadMetrics.responseBodyBytesReceived);
+    if (networkLoadMetrics.responseBodyDecodedSize != std::numeric_limits<uint64_t>::max())
+        metrics->setResponseBodyDecodedSize(networkLoadMetrics.responseBodyDecodedSize);
+
+    auto connectionPayload = Inspector::Protocol::Security::Connection::create().release();
+
+    if (RefPtr additionalMetrics = networkLoadMetrics.additionalNetworkLoadMetricsForWebInspector) {
+        if (!additionalMetrics->tlsProtocol.isEmpty())
+            connectionPayload->setProtocol(additionalMetrics->tlsProtocol);
+        if (!additionalMetrics->tlsCipher.isEmpty())
+            connectionPayload->setCipher(additionalMetrics->tlsCipher);
+    }
+
+    metrics->setSecurityConnection(WTF::move(connectionPayload));
+
+    return metrics;
+}
+
+Ref<Inspector::Protocol::Network::ResourceTiming> buildObjectForTiming(const NetworkLoadMetrics& timing, MonotonicTime loadStartTime, NOESCAPE const Function<double(MonotonicTime)>& monotonicToProtocolSeconds)
+{
+    auto millisecondsSinceFetchStart = [&](const MonotonicTime& time) {
+        if (!time)
+            return 0.0;
+        return (time - timing.fetchStart).milliseconds();
+    };
+
+    return Inspector::Protocol::Network::ResourceTiming::create()
+        .setStartTime(monotonicToProtocolSeconds(loadStartTime))
+        .setRedirectStart(monotonicToProtocolSeconds(timing.redirectStart))
+        .setRedirectEnd(monotonicToProtocolSeconds(timing.fetchStart))
+        .setFetchStart(monotonicToProtocolSeconds(timing.fetchStart))
+        .setDomainLookupStart(millisecondsSinceFetchStart(timing.domainLookupStart))
+        .setDomainLookupEnd(millisecondsSinceFetchStart(timing.domainLookupEnd))
+        .setConnectStart(millisecondsSinceFetchStart(timing.connectStart))
+        .setConnectEnd(millisecondsSinceFetchStart(timing.connectEnd))
+        .setSecureConnectionStart(millisecondsSinceFetchStart(timing.secureConnectionStart))
+        .setRequestStart(millisecondsSinceFetchStart(timing.requestStart))
+        .setResponseStart(millisecondsSinceFetchStart(timing.responseStart))
+        .setResponseEnd(millisecondsSinceFetchStart(timing.responseEnd))
+        .release();
+}
+
+static Vector<InitiatorCallFrame> copyCallFrames(const ScriptCallStack& callStack)
+{
+    Vector<InitiatorCallFrame> callFrames;
+    callFrames.reserveInitialCapacity(callStack.size());
+    for (size_t i = 0; i < callStack.size(); ++i) {
+        auto& frame = callStack.at(i);
+        callFrames.append({ frame.functionName(), frame.sourceURL(), frame.sourceID(), frame.lineNumber(), frame.columnNumber() });
+    }
+    return callFrames;
+}
+
+// Mirror of AsyncStackTrace::buildInspectorObject, producing the plain, serializable form of the
+// async parent chain. Stops at InitiatorData::maxStackTraceLevels so the producer never builds a
+// chain the IPC decoder would reject.
+static void appendAsyncStackTraceLevels(const AsyncStackTrace* asyncStackTrace, Vector<InitiatorStackTraceLevel>& levels)
+{
+    for (RefPtr<const AsyncStackTrace> level = asyncStackTrace; level; level = level->parentStackTrace()) {
+        bool truncated = level->truncated();
+        bool topCallFrameIsBoundary = level->topCallFrameIsBoundary();
+
+        // Skip async stack traces that only contain the boundary frame.
+        if (topCallFrameIsBoundary && !truncated && level->size() == 1)
+            continue;
+
+        if (levels.size() >= InitiatorData::maxStackTraceLevels)
+            return;
+
+        Vector<InitiatorCallFrame> callFrames;
+        callFrames.reserveInitialCapacity(level->size());
+        for (size_t i = 0; i < level->size(); ++i) {
+            auto& frame = level->at(i);
+            callFrames.append({ frame.functionName(), frame.sourceURL(), frame.sourceID(), frame.lineNumber(), frame.columnNumber() });
+        }
+
+        levels.append({ WTF::move(callFrames), truncated, topCallFrameIsBoundary });
+    }
+}
+
+InitiatorData copyInitiatorData(Document* document, const ResourceRequest* resourceRequest, const InstrumentingAgents& instrumentingAgents)
+{
+    InitiatorData data;
+
+    // FIXME: <https://webkit.org/b/324596> Worker support. The JS stack below can only be read on
+    // the main thread, so a load started from a worker is reported as unattributed.
+    if (!isMainThread())
+        return data;
+
+    Ref<ScriptCallStack> stackTrace = createScriptCallStack(JSExecState::currentState());
+    if (stackTrace->size() > 0) {
+        data.type = InitiatorType::Script;
+        // topCallFrameIsBoundary stays false for the synchronous top level; only the async parent
+        // levels mark it, matching ScriptCallStack::buildInspectorObject.
+        data.stackTrace.append({ copyCallFrames(stackTrace), stackTrace->truncated(), false });
+        appendAsyncStackTraceLevels(stackTrace->parentStackTrace().get(), data.stackTrace);
+    } else if (document && document->scriptableDocumentParser()) {
+        data.type = InitiatorType::Parser;
+        data.parserURL = document->url().string();
+        data.parserLineNumber = protect(document->scriptableDocumentParser())->textPosition().m_line.oneBasedInt();
+    }
+
+    if (resourceRequest && instrumentingAgents.persistentDOMAgent())
+        data.nodeId = resourceRequest->inspectorInitiatorNodeIdentifier();
+
+    return data;
+}
+
+static Inspector::Protocol::Network::Initiator::Type NODELETE toProtocol(InitiatorType type)
+{
+    switch (type) {
+    case InitiatorType::Parser:
+        return Inspector::Protocol::Network::Initiator::Type::Parser;
+    case InitiatorType::Script:
+        return Inspector::Protocol::Network::Initiator::Type::Script;
+    case InitiatorType::Other:
+        return Inspector::Protocol::Network::Initiator::Type::Other;
+    }
+
+    ASSERT_NOT_REACHED();
+    return Inspector::Protocol::Network::Initiator::Type::Other;
+}
+
+// Reconstructs Protocol::Console::StackTrace and its async parent chain, mirroring both
+// ScriptCallStack::buildInspectorObject (level 0) and AsyncStackTrace::buildInspectorObject (the
+// parent levels). Walks from the deepest level back to level 0, since a level's protocol object can
+// only be attached once its parent's has been built.
+static Ref<Inspector::Protocol::Console::StackTrace> buildStackTraceObject(const Vector<InitiatorStackTraceLevel>& levels)
+{
+    ASSERT(!levels.isEmpty());
+
+    RefPtr<Inspector::Protocol::Console::StackTrace> parentStackTraceObject;
+    for (auto& level : levels | std::views::reverse) {
+        auto callFrames = JSON::ArrayOf<Inspector::Protocol::Console::CallFrame>::create();
+        for (auto& frame : level.callFrames) {
+            callFrames->addItem(Inspector::Protocol::Console::CallFrame::create()
+                .setFunctionName(frame.functionName)
+                .setUrl(frame.sourceURL)
+                .setScriptId(String::number(frame.sourceID))
+                .setLineNumber(frame.lineNumber)
+                .setColumnNumber(frame.columnNumber)
+                .release());
+        }
+
+        auto stackTraceObject = Inspector::Protocol::Console::StackTrace::create()
+            .setCallFrames(WTF::move(callFrames))
+            .release();
+        if (level.truncated)
+            stackTraceObject->setTruncated(true);
+        if (level.topCallFrameIsBoundary)
+            stackTraceObject->setTopCallFrameIsBoundary(true);
+        if (parentStackTraceObject)
+            stackTraceObject->setParentStackTrace(parentStackTraceObject.releaseNonNull());
+
+        parentStackTraceObject = WTF::move(stackTraceObject);
+    }
+
+    return parentStackTraceObject.releaseNonNull();
+}
+
+Ref<Inspector::Protocol::Network::Initiator> buildInitiatorObject(const InitiatorData& data)
+{
+    auto initiatorObject = Inspector::Protocol::Network::Initiator::create()
+        .setType(toProtocol(data.type))
+        .release();
+
+    switch (data.type) {
+    case InitiatorType::Script:
+        if (!data.stackTrace.isEmpty())
+            initiatorObject->setStackTrace(buildStackTraceObject(data.stackTrace));
+        break;
+    case InitiatorType::Parser:
+        initiatorObject->setUrl(data.parserURL);
+        if (data.parserLineNumber)
+            initiatorObject->setLineNumber(*data.parserLineNumber);
+        break;
+    case InitiatorType::Other:
+        break;
+    }
+
+    if (data.nodeId)
+        initiatorObject->setNodeId(*data.nodeId);
+
+    return initiatorObject;
 }
 
 } // namespace ResourceUtilities

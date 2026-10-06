@@ -56,14 +56,14 @@ public:
     static constexpr GPRReg scratchRegister = GPRInfo::nonPreservedNonArgumentGPR0;
 
 private:
-    void forEachArg(Inst&, const ScopedLambda<Inst::EachArgCallback>&) final;
+    void forEachArg(Inst&, NOESCAPE const ScopedLambda<Inst::EachArgCallback>&) final;
     bool isValid(Inst&) final;
     bool admitsStack(Inst&, unsigned argIndex) final;
     bool admitsExtendedOffsetAddr(Inst&, unsigned) final;
-    void reportUsedRegisters(Inst&, const RegisterSetBuilder&) final;
+    void reportUsedRegisters(Inst&, const RegisterSet&) final;
     MacroAssembler::Jump generate(Inst&, CCallHelpers&, GenerationContext&) final;
-    RegisterSetBuilder extraEarlyClobberedRegs(Inst&) final;
-    RegisterSetBuilder extraClobberedRegs(Inst&) final;
+    RegisterSet extraEarlyClobberedRegs(Inst&) final;
+    RegisterSet extraClobberedRegs(Inst&) final;
 
     void dumpImpl(PrintStream&) const final;
     void deepDumpImpl(PrintStream&) const final;
@@ -79,7 +79,7 @@ private:
     static constexpr unsigned argArgOffset =
         numSpecialArgs + numCalleeArgs + numReturnGPArgs + numReturnFPArgs;
     
-    RegisterSetBuilder m_clobberedRegs;
+    RegisterSet m_clobberedRegs;
     bool m_isSIMDContext { false };
 };
 

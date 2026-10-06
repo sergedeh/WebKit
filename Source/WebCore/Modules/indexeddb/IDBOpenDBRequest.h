@@ -40,13 +40,13 @@ public:
 
     virtual ~IDBOpenDBRequest();
     
-    const IDBDatabaseIdentifier& databaseIdentifier() const { return m_databaseIdentifier; }
+    const IDBDatabaseIdentifier& databaseIdentifier() const LIFETIME_BOUND { return m_databaseIdentifier; }
     uint64_t version() const { return m_version; }
 
     void requestCompleted(const IDBResultData&);
     void requestBlocked(uint64_t oldVersion, uint64_t newVersion);
 
-    void versionChangeTransactionDidFinish();
+    void NODELETE versionChangeTransactionDidFinish();
     void fireSuccessAfterVersionChangeCommit();
     void fireErrorAfterVersionChangeCompletion();
 

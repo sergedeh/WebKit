@@ -92,6 +92,7 @@ Surface::Surface(EGLint surfaceType,
       mPixelAspectRatio(static_cast<EGLint>(1.0 * EGL_DISPLAY_SCALING)),
       mRenderBuffer(EGL_BACK_BUFFER),
       mRequestedRenderBuffer(EGL_BACK_BUFFER),
+      mRequestedSwapBehavior(mState.swapBehavior),
       mRequestedSwapInterval(mState.swapInterval),
       mOrientation(0),
       mTexture(nullptr),
@@ -230,7 +231,7 @@ Error Surface::initialize(const Display *display)
 
     // Initialized here since impl is nullptr in the constructor.
     // Must happen after implementation initialize for Android.
-    mState.swapBehavior = mImplementation->getSwapBehavior();
+    mRequestedSwapBehavior = mState.swapBehavior = mImplementation->getSwapBehavior();
 
     // Update render buffer based on what the impl supports.
     if ((mType == EGL_WINDOW_BIT) && mRenderBuffer == EGL_SINGLE_BUFFER &&
@@ -279,10 +280,6 @@ Error Surface::initialize(const Display *display)
 
 Error Surface::makeCurrent(const gl::Context *context)
 {
-    if (isLocked())
-    {
-        return egl::Error(EGL_BAD_ACCESS);
-    }
     ANGLE_TRY(mImplementation->makeCurrent(context));
     mIsCurrentOnAnyContext = true;
     addRef();
@@ -345,8 +342,6 @@ Error Surface::swap(gl::Context *context)
     ANGLE_TRACE_EVENT0("gpu.angle", "egl::Surface::swap");
     context->onPreSwap();
 
-    context->getState().getOverlay()->onSwap();
-
     ANGLE_TRY(updatePropertiesOnSwap(context));
 
     rx::SurfaceSwapFeedback feedback;
@@ -358,8 +353,6 @@ Error Surface::swapWithDamage(gl::Context *context, const EGLint *rects, EGLint 
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "egl::Surface::swapWithDamage");
     context->onPreSwap();
-
-    context->getState().getOverlay()->onSwap();
 
     ANGLE_TRY(updatePropertiesOnSwap(context));
 
@@ -379,8 +372,6 @@ Error Surface::postSubBuffer(const gl::Context *context,
     {
         return egl::NoError();
     }
-
-    context->getState().getOverlay()->onSwap();
 
     ANGLE_TRY(updatePropertiesOnSwap(context));
     ANGLE_TRY(mImplementation->postSubBuffer(context, x, y, width, height));
@@ -429,10 +420,14 @@ void Surface::setMultisampleResolve(EGLenum resolve)
     mMultisampleResolve = resolve;
 }
 
+void Surface::setRequestedSwapBehavior(EGLenum behavior)
+{
+    mRequestedSwapBehavior = behavior;
+}
+
 void Surface::setSwapBehavior(EGLenum behavior)
 {
-    // Behaviour is set but ignored
-    UNIMPLEMENTED();
+    mImplementation->setSwapBehavior(behavior);
     mState.swapBehavior = behavior;
 }
 
@@ -471,6 +466,11 @@ EGLenum Surface::getRequestedRenderBuffer() const
 EGLenum Surface::getSwapBehavior() const
 {
     return mState.swapBehavior;
+}
+
+EGLenum Surface::getRequestedSwapBehavior() const
+{
+    return mRequestedSwapBehavior;
 }
 
 TextureFormat Surface::getTextureFormat() const
@@ -665,16 +665,6 @@ GLuint Surface::getId() const
 
 Error Surface::getBufferAgeImpl(const gl::Context *context, EGLint *age) const
 {
-    // When EGL_BUFFER_PRESERVED, the previous frame contents are copied to
-    // current frame, so the buffer age is always 1.
-    if (mState.swapBehavior == EGL_BUFFER_PRESERVED)
-    {
-        if (age != nullptr)
-        {
-            *age = 1;
-        }
-        return egl::NoError();
-    }
     return mImplementation->getBufferAge(context, age);
 }
 
@@ -815,6 +805,10 @@ Error Surface::updatePropertiesOnSwap(const gl::Context *context)
     if (mState.swapInterval != mRequestedSwapInterval)
     {
         setSwapInterval(context->getDisplay(), mRequestedSwapInterval);
+    }
+    if (mState.swapBehavior != mRequestedSwapBehavior)
+    {
+        setSwapBehavior(mRequestedSwapBehavior);
     }
     return NoError();
 }

@@ -33,6 +33,7 @@
 #include "ExceptionOr.h"
 #include "Logging.h"
 #include "MessagePort.h"
+#include "MessageWithMessagePorts.h"
 #include "SWClientConnection.h"
 #include "ScriptExecutionContextInlines.h"
 #include "SerializedScriptValue.h"
@@ -70,10 +71,9 @@ ServiceWorker::ServiceWorker(ScriptExecutionContext& context, ServiceWorkerData&
 {
     context.registerServiceWorker(*this);
 
-    relaxAdoptionRequirement();
     updatePendingActivityForEventDispatch();
 
-    WORKER_RELEASE_LOG("serviceWorkerID=%" PRIu64 ", state=%hhu", identifier().toUInt64(), enumToUnderlyingType(m_data.state));
+    WORKER_RELEASE_LOG("serviceWorkerID=%" PRIu64 ", state=%hhu", identifier().toUInt64(), std::to_underlying(m_data.state));
 }
 
 ServiceWorker::~ServiceWorker()
@@ -87,7 +87,7 @@ ServiceWorker::~ServiceWorker()
 
 void ServiceWorker::updateState(State state)
 {
-    WORKER_RELEASE_LOG("updateState: Updating service worker %" PRIu64 " state from %hhu to %hhu. registrationID=%" PRIu64, identifier().toUInt64(), enumToUnderlyingType(m_data.state), enumToUnderlyingType(state), registrationIdentifier().toUInt64());
+    WORKER_RELEASE_LOG("updateState: Updating service worker %" PRIu64 " state from %hhu to %hhu. registrationID=%" PRIu64, identifier().toUInt64(), std::to_underlying(m_data.state), std::to_underlying(state), registrationIdentifier().toUInt64());
     m_data.state = state;
     if (state != State::Installing && !m_isStopped) {
         ASSERT(m_pendingActivityForEventDispatch);
@@ -105,18 +105,13 @@ SWClientConnection& ServiceWorker::swConnection()
     return ServiceWorkerProvider::singleton().serviceWorkerConnection();
 }
 
-Ref<SWClientConnection> ServiceWorker::protectedSWConnection()
-{
-    return swConnection();
-}
-
 ExceptionOr<void> ServiceWorker::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
     if (m_isStopped)
         return Exception { ExceptionCode::InvalidStateError };
 
     Vector<Ref<MessagePort>> ports;
-    auto messageData = SerializedScriptValue::create(globalObject, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    auto messageData = SerializedScriptValue::create(globalObject, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No);
     if (messageData.hasException())
         return messageData.releaseException();
 
@@ -134,8 +129,13 @@ ExceptionOr<void> ServiceWorker::postMessage(JSC::JSGlobalObject& globalObject, 
     }();
 
     MessageWithMessagePorts message { messageData.releaseReturnValue(), portsOrException.releaseReturnValue() };
-    protectedSWConnection()->postMessageToServiceWorker(identifier(), WTF::move(message), sourceIdentifier);
+    protect(swConnection())->postMessageToServiceWorker(identifier(), WTF::move(message), sourceIdentifier);
     return { };
+}
+
+ExceptionOr<void> ServiceWorker::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer)
+{
+    return postMessage(globalObject, messageValue, StructuredSerializeOptions { WTF::move(transfer) });
 }
 
 enum EventTargetInterfaceType ServiceWorker::eventTargetInterface() const
@@ -152,7 +152,7 @@ void ServiceWorker::stop()
 {
     m_isStopped = true;
     removeAllEventListeners();
-    protectedScriptExecutionContext()->unregisterServiceWorker(*this);
+    protect(scriptExecutionContext())->unregisterServiceWorker(*this);
     updatePendingActivityForEventDispatch();
 }
 

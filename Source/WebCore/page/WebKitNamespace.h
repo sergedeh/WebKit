@@ -34,6 +34,7 @@
 
 namespace JSC {
 class JSGlobalObject;
+class JSValue;
 }
 
 namespace WebCore {
@@ -41,9 +42,10 @@ namespace WebCore {
 class Node;
 class UserContentProvider;
 class UserMessageHandlersNamespace;
+class WebKitBuffer;
 class WebKitBufferNamespace;
 class WebKitJSHandle;
-class WebKitSerializedNode;
+class WebKitNodeSnapshot;
 
 class WebKitNamespace : public LocalDOMWindowProperty, public RefCounted<WebKitNamespace> {
 public:
@@ -55,13 +57,14 @@ public:
     virtual ~WebKitNamespace();
 
     UserMessageHandlersNamespace* messageHandlers();
-    WebKitBufferNamespace& buffers();
+    WebKitBufferNamespace& NODELETE buffers();
+    JSC::JSValue evaluateScript(JSC::JSGlobalObject&, const String& source, const String& url);
     Ref<WebKitJSHandle> createJSHandle(JSC::Strong<JSC::JSObject>);
 
-    struct SerializedNodeInit {
+    struct NodeSnapshotInit {
         bool deep { false };
     };
-    ExceptionOr<Ref<WebKitSerializedNode>> serializeNode(Node&, SerializedNodeInit&&);
+    ExceptionOr<Ref<WebKitNodeSnapshot>> createNodeSnapshot(Node&, NodeSnapshotInit&&);
 
 private:
     explicit WebKitNamespace(LocalDOMWindow&, UserContentProvider&);

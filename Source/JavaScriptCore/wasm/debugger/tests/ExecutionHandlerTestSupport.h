@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(REMOTE_INSPECTOR)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 #include <atomic>
 #include <functional>
@@ -56,7 +56,7 @@ using JSC::Wasm::ExecutionHandler;
 using TestScripts::TestScript;
 
 constexpr bool verboseLogging = false;
-constexpr double defaultTimeoutSeconds = 5.0;
+constexpr double defaultTimeoutSeconds = 10.0;
 
 extern std::atomic<unsigned> replyCount;
 
@@ -68,4 +68,4 @@ inline unsigned getReplyCount() { return replyCount.load(); }
 
 } // namespace ExecutionHandlerTestSupport
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(REMOTE_INSPECTOR)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

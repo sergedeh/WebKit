@@ -1,4 +1,4 @@
-# Copyright (C) 2018-2024 Apple Inc. All rights reserved.
+# Copyright (C) 2018-2026 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -26,19 +26,18 @@ import os
 import re
 
 from buildbot.scheduler import AnyBranchScheduler, Periodic, Dependent, Triggerable, Nightly
-from buildbot.schedulers.trysched import Try_Userpass
-from buildbot.schedulers.forcesched import ForceScheduler, StringParameter, FixedParameter, CodebaseParameter
+from buildbot.schedulers.forcesched import ChoiceStringParameter, CodebaseParameter, FixedParameter, ForceScheduler, StringParameter
 from buildbot.worker import Worker
 from buildbot.util import identifiers as buildbot_identifiers
 from buildbot.changes.filter import ChangeFilter
 from datetime import datetime, timezone
 from twisted.internet import defer
 
-from .factories import (APITestsFactory, BindingsFactory, BuildFactory, CommitQueueFactory, Factory, GTKBuildFactory,
+from .factories import (APITestsFactory, BindingsFactory, BuildFactory, Factory, GTKBuildFactory,
                         GTKTestsFactory, JSCBuildFactory, JSCBuildAndTestsFactory, JSCBuildO3AndTestsFactory, JSCTestsFactory, MergeQueueFactory, SafeMergeQueueFactory, StressTestFactory,
-                        StyleFactory, TestFactory, tvOSBuildFactory, WPEBuildFactory, WPECairoLibWebRTCBuildFactory, WPETestsFactory, WebKitPerlFactory, WebKitPyFactory, PlayStationBuildFactory,
+                        StyleFactory, TestFactory, tvOSBuildFactory, WPEBuildFactory, GTK3GCCBuildFactory, WPETestsFactory, WebKitPerlFactory, WebKitPyFactory, PlayStationBuildFactory,
                         WinBuildFactory, WinTestsFactory, iOSBuildFactory, iOSEmbeddedBuildFactory, iOSTestsFactory,  visionOSBuildFactory, visionOSEmbeddedBuildFactory, visionOSTestsFactory, macOSBuildFactory, macOSBuildOnlyFactory,
-                        macOSWK1Factory, macOSWK2Factory, ServicesFactory, SaferCPPStaticAnalyzerFactory, UnsafeMergeQueueFactory, watchOSBuildFactory)
+                        macOSWK1Factory, macOSWK2Factory, macOSSiteIsolationFactory, ServicesFactory, SaferCPPStaticAnalyzerFactory, UnsafeMergeQueueFactory, watchOSBuildFactory)
 
 from .utils import get_custom_suffix
 
@@ -67,6 +66,11 @@ def loadBuilderConfig(c, is_test_mode_enabled=False, setup_main_schedulers=True,
     if is_test_mode_enabled:
         c['workers'].append(Worker('local-worker', 'password', max_builds=1))
 
+    builder_triggers_map = {
+        builder['name']: list(builder.get('triggers') or [])
+        for builder in config['builders']
+    }
+
     c['builders'] = []
     for builder in config['builders']:
         builder['tags'] = getTagsForBuilder(builder)
@@ -75,7 +79,7 @@ def loadBuilderConfig(c, is_test_mode_enabled=False, setup_main_schedulers=True,
         if 'icon' in builder:
             del builder['icon']
         factorykwargs = {}
-        for key in ['platform', 'configuration', 'architectures', 'triggers', 'remotes', 'additionalArguments', 'runTests', 'triggered_by']:
+        for key in ['platform', 'configuration', 'architectures', 'triggers', 'remotes', 'additionalArguments', 'runTests', 'triggered_by', 'rebuild_without_change_on_builder', 'deployment_target']:
             value = builder.pop(key, None)
             if value:
                 factorykwargs[key] = value
@@ -97,9 +101,6 @@ def loadBuilderConfig(c, is_test_mode_enabled=False, setup_main_schedulers=True,
         def filter_fn(change, schedulerName=schedulerName):
             return change.properties.getProperty('event') == schedulerName
 
-        if (schedulerClassName == 'Try_Userpass'):
-            # FIXME: Read the credentials from local file on disk.
-            scheduler['userpass'] = [(passwords.get('BUILDBOT_TRY_USERNAME', 'sampleuser'), passwords.get('BUILDBOT_TRY_PASSWORD', 'samplepass'))]
         if custom_suffix != '' and schedulerName == 'safe-merge-queue' and schedulerClassName == 'Periodic':
             print(f'Testing instance, reducing safe-merge-queue scheduler frequency to avoid accumulating too many pending build-requests.')
             scheduler['periodicBuildTimer'] = 24 * 60 * 60
@@ -112,7 +113,7 @@ def loadBuilderConfig(c, is_test_mode_enabled=False, setup_main_schedulers=True,
         name='try_build',
         buttonName='Try Build',
         reason=StringParameter(name='reason', default='Trying pull request', size=20),
-        builderNames=[str(builder['name']) for builder in config['builders']],
+        builderNames=[str(builder['name']) for builder in config['builders'] if not builder_triggers_map.get(builder['name'])],
         # Disable default enabled input fields: branch, repository, project, additional properties
         codebases=[CodebaseParameter('',
                    revision=FixedParameter(name='revision', default=''),
@@ -125,6 +126,35 @@ def loadBuilderConfig(c, is_test_mode_enabled=False, setup_main_schedulers=True,
     )
     if setup_force_schedulers is True:
         c['schedulers'].append(forceScheduler)
+
+    if setup_force_schedulers is True:
+        for builder_name, builder_triggers in builder_triggers_map.items():
+            if not builder_triggers:
+                continue
+            c['schedulers'].append(ForceScheduler(
+                name=f'force-retry-{builder_name}',
+                buttonName='Try Build',
+                reason=StringParameter(name='reason', default='Selective retry', size=40),
+                builderNames=[builder_name],
+                codebases=[CodebaseParameter('',
+                           revision=FixedParameter(name='revision', default=''),
+                           repository=FixedParameter(name='repository', default=''),
+                           project=FixedParameter(name='project', default=''),
+                           branch=FixedParameter(name='branch', default=''))],
+                properties=[
+                    StringParameter(name='pr_number', label='Pull Request number (not bug number)', regex=r'^[0-9]{5,6}$', required=True, maxsize=6),
+                    StringParameter(name='ews_revision', label='WebKit git hash to checkout before retrying (optional)', required=False, maxsize=40),
+                    ChoiceStringParameter(
+                        name='triggers',
+                        label='Downstream testers to trigger:',
+                        choices=builder_triggers,
+                        multiple=True,
+                        strict=True,
+                        default=builder_triggers,
+                        required=True,
+                    ),
+                ],
+            ))
 
 
 # Copied from https://github.com/buildbot/buildbot/blob/master/master/buildbot/util/async_sort.py
@@ -148,7 +178,7 @@ def prioritizeBuilders(buildmaster, builders):
     def key(b):
         request_time = yield b.getOldestRequestTime()
         return (
-            'build' not in b.name.lower() and 'unsafe' not in b.name.lower() and 'commit' not in b.name.lower(),
+            'build' not in b.name.lower() and 'unsafe' not in b.name.lower(),
             bool(b.building) or bool(b.old_building),
             request_time or datetime.now(timezone.utc),
         )
@@ -196,6 +226,9 @@ def checkValidBuilder(config, builder):
     for trigger in builder.get('triggers') or []:
         if not doesTriggerExist(config, trigger):
             raise Exception('Trigger: {} in builder {} does not exist in list of Trigerrable schedulers.'.format(trigger, builder['name']))
+
+    if builder.get('rebuild_without_change_on_builder') and not builder.get('triggers'):
+        raise Exception(f'rebuild_without_change_on_builder can only be set on builders with triggers. Builder: {builder["name"]}')
 
 
 def checkValidSchedulers(config, schedulers):

@@ -32,7 +32,7 @@
 #include "config.h"
 #include "EventTarget.h"
 
-#include "AddEventListenerOptionsInlines.h"
+#include "AbortSignal.h"
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
 #include "EventPath.h"
@@ -48,12 +48,18 @@
 #include "ScriptController.h"
 #include "ScriptDisallowedScope.h"
 #include "Settings.h"
+#include "WebCoreOpaqueRoot.h"
+#include <JavaScriptCore/HeapCellInlines.h>
+#include <JavaScriptCore/JSCJSValueStructure.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+
+template class mpark::variant<WebCore::AddEventListenerOptions, bool>;
+template class mpark::variant<WebCore::EventListenerOptions, bool>;
 
 namespace WebCore {
 
@@ -78,9 +84,9 @@ EventTarget::~EventTarget()
         eventTargetData->clear();
 }
 
-RefPtr<ScriptExecutionContext> EventTarget::protectedScriptExecutionContext() const
+WebCoreOpaqueRoot EventTarget::opaqueRoot() const
 {
-    return scriptExecutionContext();
+    return WebCoreOpaqueRoot { const_cast<EventTarget*>(this) };
 }
 
 bool EventTarget::isPaymentRequest() const
@@ -111,7 +117,7 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     bool trustedOnly = false;
     if (options.webkitTrustedOnly) {
         auto* function = listener->jsFunction();
-        if (function && worldForDOMObject(*function).allowAutofill())
+        if (function && function->realmMayBeNull() && worldForDOMObject(*function).allowAutofill())
             trustedOnly = true;
     }
 
@@ -121,7 +127,7 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     if (RefPtr signal = options.signal) {
         signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue) {
             if (weakThis && listener)
-                Ref { *weakThis }->removeEventListener(eventType, *listener, capture);
+                Ref { *weakThis }->removeEventListener(eventType, *listener, { .capture = capture });
         });
     }
 
@@ -130,6 +136,11 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
 
     eventListenersDidChange();
     return true;
+}
+
+bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener)
+{
+    return addEventListener(eventType, WTF::move(listener), { });
 }
 
 void EventTarget::addEventListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&& listener, AddEventListenerOptionsOrBoolean&& variant)
@@ -142,7 +153,7 @@ void EventTarget::addEventListenerForBindings(const AtomString& eventType, RefPt
         SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE addEventListener(eventType, listener.releaseNonNull(), options);
     }, [&](bool capture) {
         // FIXME: Ideally we'd be able to mark the makeVisitor() lamdbas as NOESCAPE to avoid having to suppress.
-        SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE addEventListener(eventType, listener.releaseNonNull(), capture);
+        SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE addEventListener(eventType, listener.releaseNonNull(), { { capture }, std::nullopt, false, nullptr, false });
     });
 
     WTF::visit(visitor, variant);
@@ -158,7 +169,7 @@ void EventTarget::removeEventListenerForBindings(const AtomString& eventType, Re
         SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE removeEventListener(eventType, *listener, options);
     }, [&](bool capture) {
         // FIXME: Ideally we'd be able to mark the makeVisitor() lamdbas as NOESCAPE to avoid having to suppress.
-        SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE removeEventListener(eventType, *listener, capture);
+        SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE removeEventListener(eventType, *listener, { .capture = capture });
     });
 
     WTF::visit(visitor, variant);
@@ -186,7 +197,7 @@ void EventTarget::setAttributeEventListener(const AtomString& eventType, JSC::JS
     RefPtr existingListener = attributeEventListener(eventType, isolatedWorld);
     if (!listener.isObject()) {
         if (existingListener)
-            removeEventListener(eventType, *existingListener, false);
+            removeEventListener(eventType, *existingListener, { .capture = false });
     } else if (existingListener) {
         bool capture = false;
 
@@ -205,7 +216,7 @@ bool EventTarget::setAttributeEventListener(const AtomString& eventType, RefPtr<
     RefPtr existingListener = attributeEventListener(eventType, isolatedWorld);
     if (!listener) {
         if (existingListener)
-            removeEventListener(eventType, *existingListener, false);
+            removeEventListener(eventType, *existingListener, { .capture = false });
         return false;
     }
     if (existingListener) {
@@ -215,7 +226,7 @@ bool EventTarget::setAttributeEventListener(const AtomString& eventType, RefPtr<
         listener->checkValidityForEventTarget(*this);
 #endif
 
-        eventTargetData()->eventListenerMap.replace(eventType, *existingListener, *listener, { });
+        eventTargetData()->eventListenerMap.replacePreservingOptions(eventType, *existingListener, *listener);
 
         InspectorInstrumentation::didAddEventListener(*this, eventType, *listener, false);
 
@@ -373,18 +384,13 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         JSC::EnsureStillAliveScope jsFunctionProtector(callback->jsFunction());
 
         if (event.isAutofillEvent()) [[unlikely]] {
-            if (!worldForDOMObject(*callback->jsFunction()).allowAutofill())
+            if (!callback->jsFunction()->realmMayBeNull() || !worldForDOMObject(*callback->jsFunction()).allowAutofill())
                 continue; // webkitrequestautofill only fires in a world with autofill capability.
-        }
-
-        if (event.isShadowRootAttachedEvent()) [[unlikely]] {
-            if (!worldForDOMObject(*callback->jsFunction()).canAccessAnyShadowRoot())
-                continue; // webkitshadowrootattached only fires in a world with access to all shadow roots.
         }
 
         // Do this before invocation to avoid reentrancy issues.
         if (registeredListener->isOnce())
-            removeEventListener(event.type(), callback, registeredListener->useCapture());
+            removeEventListener(event.type(), callback, { .capture = registeredListener->useCapture() });
 
         if (registeredListener->isPassive())
             event.setInPassiveListener(true);
@@ -435,7 +441,7 @@ void EventTarget::removeAllEventListeners()
     threadData->setIsInRemoveAllEventListeners(false);
 }
 
-bool EventTarget::hasAnyEventListeners(Vector<AtomString> eventTypes) const
+bool EventTarget::hasAnyEventListeners(std::span<const AtomString> eventTypes) const
 {
     if (auto* data = eventTargetData()) {
         for (const auto& eventType : eventTypes) {

@@ -91,13 +91,13 @@ DragImageRef createDragImageFromImage(Image* image, ImageOrientation orientation
         imageSize = adjustedSize;
     }
 
-    RefPtr buffer = ImageBuffer::create(imageSize, RenderingMode::Accelerated, RenderingPurpose::Snapshot, scale, DestinationColorSpace::SRGB(), PixelFormat::BGRA8, client);
+    RefPtr buffer = ImageBuffer::create(imageSize, RenderingMode::Accelerated, RenderingPurpose::Snapshot, scale, ColorSpace::SRGB(), PixelFormat::BGRA8, client);
     if (!buffer)
         return nil;
 
     buffer->context().translate(0, imageSize.height());
     buffer->context().scale({ adjustedImageScale, -adjustedImageScale });
-    buffer->context().drawImage(*image, FloatPoint { }, { orientation });
+    buffer->context().drawImage(*image, ConcreteObjectSize::fixed(image->size()), FloatPoint { }, { orientation });
 
     RefPtr nativeImage = ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
     if (!nativeImage)
@@ -161,7 +161,7 @@ constexpr OptionSet<TextIndicatorOption> defaultSelectionDragImageTextIndicatorO
 
 DragImageData createDragImageForSelection(LocalFrame& frame, bool forceBlackText)
 {
-    if (auto document = frame.document())
+    if (RefPtr document = frame.document())
         document->updateLayout();
 
     auto options = defaultSelectionDragImageTextIndicatorOptions;
@@ -183,7 +183,7 @@ DragImageRef dissolveDragImageToFraction(DragImageRef image, float)
 
 DragImageRef createDragImageForRange(LocalFrame& frame, const SimpleRange& range, bool forceBlackText)
 {
-    if (auto document = frame.document())
+    if (RefPtr document = frame.document())
         document->updateLayout();
 
     if (range.collapsed())
@@ -197,14 +197,14 @@ DragImageRef createDragImageForRange(LocalFrame& frame, const SimpleRange& range
     if (!textIndicator || !textIndicator->contentImage())
         return nil;
 
-    auto& image = *textIndicator->contentImage();
-    auto render = adoptNS([PAL::allocUIGraphicsImageRendererInstance() initWithSize:image.size()]);
-    UIImage *finalImage = [render imageWithActions:[&image](UIGraphicsImageRendererContext *rendererContext) {
+    Ref image = *textIndicator->contentImage();
+    RetainPtr render = adoptNS([PAL::allocUIGraphicsImageRendererInstance() initWithSize:image->size()]);
+    RetainPtr finalImage = [render imageWithActions:[&image](UIGraphicsImageRendererContext *rendererContext) {
         GraphicsContextCG context(rendererContext.CGContext);
-        context.drawImage(image, FloatPoint());
+        context.drawBitmapImage(image, FloatPoint());
     }];
 
-    return finalImage.CGImage;
+    return [finalImage CGImage];
 }
 
 DragImageRef createDragImageForColor(const Color& color, const FloatRect& elementRect, float pageScaleFactor, Path& visiblePath)
@@ -213,7 +213,7 @@ DragImageRef createDragImageForColor(const Color& color, const FloatRect& elemen
     FloatRoundedRect swatch { imageRect, CornerRadii(ColorSwatchCornerRadius * pageScaleFactor) };
 
     auto render = adoptNS([PAL::allocUIGraphicsImageRendererInstance() initWithSize:imageRect.size()]);
-    UIImage *image = [render imageWithActions:^(UIGraphicsImageRendererContext *rendererContext) {
+    RetainPtr image = [render imageWithActions:^(UIGraphicsImageRendererContext *rendererContext) {
         GraphicsContextCG context { rendererContext.CGContext };
         context.translate(0, CGRectGetHeight(imageRect));
         context.scale({ 1, -1 });
@@ -221,7 +221,7 @@ DragImageRef createDragImageForColor(const Color& color, const FloatRect& elemen
     }];
 
     visiblePath.addRoundedRect(swatch);
-    return image.CGImage;
+    return [image CGImage];
 }
 
 #else

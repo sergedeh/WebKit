@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleSVGPaintOrder.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 
 namespace WebCore {
@@ -61,8 +62,8 @@ std::span<const PaintType, 3> SVGPaintOrder::paintTypes() const
 
 auto CSSValueConversion<SVGPaintOrder>::operator()(BuilderState& state, const CSSValue& value) -> SVGPaintOrder
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
         case CSSValueNormal:
             return CSS::Keyword::Normal { };
         case CSSValueFill:
@@ -77,14 +78,14 @@ auto CSSValueConversion<SVGPaintOrder>::operator()(BuilderState& state, const CS
         }
     }
 
-    auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue, 1>(state, value);
+    auto list = requiredListDowncast<CSSValueList, CSSKeywordValue, 1>(state, value);
     if (!list)
         return CSS::Keyword::Normal { };
 
-    switch (Ref first = list->item(0); first->valueID()) {
+    switch (auto& first = list->item(0); first.valueID()) {
     case CSSValueFill:
         if (list->size() > 1) {
-            switch (Ref second = list->item(1); second->valueID()) {
+            switch (auto& second = list->item(1); second.valueID()) {
             case CSSValueMarkers:
                 return { CSS::Keyword::Fill { }, CSS::Keyword::Markers { } };
             default:
@@ -95,7 +96,7 @@ auto CSSValueConversion<SVGPaintOrder>::operator()(BuilderState& state, const CS
         return CSS::Keyword::Fill { };
     case CSSValueStroke:
         if (list->size() > 1) {
-            switch (Ref second = list->item(1); second->valueID()) {
+            switch (auto& second = list->item(1); second.valueID()) {
             case CSSValueMarkers:
                 return { CSS::Keyword::Stroke { }, CSS::Keyword::Markers { } };
             default:
@@ -106,7 +107,7 @@ auto CSSValueConversion<SVGPaintOrder>::operator()(BuilderState& state, const CS
         return CSS::Keyword::Stroke { };
     case CSSValueMarkers:
         if (list->size() > 1) {
-            switch (Ref second = list->item(1); second->valueID()) {
+            switch (auto& second = list->item(1); second.valueID()) {
             case CSSValueStroke:
                 return { CSS::Keyword::Markers { }, CSS::Keyword::Stroke { } };
             default:

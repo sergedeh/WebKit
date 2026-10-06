@@ -30,13 +30,12 @@
 #import "CommandsMixin.h"
 #import "Device.h"
 #import <WebGPU/WebGPU.h>
+#import <WebGPU/WebGPUCpp.h>
 #import <WebGPU/WebGPUExt.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Function.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
-#import <wtf/RetainReleaseSwift.h>
-#import <wtf/SwiftCXXThunk.h>
+#import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/TaggedPtr.h>
 #import <wtf/Vector.h>
@@ -47,7 +46,7 @@ IGNORE_CLANG_WARNINGS_BEGIN("nullability-completeness")
 @interface TextureAndClearColor : NSObject
 - (instancetype)initWithTexture:(id<MTLTexture> _Nonnull)texture NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
-@property (nonatomic) id<MTLTexture> texture;
+@property (nonatomic, nonnull) id<MTLTexture> texture;
 @property (nonatomic) MTLClearColor clearColor;
 @property (nonatomic) NSUInteger depthPlane;
 @end
@@ -55,7 +54,7 @@ IGNORE_CLANG_WARNINGS_BEGIN("nullability-completeness")
 struct WGPUCommandEncoderImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class BindGroup;
 class Buffer;
@@ -69,7 +68,7 @@ class Texture;
 class TextureView;
 
 // https://gpuweb.github.io/gpuweb/#gpucommandencoder
-class CommandEncoder : public CommandsMixin, public RefCountedAndCanMakeWeakPtr<CommandEncoder>, public WGPUCommandEncoderImpl {
+class CommandEncoder final : public WebGPU::CommandEncoder, public CommandsMixin, public WGPUCommandEncoderImpl {
     WTF_MAKE_TZONE_ALLOCATED(CommandEncoder);
 public:
     static Ref<CommandEncoder> create(id<MTLCommandBuffer> commandBuffer, Device& device, uint64_t uniqueId)
@@ -89,26 +88,26 @@ public:
 
     ~CommandEncoder();
 
-    Ref<ComputePassEncoder> beginComputePass(const WGPUComputePassDescriptor&) HAS_SWIFTCXX_THUNK;
-    Ref<RenderPassEncoder> beginRenderPass(const WGPURenderPassDescriptor&) HAS_SWIFTCXX_THUNK;
-    void copyBufferToBuffer(const Buffer& source, uint64_t sourceOffset, Buffer& destination, uint64_t destinationOffset, uint64_t size) HAS_SWIFTCXX_THUNK;
-    void copyBufferToTexture(const WGPUImageCopyBuffer& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize) HAS_SWIFTCXX_THUNK;
-    void copyTextureToBuffer(const WGPUImageCopyTexture& source, const WGPUImageCopyBuffer& destination, const WGPUExtent3D& copySize) HAS_SWIFTCXX_THUNK;
-    void copyTextureToTexture(const WGPUImageCopyTexture& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize) HAS_SWIFTCXX_THUNK;
-    void runClearEncoder(NSMutableDictionary<NSNumber*, TextureAndClearColor*> *attachmentsToClear, id<MTLTexture> depthStencilAttachmentToClear, bool depthAttachmentToClear, bool stencilAttachmentToClear, float depthClearValue = 0, uint32_t stencilClearValue = 0, id<MTLRenderCommandEncoder> existingEncoder = nil) HAS_SWIFTCXX_THUNK;
-    void clearBuffer(Buffer&, uint64_t offset, uint64_t size);
-    Ref<CommandBuffer> finish(const WGPUCommandBufferDescriptor&) HAS_SWIFTCXX_THUNK;
+    Ref<ComputePassEncoder> beginComputePass(const WebGPU::ComputePassDescriptor&);
+    Ref<RenderPassEncoder> beginRenderPass(const WebGPU::RenderPassDescriptor&);
+    void copyBufferToBuffer(const Buffer& source, uint64_t sourceOffset, Buffer& destination, uint64_t destinationOffset, uint64_t size);
+    void copyBufferToTexture(const WebGPU::TexelCopyBufferInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize);
+    void copyTextureToBuffer(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyBufferInfo& destination, const WebGPU::Extent3D& copySize);
+    void copyTextureToTexture(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize);
+    void runClearEncoder(NSMutableDictionary<NSNumber*, TextureAndClearColor*> *attachmentsToClear, id<MTLTexture> depthStencilAttachmentToClear, bool depthAttachmentToClear, bool stencilAttachmentToClear, float depthClearValue = 0, uint32_t stencilClearValue = 0, id<MTLRenderCommandEncoder> existingEncoder = nil);
+    // std::nullopt is the rest of the buffer after the offset.
+    void clearBuffer(Buffer&, uint64_t offset, std::optional<uint64_t> size);
+    Ref<CommandBuffer> finish(const WebGPU::CommandBufferDescriptor&);
     void insertDebugMarker(String&& markerLabel);
     void popDebugGroup();
     void pushDebugGroup(String&& groupLabel);
     void resolveQuerySet(const QuerySet&, uint32_t firstQuery, uint32_t queryCount, Buffer& destination, uint64_t destinationOffset);
     void writeTimestamp(QuerySet&, uint32_t queryIndex);
-    void setLabel(String&&);
+    void setLabel(String&&) final;
 
     Device& device() const { return m_device; }
-    Ref<Device> protectedDevice() const { return m_device; }
 
-    bool isValid() const { return m_commandBuffer; }
+    bool isValid() const final { return m_commandBuffer; }
     void lock(bool);
     bool isLocked() const { return m_state == EncoderState::Locked; }
 
@@ -121,9 +120,9 @@ public:
 
     id<MTLBlitCommandEncoder> ensureBlitCommandEncoder();
     void finalizeBlitCommandEncoder();
-    static void clearTextureIfNeeded(const WGPUImageCopyTexture&, NSUInteger, const Device&, id<MTLBlitCommandEncoder>);
+    static void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger, const Device&, id<MTLBlitCommandEncoder>);
     static void clearTextureIfNeeded(Texture&, NSUInteger, NSUInteger, const Device&, id<MTLBlitCommandEncoder>);
-    void clearTextureIfNeeded(const WGPUImageCopyTexture&, NSUInteger) HAS_SWIFTCXX_THUNK;
+    void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger);
     void makeInvalid(NSString*);
     void makeSubmitInvalid(NSString* = nil);
     void incrementBufferMapCount();
@@ -131,6 +130,7 @@ public:
     void endEncoding(id<MTLCommandEncoder>);
     void setLastError(NSString*);
     bool waitForCommandBufferCompletion();
+    void recordGPUExecutionWindowOnCanvasTextures(double startTime, double endTime) const;
     bool encoderIsCurrent(id<MTLCommandEncoder>) const;
     bool submitWillBeInvalid() const { return m_makeSubmitInvalid; }
     void addBuffer(id<MTLBuffer>);
@@ -139,12 +139,12 @@ public:
     void addTexture(id<MTLTexture>);
     void addTexture(const Texture&);
     void addSampler(const Sampler&);
-    id<MTLCommandBuffer> _Nullable commandBuffer() const;
+    id<MTLCommandBuffer> _Nullable NODELETE commandBuffer() const;
     void setExistingEncoder(id<MTLCommandEncoder>);
     void generateInvalidEncoderStateError();
-    bool validateClearBuffer(const Buffer&, uint64_t offset, uint64_t size);
+    bool NODELETE validateClearBuffer(const Buffer&, uint64_t offset, uint64_t size);
     void clearTracking();
-    void trackEncoderForBuffer(const Buffer&, TrackedResourceContainer&);
+    bool trackEncoderForBuffer(const Buffer&, TrackedResourceContainer&);
     void trackEncoderForTexture(const Texture&, TrackedResourceContainer&);
     void trackEncoderForTextureView(const TextureView&, TrackedResourceContainer&);
     void trackEncoderForExternalTexture(const ExternalTexture&, TrackedResourceContainer&);
@@ -164,20 +164,18 @@ private:
     CommandEncoder(id<MTLCommandBuffer>, Device&, uint64_t uniqueId);
     CommandEncoder(Device&);
 
-    bool validatePopDebugGroup() const;
+    bool NODELETE validatePopDebugGroup() const;
 
     NSString * _Nullable validateFinishError() const;
     NSString * _Nullable errorValidatingCopyBufferToBuffer(const Buffer& source, uint64_t sourceOffset, const Buffer& destination, uint64_t destinationOffset, uint64_t size);
-    NSString * _Nullable errorValidatingComputePassDescriptor(const WGPUComputePassDescriptor&) const;
-    NSString * _Nullable errorValidatingRenderPassDescriptor(const WGPURenderPassDescriptor&) const;
-    NSString * _Nullable errorValidatingImageCopyBuffer(const WGPUImageCopyBuffer&) const;
-    NSString * _Nullable errorValidatingCopyBufferToTexture(const WGPUImageCopyBuffer&, const WGPUImageCopyTexture&, const WGPUExtent3D&) const;
-    NSString * _Nullable errorValidatingCopyTextureToBuffer(const WGPUImageCopyTexture&, const WGPUImageCopyBuffer&, const WGPUExtent3D&) const;
-    NSString * _Nullable errorValidatingCopyTextureToTexture(const WGPUImageCopyTexture& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize) const;
-    void trackEncoder(TrackedResourceContainer&);
+    NSString * _Nullable errorValidatingComputePassDescriptor(const WebGPU::ComputePassDescriptor&) const;
+    NSString * _Nullable errorValidatingRenderPassDescriptor(const WebGPU::RenderPassDescriptor&) const;
+    NSString * _Nullable errorValidatingImageCopyBuffer(const WebGPU::TexelCopyBufferInfo&) const;
+    NSString * _Nullable errorValidatingCopyBufferToTexture(const WebGPU::TexelCopyBufferInfo&, const WebGPU::TexelCopyTextureInfo&, const WebGPU::Extent3D&) const;
+    NSString * _Nullable errorValidatingCopyTextureToBuffer(const WebGPU::TexelCopyTextureInfo&, const WebGPU::TexelCopyBufferInfo&, const WebGPU::Extent3D&) const;
+    NSString * _Nullable errorValidatingCopyTextureToTexture(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize) const;
 
     void discardCommandBuffer();
-    RefPtr<CommandBuffer> protectedCachedCommandBuffer() const { return m_cachedCommandBuffer.get(); }
     void retainTimestampsForOneUpdateLoop();
 
     id<MTLCommandBuffer> _Nullable m_commandBuffer { nil };
@@ -214,18 +212,20 @@ private:
 #if ENABLE(WEBGPU_BY_DEFAULT)
     uint32_t m_currentResidencySetCount { 0 };
 #endif
-} SWIFT_SHARED_REFERENCE(refCommandEncoder, derefCommandEncoder) SWIFT_PRIVATE_FILEID("WebGPU/CommandEncoder.swift");
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refCommandEncoder, derefCommandEncoder) SWIFT_PRIVATE_FILEID("WebGPU/CommandEncoder.swift");
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
-inline void refCommandEncoder(WebGPU::CommandEncoder* obj)
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+inline void refCommandEncoder(WebGPU::Metal::CommandEncoder* obj)
 {
-    WTF::ref(obj);
+    obj->ref();
 }
 
-inline void derefCommandEncoder(WebGPU::CommandEncoder* obj)
+inline void derefCommandEncoder(WebGPU::Metal::CommandEncoder* obj)
 {
-    WTF::deref(obj);
+    obj->deref();
 }
+#endif
 
 IGNORE_CLANG_WARNINGS_END

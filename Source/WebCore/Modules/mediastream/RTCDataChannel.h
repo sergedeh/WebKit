@@ -63,16 +63,16 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    bool ordered() const { return *m_options.ordered; }
+    bool ordered() const { return m_options.ordered; }
     std::optional<unsigned short> maxPacketLifeTime() const { return m_options.maxPacketLifeTime; }
     std::optional<unsigned short> maxRetransmits() const { return m_options.maxRetransmits; }
     String protocol() const { return m_options.protocol; }
-    bool negotiated() const { return *m_options.negotiated; };
+    bool negotiated() const { return m_options.negotiated; }
     std::optional<unsigned short> id() const;
     RTCPriorityType priority() const { return m_options.priority; };
-    const RTCDataChannelInit& options() const { return m_options; }
+    const RTCDataChannelInit& options() const LIFETIME_BOUND { return m_options; }
 
-    const String& label() const { return m_label; }
+    const String& label() const LIFETIME_BOUND { return m_label; }
     RTCDataChannelState readyState() const {return m_readyState; }
     size_t bufferedAmount() const final { return m_bufferedAmount; }
     size_t bufferedAmountLowThreshold() const { return m_bufferedAmountLowThreshold; }
@@ -80,7 +80,7 @@ public:
 
     enum class BinaryType : bool { Blob, Arraybuffer };
     BinaryType binaryType() const { return m_binaryType; }
-    void setBinaryType(BinaryType);
+    void NODELETE setBinaryType(BinaryType);
 
     ExceptionOr<void> send(const String&);
     ExceptionOr<void> send(JSC::ArrayBuffer&);
@@ -89,7 +89,7 @@ public:
 
     void close();
 
-    bool canDetach() const;
+    bool NODELETE canDetach() const;
     std::unique_ptr<DetachedRTCDataChannel> detach();
 
     static void removeDetachedRTCDataChannel(RTCDataChannelIdentifier identifer) { handlerFromIdentifier(identifer.object()); }
@@ -105,15 +105,14 @@ private:
     void removeFromDataChannelLocalMapIfNeeded();
 
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::RTCDataChannel; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
     // ActiveDOMObject.
     void stop() final;
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     // RTCDataChannelHandlerClient API
     void didChangeReadyState(RTCDataChannelState) final;

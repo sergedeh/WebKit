@@ -61,7 +61,7 @@ public:
     JSFunction* function()
     {
         ASSERT(m_valid);
-        return jsCast<JSFunction*>(m_protoCallFrame.calleeValue.unboxedCell());
+        return uncheckedDowncast<JSFunction>(m_protoCallFrame.calleeValue.unboxedCell());
     }
     FunctionExecutable* functionExecutable() { return m_functionExecutable; }
     JSScope* scope() { return m_scope; }
@@ -78,7 +78,6 @@ public:
             remove();
 
         if (newCodeBlock && m_protoCallFrame.codeBlock() == oldCodeBlock) {
-            newCodeBlock->m_shouldAlwaysBeInlined = false;
             m_addressForCall = newCodeBlock->jitCode()->addressForCall();
             m_protoCallFrame.setCodeBlock(newCodeBlock);
             newCodeBlock->linkIncomingCall(nullptr, this);

@@ -81,20 +81,21 @@ public:
 
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    const IDBResourceIdentifier& resourceIdentifier() const { return m_resourceIdentifier; }
+    const IDBResourceIdentifier& resourceIdentifier() const LIFETIME_BOUND { return m_resourceIdentifier; }
 
     virtual ~IDBRequest();
 
-    using Result = Variant<RefPtr<IDBCursor>, RefPtr<IDBDatabase>, IDBKeyData, Vector<IDBKeyData>, IDBGetResult, IDBGetAllResult, uint64_t, NullResultType>;
+    using Result = Variant<Ref<IDBCursor>, Ref<IDBDatabase>, IDBKeyData, Vector<IDBKeyData>, IDBGetResult, IDBGetAllResult, uint64_t, NullResultType>;
     ExceptionOr<Result> result() const;
-    JSValueInWrappedObject& resultWrapper() { return m_resultWrapper; }
+    JSValueInWrappedObject& resultWrapper() LIFETIME_BOUND { return m_resultWrapper; }
 
-    using Source = Variant<RefPtr<IDBObjectStore>, RefPtr<IDBIndex>, RefPtr<IDBCursor>>;
-    const std::optional<Source>& source() const { return m_source; }
+    using Source = Variant<Ref<IDBObjectStore>, Ref<IDBIndex>, Ref<IDBCursor>>;
+    const std::optional<Source>& source() const LIFETIME_BOUND { return m_source; }
 
     ExceptionOr<DOMException*> error() const;
 
-    RefPtr<IDBTransaction> transaction() const;
+    IDBTransaction* NODELETE transaction() const;
+    IDBTransaction* NODELETE transactionForBindings() const;
     
     enum class ReadyState { Pending, Done };
     ReadyState readyState() const { return m_readyState; }
@@ -103,11 +104,10 @@ public:
 
     std::optional<IDBObjectStoreIdentifier> sourceObjectStoreIdentifier() const;
     std::optional<IDBIndexIdentifier> sourceIndexIdentifier() const;
-    IndexedDB::ObjectStoreRecordType requestedObjectStoreRecordType() const;
-    IndexedDB::IndexRecordType requestedIndexRecordType() const;
+    IndexedDB::ObjectStoreRecordType NODELETE requestedObjectStoreRecordType() const;
+    IndexedDB::IndexRecordType NODELETE requestedIndexRecordType() const;
 
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using IDBActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
 
     // ActiveDOMObject.
     void ref() const final { ThreadSafeRefCounted::ref(); }
@@ -134,7 +134,7 @@ public:
 
     void setTransactionOperationID(uint64_t transactionOperationID) { m_currentTransactionOperationID = transactionOperationID; }
     bool willAbortTransactionAfterDispatchingEvent() const;
-    void transactionTransitionedToFinishing();
+    void NODELETE transactionTransitionedToFinishing();
     bool isEventBeingDispatched() const { return !!m_eventBeingDispatched; }
 
 protected:
@@ -160,7 +160,7 @@ private:
     EventTargetInterfaceType eventTargetInterface() const override;
 
     // ActiveDOMObject.
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
     void stop() final;
 
     virtual void cancelForStop();
@@ -178,8 +178,6 @@ private:
     void clearWrappers();
 
 protected:
-    RefPtr<IDBTransaction> protectedTransaction() const;
-
     // FIXME: Protected data members aren't great for maintainability.
     // Consider adding protected helper functions and making these private.
     RefPtr<IDBTransaction> m_transaction;
@@ -214,7 +212,7 @@ private:
     RefPtr<Event> m_eventBeingDispatched;
 };
 
-WebCoreOpaqueRoot root(IDBRequest*);
+WebCoreOpaqueRoot NODELETE root(IDBRequest*);
 
 } // namespace WebCore
 

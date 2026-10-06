@@ -42,13 +42,9 @@ static constexpr size_t maxFrameExtentForSlowPathCall = 0;
 // All args in registers. Windows also uses System V ABI.
 static constexpr size_t maxFrameExtentForSlowPathCall = 0;
 
-#elif CPU(ARM64) || CPU(ARM64E) || CPU(RISCV64)
+#elif CPU(ARM64) || CPU(RISCV64)
 // All args in registers.
 static constexpr size_t maxFrameExtentForSlowPathCall = 0;
-
-#elif CPU(ARM)
-// First four args in registers, remaining 4 args on stack.
-static constexpr size_t maxFrameExtentForSlowPathCall = 24;
 
 #else
 #error "Unsupported CPU: need value for maxFrameExtentForSlowPathCall"

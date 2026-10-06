@@ -28,33 +28,33 @@
 #import "BindableResource.h"
 #import <WebGPU/WGPUQuerySetImpl.h>
 #import <WebGPU/WebGPU.h>
+#import <WebGPU/WebGPUCpp.h>
 #import <WebGPU/WebGPUExt.h>
 #import <optional>
 #import <wtf/FastMalloc.h>
 #import <wtf/Range.h>
 #import <wtf/RangeSet.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
-#import <wtf/RetainReleaseSwift.h>
+#import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/Vector.h>
 #import <wtf/WeakHashSet.h>
 #import <wtf/WeakPtr.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class Buffer;
 class CommandEncoder;
 class Device;
 
 // https://gpuweb.github.io/gpuweb/#gpuqueryset
-class QuerySet : public WGPUQuerySetImpl, public RefCountedAndCanMakeWeakPtr<QuerySet>, public TrackedResource {
+class QuerySet final : public WebGPU::QuerySet, public WGPUQuerySetImpl, public TrackedResource {
     WTF_MAKE_TZONE_ALLOCATED(QuerySet);
 public:
     struct CounterSampleBuffer {
         id<MTLCounterSampleBuffer> buffer { nil }; // Safety: ARC retains this pointer
         uint32_t offset { 0 };
-    } SWIFT_ESCAPABLE;
+    } SWIFT_SELF_CONTAINED;
 
     static Ref<QuerySet> create(id<MTLBuffer> visibilityBuffer, uint32_t count, WGPUQueryType type, Device& device)
     {
@@ -72,20 +72,20 @@ public:
     ~QuerySet();
 
     void destroy();
-    void setLabel(String&&);
+    void setLabel(String&&) final;
 
-    bool isValid() const;
+    bool NODELETE isValid() const final;
 
-    void setOverrideLocation(QuerySet& otherQuerySet, uint32_t beginningOfPassIndex, uint32_t endOfPassIndex);
+    void NODELETE setOverrideLocation(QuerySet& otherQuerySet, uint32_t beginningOfPassIndex, uint32_t endOfPassIndex);
 
     Device& device() const { return m_device; }
     uint32_t count() const { return m_count; }
     WGPUQueryType type() const { return m_type; }
     id<MTLBuffer> visibilityBuffer() const { return m_visibilityBuffer; }
-    CounterSampleBuffer counterSampleBufferWithOffset() const;
+    CounterSampleBuffer NODELETE counterSampleBufferWithOffset() const;
 
     void setCommandEncoder(CommandEncoder&) const;
-    bool isDestroyed() const;
+    bool NODELETE isDestroyed() const;
     static void destroyQuerySet(const QuerySet&);
     static CounterSampleBuffer counterSampleBufferWithOffsetForDevice(size_t, const Device&);
     static void createContainersIfNeeded();
@@ -118,16 +118,16 @@ private:
     static Lock querySetLock;
     static std::unique_ptr<Vector<id<MTLCounterSampleBuffer>>> m_counterSampleBuffers WTF_GUARDED_BY_LOCK(querySetLock);
     static std::unique_ptr<Vector<RangeSet<Range<uint32_t>>>> m_counterSampleBufferFreeRanges WTF_GUARDED_BY_LOCK(querySetLock);
-} SWIFT_SHARED_REFERENCE(refQuerySet, derefQuerySet);
+} SWIFT_SHARED_REFERENCE(refQuerySet, derefQuerySet) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
-inline void refQuerySet(WebGPU::QuerySet* obj)
+inline void refQuerySet(WebGPU::Metal::QuerySet* obj)
 {
-    WTF::ref(obj);
+    obj->ref();
 }
 
-inline void derefQuerySet(WebGPU::QuerySet* obj)
+inline void derefQuerySet(WebGPU::Metal::QuerySet* obj)
 {
-    WTF::deref(obj);
+    obj->deref();
 }

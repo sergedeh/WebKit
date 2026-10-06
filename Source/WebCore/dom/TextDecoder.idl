@@ -23,16 +23,14 @@
 * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary TextDecoderOptions {
+// https://encoding.spec.whatwg.org/#textdecoder
+
+dictionary TextDecoderOptions {
     boolean fatal = false;
     boolean ignoreBOM = false;
 };
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary TextDecodeOptions {
+dictionary TextDecodeOptions {
     boolean stream = false;
 };
 
@@ -44,5 +42,5 @@
     readonly attribute DOMString encoding;
     readonly attribute boolean fatal;
     readonly attribute boolean ignoreBOM;
-    USVString decode(optional [AllowShared] (ArrayBufferView or ArrayBuffer)? input, optional TextDecodeOptions options = {});
+    USVString decode(optional AllowSharedBufferSource? input, optional TextDecodeOptions options = {});
 };

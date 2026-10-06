@@ -10,9 +10,8 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/tools/metadata/__init__.py
+/LayoutTests/imported/w3c/web-platform-tests/tools/metadata/requirements.txt
 /LayoutTests/imported/w3c/web-platform-tests/tools/metadata/schema.py

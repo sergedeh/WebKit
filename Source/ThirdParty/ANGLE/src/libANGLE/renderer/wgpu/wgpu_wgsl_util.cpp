@@ -4,12 +4,9 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/wgpu/wgpu_wgsl_util.h"
 
+#include <iostream>
 #include <sstream>
 #include <string>
 
@@ -20,6 +17,7 @@
 #include "compiler/translator/wgsl/OutputUniformBlocks.h"
 #include "libANGLE/Program.h"
 #include "libANGLE/ProgramExecutable.h"
+#include "libANGLE/renderer/renderer_utils.h"
 
 namespace rx
 {
@@ -29,6 +27,25 @@ namespace webgpu
 namespace
 {
 const bool kOutputReplacements = false;
+
+// GLSL sampler uniforms are extracted from structs. Given a GLSL sampler's associated name string,
+// this function retrieves its new WGSL name and strips off array indices.
+//
+// For extracted samplers, their names are generated and indexed by their order.
+std::string GetMappedSamplerName(const std::string &originalName,
+                                 angle::HashMap<std::string, size_t> *extractedSamplerIndices)
+{
+    // Remove array elements
+    const std::string samplerName = RemoveArraySubscripts(originalName);
+
+    // Samplers in structs are extracted.
+    if (samplerName.find('.') != std::string::npos)
+    {
+        return GetExtractedStructSamplerName(samplerName, extractedSamplerIndices);
+    }
+
+    return samplerName;
+}
 
 void ReplaceFoundMarker(const std::string &shaderSource,
                         std::string &newSource,
@@ -166,7 +183,7 @@ std::string WgslAssignLocationsAndSamplerBindings(const gl::ProgramExecutable &e
             continue;
         }
         int loc = shaderVar.getLocation();
-        AddShaderVarLocation(varNameToLocation, shaderVar.name, loc, shaderVar.getType(),
+        AddShaderVarLocation(varNameToLocation, shaderVar.mappedName, loc, shaderVar.getType(),
                              shaderVar.isArray() ? shaderVar.getBasicTypeElementCount() : 0u);
     }
 
@@ -192,7 +209,8 @@ std::string WgslAssignLocationsAndSamplerBindings(const gl::ProgramExecutable &e
             {
                 continue;
             }
-            AddShaderVarLocation(varNameToLocation, shaderVar->name, currLocMarker, shaderVar->type,
+            AddShaderVarLocation(varNameToLocation, shaderVar->mappedName, currLocMarker,
+                                 shaderVar->type,
                                  shaderVar->isArray() ? shaderVar->getBasicTypeElementCount() : 0u);
         }
         else
@@ -216,6 +234,7 @@ std::string WgslAssignLocationsAndSamplerBindings(const gl::ProgramExecutable &e
     // locations, alternating between a sampler and its corresponding texture.
     // The WGPU backend will read the same metadata and lay out its bind groups in the same
     // alternating fashion.
+    angle::HashMap<std::string, size_t> extractedSamplerIndices;
     for (uint32_t textureIndex = 0; textureIndex < samplerBindings.size(); ++textureIndex)
     {
         if (samplerBindings[textureIndex].textureUnitsCount != 1)
@@ -227,7 +246,7 @@ std::string WgslAssignLocationsAndSamplerBindings(const gl::ProgramExecutable &e
         // Get the name of the sampler variable from the uniform metadata.
         uint32_t uniformIndex          = executable.getUniformIndexFromSamplerIndex(textureIndex);
         const std::string &uniformName = executable.getUniformNames()[uniformIndex];
-        std::string mappedSamplerName  = sh::WGSLGetMappedSamplerName(uniformName);
+        std::string mappedSamplerName = GetMappedSamplerName(uniformName, &extractedSamplerIndices);
 
         varNameToLocation[std::string(sh::kAngleSamplerPrefix) + mappedSamplerName] =
             textureIndex * 2;

@@ -30,16 +30,20 @@
 
 #import <simd/simd.h>
 
-typedef struct REAsset *REAssetRef;
-typedef struct REEntity *REEntityRef;
-
-NS_ASSUME_NONNULL_BEGIN
-
 typedef struct {
     simd_float3 scale;
     simd_quatf rotation;
     simd_float3 translation;
 } WKEntityTransform;
+
+#if HAVE(CORE_RE)
+typedef struct REAsset *REAssetRef;
+typedef struct REEntity *REEntityRef;
+#else
+typedef void *REAssetRef;
+#endif
+
+NS_ASSUME_NONNULL_BEGIN
 
 @class WKRKEntity;
 
@@ -59,6 +63,7 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) float boundingRadius;
 @property (nonatomic, readonly) simd_float3 interactionPivotPoint;
 @property (nonatomic) WKEntityTransform transform;
+@property (nonatomic, weak) WKRKEntity * _Nullable referenceEntity;
 @property (nonatomic) float opacity;
 @property (nonatomic, readonly) NSTimeInterval duration;
 @property (nonatomic) BOOL loop;
@@ -68,13 +73,21 @@ NS_SWIFT_UI_ACTOR
 
 + (BOOL)isLoadFromDataAvailable;
 + (void)loadFromData:(NSData *)data withAttributionTaskID:(nullable NSString *)attributionTaskId entityMemoryLimit:(NSInteger)entityMemoryLimit completionHandler:(NS_SWIFT_UI_ACTOR void (^)(WKRKEntity * _Nullable entity))completionHandler;
-- (instancetype)initWithCoreEntity:(REEntityRef)coreEntity;
-- (void)setParentCoreEntity:(REEntityRef)parentCoreEntity preservingWorldTransform:(BOOL)preservingWorldTransform;
 - (void)setUpAnimationWithAutoPlay:(BOOL)autoPlay;
 - (void)applyIBLData:(NSData *)data attributionHandler:(NS_SWIFT_UI_ACTOR void (^)(REAssetRef coreEnvironmentResourceAsset))attributionHandler withCompletion:(NS_SWIFT_UI_ACTOR void (^)(BOOL success))completion;
-- (void)interactionContainerDidRecenterFromTransform:(simd_float4x4)transform;
-- (void)recenterEntityAtTransform:(WKEntityTransform)transform;
 - (void)applyDefaultIBL;
+- (void)removeIBL;
+- (void)setIBLReceiverEnabled:(BOOL)enabled;
+- (void)setProvidesEnvironmentLighting:(BOOL)provides;
+- (void)setGroundingShadowsEnabled:(BOOL)enabled;
+- (void)removeFromParentEntity;
+
+#if HAVE(CORE_RE)
+@property (nonatomic, readonly) REEntityRef coreEntity;
+- (instancetype)initWithCoreEntity:(REEntityRef)coreEntity;
+- (void)setParentCoreEntity:(REEntityRef)parentCoreEntity preservingWorldTransform:(BOOL)preservingWorldTransform;
+#endif
+
 @end
 
 NS_ASSUME_NONNULL_END

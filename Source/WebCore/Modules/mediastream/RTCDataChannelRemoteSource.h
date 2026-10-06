@@ -46,7 +46,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    void sendStringData(const CString& text) { m_handler->sendStringData(text); }
+    void sendStringData(const UTF8CString& text) { m_handler->sendStringData(text); }
     void sendRawData(std::span<const uint8_t> data) { m_handler->sendRawData(data); }
     void close() { m_handler->close(); }
 
@@ -59,7 +59,7 @@ private:
     void didReceiveRawData(std::span<const uint8_t>) final;
     void didDetectError(Ref<RTCError>&&) final;
     void bufferedAmountIsDecreasing(size_t) final;
-    size_t bufferedAmount() const final;
+    size_t NODELETE bufferedAmount() const final;
     void peerConnectionIsClosing() final;
 
     const RTCDataChannelIdentifier m_remoteIdentifier;

@@ -44,7 +44,7 @@
 #include <wtf/Forward.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/HashTraits.h>
-#include <wtf/ListHashSet.h>
+#include <wtf/OrderedHashSet.h>
 #include <wtf/Platform.h>
 #include <wtf/PointerComparison.h>
 #include <wtf/RefPtr.h>
@@ -124,7 +124,7 @@ class FontCache : public CanMakeCheckedPtr<FontCache> {
     WTF_MAKE_NONCOPYABLE(FontCache);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FontCache);
 public:
-    WEBCORE_EXPORT static CheckedRef<FontCache> forCurrentThread();
+    WEBCORE_EXPORT static FontCache& forCurrentThread();
     static FontCache* forCurrentThreadIfExists();
     static FontCache* forCurrentThreadIfNotDestroyed();
 
@@ -137,7 +137,7 @@ public:
     Vector<String> systemFontFamilies();
     void platformInit();
 
-    static bool isSystemFontForbiddenForEditing(const String&);
+    static bool NODELETE isSystemFontForbiddenForEditing(const String&);
 
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT static void setFontAllowlist(const Vector<String>&);
@@ -174,12 +174,13 @@ public:
     enum class ShouldRunInvalidationCallback : bool { No, Yes };
     WEBCORE_EXPORT static void invalidateAllFontCaches(ShouldRunInvalidationCallback = ShouldRunInvalidationCallback::Yes);
 
-    WEBCORE_EXPORT size_t fontCount();
+    WEBCORE_EXPORT size_t NODELETE fontCount();
     WEBCORE_EXPORT size_t inactiveFontCount();
     WEBCORE_EXPORT void purgeInactiveFontData(unsigned count = UINT_MAX);
     void platformPurgeInactiveFontData();
 
     static void releaseNoncriticalMemoryInAllFontCaches();
+    static void releaseCriticalMemoryInAllFontCaches();
 
     void updateFontCascade(const FontCascade&);
 
@@ -199,11 +200,11 @@ public:
     void prewarm(PrewarmInformation&&);
     static void prewarmGlobally();
 
-    FontCascadeCache& fontCascadeCache() { return m_fontCascadeCache; }
-    SystemFallbackFontCache& systemFallbackFontCache() { return m_systemFallbackFontCache; }
+    FontCascadeCache& fontCascadeCache() LIFETIME_BOUND { return m_fontCascadeCache; }
+    SystemFallbackFontCache& systemFallbackFontCache() LIFETIME_BOUND { return m_systemFallbackFontCache; }
 #if PLATFORM(COCOA)
-    FontFamilySpecificationCoreTextCache& fontFamilySpecificationCoreTextCache() { return m_fontFamilySpecificationCoreTextCache; }
-    SystemFontDatabaseCoreText& systemFontDatabaseCoreText() { return m_systemFontDatabaseCoreText; }
+    FontFamilySpecificationCoreTextCache& fontFamilySpecificationCoreTextCache() LIFETIME_BOUND { return m_fontFamilySpecificationCoreTextCache; }
+    SystemFontDatabaseCoreText& systemFontDatabaseCoreText() LIFETIME_BOUND { return m_systemFontDatabaseCoreText; }
 #endif
 
     bool useBackslashAsYenSignForFamily(const AtomString& family);
@@ -215,7 +216,7 @@ public:
 #if USE(SKIA)
     static Vector<hb_feature_t> computeFeatures(const FontDescription&, const FontCreationContext&);
     WEBCORE_EXPORT SkFontMgr& fontManager() const;
-    SkiaHarfBuzzFontCache& harfBuzzFontCache() { return m_harfBuzzFontCache; }
+    SkiaHarfBuzzFontCache& harfBuzzFontCache() LIFETIME_BOUND { return m_harfBuzzFontCache; }
 #endif
 
     void invalidate();
@@ -239,7 +240,7 @@ private:
 #endif
 
 #if PLATFORM(COCOA)
-    FontDatabase& database(AllowUserInstalledFonts);
+    FontDatabase& NODELETE database(AllowUserInstalledFonts);
 #endif
 
     Timer m_purgeTimer;
@@ -268,8 +269,8 @@ private:
     using FallbackFontSet = HashSet<RetainPtr<CTFontRef>, WTF::RetainPtrObjectHash<CTFontRef>, WTF::RetainPtrObjectHashTraits<CTFontRef>>;
     FallbackFontSet m_fallbackFonts;
 
-    ListHashSet<String> m_seenFamiliesForPrewarming;
-    ListHashSet<String> m_fontNamesRequiringSystemFallbackForPrewarming;
+    OrderedHashSet<String> m_seenFamiliesForPrewarming;
+    OrderedHashSet<String> m_fontNamesRequiringSystemFallbackForPrewarming;
     const RefPtr<WorkQueue> m_prewarmQueue;
 
     FontFamilySpecificationCoreTextCache m_fontFamilySpecificationCoreTextCache;

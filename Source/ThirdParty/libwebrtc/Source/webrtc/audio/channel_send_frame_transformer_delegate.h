@@ -16,10 +16,10 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
-#include "api/array_view.h"
 #include "api/frame_transformer_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/task_queue/task_queue_base.h"
@@ -31,7 +31,7 @@ namespace webrtc {
 
 // Delegates calls to FrameTransformerInterface to transform frames, and to
 // ChannelSend to send the transformed frames using `send_frame_callback_` on
-// the `encoder_queue_`.
+// the `send_queue_`.
 // OnTransformedFrame() can be called from any thread, the delegate ensures
 // thread-safe access to the ChannelSend callback.
 class ChannelSendFrameTransformerDelegate : public TransformedFrameCallback {
@@ -39,15 +39,15 @@ class ChannelSendFrameTransformerDelegate : public TransformedFrameCallback {
   using SendFrameCallback =
       std::function<int32_t(AudioFrameType frameType,
                             uint8_t payloadType,
-                            uint32_t rtp_timestamp_with_offset,
-                            webrtc::ArrayView<const uint8_t> payload,
+                            RtpTimestampInfo rtp_timestamp_info,
+                            std::span<const uint8_t> payload,
                             int64_t absolute_capture_timestamp_ms,
-                            webrtc::ArrayView<const uint32_t> csrcs,
+                            std::span<const uint32_t> csrcs,
                             std::optional<uint8_t> audio_level_dbov)>;
   ChannelSendFrameTransformerDelegate(
       SendFrameCallback send_frame_callback,
       scoped_refptr<FrameTransformerInterface> frame_transformer,
-      TaskQueueBase* encoder_queue);
+      TaskQueueBase* send_queue);
 
   // Registers `this` as callback for `frame_transformer_`, to get the
   // transformed frames.
@@ -77,7 +77,7 @@ class ChannelSendFrameTransformerDelegate : public TransformedFrameCallback {
 
   void StartShortCircuiting() override;
 
-  // Delegates the call to ChannelSend::SendRtpAudio on the `encoder_queue_`,
+  // Delegates the call to ChannelSend::SendRtpAudio on the `send_queue_`,
   // by calling `send_audio_callback_`.
   void SendFrame(std::unique_ptr<TransformableFrameInterface> frame) const;
 
@@ -88,12 +88,23 @@ class ChannelSendFrameTransformerDelegate : public TransformedFrameCallback {
   mutable Mutex send_lock_;
   SendFrameCallback send_frame_callback_ RTC_GUARDED_BY(send_lock_);
   scoped_refptr<FrameTransformerInterface> frame_transformer_;
-  TaskQueueBase* const encoder_queue_;
+  TaskQueueBase* const send_queue_;
   bool short_circuit_ RTC_GUARDED_BY(send_lock_) = false;
 };
 
 std::unique_ptr<TransformableAudioFrameInterface> CloneSenderAudioFrame(
     TransformableAudioFrameInterface* original);
-
+std::unique_ptr<TransformableAudioFrameInterface> CreateSenderAudioFrame(
+    TransformableAudioFrameInterface::FrameType frame_type,
+    uint8_t payload_type,
+    RtpTimestampInfo rtp_timestamp_info,
+    const uint8_t* payload_data,
+    size_t payload_size,
+    std::optional<uint64_t> absolute_capture_timestamp_ms,
+    uint32_t ssrc,
+    const std::vector<uint32_t>& csrcs,
+    const std::string& codec_mime_type,
+    std::optional<uint16_t> sequence_number,
+    std::optional<uint8_t> audio_level_dbov);
 }  // namespace webrtc
 #endif  // AUDIO_CHANNEL_SEND_FRAME_TRANSFORMER_DELEGATE_H_

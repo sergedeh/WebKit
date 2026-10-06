@@ -35,6 +35,7 @@
 #include <wayland-client-protocol.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
+#include <wtf/text/StringView.h>
 #include <xkbcommon/xkbcommon.h>
 
 typedef struct _TextInputV1Global TextInputV1Global;
@@ -125,6 +126,7 @@ static uint32_t toTextInputV1Purpose(WPEInputPurpose purpose)
 {
     switch (purpose) {
     case WPE_INPUT_PURPOSE_FREE_FORM:
+    case WPE_INPUT_PURPOSE_SEARCH:
         return ZWP_TEXT_INPUT_V1_CONTENT_PURPOSE_NORMAL;
     case WPE_INPUT_PURPOSE_ALPHA:
         return ZWP_TEXT_INPUT_V1_CONTENT_PURPOSE_ALPHA;
@@ -279,14 +281,12 @@ static void textInputV1UpdateState(WPEIMContextWaylandV1* context)
 static xkb_mod_mask_t keysymModifiersGetMask(struct wl_array *map, const char *name)
 {
     xkb_mod_index_t index = 0;
-    const char* p = static_cast<const char *>(map->data);
+    auto entries = StringView(unsafeMakeSpan(static_cast<const char*>(map->data), map->size));
 
-    while (p < static_cast<const char *>(p + map->size)) {
-        if (!strcmp (p, name))
+    for (auto entry : entries.split('\0')) {
+        if (entry == StringView::fromLatin1(name))
             return 1 << index;
-
         index++;
-        p += strlen(p) + 1;
     }
 
     return XKB_MOD_INVALID;

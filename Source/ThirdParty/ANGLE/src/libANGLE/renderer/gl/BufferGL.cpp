@@ -4,13 +4,10 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 // BufferGL.cpp: Implements the class methods for BufferGL.
 
 #include "libANGLE/renderer/gl/BufferGL.h"
+#include "common/unsafe_buffers.h"
 
 #include "common/debug.h"
 #include "common/utilities.h"
@@ -89,15 +86,12 @@ angle::Result BufferGL::setData(const gl::Context *context,
                                 const void *data,
                                 size_t size,
                                 gl::BufferUsage usage,
-                                BufferFeedback *feedback)
+                                BufferFeedback *feedback,
+                                gl::ZeroFillRequired zeroFillRequired)
 {
     ContextGL *contextGL         = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions = GetFunctionsGL(context);
     StateManagerGL *stateManager = GetStateManagerGL(context);
-
-    stateManager->bindBuffer(DestBufferOperationTarget, mBufferID);
-    ANGLE_GL_TRY(context, functions->bufferData(gl::ToGLenum(DestBufferOperationTarget), size, data,
-                                                ToGLenum(usage)));
 
     // Initialize the shadow buffer if needed. Don't delete existing shadow data. WebGL allows users
     // to bind as an element array buffer first and then copy source/dest later (but not the other
@@ -107,15 +101,31 @@ angle::Result BufferGL::setData(const gl::Context *context,
         mShadowCopy = angle::MemoryBuffer();
     }
 
+    stateManager->bindBuffer(DestBufferOperationTarget, mBufferID);
+
+    const void *uploadData = data;
+    if (zeroFillRequired == gl::ZeroFillRequired::Yes)
+    {
+        const angle::MemoryBuffer *scratchBuffer = nullptr;
+        ANGLE_CHECK_GL_ALLOC(
+            contextGL, context->getZeroFilledBuffer(static_cast<size_t>(size), &scratchBuffer));
+        uploadData = scratchBuffer->data();
+    }
+
     if (mShadowCopy.has_value())
     {
         ANGLE_CHECK_GL_ALLOC(contextGL, mShadowCopy->resize(size));
 
-        if (size > 0 && data != nullptr)
+        if (size > 0 && uploadData != nullptr)
         {
-            memcpy(mShadowCopy->data(), data, size);
+            ANGLE_UNSAFE_TODO(memcpy(mShadowCopy->data(), uploadData, size));
+            uploadData = mShadowCopy->data();
         }
     }
+
+    ANGLE_GL_TRY_ALWAYS_CHECK(
+        context, functions->bufferData(gl::ToGLenum(DestBufferOperationTarget), size, uploadData,
+                                       ToGLenum(usage)));
 
     mBufferSize = size;
 
@@ -136,13 +146,20 @@ angle::Result BufferGL::setSubData(const gl::Context *context,
     StateManagerGL *stateManager = GetStateManagerGL(context);
 
     stateManager->bindBuffer(DestBufferOperationTarget, mBufferID);
-    ANGLE_GL_TRY(context, functions->bufferSubData(gl::ToGLenum(DestBufferOperationTarget), offset,
-                                                   size, data));
 
-    if (mShadowCopy.has_value() && size > 0)
+    const void *uploadData = data;
+
+    if (mShadowCopy.has_value())
     {
-        memcpy(mShadowCopy->data() + offset, data, size);
+        if (size > 0 && data != nullptr)
+        {
+            ANGLE_UNSAFE_TODO(memcpy(mShadowCopy->data() + offset, data, size));
+            uploadData = ANGLE_UNSAFE_TODO(mShadowCopy->data() + offset);
+        }
     }
+
+    ANGLE_GL_TRY(context, functions->bufferSubData(gl::ToGLenum(DestBufferOperationTarget), offset,
+                                                   size, uploadData));
 
     contextGL->markWorkSubmitted();
 
@@ -176,8 +193,8 @@ angle::Result BufferGL::copySubData(const gl::Context *context,
         ASSERT(sourceGL->mShadowCopy.has_value());
 
         ASSERT(sourceGL->mShadowCopy->size() >= static_cast<size_t>(sourceOffset + size));
-        memcpy(mShadowCopy->data() + destOffset, sourceGL->mShadowCopy->data() + sourceOffset,
-               size);
+        ANGLE_UNSAFE_TODO(memcpy(mShadowCopy->data() + destOffset,
+                                 sourceGL->mShadowCopy->data() + sourceOffset, size));
     }
 
     contextGL->markWorkSubmitted();
@@ -242,7 +259,7 @@ angle::Result BufferGL::mapRange(const gl::Context *context,
 
     if (mShadowCopy.has_value())
     {
-        *mapPtr = mShadowCopy->data() + offset;
+        *mapPtr = ANGLE_UNSAFE_TODO(mShadowCopy->data() + offset);
     }
     else
     {
@@ -280,9 +297,9 @@ angle::Result BufferGL::unmap(const gl::Context *context,
     if (mShadowCopy.has_value())
     {
         stateManager->bindBuffer(DestBufferOperationTarget, mBufferID);
-        ANGLE_GL_TRY(context,
-                     functions->bufferSubData(gl::ToGLenum(DestBufferOperationTarget), mMapOffset,
-                                              mMapSize, mShadowCopy->data() + mMapOffset));
+        ANGLE_UNSAFE_TODO(ANGLE_GL_TRY(
+            context, functions->bufferSubData(gl::ToGLenum(DestBufferOperationTarget), mMapOffset,
+                                              mMapSize, mShadowCopy->data() + mMapOffset)));
         *result = GL_TRUE;
     }
     else
@@ -314,8 +331,8 @@ angle::Result BufferGL::getIndexRange(const gl::Context *context,
 
     if (mShadowCopy.has_value())
     {
-        *outRange = gl::ComputeIndexRange(type, mShadowCopy->data() + offset, count,
-                                          primitiveRestartEnabled);
+        *outRange = gl::ComputeIndexRange(type, ANGLE_UNSAFE_TODO(mShadowCopy->data() + offset),
+                                          count, primitiveRestartEnabled);
     }
     else
     {

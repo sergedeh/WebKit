@@ -23,6 +23,7 @@ selectors = [
     { name = "lookUpURL:isMainFrame:hasHighConfidenceOfSafety:cachedResult:completionHandler:", class = "SSBLookupContext" },
     { name = "_getListsForNamespace:collectionId:completionHandler:", class = "SSBLookupContext" },
 ]
+requires = ["HAVE_SAFE_BROWSING"]
 
 [[not-web-essential]]
 request = "rdar://166711133"
@@ -93,6 +94,7 @@ symbols = [
     "nw_connection_abort_reads",
     "nw_connection_abort_writes",
     "nw_http_fields_access_value_by_name",
+    "nw_http_fields_enumerate",
     "nw_parameters_create_webtransport_http",
     "nw_protocol_copy_webtransport_definition",
     "nw_webtransport_create_options",
@@ -106,6 +108,8 @@ symbols = [
     "nw_webtransport_metadata_set_remote_drain_handler",
     "nw_webtransport_metadata_set_remote_receive_error_handler",
     "nw_webtransport_metadata_set_remote_send_error_handler",
+    "nw_protocol_copy_quic_connection_definition",
+    "nw_quic_connection_copy_sec_protocol_metadata",
     "nw_webtransport_metadata_copy_connect_response",
     "nw_webtransport_metadata_get_transport_mode",
     "nw_webtransport_options_add_connect_request_header",
@@ -115,7 +119,6 @@ symbols = [
     "nw_webtransport_options_set_initial_max_streams_uni",
     "nw_webtransport_options_set_initial_max_streams_bidi"
 ]
-requires = ["HAVE_WEB_TRANSPORT"]
 
 [[temporary-usage]]
 request = "rdar://157886016"
@@ -190,6 +193,12 @@ selectors = [
 ]
 requires = ["ENABLE_SCRIPT_TRACKING_PRIVACY_PROTECTIONS"]
 
+[[not-web-essential]]
+request = "rdar://157886589"
+selectors = [
+    { name = "loadDefaultContentRuleListForStore:completionHandler:", class = "?" },
+]
+
 [[temporary-usage]]
 request = "rdar://157888734"
 cleanup = "rdar://157888769"
@@ -256,31 +265,27 @@ selectors = [
 requires = ["HAVE_UIKIT_SCROLLBAR_COLOR_SPI"]
 
 [[temporary-usage]]
-request = "rdar://164431329"
-cleanup = "rdar://164667890"
-classes = [
-    "AVLegibleMediaOptionsMenuController",
-]
-selectors = [
-    { name = "buildMenuOfType:", class = "AVLegibleMediaOptionsMenuController" },
-    { name = "menuWithContents:", class = "AVLegibleMediaOptionsMenuController" },
-]
-requires = ["HAVE_AVLEGIBLEMEDIAOPTIONSMENUCONTROLLER"]
-
-[[temporary-usage]]
 request = "rdar://165789536"
 cleanup = "rdar://165842824"
 selectors = [
     { name = "requestProofreadingReviewOfString:range:language:options:completionHandler:", class = "UITextChecker" },
 ]
 
-[[staging]]
-request = "rdar://163791929"
-cleanup = "rdar://165836164"
+[[temporary-usage]]
+request = "rdar://165789536"
+cleanup = "rdar://165842824"
 selectors = [
- { name = "setIsDelegatedRequest:", class = "PKPaymentRequest" },
+    { name = "proofreadingSessionType", class = "WTSession" },
 ]
-requires = ["HAVE_PASSKIT_DELEGATED_REQUEST"]
+requires = ["ENABLE_WRITING_TOOLS_EXTENDED_PROOFREADING"]
+
+[[not-web-essential]]
+request = "rdar://178257869"
+selectors = [
+    { name = "paymentServicesMerchantURLForAPIType:isDelegated:completion:", class = "PKPaymentAuthorizationController" },
+    { name = "paymentServicesMerchantURLForAPIType:isDelegated:completion:", class = "PKPaymentAuthorizationViewController" },
+]
+requires = ["HAVE_PASSKIT_PAYMENT_SERVICES_MERCHANT_URL_IS_DELEGATED"]
 
 [[not-web-essential]]
 request = "rdar://165006869"
@@ -288,3 +293,65 @@ selectors = [
     { name = "_setDecelerationTrackingBehavior:", class = "UIScrollView" },
 ]
 requires = ["HAVE_UISCROLLVIEW_DECELERATION_TRACKING_BEHAVIOR"]
+
+[[temporary-usage]]
+request = "rdar://170141943"
+cleanup = "rdar://170141943"
+selectors = [
+    { name = "_setUseVisionAlternateScrollIndicatorRendering:", class = "UIScrollView" },
+]
+requires = ["PLATFORM_VISION"]
+
+[[temporary-usage]]
+request = "rdar://171730075"
+cleanup = "rdar://171730140"
+selectors = [
+    { name = "_lookToScrollGroupName", class = "UIScrollView" },
+]
+requires = ["PLATFORM_VISION"]
+
+[[staging]]
+request = "rdar://171222829"
+selectors = [
+    { name = "setPresentingAppBundleID:", class = "?" },
+    { name = "setPresentingAppProcessIdentifier:", class = "?" },
+]
+requires = ["ENABLE_AIRPLAY_PICKER", "ENABLE_WIRELESS_PLAYBACK_MEDIA_PLAYER"]
+
+[[staging]]
+request = "rdar://161102071"
+selectors = [
+    { name = "setAllowsTypeSelect:", class = "UIContextMenuConfiguration" },
+]
+requires = ["HAVE_UICONTEXTMENUCONFIGURATION_ALLOWTYPESELECT_SUPPORT"]
+
+[[not-web-essential]]
+request = "rdar://171940190"
+selectors = [
+    { name = "endSessionWithCompletion:", class = "NFSession" },
+]
+
+[[staging]]
+request = "rdar://166719636"
+symbols = [
+    "SecTrustCreateAndVerifyQWACTLSBinding"
+]
+
+[[not-web-essential]]
+request = "rdar://185838347"
+selectors = [
+    { name = "invalidateWithReason:", class = "BEWebContentProcess" },
+    { name = "invalidateWithReason:", class = "BENetworkingProcess" },
+    { name = "invalidateWithReason:", class = "BERenderingProcess" },
+]
+requires = ["USE_EXTENSIONKIT"]
+
+[[not-web-essential]]
+request = "rdar://188757685"
+classes = ["_UIVolumetricWindowSceneActivationRequestOptions"]
+selectors = [
+    { name = "_internalConfigurationWithRole:sceneClass:delegateClass:storyboard:", class = "UISceneConfiguration" },
+    { name = "_requestWithConfiguration:", class = "UISceneSessionActivationRequest" },
+    { name = "_setInternal:", class = "_UIVolumetricWindowSceneActivationRequestOptions" },
+]
+requires = ["PLATFORM_VISION", "ENABLE_CONNECTED_VOLUMETRIC_SCENE"]

@@ -37,9 +37,9 @@
 #import <pal/cf/CoreMediaSoftLink.h>
 
 @interface WebEffectiveRateChangedListenerObjCAdapter : NSObject
-@property (atomic, readonly, direct) RefPtr<WebCore::EffectiveRateChangedListener> protectedListener;
 - (instancetype)init NS_UNAVAILABLE;
 - (instancetype)initWithEffectiveRateChangedListener:(const WebCore::EffectiveRateChangedListener&)listener;
+- (RefPtr<WebCore::EffectiveRateChangedListener>)listener;
 @end
 
 NS_DIRECT_MEMBERS
@@ -54,7 +54,7 @@ NS_DIRECT_MEMBERS
     return self;
 }
 
-- (RefPtr<WebCore::EffectiveRateChangedListener>)protectedListener
+- (RefPtr<WebCore::EffectiveRateChangedListener>)listener
 {
     return _listener.get();
 }
@@ -65,8 +65,8 @@ namespace WebCore {
 static void timebaseEffectiveRateChangedCallback(CFNotificationCenterRef, void* observer, CFNotificationName, const void*, CFDictionaryRef)
 {
     RetainPtr adapter { dynamic_objc_cast<WebEffectiveRateChangedListenerObjCAdapter>(reinterpret_cast<id>(observer)) };
-    if (RefPtr protectedListener = [adapter protectedListener])
-        protectedListener->effectiveRateChanged();
+    if (RefPtr listener = [adapter listener])
+        listener->effectiveRateChanged();
 }
 
 EffectiveRateChangedListener::EffectiveRateChangedListener(Function<void(double)>&& callback, CMTimebaseRef timebase)
@@ -85,7 +85,7 @@ EffectiveRateChangedListener::~EffectiveRateChangedListener()
 
 void EffectiveRateChangedListener::effectiveRateChanged()
 {
-    m_callback(PAL::CMTimebaseGetRate(m_timebase.get()));
+    m_callback(PAL::CMTimebaseGetEffectiveRate(m_timebase.get()));
 }
 
 void EffectiveRateChangedListener::stop()

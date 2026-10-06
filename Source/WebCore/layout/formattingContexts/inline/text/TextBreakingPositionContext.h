@@ -25,7 +25,8 @@
 
 #pragma once
 
-#include <WebCore/RenderStyle.h>
+#include <WebCore/StyleComputedStyle.h>
+#include <WebCore/StyleWebKitLocale.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/HashMap.h>
 #include <wtf/Hasher.h>
@@ -64,23 +65,22 @@ struct TextBreakingPositionContext {
     LineBreak lineBreak { LineBreak::Normal };
     WordBreak wordBreak { WordBreak::Normal };
     NBSPMode nbspMode { NBSPMode::Normal };
+    bool isHashTableDeletedValue { false };
     AtomString locale;
 
-    bool isHashTableDeletedValue { false };
-
-    TextBreakingPositionContext(const RenderStyle&);
+    TextBreakingPositionContext(const Style::ComputedStyle&);
     TextBreakingPositionContext() = default;
 
     friend bool operator==(const TextBreakingPositionContext&, const TextBreakingPositionContext&) = default;
 };
 
-inline TextBreakingPositionContext::TextBreakingPositionContext(const RenderStyle& style)
+inline TextBreakingPositionContext::TextBreakingPositionContext(const Style::ComputedStyle& style)
     : whitespaceCollapseBehavior(BehaviorForWhiteSpaceCollapse(style.whiteSpaceCollapse()))
     , overflowWrap(style.overflowWrap())
     , lineBreak(style.lineBreak())
     , wordBreak(style.wordBreak())
     , nbspMode(style.nbspMode())
-    , locale(Style::toPlatform(style.computedLocale()))
+    , locale(Style::toPlatform(style.usedLocale()))
 {
 }
 

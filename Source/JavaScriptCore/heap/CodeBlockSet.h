@@ -55,7 +55,7 @@ public:
     void clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM&);
 
     bool contains(const AbstractLocker&, void* candidateCodeBlock);
-    Lock& getLock() WTF_RETURNS_LOCK(m_lock) { return m_lock; }
+    Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
 
     // This is expected to run only when we're not adding to the set for now. If
     // this needs to run concurrently in the future, we'll need to lock around this.
@@ -64,10 +64,10 @@ public:
     // Visits each CodeBlock in the heap until the visitor function returns true
     // to indicate that it is done iterating, or until every CodeBlock has been
     // visited.
-    template<typename Functor> void iterate(const Functor&);
-    template<typename Functor> void iterate(const AbstractLocker&, const Functor&);
+    template<typename Functor> void iterate(NOESCAPE const Functor&);
+    template<typename Functor> void iterate(const AbstractLocker&, NOESCAPE const Functor&);
 
-    template<typename Functor> void iterateCurrentlyExecuting(const Functor&);
+    template<typename Functor> void iterateCurrentlyExecuting(NOESCAPE const Functor&);
     
     void dump(PrintStream&) const;
     

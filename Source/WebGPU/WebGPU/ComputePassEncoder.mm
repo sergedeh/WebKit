@@ -37,27 +37,27 @@
 #import "QuerySet.h"
 #import <wtf/TZoneMallocInlines.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 #define RETURN_IF_FINISHED() \
 if (!m_parentEncoder->isLocked() || m_parentEncoder->isFinished()) { \
-    protectedDevice()->generateAValidationError([NSString stringWithFormat:@"%s: failed as encoding has finished", __PRETTY_FUNCTION__]); \
+    protect(m_device)->generateAValidationError([NSString stringWithFormat:@"%s: failed as encoding has finished", __PRETTY_FUNCTION__]); \
     m_computeCommandEncoder = nil; \
     return; \
 } \
-if (!m_computeCommandEncoder || !m_parentEncoder->isValid() || !protectedParentEncoder()->encoderIsCurrent(m_computeCommandEncoder)) { \
+if (!m_computeCommandEncoder || !m_parentEncoder->isValid() || !protect(m_parentEncoder)->encoderIsCurrent(m_computeCommandEncoder)) { \
     m_computeCommandEncoder = nil; \
     return; \
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ComputePassEncoder);
 
-ComputePassEncoder::ComputePassEncoder(id<MTLComputeCommandEncoder> computeCommandEncoder, const WGPUComputePassDescriptor&, CommandEncoder& parentEncoder, Device& device)
+ComputePassEncoder::ComputePassEncoder(id<MTLComputeCommandEncoder> computeCommandEncoder, const WebGPU::ComputePassDescriptor&, CommandEncoder& parentEncoder, Device& device)
     : m_computeCommandEncoder(computeCommandEncoder)
     , m_device(device)
     , m_parentEncoder(parentEncoder)
 {
-    protectedParentEncoder()->lock(true);
+    protect(m_parentEncoder)->lock(true);
     RELEASE_ASSERT(m_maxDynamicOffsetAtIndex.size() >= m_device->limits().maxBindGroups);
 }
 
@@ -66,7 +66,7 @@ ComputePassEncoder::ComputePassEncoder(CommandEncoder& parentEncoder, Device& de
     , m_parentEncoder(parentEncoder)
     , m_lastErrorString(errorString)
 {
-    protectedParentEncoder()->lock(true);
+    protect(m_parentEncoder)->lock(true);
     m_parentEncoder->setLastError(errorString);
     RELEASE_ASSERT(m_maxDynamicOffsetAtIndex.size() >= m_device->limits().maxBindGroups);
 }
@@ -74,7 +74,7 @@ ComputePassEncoder::ComputePassEncoder(CommandEncoder& parentEncoder, Device& de
 ComputePassEncoder::~ComputePassEncoder()
 {
     if (m_computeCommandEncoder)
-        protectedParentEncoder()->makeInvalid(@"GPUComputePassEncoder.finish was never called");
+        protect(m_parentEncoder)->makeInvalid(@"GPUComputePassEncoder.finish was never called");
     m_computeCommandEncoder = nil;
 }
 
@@ -180,7 +180,12 @@ void ComputePassEncoder::executePreDispatchCommands(const Buffer* indirectBuffer
         return;
     }
 
-    if (NSString *error = pipeline->protectedPipelineLayout()->errorValidatingBindGroupCompatibility(m_bindGroups)) {
+    if (!pipeline->isValid()) {
+        makeInvalid(@"pipeline is not valid prior to dispatch");
+        return;
+    }
+
+    if (NSString *error = protect(pipeline->pipelineLayout())->errorValidatingBindGroupCompatibility(m_bindGroups)) {
         makeInvalid(error);
         return;
     }
@@ -198,11 +203,11 @@ void ComputePassEncoder::executePreDispatchCommands(const Buffer* indirectBuffer
         auto bindGroupIndex = kvp.key;
         Ref group = kvp.value;
         if (group->hasSamplers())
-            protectedParentEncoder()->rebindSamplersPreCommit(group);
+            protect(m_parentEncoder)->rebindSamplersPreCommit(group);
 
         if (!group->previouslyValidatedBindGroup(bindGroupIndex, pipelineIdentifier, m_maxDynamicOffsetAtIndex[bindGroupIndex])) {
-            if (group->makeSubmitInvalid(ShaderStage::Compute, pipelineLayout->protectedOptionalBindGroupLayout(bindGroupIndex).get())) {
-                protectedParentEncoder()->makeSubmitInvalid();
+            if (group->makeSubmitInvalid(ShaderStage::Compute, protect(pipelineLayout->optionalBindGroupLayout(bindGroupIndex)).get())) {
+                protect(m_parentEncoder)->makeSubmitInvalid();
                 return;
             }
 
@@ -228,7 +233,7 @@ void ComputePassEncoder::executePreDispatchCommands(const Buffer* indirectBuffer
             for (size_t i = 0, sz = bindGroupResources->mtlResources.size(); i < sz; ++i) {
                 auto& usageData = bindGroupResources->resourceUsages[i];
                 constexpr ShaderStage shaderStages[] = { ShaderStage::Vertex, ShaderStage::Fragment, ShaderStage::Compute, ShaderStage::Undefined };
-                std::optional<BindGroupLayout::StageMapValue> bindingAccess = std::nullopt;
+                std::optional<BindGroupLayout::StageMapValue> bindingAccess;
                 for (auto shaderStage : shaderStages) {
                     bindingAccess = bindGroupLayout->bindingAccessForBindingIndex(usageData.binding, shaderStage);
                     if (bindingAccess)
@@ -237,7 +242,7 @@ void ComputePassEncoder::executePreDispatchCommands(const Buffer* indirectBuffer
                 if (!bindingAccess)
                     continue;
 
-                if (!addResourceToActiveResources(usageData.resource, usageData.usage, BindGroupId { bindGroupIndex }, usagesForResource, textureUsagesForResource, protectedParentEncoder())) {
+                if (!addResourceToActiveResources(usageData.resource, usageData.usage, BindGroupId { bindGroupIndex }, usagesForResource, textureUsagesForResource, protect(m_parentEncoder))) {
                     makeInvalid(@"GPUComputePassEncoder.executePreDispatchCommands - could not track resource");
                     return;
                 }
@@ -318,8 +323,8 @@ void ComputePassEncoder::dispatchIndirect(const Buffer& indirectBuffer, uint64_t
     }
 
     auto indirectOffsetSum = checkedSum<uint64_t>(indirectOffset, 3 * sizeof(uint32_t));
-    if ((indirectOffset % 4) || !(indirectBuffer.usage() & WGPUBufferUsage_Indirect) || indirectOffsetSum.hasOverflowed() || (indirectOffsetSum.value() > indirectBuffer.initialSize())) {
-        makeInvalid([NSString stringWithFormat:@"GPUComputePassEncoder.dispatchIndirect: (indirectOffset(%llu) mod 4) || !(indirectBuffer.usage(%u) & WGPUBufferUsage_Indirect(%u)) || indirectOffsetSum.hasOverflowed(%d) || (indirectOffsetSum(%llu) > indirectBuffer.initialSize(%llu))", indirectOffset, indirectBuffer.usage(), WGPUBufferUsage_Indirect, indirectOffsetSum.hasOverflowed(), indirectOffsetSum.hasOverflowed() ? 0 : indirectOffsetSum.value(), indirectBuffer.initialSize()]);
+    if ((indirectOffset % 4) || !indirectBuffer.usage().contains(WebGPU::BufferUsage::Indirect) || indirectOffsetSum.hasOverflowed() || (indirectOffsetSum.value() > indirectBuffer.initialSize())) {
+        makeInvalid([NSString stringWithFormat:@"GPUComputePassEncoder.dispatchIndirect: (indirectOffset(%llu) mod 4) || !(indirectBuffer.usage(%llu) & WGPUBufferUsage_Indirect(%llu)) || indirectOffsetSum.hasOverflowed(%d) || (indirectOffsetSum(%llu) > indirectBuffer.initialSize(%llu))", indirectOffset, toAPI(indirectBuffer.usage()), WGPUBufferUsage_Indirect, indirectOffsetSum.hasOverflowed(), indirectOffsetSum.hasOverflowed() ? 0 : indirectOffsetSum.value(), indirectBuffer.initialSize()]);
         return;
     }
 
@@ -337,20 +342,46 @@ void ComputePassEncoder::dispatchIndirect(const Buffer& indirectBuffer, uint64_t
 void ComputePassEncoder::endPass()
 {
     if (m_passEnded) {
-        protectedDevice()->generateAValidationError([NSString stringWithFormat:@"%s: failed as pass is already ended", __PRETTY_FUNCTION__]);
+        protect(m_device)->generateAValidationError([NSString stringWithFormat:@"%s: failed as pass is already ended", __PRETTY_FUNCTION__]);
         return;
     }
     m_passEnded = true;
 
-    RETURN_IF_FINISHED();
+    // https://gpuweb.github.io/gpuweb/#dom-gpucomputepassencoder-end
+    // A pass begun while the command encoder was already locked by another pass never took the
+    // encoder over. Ending it is a validation error the page can catch, not a silent no-op.
+    if (m_encoderStateWasNotOpen) {
+        protect(m_device)->generateAValidationError([NSString stringWithFormat:@"%s: failed as the command encoder was not open when the pass began", __PRETTY_FUNCTION__]);
+        return;
+    }
 
     auto parentEncoder = m_parentEncoder;
 
+    // Spelled out rather than RETURN_IF_FINISHED() because ending a pass hands the command encoder
+    // back and only then looks at whether the pass ended in a good state, so every path from here
+    // unlocks the encoder. A pass that ended badly invalidates its encoder instead of leaving it
+    // locked: a later pass can still be begun on an invalid encoder.
+    if (!parentEncoder->isLocked() || parentEncoder->isFinished()) {
+        protect(m_device)->generateAValidationError([NSString stringWithFormat:@"%s: failed as encoding has finished", __PRETTY_FUNCTION__]);
+        m_computeCommandEncoder = nil;
+        return;
+    }
+
     auto passIsValid = isValid();
     if (m_debugGroupStackSize || !passIsValid) {
-        parentEncoder->endEncoding(m_computeCommandEncoder);
+        // An already-invalidated pass has handed its command encoder back already.
+        if (m_computeCommandEncoder)
+            parentEncoder->endEncoding(m_computeCommandEncoder);
         m_computeCommandEncoder = nil;
+        parentEncoder->lock(false);
         parentEncoder->makeInvalid([NSString stringWithFormat:@"ComputePassEncoder.endPass failure, m_debugGroupStackSize = %llu, isValid = %d, error = %@", m_debugGroupStackSize, passIsValid, m_lastErrorString]);
+        return;
+    }
+
+    if (!parentEncoder->isValid() || !parentEncoder->encoderIsCurrent(m_computeCommandEncoder)) {
+        m_computeCommandEncoder = nil;
+        parentEncoder->lock(false);
+        parentEncoder->makeInvalid(@"ComputePassEncoder.endPass: the pass no longer holds the command encoder");
         return;
     }
 
@@ -443,11 +474,16 @@ static void setCommandEncoder(const BindGroupEntryUsageData::Resource& resource,
     });
 }
 
-void ComputePassEncoder::setBindGroup(uint32_t groupIndex, const BindGroup* groupPtr, std::optional<Vector<uint32_t>>&& dynamicOffsets)
+void ComputePassEncoder::setBindGroup(uint32_t groupIndex, const BindGroup* groupPtr, std::optional<std::span<const uint32_t>> apiDynamicOffsets)
 {
+    // The encoder keeps the dynamic offsets.
+    std::optional<Vector<uint32_t>> dynamicOffsets;
+    if (apiDynamicOffsets)
+        dynamicOffsets = Vector<uint32_t> { *apiDynamicOffsets };
+
     RETURN_IF_FINISHED();
 
-    auto dynamicOffsetCount = (groupPtr && groupPtr->bindGroupLayout()) ? groupPtr->protectedBindGroupLayout()->dynamicBufferCount() : 0;
+    auto dynamicOffsetCount = (groupPtr && groupPtr->bindGroupLayout()) ? groupPtr->bindGroupLayout()->dynamicBufferCount() : 0;
     if (groupIndex >= m_device->limits().maxBindGroups || (dynamicOffsets && dynamicOffsetCount != dynamicOffsets->size())) {
         makeInvalid(@"GPUComputePassEncoder.setBindGroup: groupIndex >= limits.maxBindGroups");
         return;
@@ -510,7 +546,7 @@ void ComputePassEncoder::setPipeline(const ComputePipeline& pipeline)
     }
 
     m_pipeline = pipeline;
-    m_computeDynamicOffsets.fill(0, m_pipeline->protectedPipelineLayout()->sizeOfComputeDynamicOffsets());
+    m_computeDynamicOffsets.fill(0, protect(m_pipeline->pipelineLayout())->sizeOfComputeDynamicOffsets());
     m_maxDynamicOffsetAtIndex.fill(0);
 
     ASSERT(pipeline.computePipelineState());
@@ -534,61 +570,61 @@ id<MTLComputeCommandEncoder> ComputePassEncoder::computeCommandEncoder() const
 
 #undef RETURN_IF_FINISHED
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
 
-void wgpuComputePassEncoderReference(WGPUComputePassEncoder computePassEncoder)
+void NODELETE wgpuComputePassEncoderAddRef(WGPUComputePassEncoder computePassEncoder)
 {
-    WebGPU::fromAPI(computePassEncoder).ref();
+    WebGPU::Metal::fromAPI(computePassEncoder).ref();
 }
 
 void wgpuComputePassEncoderRelease(WGPUComputePassEncoder computePassEncoder)
 {
-    WebGPU::fromAPI(computePassEncoder).deref();
+    WebGPU::Metal::fromAPI(computePassEncoder).deref();
 }
 
 void wgpuComputePassEncoderDispatchWorkgroups(WGPUComputePassEncoder computePassEncoder, uint32_t x, uint32_t y, uint32_t z)
 {
-    WebGPU::protectedFromAPI(computePassEncoder)->dispatch(x, y, z);
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->dispatch(x, y, z);
 }
 
 void wgpuComputePassEncoderDispatchWorkgroupsIndirect(WGPUComputePassEncoder computePassEncoder, WGPUBuffer indirectBuffer, uint64_t indirectOffset)
 {
-    WebGPU::protectedFromAPI(computePassEncoder)->dispatchIndirect(WebGPU::protectedFromAPI(indirectBuffer), indirectOffset);
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->dispatchIndirect(protect(WebGPU::Metal::fromAPI(indirectBuffer)), indirectOffset);
 }
 
 void wgpuComputePassEncoderEnd(WGPUComputePassEncoder computePassEncoder)
 {
-    WebGPU::protectedFromAPI(computePassEncoder)->endPass();
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->endPass();
 }
 
-void wgpuComputePassEncoderInsertDebugMarker(WGPUComputePassEncoder computePassEncoder, const char* markerLabel)
+void wgpuComputePassEncoderInsertDebugMarker(WGPUComputePassEncoder computePassEncoder, WGPUStringView markerLabel)
 {
-    WebGPU::protectedFromAPI(computePassEncoder)->insertDebugMarker(WebGPU::fromAPI(markerLabel));
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->insertDebugMarker(WebGPU::Metal::fromAPI(markerLabel));
 }
 
 void wgpuComputePassEncoderPopDebugGroup(WGPUComputePassEncoder computePassEncoder)
 {
-    WebGPU::protectedFromAPI(computePassEncoder)->popDebugGroup();
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->popDebugGroup();
 }
 
-void wgpuComputePassEncoderPushDebugGroup(WGPUComputePassEncoder computePassEncoder, const char* groupLabel)
+void wgpuComputePassEncoderPushDebugGroup(WGPUComputePassEncoder computePassEncoder, WGPUStringView groupLabel)
 {
-    WebGPU::protectedFromAPI(computePassEncoder)->pushDebugGroup(WebGPU::fromAPI(groupLabel));
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->pushDebugGroup(WebGPU::Metal::fromAPI(groupLabel));
 }
 
 void wgpuComputePassEncoderSetBindGroup(WGPUComputePassEncoder computePassEncoder, uint32_t groupIndex, WGPUBindGroup group, std::optional<Vector<uint32_t>>&& dynamicOffsets)
 {
-    WebGPU::protectedFromAPI(computePassEncoder)->setBindGroup(groupIndex, group ? WebGPU::protectedFromAPI(group).ptr() : nullptr, WTF::move(dynamicOffsets));
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->setBindGroup(groupIndex, group ? protect(WebGPU::Metal::fromAPI(group)).ptr() : nullptr, dynamicOffsets ? std::optional { dynamicOffsets->span() } : std::nullopt);
 }
 
 void wgpuComputePassEncoderSetPipeline(WGPUComputePassEncoder computePassEncoder, WGPUComputePipeline pipeline)
 {
-    WebGPU::protectedFromAPI(computePassEncoder)->setPipeline(WebGPU::protectedFromAPI(pipeline));
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->setPipeline(protect(WebGPU::Metal::fromAPI(pipeline)));
 }
 
-void wgpuComputePassEncoderSetLabel(WGPUComputePassEncoder computePassEncoder, const char* label)
+void wgpuComputePassEncoderSetLabel(WGPUComputePassEncoder computePassEncoder, WGPUStringView label)
 {
-    WebGPU::protectedFromAPI(computePassEncoder)->setLabel(WebGPU::fromAPI(label));
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->setLabel(WebGPU::Metal::fromAPI(label));
 }

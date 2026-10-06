@@ -32,6 +32,7 @@
 #import "NetworkProcessMessages.h"
 #import "ProcessAssertion.h"
 #import "RunningBoardServicesSPI.h"
+#import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -40,6 +41,16 @@ static constexpr double maxPrepareForSuspensionDelayInSecond = 15;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessStateMonitor);
 
+RefPtr<ProcessStateMonitor> ProcessStateMonitor::create(Function<void(bool)>&& becomeSuspendedHandler)
+{
+    // FIXME: this bundle ID check is a short term fix; it should eventually check
+    // -[RBSProcessHandle isManaged].
+    if (applicationBundleIdentifier() == "com.apple.textunderstandingd"_s)
+        return nullptr;
+
+    return adoptRef(*new ProcessStateMonitor(WTF::move(becomeSuspendedHandler)));
+}
+
 ProcessStateMonitor::ProcessStateMonitor(Function<void(bool)>&& becomeSuspendedHandler)
     : m_becomeSuspendedHandler(WTF::move(becomeSuspendedHandler))
     , m_suspendTimer(RunLoop::mainSingleton(), "ProcessStateMonitor::SuspendTimer"_s, [this] { suspendTimerFired(); })
@@ -47,7 +58,7 @@ ProcessStateMonitor::ProcessStateMonitor(Function<void(bool)>&& becomeSuspendedH
     RELEASE_LOG(ProcessSuspension, "%p - ProcessStateMonitor::ProcessStateMonitor", this);
     RELEASE_ASSERT(RunLoop::isMain());
 
-    m_rbsMonitor = [RBSProcessMonitor monitorWithConfiguration:[weakThis = WeakPtr { *this }](id<RBSProcessMonitorConfiguring> config) mutable {
+    lazyInitialize(m_rbsMonitor, retainPtr([RBSProcessMonitor monitorWithConfiguration:[weakThis = WeakPtr { *this }](id<RBSProcessMonitorConfiguring> config) mutable {
         RBSProcessStateDescriptor *descriptor = [RBSProcessStateDescriptor descriptor];
         [descriptor setValues:RBSProcessStateValueLegacyAssertions | RBSProcessStateValueModernAssertions];
         [config setStateDescriptor:descriptor];
@@ -58,7 +69,7 @@ ProcessStateMonitor::ProcessStateMonitor(Function<void(bool)>&& becomeSuspendedH
                     weakThis->checkRemainingRunTime();
             });
         }];
-    }];
+    }]));
 
     checkRemainingRunTime();
 }
@@ -76,6 +87,8 @@ void ProcessStateMonitor::processDidBecomeRunning()
 {
     if (m_state == State::Running)
         return;
+
+    RELEASE_LOG(ProcessSuspension, "%p - ProcessStateMonitor::processDidBecomeRunning", this);
 
     if (m_state == State::Suspended)
         m_becomeSuspendedHandler(false);

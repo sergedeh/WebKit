@@ -31,6 +31,7 @@
 #include <wtf/Observer.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebDriver {
 
@@ -45,6 +46,13 @@ static WeakHashSet<SessionHost::BrowserTerminatedObserver>& browserTerminatedObs
 void SessionHost::inspectorDisconnected()
 {
     Ref<SessionHost> protectedThis(*this);
+
+    auto pendingRequestCount = m_commandRequests.size();
+    if (pendingRequestCount)
+        RELEASE_LOG_INFO(SessionHost, "Inspector disconnected; failing %u pending command(s)", pendingRequestCount);
+    else
+        RELEASE_LOG_INFO(SessionHost, "Inspector disconnected; no commands remaining.");
+
     // Browser closed or crashed, finish all pending commands with error.
     RefPtr<JSON::Object> errorResponse = JSON::Object::create();
     errorResponse->setString("message"_s, "Session terminated without a reply"_s);
@@ -74,6 +82,7 @@ long SessionHost::sendCommandToBackend(const String& command, RefPtr<JSON::Objec
     if (parameters)
         messageBuilder.append(",\"params\":"_s, parameters->toJSONString());
     messageBuilder.append('}');
+    RELEASE_LOG_INFO(SessionHost, "    SEND inspector #%04ld: Automation.%s (%u bytes)", sequenceID, command.utf8(), messageBuilder.length());
     sendMessageToBackend(messageBuilder.toString());
 
     return sequenceID;
@@ -81,7 +90,7 @@ long SessionHost::sendCommandToBackend(const String& command, RefPtr<JSON::Objec
 
 void SessionHost::dispatchMessage(const String& message)
 {
-    LOG(SessionHost, "SessionHost::dispatchMessage: %s", message.utf8().data());
+    LOG_WITH_STREAM(SessionHost, stream << "SessionHost::dispatchMessage: "_s << message);
     auto messageValue = JSON::Value::parseJSON(message);
     if (!messageValue)
         return;
@@ -100,13 +109,17 @@ void SessionHost::dispatchMessage(const String& message)
             return;
         dispatchBidiMessage(WTF::move(messageObject));
 #else
-        RELEASE_LOG_ERROR(SessionHost, "Received from browser message without id: %s", message.utf8().data());
+        RELEASE_LOG_ERROR(SessionHost, "Received from browser message without id: %s", message.utf8());
 #endif
         return;
     }
 
     auto responseHandler = m_commandRequests.take(*sequenceID);
     ASSERT(responseHandler);
+    if (!responseHandler) {
+        RELEASE_LOG_ERROR(SessionHost, "    RECV inspector #%04d: unknown sequenceID", *sequenceID);
+        return;
+    }
 
     CommandResponse response;
     if (auto errorObject = messageObject->getObject("error"_s)) {
@@ -116,6 +129,7 @@ void SessionHost::dispatchMessage(const String& message)
         if (resultObject->size())
             response.responseObject = WTF::move(resultObject);
     }
+    RELEASE_LOG_INFO(SessionHost, "    RECV inspector #%04d: %s", *sequenceID, response.isError ? "error" : "ok");
 
     responseHandler(WTF::move(response));
 }
@@ -139,11 +153,11 @@ void SessionHost::removeBrowserTerminatedObserver(const BrowserTerminatedObserve
 
 void SessionHost::dispatchBidiMessage(RefPtr<JSON::Object>&& event)
 {
-    LOG(WebDriverBiDi, "SessionHost::dispatchBidiMessage: %s", event->toJSONString().utf8().data());
+    LOG_WITH_STREAM(WebDriverBiDi, stream << "SessionHost::dispatchBidiMessage: "_s << event->toJSONString());
     if (m_bidiHandler)
         m_bidiHandler->dispatchBidiMessage(WTF::move(event));
     else
-        RELEASE_LOG(SessionHost, "No bidi message handler to dispatch message %s", event->toJSONString().utf8().data());
+        RELEASE_LOG(SessionHost, "No bidi message handler to dispatch message %s", event->toJSONString().utf8());
 }
 #endif
 

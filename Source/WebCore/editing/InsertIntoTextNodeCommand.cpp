@@ -36,10 +36,6 @@
 #include "Settings.h"
 #include "Text.h"
 
-#if PLATFORM(IOS_FAMILY)
-#include "RenderText.h"
-#endif
-
 namespace WebCore {
 
 InsertIntoTextNodeCommand::InsertIntoTextNodeCommand(Ref<Text>&& node, unsigned offset, const String& text, AllowPasswordEcho allowPasswordEcho, EditAction editingAction)
@@ -61,7 +57,7 @@ bool InsertIntoTextNodeCommand::shouldEnablePasswordEcho() const
     if (!document().settings().passwordEchoEnabled())
         return false;
 
-    if (document().editor().client()->shouldSuppressPasswordEcho())
+    if (protect(document().editor().client())->shouldSuppressPasswordEcho())
         return false;
 
     return true;
@@ -72,7 +68,7 @@ void InsertIntoTextNodeCommand::doApply()
     bool passwordEchoEnabled = shouldEnablePasswordEcho();
 
     if (passwordEchoEnabled)
-        document().updateLayoutIgnorePendingStylesheets();
+        protect(document())->updateLayoutIgnorePendingStylesheets();
 
     if (!m_node->hasEditableStyle())
         return;

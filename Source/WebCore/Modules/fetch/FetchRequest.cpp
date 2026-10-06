@@ -60,20 +60,20 @@ static ExceptionOr<String> computeReferrer(ScriptExecutionContext& context, cons
     if (referrer.isEmpty())
         return "no-referrer"_str;
 
-    URL referrerURL = context.completeURL(referrer, ScriptExecutionContext::ForceUTF8::Yes);
+    URL referrerURL = context.parseURL(referrer);
     if (!referrerURL.isValid())
         return Exception { ExceptionCode::TypeError, "Referrer is not a valid URL."_s };
 
     if (referrerURL.protocolIsAbout() && referrerURL.path() == "client"_s)
         return "client"_str;
 
-    if (!(context.securityOrigin() && context.protectedSecurityOrigin()->canRequest(referrerURL, OriginAccessPatternsForWebProcess::singleton())))
+    if (!(context.securityOrigin() && protect(context.securityOrigin())->canRequest(referrerURL, OriginAccessPatternsForWebProcess::singleton())))
         return "client"_str;
 
     return String { referrerURL.string() };
 }
 
-static std::optional<Exception> buildOptions(FetchOptions& options, ResourceRequest& request, String& referrer, RequestPriority& priority, ScriptExecutionContext& context, const FetchRequest::Init& init)
+static std::optional<Exception> buildOptions(FetchOptions& options, ResourceRequest& request, String& referrer, RequestPriority& priority, std::optional<FetchRequestDuplex>& duplex, ScriptExecutionContext& context, const FetchRequest::Init& init)
 {
     if (!init.window.isUndefinedOrNull() && !init.window.isEmpty())
         return Exception { ExceptionCode::TypeError, "Window can only be null."_s };
@@ -97,6 +97,9 @@ static std::optional<Exception> buildOptions(FetchOptions& options, ResourceRequ
 
     if (init.priority)
         priority = *init.priority;
+
+    if (init.duplex)
+        duplex = init.duplex;
 
     if (init.mode) {
         options.mode = init.mode.value();
@@ -140,8 +143,9 @@ static IPAddressSpace updateTargetAddressSpaceIfNeeded(IPAddressSpace currentAdd
     if (host.isEmpty())
         return currentAddressSpace;
 
-    if (WebCore::isLocalIPAddressSpace(url))
-        return IPAddressSpace::Local;
+    auto addressSpace = WebCore::determineIPAddressSpace(url);
+    if (addressSpace != IPAddressSpace::Public)
+        return addressSpace;
 
     if (host.endsWithIgnoringASCIICase(".local"_s))
         return IPAddressSpace::Local;
@@ -164,7 +168,7 @@ ExceptionOr<void> FetchRequest::initializeOptions(const Init& init)
 {
     ASSERT(scriptExecutionContext());
 
-    auto exception = buildOptions(m_options, m_request, m_referrer, m_priority, *protectedScriptExecutionContext(), init);
+    auto exception = buildOptions(m_options, m_request, m_referrer, m_priority, m_duplex, *protect(scriptExecutionContext()), init);
     if (exception)
         return WTF::move(exception.value());
 
@@ -195,7 +199,7 @@ ExceptionOr<void> FetchRequest::initializeWith(const String& url, Init&& init)
 {
     Ref context = *scriptExecutionContext();
 
-    URL requestURL = context->completeURL(url, ScriptExecutionContext::ForceUTF8::Yes);
+    URL requestURL = context->parseURL(url);
     if (!requestURL.isValid() || requestURL.hasCredentials())
         return Exception { ExceptionCode::TypeError, "URL is not valid or contains user credentials."_s };
 
@@ -207,7 +211,7 @@ ExceptionOr<void> FetchRequest::initializeWith(const String& url, Init&& init)
     m_request.setInitiatorIdentifier(context->resourceRequestIdentifier());
 
     if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext()); document && document->settings().localNetworkAccessEnabled())
-        m_targetAddressSpace = updateTargetAddressSpaceIfNeeded(m_targetAddressSpace, m_request.url());
+        m_targetAddressSpace = updateTargetAddressSpaceIfNeeded(init.targetAddressSpace.value_or(m_targetAddressSpace), m_request.url());
 
     auto optionsResult = initializeOptions(init);
     if (optionsResult.hasException())
@@ -228,8 +232,8 @@ ExceptionOr<void> FetchRequest::initializeWith(const String& url, Init&& init)
             return fillResult.releaseException();
     }
 
-    if (init.body) {
-        auto setBodyResult = setBody(WTF::move(*init.body));
+    if (init.body && init.body.value()) {
+        auto setBodyResult = setBody(WTF::move(*init.body.value()));
         if (setBodyResult.hasException())
             return setBodyResult.releaseException();
     }
@@ -246,6 +250,7 @@ ExceptionOr<void> FetchRequest::initializeWith(FetchRequest& input, Init&& init)
     m_options = input.m_options;
     m_referrer = input.m_referrer;
     m_priority = input.m_priority;
+    m_duplex = input.m_duplex;
     m_enableContentExtensionsCheck = input.m_enableContentExtensionsCheck;
 
     auto optionsResult = initializeOptions(init);
@@ -274,13 +279,18 @@ ExceptionOr<void> FetchRequest::initializeWith(FetchRequest& input, Init&& init)
     }
 
     if (RefPtr document = dynamicDowncast<Document>(context); document && document->settings().localNetworkAccessEnabled())
-        m_targetAddressSpace = updateTargetAddressSpaceIfNeeded(*init.targetAddressSpace, m_request.url());
+        m_targetAddressSpace = updateTargetAddressSpaceIfNeeded(init.targetAddressSpace.value_or(input.m_targetAddressSpace), m_request.url());
 
-    auto setBodyResult = init.body ? setBody(WTF::move(*init.body)) : setBody(input);
+    auto setBodyResult = init.body && init.body.value() ? setBody(WTF::move(*init.body.value())) : setBody(input);
     if (setBodyResult.hasException())
         return setBodyResult;
 
     return { };
+}
+
+static bool shouldCheckDuplex(ScriptExecutionContext* context)
+{
+    return context && context->settingsValues().fetchUploadStreamsEnabled;
 }
 
 ExceptionOr<void> FetchRequest::setBody(FetchBody::Init&& body)
@@ -293,6 +303,9 @@ ExceptionOr<void> FetchRequest::setBody(FetchBody::Init&& body)
     if (result.hasException())
         return result;
 
+    if (isReadableStreamBody() && !m_duplex && shouldCheckDuplex(protect(scriptExecutionContext())))
+        return Exception { ExceptionCode::TypeError, "Request with a ReadableStream body requires the 'duplex' option to be set"_s };
+
     if (m_options.keepAlive && hasReadableStreamBody())
         return Exception { ExceptionCode::TypeError, "Request cannot have a ReadableStream body and keepalive set to true"_s };
     return { };
@@ -303,15 +316,18 @@ ExceptionOr<void> FetchRequest::setBody(FetchRequest& request)
     if (request.isDisturbedOrLocked())
         return Exception { ExceptionCode::TypeError, "Request input is disturbed or locked."_s };
 
+    RefPtr context = scriptExecutionContext();
     if (!request.isBodyNull()) {
         if (!methodCanHaveBody(m_request))
             return Exception { ExceptionCode::TypeError, makeString("Request has method '"_s, m_request.httpMethod(), "' and cannot have a body"_s) };
 
-        RefPtr context = scriptExecutionContext();
-        auto* globalObject = context ? JSC::jsCast<JSDOMGlobalObject*>(context->globalObject()) : nullptr;
+        auto* globalObject = context ? downcast<JSDOMGlobalObject>(context->globalObject()) : nullptr;
         m_body = request.m_body->createProxy(*globalObject);
         request.setDisturbed();
     }
+
+    if (isReadableStreamBody() && !m_duplex && shouldCheckDuplex(context))
+        return Exception { ExceptionCode::TypeError, "Request with a ReadableStream body requires the 'duplex' option to be set"_s };
 
     if (m_options.keepAlive && hasReadableStreamBody())
         return Exception { ExceptionCode::TypeError, "Request cannot have a ReadableStream body and keepalive set to true"_s };
@@ -328,7 +344,7 @@ ExceptionOr<Ref<FetchRequest>> FetchRequest::create(ScriptExecutionContext& cont
         if (result.hasException())
             return result.releaseException();
     } else {
-        auto result = request->initializeWith(Ref { *std::get<RefPtr<FetchRequest>>(input) }.get(), WTF::move(init));
+        auto result = request->initializeWith(std::get<Ref<FetchRequest>>(input).get(), WTF::move(init));
         if (result.hasException())
             return result.releaseException();
     }
@@ -367,8 +383,8 @@ ResourceRequest FetchRequest::resourceRequest() const
     if (!isBodyNull())
         request.setHTTPBody(body().bodyAsFormData());
 
-    if (RefPtr context = scriptExecutionContext()) {
-        if (RefPtr document = dynamicDowncast<Document>(*context); document && document->settings().localNetworkAccessEnabled())
+    if (auto* context = scriptExecutionContext()) {
+        if (auto* document = dynamicDowncast<Document>(*context); document && document->settings().localNetworkAccessEnabled())
             request.setTargetAddressSpace(m_targetAddressSpace);
     }
 
@@ -384,10 +400,13 @@ ExceptionOr<Ref<FetchRequest>> FetchRequest::clone(JSDOMGlobalObject& globalObje
         return Exception { ExceptionCode::InvalidStateError, "Cannot clone FetchRequest without a valid script execution context"_s };
     auto clone = adoptRef(*new FetchRequest(*context, std::nullopt, FetchHeaders::create(m_headers.get()), ResourceRequest { m_request }, FetchOptions { m_options }, String { m_referrer }));
     clone->suspendIfNeeded();
-    clone->cloneBody(globalObject, *this);
+    clone->m_duplex = m_duplex;
+    if (auto exception = clone->cloneBody(globalObject, *this))
+        return { WTF::move(*exception) };
+
     clone->setNavigationPreloadIdentifier(m_navigationPreloadIdentifier);
     clone->m_enableContentExtensionsCheck = m_enableContentExtensionsCheck;
-    if (RefPtr document = dynamicDowncast<Document>(*context); document && document->settings().localNetworkAccessEnabled())
+    if (auto* document = dynamicDowncast<Document>(*context); document && document->settings().localNetworkAccessEnabled())
         clone->m_targetAddressSpace = m_targetAddressSpace;
     clone->m_signal->signalFollow(m_signal);
     return clone;
@@ -397,6 +416,12 @@ void FetchRequest::stop()
 {
     m_requestURL.clear();
     FetchBodyOwner::stop();
+}
+
+void FetchRequest::cancel()
+{
+    if (!isBodyNull())
+        body().cancelReadableStream();
 }
 
 WebCoreOpaqueRoot root(FetchRequest* request)

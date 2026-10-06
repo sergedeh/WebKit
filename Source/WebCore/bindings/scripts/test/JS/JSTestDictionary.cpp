@@ -22,10 +22,10 @@
 #include "JSTestDictionary.h"
 
 #include "DOMWrapperWorld.h"
+#include "JSDOMBindingFacade.h"
 #include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertOptional.h"
-#include <JavaScriptCore/JSCInlines.h>
 #include <type_traits>
 #include <wtf/IsIncreasing.h>
 
@@ -47,7 +47,7 @@ IGNORE_WARNINGS_END
 
 template<> ConversionResult<IDLDictionary<TestDictionary>> convertDictionary<TestDictionary>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
@@ -55,13 +55,13 @@ template<> ConversionResult<IDLDictionary<TestDictionary>> convertDictionary<Tes
         throwTypeError(&lexicalGlobalObject, throwScope);
         return ConversionResultException { };
     }
-    auto guardedMemberConversionResult = [&]() -> ConversionResult<IDLOptional<IDLBoolean>> {
+    auto guardedMemberConversionResult = [&] -> ConversionResult<IDLOptional<IDLBoolean>> {
         if (worldForDOMObject(*&lexicalGlobalObject).someWorld()) {
             JSValue guardedMemberValue;
             if (isNullOrUndefined)
                 guardedMemberValue = jsUndefined();
             else {
-                guardedMemberValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "guardedMember"_s));
+                guardedMemberValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "guardedMember"_s));
                 RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
             }
             return convert<IDLOptional<IDLBoolean>>(lexicalGlobalObject, guardedMemberValue);
@@ -75,7 +75,7 @@ template<> ConversionResult<IDLDictionary<TestDictionary>> convertDictionary<Tes
     if (isNullOrUndefined)
         memberValue = jsUndefined();
     else {
-        memberValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "member"_s));
+        memberValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "member"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
     auto memberConversionResult = convert<IDLOptional<IDLDouble>>(lexicalGlobalObject, memberValue);

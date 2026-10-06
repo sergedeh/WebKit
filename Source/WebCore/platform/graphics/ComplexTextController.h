@@ -40,7 +40,6 @@
 typedef unsigned short CGGlyph;
 
 typedef const struct __CTRun * CTRunRef;
-typedef const struct __CTLine * CTLineRef;
 
 typedef struct hb_buffer_t hb_buffer_t;
 
@@ -60,7 +59,7 @@ enum class GlyphIterationStyle : bool { IncludePartialGlyphs, ByWholeGlyphs };
 class ComplexTextController {
     WTF_MAKE_TZONE_ALLOCATED(ComplexTextController);
 public:
-    ComplexTextController(const FontCascade&, const TextRun&, bool mayUseNaturalWritingDirection = false, SingleThreadWeakHashSet<const Font>* fallbackFonts = 0, bool forTextEmphasis = false);
+    ComplexTextController(const FontCascade&, const TextRun&, bool mayUseNaturalWritingDirection = false, SingleThreadWeakHashSet<const Font>* fallbackFonts = nullptr, bool forTextEmphasis = false);
 
     static std::pair<float, float> enclosingGlyphBoundsForTextRun(const FontCascade&, const TextRun&);
     static Vector<float> glyphAdvancesForTextRun(const FontCascade&, const TextRun&);
@@ -108,11 +107,10 @@ public:
 
         unsigned glyphCount() const { return m_glyphCount; }
         const Font& font() const { return m_font; }
-        Ref<const Font> protectedFont() const { return m_font.get(); }
         std::span<const char16_t> characters() const { return m_characters; }
         unsigned stringLocation() const { return m_stringLocation; }
         size_t stringLength() const { return m_characters.size(); }
-        ALWAYS_INLINE unsigned indexAt(unsigned) const;
+        ALWAYS_INLINE unsigned NODELETE indexAt(unsigned) const;
         unsigned indexBegin() const { return m_indexBegin; }
         unsigned indexEnd() const { return m_indexEnd; }
         unsigned endOffsetAt(unsigned i) const { ASSERT(!m_isMonotonic); return m_glyphEndOffsets[i]; }
@@ -167,10 +165,10 @@ private:
     void collectComplexTextRunsForCharacters(std::span<const char16_t>, unsigned stringLocation, const Font*);
     void adjustGlyphsAndAdvances();
 
-    unsigned indexOfCurrentRun(unsigned& leftmostGlyph);
-    unsigned incrementCurrentRun(unsigned& leftmostGlyph);
+    unsigned NODELETE indexOfCurrentRun(unsigned& leftmostGlyph);
+    unsigned NODELETE incrementCurrentRun(unsigned& leftmostGlyph);
 
-    float runWidthSoFarFraction(unsigned glyphStartOffset, unsigned glyphEndOffset, unsigned oldCharacterInCurrentGlyph, GlyphIterationStyle) const;
+    float NODELETE runWidthSoFarFraction(unsigned glyphStartOffset, unsigned glyphEndOffset, unsigned oldCharacterInCurrentGlyph, GlyphIterationStyle) const;
 
     FloatPoint glyphOrigin(unsigned index) const { return index < m_glyphOrigins.size() ? m_glyphOrigins[index] : FloatPoint(); }
 
@@ -197,10 +195,6 @@ private:
     Vector<unsigned, 16> m_runIndices;
     Vector<unsigned, 16> m_glyphCountFromStartToIndex;
 
-#if PLATFORM(COCOA)
-    Vector<RetainPtr<CTLineRef>, 4> m_coreTextLines;
-#endif
-
     Vector<String> m_stringsFor8BitRuns;
 
     SingleThreadWeakHashSet<const Font>* m_fallbackFonts { nullptr };
@@ -213,7 +207,6 @@ private:
 
     FloatSize m_totalAdvance;
     float m_runWidthSoFar { 0 };
-    unsigned m_numGlyphsSoFar { 0 };
     unsigned m_currentRun { 0 };
     unsigned m_glyphInCurrentRun { 0 };
     unsigned m_characterInCurrentGlyph { 0 };

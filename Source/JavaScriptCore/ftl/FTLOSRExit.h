@@ -44,6 +44,7 @@
 #include "Reg.h"
 #include "ValueProfile.h"
 #include "VirtualRegister.h"
+#include <wtf/Bag.h>
 #include <wtf/FixedVector.h>
 
 namespace JSC {
@@ -67,13 +68,39 @@ class State;
 struct OSRExitDescriptorImpl;
 struct OSRExitHandle;
 
+class JITCode;
+
+// Stores one ExitValue per operand of the exit (arguments, then locals, then tmps) as
+// a byte stream: a tag byte followed by an optional payload.
+//
+//   0x00-0x3F  (tag + 1) consecutive dead values
+//   0x40-0x43  InJSStack / AsInt32 / AsInt52 / AsDouble, flushed to the operand's own virtual register
+//   0x44-0x47  the same, flushed to another virtual register: SLEB128 register offset follows
+//   0x48       Constant: LEB128 index into JITCode::osrExitConstants follows
+//   0x49       MaterializeNewObject: LEB128 index into OSRExitDescriptor::m_materializations follows
+//   0x4A       Argument: DataFormat byte and LEB128 stackmap index follow
+//
+// Virtual registers are stored before the localsOffset adjustment; decode() applies it.
+class OSRExitValues {
+    WTF_MAKE_NONCOPYABLE(OSRExitValues);
+public:
+    OSRExitValues() = default;
+
+    void encode(const Operands<ExitValue>&, const Bag<ExitTimeObjectMaterialization>&, JITCode&);
+    FixedOperands<ExitValue> decode(const JITCode&, const Bag<ExitTimeObjectMaterialization>&) const;
+
+private:
+    FixedVector<uint8_t> m_bytes;
+    unsigned m_numberOfArguments { 0 };
+    unsigned m_numberOfLocals { 0 };
+    unsigned m_numberOfTmps { 0 };
+};
+
 struct OSRExitDescriptor {
 private:
     WTF_MAKE_NONCOPYABLE(OSRExitDescriptor);
 public:
-    OSRExitDescriptor(
-        DataFormat profileDataFormat, MethodOfGettingAValueProfile,
-        unsigned numberOfArguments, unsigned numberOfLocals, unsigned numberOfTmps);
+    OSRExitDescriptor(unsigned index, DataFormat profileDataFormat, MethodOfGettingAValueProfile);
 
     // The first argument to the exit call may be a value we wish to profile.
     // If that's the case, the format will be not Invalid and we'll have a
@@ -81,19 +108,22 @@ public:
     // are already aware of this possible off-by-one, so there is no need to
     // correct them.
     DataFormat m_profileDataFormat;
+    unsigned m_index;
     MethodOfGettingAValueProfile m_valueProfile;
-    
-    FixedOperands<ExitValue> m_values;
+
+    OSRExitValues m_values;
     Bag<ExitTimeObjectMaterialization> m_materializations;
+
+    FixedOperands<ExitValue> values(const JITCode& jitCode) const { return m_values.decode(jitCode, m_materializations); }
 
     void validateReferences(const TrackedReferences&);
 
     // Call this once we have a place to emit the OSR exit jump and we have data about how the state
     // should be recovered. This effectively emits code that does the exit, though the code is really a
-    // patchable jump and we emit the real code lazily. The description of how to emit the real code is
-    // up to the OSRExit object, which this creates. Note that it's OK to drop the OSRExitHandle object
-    // on the ground. It contains information that is mostly not useful if you use this API, since after
-    // this call, the OSRExit is simply ready to go.
+    // call to the OSR exit generation thunk and we emit the real code lazily. The description of how to
+    // emit the real code is up to the OSRExit object, which this creates. Note that it's OK to drop the
+    // OSRExitHandle object on the ground. It contains information that is mostly not useful if you use
+    // this API, since after this call, the OSRExit is simply ready to go.
     Ref<OSRExitHandle> emitOSRExit(
         State&, ExitKind, const DFG::NodeOrigin&, CCallHelpers&, const B3::StackmapGenerationParams&,
         uint32_t dfgNodeIndex, unsigned offset);
@@ -120,19 +150,70 @@ private:
 };
 
 struct OSRExit : public DFG::OSRExitBase {
-    OSRExit(OSRExitDescriptor*, ExitKind, CodeOrigin, CodeOrigin codeOriginForExitProfile, bool wasHoisted, uint32_t dfgNodeIndex, FixedVector<B3::ValueRep>&&);
+    OSRExit(const OSRExitDescriptor*, ExitKind, CodeOrigin, CodeOrigin codeOriginForExitProfile, bool wasHoisted, uint32_t dfgNodeIndex, unsigned valueRepsOffset);
 
-    OSRExitDescriptor* m_descriptor;
-    MacroAssemblerCodeRef<OSRExitPtrTag> m_code;
+    FixedVector<B3::ValueRep> valueReps(const JITCode&) const;
+
+    unsigned m_valueRepsOffset;
+    const OSRExitDescriptor* m_descriptor;
     // This tells us where to place a jump.
-    CodeLocationJump<JSInternalPtrTag> m_patchableJump;
-    FixedVector<B3::ValueRep> m_valueReps;
+    uint32_t m_entranceOffset { 0 };
 
-    CodeLocationJump<JSInternalPtrTag> codeLocationForRepatch(CodeBlock* ftlCodeBlock) const;
     void considerAddingAsFrequentExitSite(CodeBlock* profiledCodeBlock)
     {
         OSRExitBase::considerAddingAsFrequentExitSite(profiledCodeBlock, ExitFromFTL);
     }
+};
+
+// The FTL counterpart of DFG::OSRExitStream, with the same chunks, deltas and origin tags.
+// m_exceptionHandlerExits lists the generic unwind handler exits.
+//
+//   byte        ExitKind
+//   byte        flags:
+//     bits 0-1  origin tag of m_codeOrigin against the previous exit's m_codeOrigin
+//     bits 2-3  origin tag of m_codeOriginForExitProfile against m_codeOrigin
+//     bit 4     m_wasHoisted
+//   the payload of each origin tag, in the order of the flags
+//   LEB128      signed delta of m_dfgNodeIndex
+//   LEB128      signed delta of the index of m_descriptor in JITCode::osrExitDescriptors
+//   LEB128      signed delta of m_entranceOffset
+//   [LEB128]    WillThrowOutOfMemoryError: m_exitCallSiteIndex
+//   LEB128      number of exit arguments
+//   where B3 placed each exit argument, which is a B3::ValueRep::Kind byte and then:
+//     Register  the Reg index byte
+//     Stack     the SLEB128 offset from the frame pointer
+//     Constant  the SLEB128 value
+class OSRExitStream {
+public:
+    struct ExceptionHandlerExit {
+        CallSiteIndex callSiteIndex;
+        uint32_t valueRepsOffset;
+    };
+
+    OSRExitStream() = default;
+    OSRExitStream(const Vector<OSRExit>&, std::span<const uint8_t> valueReps);
+
+    OSRExit at(unsigned index, const JITCode&) const;
+    unsigned indexForEntranceOffset(uintptr_t, const JITCode&) const;
+    FixedVector<B3::ValueRep> valueReps(unsigned offset) const;
+    std::span<const ExceptionHandlerExit> exceptionHandlerExits() const LIFETIME_BOUND { return m_exceptionHandlerExits.span(); }
+
+private:
+    static constexpr unsigned exitsPerChunk = 16;
+
+    struct PreviousExit {
+        CodeOrigin codeOrigin { BytecodeIndex(0) };
+        uint32_t dfgNodeIndex { 0 };
+        unsigned descriptorIndex { 0 };
+        uint32_t entranceOffset { 0 };
+    };
+
+    OSRExit decode(size_t& offset, PreviousExit&, const JITCode&) const;
+
+    FixedVector<uint8_t> m_bytes;
+    FixedVector<uint32_t> m_chunkOffsets;
+    FixedVector<ExceptionHandlerExit> m_exceptionHandlerExits;
+    unsigned m_size { 0 };
 };
 
 } } // namespace JSC::FTL

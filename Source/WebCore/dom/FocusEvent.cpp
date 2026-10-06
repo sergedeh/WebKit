@@ -29,6 +29,8 @@
 #include "EventTargetInlines.h"
 #include "Node.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -45,9 +47,9 @@ FocusEvent::FocusEvent(const AtomString& type, CanBubble canBubble, IsCancelable
 {
 }
 
-FocusEvent::FocusEvent(const AtomString& type, const Init& initializer)
-    : UIEvent(EventInterfaceType::FocusEvent, type, initializer)
-    , m_relatedTarget(initializer.relatedTarget)
+FocusEvent::FocusEvent(const AtomString& type, Init&& initializer)
+    : UIEvent(EventInterfaceType::FocusEvent, type, WTF::move(initializer))
+    , m_relatedTarget(WTF::move(initializer.relatedTarget))
 {
 }
 

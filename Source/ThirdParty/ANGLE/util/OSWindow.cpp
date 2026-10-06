@@ -4,11 +4,8 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_libc_calls
-#endif
-
 #include "OSWindow.h"
+#include "common/unsafe_buffers.h"
 
 #include <cstring>
 #include <fstream>
@@ -21,6 +18,10 @@
 #if defined(ANGLE_PLATFORM_ANDROID)
 #    include "util/android/AndroidWindow.h"
 #endif  // defined(ANGLE_PLATFORM_ANDROID)
+
+#if ANGLE_PLATFORM_IOS_FAMILY
+#    include "util/ios/IOSWindow.h"
+#endif  // ANGLE_PLATFORM_IOS_FAMILY
 
 #ifndef DEBUG_EVENTS
 #    define DEBUG_EVENTS 0
@@ -468,11 +469,16 @@ bool FindTestDataPath(const char *searchPath, char *dataPathOut, size_t maxDataP
         AndroidWindow::GetApplicationDirectory() + "/chromium_tests_root"};
 #elif ANGLE_PLATFORM_IOS_FAMILY
     const std::string searchPaths[] = {GetExecutableDirectory(),
-                                       GetExecutableDirectory() + "/third_party/angle"};
+                                       GetExecutableDirectory() + "/third_party/angle",
+                                       IOSWindow::GetResourcePath()};
 #else
-    const std::string searchPaths[] = {
-        GetExecutableDirectory(), GetExecutableDirectory() + "/../..", ".",
-        GetExecutableDirectory() + "/../../third_party/angle", "third_party/angle"};
+    const std::string searchPaths[] = {GetExecutableDirectory(),
+                                       GetExecutableDirectory() + "/../..",
+                                       ".",
+                                       GetExecutableDirectory() + "/../../third_party/angle",
+                                       "third_party/angle",
+                                       GetExecutableDirectory() + "/../../Source/ThirdParty/ANGLE",
+                                       "Source/ThirdParty/ANGLE"};
 #endif  // defined(ANGLE_PLATFORM_ANDROID)
 
     for (const std::string &path : searchPaths)
@@ -489,14 +495,14 @@ bool FindTestDataPath(const char *searchPath, char *dataPathOut, size_t maxDataP
 
         if (angle::IsDirectory(candidatePath.c_str()))
         {
-            memcpy(dataPathOut, candidatePath.c_str(), candidatePath.size() + 1);
+            ANGLE_UNSAFE_TODO(memcpy(dataPathOut, candidatePath.c_str(), candidatePath.size() + 1));
             return true;
         }
 
         std::ifstream inFile(candidatePath.c_str());
         if (!inFile.fail())
         {
-            memcpy(dataPathOut, candidatePath.c_str(), candidatePath.size() + 1);
+            ANGLE_UNSAFE_TODO(memcpy(dataPathOut, candidatePath.c_str(), candidatePath.size() + 1));
             return true;
         }
     }

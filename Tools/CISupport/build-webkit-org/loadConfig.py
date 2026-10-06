@@ -37,6 +37,8 @@ from .factories import *
 from . import wkbuild
 
 main_filter = ChangeFilter(branch=["main", None])
+webkitglib_v252_filter = ChangeFilter(branch=["webkitglib/2.52"])
+webkitglib_v254_filter = ChangeFilter(branch=["webkitglib/2.54"])
 
 BUILDER_NAME_LENGTH_LIMIT = 70
 STEP_NAME_LENGTH_LIMIT = 50
@@ -97,7 +99,7 @@ def loadBuilderConfig(c, is_test_mode_enabled=False, setup_main_schedulers=True,
         factoryName = builder.pop('factory')
         factory = globals()[factoryName]
         factorykwargs = {}
-        for key in ['platform', 'configuration', 'architectures', 'triggers', 'additionalArguments', 'device_model']:
+        for key in ['platform', 'configuration', 'architectures', 'triggers', 'additionalArguments', 'device_model', 'deployment_target']:
             value = builder.pop(key, None)
             if value:
                 factorykwargs[key] = value

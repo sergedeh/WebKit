@@ -22,13 +22,14 @@
 
 #include <gtk/gtk.h>
 #include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
 
 struct _WebKitInputMethodContextImplGtkPrivate {
     GRefPtr<GtkIMContext> context;
-    CString surroundingText;
+    UTF8CString surroundingText;
     unsigned surroundingCursorIndex;
 };
 
@@ -38,6 +39,7 @@ static GtkInputPurpose toGtkInputPurpose(WebKitInputPurpose purpose)
 {
     switch (purpose) {
     case WEBKIT_INPUT_PURPOSE_FREE_FORM:
+    case WEBKIT_INPUT_PURPOSE_SEARCH:
         return GTK_INPUT_PURPOSE_FREE_FORM;
     case WEBKIT_INPUT_PURPOSE_DIGITS:
         return GTK_INPUT_PURPOSE_DIGITS;
@@ -107,7 +109,7 @@ static void contextCommitCallback(WebKitInputMethodContextImplGtk* context, cons
 static gboolean contextRetrieveSurrounding(WebKitInputMethodContextImplGtk* context)
 {
     auto* priv = context->priv;
-    gtk_im_context_set_surrounding(priv->context.get(), priv->surroundingText.data(), priv->surroundingText.length(), priv->surroundingCursorIndex);
+    gtk_im_context_set_surrounding(priv->context.get(), priv->surroundingText.legacyCStringPointer(), priv->surroundingText.length(), priv->surroundingCursorIndex);
     return TRUE;
 }
 
@@ -202,9 +204,7 @@ static void webkitInputMethodContextImplGtkNotifyCursorArea(WebKitInputMethodCon
 static void webkitInputMethodContextImplGtkNotifySurrounding(WebKitInputMethodContext* context, const gchar* text, unsigned length, unsigned cursorIndex, unsigned)
 {
     auto* priv = WEBKIT_INPUT_METHOD_CONTEXT_IMPL_GTK(context)->priv;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK port
-    priv->surroundingText = std::span { text, length };
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    priv->surroundingText = UTF8CString::fromUTF8(unsafeMakeSpan(text, length));
     priv->surroundingCursorIndex = cursorIndex;
 }
 

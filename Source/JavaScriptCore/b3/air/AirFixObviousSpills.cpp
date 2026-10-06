@@ -29,9 +29,13 @@
 #if ENABLE(B3_JIT)
 
 #include "AirArgInlines.h"
+#include "AirCFG.h"
 #include "AirCode.h"
 #include "AirInstInlines.h"
 #include "AirPhaseScope.h"
+#include "Options.h"
+#include "RegisterSet.h"
+#include <wtf/GraphOrdering.h>
 #include <wtf/IndexMap.h>
 #include <wtf/ListDump.h>
 
@@ -48,16 +52,12 @@ public:
     FixObviousSpills(Code& code)
         : m_code(code)
         , m_atHead(code.size())
-        , m_notBottom(code.size())
-        , m_shouldVisit(code.size())
     {
     }
 
     void run()
     {
-        if (AirFixObviousSpillsInternal::verbose)
-            dataLog("Code before fixObviousSpills:\n", m_code);
-        
+        dataLogLnIf(AirFixObviousSpillsInternal::verbose, "Code before fixObviousSpills:\n", m_code);
         computeAliases();
         fixCode();
     }
@@ -65,46 +65,62 @@ public:
 private:
     void computeAliases()
     {
-        m_notBottom.quickSet(0);
-        m_shouldVisit.quickSet(0);
-        
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            
-            for (unsigned blockIndex : m_shouldVisit) {
-                m_shouldVisit.quickClear(blockIndex);
-                BasicBlock* block = m_code[blockIndex];
-                ASSERT(m_notBottom.quickGet(blockIndex));
-                m_block = block;
-                m_state = m_atHead[block];
+        Vector<BasicBlock*, 32> reversePostOrder;
+        appendNodesInOrder(m_code.cfg(), GraphOrder::PostOrder, reversePostOrder);
+        reversePostOrder.reverse();
 
-                if (AirFixObviousSpillsInternal::verbose)
-                    dataLog("Executing block ", *m_block, ": ", m_state, "\n");
-                
-                for (m_instIndex = 0; m_instIndex < block->size(); ++m_instIndex)
-                    executeInst();
+        size_t numInOrder = reversePostOrder.size();
+        IndexMap<BasicBlock*, unsigned> rpoNumber(m_code.size());
+        for (size_t i = 0; i < numInOrder; ++i)
+            rpoNumber[reversePostOrder[i]] = i;
 
-                // Before we call merge we must make sure that the two states are sorted.
-                m_state.sort();
+        // shouldVisit is keyed by RPO position here (not block index). Position
+        // 0 is the entry block, which is where the dataflow seeds.
+        BitVector shouldVisit(m_code.size());
+        BitVector notBottom(m_code.size());
+        shouldVisit.quickSet(0);
+        notBottom.quickSet(reversePostOrder[0]->index());
 
-                for (BasicBlock* successor : block->successorBlocks()) {
-                    unsigned successorIndex = successor->index();
-                    State& toState = m_atHead[successor];
-                    if (m_notBottom.quickGet(successorIndex)) {
-                        bool changedAtSuccessorHead = toState.merge(m_state);
-                        if (changedAtSuccessorHead) {
-                            changed = true;
-                            m_shouldVisit.quickSet(successorIndex);
-                        }
-                    } else { // The state at head of successor is bottom
-                        toState = m_state;
-                        changed = true;
-                        m_notBottom.quickSet(successorIndex);
-                        m_shouldVisit.quickSet(successorIndex);
+        unsigned cursor = 0;
+        while ((cursor = shouldVisit.findBit(cursor, true)) < numInOrder) {
+            shouldVisit.quickClear(cursor);
+            BasicBlock* block = reversePostOrder[cursor];
+            ASSERT(notBottom.quickGet(block->index()));
+            m_block = block;
+            m_state = m_atHead[block];
+
+            dataLogLnIf(AirFixObviousSpillsInternal::verbose, "Executing block ", *m_block, ": ", m_state);
+            for (m_instIndex = 0; m_instIndex < block->size(); ++m_instIndex) {
+                dataLogLnIf(AirFixObviousSpillsInternal::verbose, "    Executing ", m_block->at(m_instIndex), ": ", m_state);
+                if (!m_state.isEmpty())
+                    clobberAllDefs();
+                addInstAliases();
+            }
+
+            // Before we call merge we must make sure that the two states are sorted.
+            m_state.sort();
+
+            // Default to advancing forward. If a back-edge re-activates an earlier
+            // block, rewind the cursor so findBit picks it up on the next step.
+            unsigned nextCursor = cursor + 1;
+            for (BasicBlock* successor : block->successorBlocks()) {
+                unsigned successorIndex = successor->index();
+                unsigned successorPosition = rpoNumber[successor];
+                State& toState = m_atHead[successor];
+                if (notBottom.quickGet(successorIndex)) {
+                    bool changedAtSuccessorHead = toState.merge(m_state);
+                    if (changedAtSuccessorHead) {
+                        shouldVisit.quickSet(successorPosition);
+                        nextCursor = std::min(nextCursor, successorPosition);
                     }
+                } else { // The state at head of successor is bottom
+                    toState = m_state;
+                    notBottom.quickSet(successorIndex);
+                    shouldVisit.quickSet(successorPosition);
+                    nextCursor = std::min(nextCursor, successorPosition);
                 }
             }
+            cursor = nextCursor;
         }
     }
 
@@ -113,67 +129,72 @@ private:
         for (BasicBlock* block : m_code) {
             m_block = block;
             m_state = m_atHead[block];
-            RELEASE_ASSERT(m_notBottom.quickGet(block->index()));
 
             for (m_instIndex = 0; m_instIndex < block->size(); ++m_instIndex) {
+                if (m_state.isEmpty()) {
+                    addInstAliases();
+                    continue;
+                }
+                clobberEarlyDefs();
                 fixInst();
-                executeInst();
+                clobberLateDefs();
+                addInstAliases();
             }
         }
     }
-    
+
     template<typename Func>
-    void forAllAliases(const Func& func)
+    void forAllAliases(NOESCAPE const Func& func)
     {
         Inst& inst = m_block->at(m_instIndex);
 
         switch (inst.kind.opcode) {
         case Move:
-            if (inst.args[0].isSomeImm()) {
-                if (inst.args[1].isReg())
-                    func(RegConst(inst.args[1].reg(), inst.args[0].value()));
-                else if (isSpillSlot(inst.args[1]))
-                    func(SlotConst(inst.args[1].stackSlot(), inst.args[0].value()));
-            } else if (isSpillSlot(inst.args[0]) && inst.args[1].isReg()) {
-                if (std::optional<int64_t> constant = m_state.constantFor(inst.args[0]))
-                    func(RegConst(inst.args[1].reg(), *constant));
-                func(RegSlot(inst.args[1].reg(), inst.args[0].stackSlot(), RegSlot::AllBits));
-            } else if (inst.args[0].isReg() && isSpillSlot(inst.args[1])) {
-                if (std::optional<int64_t> constant = m_state.constantFor(inst.args[0]))
-                    func(SlotConst(inst.args[1].stackSlot(), *constant));
-                func(RegSlot(inst.args[0].reg(), inst.args[1].stackSlot(), RegSlot::AllBits));
+            if (inst.args()[0].isSomeImm()) {
+                if (inst.args()[1].isReg())
+                    func(RegConst(inst.args()[1].reg(), inst.args()[0].value()));
+                else if (isSpillSlot(inst.args()[1]))
+                    func(SlotConst(inst.args()[1].stackSlot(), inst.args()[0].value()));
+            } else if (isSpillSlot(inst.args()[0]) && inst.args()[1].isReg()) {
+                if (std::optional<int64_t> constant = m_state.constantFor(inst.args()[0]))
+                    func(RegConst(inst.args()[1].reg(), *constant));
+                func(RegSlot(inst.args()[1].reg(), inst.args()[0].stackSlot(), RegSlot::AllBits));
+            } else if (inst.args()[0].isReg() && isSpillSlot(inst.args()[1])) {
+                if (std::optional<int64_t> constant = m_state.constantFor(inst.args()[0]))
+                    func(SlotConst(inst.args()[1].stackSlot(), *constant));
+                func(RegSlot(inst.args()[0].reg(), inst.args()[1].stackSlot(), RegSlot::AllBits));
             }
             break;
 
         case Move32:
-            if (inst.args[0].isSomeImm()) {
-                if (inst.args[1].isReg())
-                    func(RegConst(inst.args[1].reg(), static_cast<uint32_t>(inst.args[0].value())));
-                else if (isSpillSlot(inst.args[1]))
-                    func(SlotConst(inst.args[1].stackSlot(), static_cast<uint32_t>(inst.args[0].value())));
-            } else if (isSpillSlot(inst.args[0]) && inst.args[1].isReg()) {
-                if (std::optional<int64_t> constant = m_state.constantFor(inst.args[0]))
-                    func(RegConst(inst.args[1].reg(), static_cast<uint32_t>(*constant)));
-                func(RegSlot(inst.args[1].reg(), inst.args[0].stackSlot(), RegSlot::ZExt32));
-            } else if (inst.args[0].isReg() && isSpillSlot(inst.args[1])) {
-                if (std::optional<int64_t> constant = m_state.constantFor(inst.args[0]))
-                    func(SlotConst(inst.args[1].stackSlot(), static_cast<int32_t>(*constant)));
-                func(RegSlot(inst.args[0].reg(), inst.args[1].stackSlot(), RegSlot::Match32));
+            if (inst.args()[0].isSomeImm()) {
+                if (inst.args()[1].isReg())
+                    func(RegConst(inst.args()[1].reg(), static_cast<uint32_t>(inst.args()[0].value())));
+                else if (isSpillSlot(inst.args()[1]))
+                    func(SlotConst(inst.args()[1].stackSlot(), static_cast<uint32_t>(inst.args()[0].value())));
+            } else if (isSpillSlot(inst.args()[0]) && inst.args()[1].isReg()) {
+                if (std::optional<int64_t> constant = m_state.constantFor(inst.args()[0]))
+                    func(RegConst(inst.args()[1].reg(), static_cast<uint32_t>(*constant)));
+                func(RegSlot(inst.args()[1].reg(), inst.args()[0].stackSlot(), RegSlot::ZExt32));
+            } else if (inst.args()[0].isReg() && isSpillSlot(inst.args()[1])) {
+                if (std::optional<int64_t> constant = m_state.constantFor(inst.args()[0]))
+                    func(SlotConst(inst.args()[1].stackSlot(), static_cast<int32_t>(*constant)));
+                func(RegSlot(inst.args()[0].reg(), inst.args()[1].stackSlot(), RegSlot::Match32));
             }
             break;
 
         case MoveFloat:
-            if (isSpillSlot(inst.args[0]) && inst.args[1].isReg())
-                func(RegSlot(inst.args[1].reg(), inst.args[0].stackSlot(), RegSlot::Match32));
-            else if (inst.args[0].isReg() && isSpillSlot(inst.args[1]))
-                func(RegSlot(inst.args[0].reg(), inst.args[1].stackSlot(), RegSlot::Match32));
+            if (isSpillSlot(inst.args()[0]) && inst.args()[1].isReg())
+                func(RegSlot(inst.args()[1].reg(), inst.args()[0].stackSlot(), RegSlot::Match32));
+            else if (inst.args()[0].isReg() && isSpillSlot(inst.args()[1]))
+                func(RegSlot(inst.args()[0].reg(), inst.args()[1].stackSlot(), RegSlot::Match32));
             break;
 
         case MoveDouble:
-            if (isSpillSlot(inst.args[0]) && inst.args[1].isReg())
-                func(RegSlot(inst.args[1].reg(), inst.args[0].stackSlot(), RegSlot::AllBits));
-            else if (inst.args[0].isReg() && isSpillSlot(inst.args[1]))
-                func(RegSlot(inst.args[0].reg(), inst.args[1].stackSlot(), RegSlot::AllBits));
+            if (isSpillSlot(inst.args()[0]) && inst.args()[1].isReg())
+                func(RegSlot(inst.args()[1].reg(), inst.args()[0].stackSlot(), RegSlot::AllBits));
+            else if (inst.args()[0].isReg() && isSpillSlot(inst.args()[1]))
+                func(RegSlot(inst.args()[0].reg(), inst.args()[1].stackSlot(), RegSlot::AllBits));
             break;
             
         default:
@@ -181,27 +202,93 @@ private:
         }
     }
 
-    void executeInst()
+    template<typename IsWhichDef>
+    void clobberDefTmps(Arg& arg, Arg::Role role, Bank bank, Width width, NOESCAPE const IsWhichDef& isWhichDef)
+    {
+        auto mayReportDefTmp = [](const Arg& arg, bool argRoleIsDef) {
+            return argRoleIsDef || arg.isPreIndex() || arg.isPostIndex();
+        };
+
+        if (!mayReportDefTmp(arg, isWhichDef(role))) {
+            if (Options::airValidateGreedRegAlloc()) [[unlikely]] {
+                arg.forEachTmp(role, bank, width,
+                    [&](Tmp& tmp, Arg::Role refinedRole, Bank, Width) {
+                        RELEASE_ASSERT(!(isWhichDef(refinedRole) && tmp.isReg()));
+                    });
+            }
+            return;
+        }
+        if (m_state.hasNoRegAlias())
+            return;
+        arg.forEachTmp(role, bank, width,
+            [&](Tmp& tmp, Arg::Role refinedRole, Bank, Width) {
+                if (isWhichDef(refinedRole) && tmp.isReg()) {
+                    dataLogLnIf(AirFixObviousSpillsInternal::verbose, "        Clobbering ", tmp.reg());
+                    m_state.clobber(tmp.reg());
+                }
+            });
+    }
+
+    void clobberDefs(Inst* prevInst, Inst* nextInst)
+    {
+        auto walk = [&] (Inst* inst, auto isWhichDef) {
+            if (!inst)
+                return;
+            inst->forEachArg([&](Arg& arg, Arg::Role role, Bank bank, Width width) {
+                // Only clobber spilled StackSlot since this phase's State only cares spilled StackSlots.
+                if (isWhichDef(role) && arg.isStack() && arg.stackSlot()->isSpill()) {
+                    dataLogLnIf(AirFixObviousSpillsInternal::verbose, "        Clobbering ", *arg.stackSlot());
+                    m_state.clobber(arg.stackSlot());
+                }
+                clobberDefTmps(arg, role, bank, width, isWhichDef);
+            });
+        };
+        walk(prevInst, [] (Arg::Role role) { return Arg::isLateDef(role); });
+        walk(nextInst, [] (Arg::Role role) { return Arg::isEarlyDef(role); });
+
+        // Patch's extra-clobbered registers aren't represented as args. Late
+        // extras live on prevInst, early extras on nextInst — matching
+        // forEachDefWithExtraClobberedRegs.
+        if (prevInst && prevInst->kind.opcode == Patch) [[unlikely]] {
+            prevInst->extraClobberedRegs().forEachWithWidthAndPreserved(
+                [&](Reg reg, Width, PreservedWidth) { m_state.clobber(reg); });
+        }
+        if (nextInst && nextInst->kind.opcode == Patch) [[unlikely]] {
+            nextInst->extraEarlyClobberedRegs().forEachWithWidthAndPreserved(
+                [&](Reg reg, Width, PreservedWidth) { m_state.clobber(reg); });
+        }
+    }
+
+    void clobberEarlyDefs()
+    {
+        clobberDefs(nullptr, &m_block->at(m_instIndex));
+    }
+
+    void clobberLateDefs()
+    {
+        clobberDefs(&m_block->at(m_instIndex), nullptr);
+    }
+
+    void clobberAllDefs()
     {
         Inst& inst = m_block->at(m_instIndex);
+        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank bank, Width width) {
+            if (Arg::isAnyDef(role) && arg.isStack() && arg.stackSlot()->isSpill())
+                m_state.clobber(arg.stackSlot());
+            clobberDefTmps(arg, role, bank, width, [](Arg::Role role) { return Arg::isAnyDef(role); });
+        });
 
-        if (AirFixObviousSpillsInternal::verbose)
-            dataLog("    Executing ", inst, ": ", m_state, "\n");
+        // Patch ops have extra-clobbered registers that aren't represented as
+        // args. Both early and late extras clobber the same state here.
+        if (inst.kind.opcode == Patch) [[unlikely]] {
+            auto reportReg = [&](Reg reg, Width, PreservedWidth) { m_state.clobber(reg); };
+            inst.extraEarlyClobberedRegs().forEachWithWidthAndPreserved(reportReg);
+            inst.extraClobberedRegs().forEachWithWidthAndPreserved(reportReg);
+        }
+    }
 
-        Inst::forEachDefWithExtraClobberedRegs<Reg>(&inst, &inst,
-            [&] (const Reg& reg, Arg::Role, Bank, Width, PreservedWidth) {
-                if (AirFixObviousSpillsInternal::verbose)
-                    dataLog("        Clobbering ", reg, "\n");
-                m_state.clobber(reg);
-            });
-
-        Inst::forEachDef<StackSlot*>(&inst, &inst,
-            [&] (StackSlot* slot, Arg::Role, Bank, Width) {
-                if (AirFixObviousSpillsInternal::verbose)
-                    dataLog("        Clobbering ", *slot, "\n");
-                m_state.clobber(slot);
-            });
-
+    void addInstAliases()
+    {
         forAllAliases(
             [&] (const auto& alias) {
                 m_state.addAlias(alias);
@@ -211,9 +298,7 @@ private:
     void fixInst()
     {
         Inst& inst = m_block->at(m_instIndex);
-
-        if (AirFixObviousSpillsInternal::verbose)
-            dataLog("Fixing inst ", inst, ": ", m_state, "\n");
+        dataLogLnIf(AirFixObviousSpillsInternal::verbose, "Fixing inst ", inst, ": ", m_state);
         
         // Check if alias analysis says that this is unnecessary.
         bool shouldLive = true;
@@ -229,27 +314,29 @@ private:
         // First handle some special instructions.
         switch (inst.kind.opcode) {
         case Move: {
-            if (inst.args[0].isBigImm() && inst.args[1].isReg()
+            if (inst.args()[0].isBigImm() && inst.args()[1].isReg()
                 && isValidForm(Add64, Arg::Imm, Arg::Tmp, Arg::Tmp)) {
                 // BigImm materializations are super expensive on both x86 and ARM. Let's try to
                 // materialize this bad boy using math instead. Note that we use unsigned math here
                 // since it's more deterministic.
-                uint64_t myValue = inst.args[0].value();
-                Reg myDest = inst.args[1].reg();
-                for (const RegConst& regConst : m_state.regConst) {
-                    uint64_t otherValue = regConst.constant;
-                    
+                uint64_t myValue = inst.args()[0].value();
+                Reg myDest = inst.args()[1].reg();
+                for (Reg reg : m_state.constRegs) {
+                    uint64_t otherValue = m_state.constants[reg.index()];
+
                     // Let's try add. That's the only thing that works on all platforms, since it's
                     // the only cheap arithmetic op that x86 does in three operands. Long term, we
                     // should add fancier materializations here for ARM if the BigImm is yuge.
                     uint64_t delta = myValue - otherValue;
-                    
+
                     if (Arg::isValidImmForm(delta)) {
-                        inst.kind = Add64;
-                        inst.args.resize(3);
-                        inst.args[0] = Arg::imm(delta);
-                        inst.args[1] = Tmp(regConst.reg);
-                        inst.args[2] = Tmp(myDest);
+                        if (delta) {
+                            inst.kind = Add64;
+                            inst.setArgs(Arg::imm(delta), Tmp(reg), Tmp(myDest));
+                        } else {
+                            inst.kind = Move;
+                            inst.setArgs(Tmp(reg), Tmp(myDest));
+                        }
                         return;
                     }
                 }
@@ -265,6 +352,25 @@ private:
         // FIXME: This code should be taught how to simplify the spill-to-spill move
         // instruction. Basically it needs to know to remove the scratch arg.
         // https://bugs.webkit.org/show_bug.cgi?id=171133
+
+        // Substitution below only ever replaces a spill slot argument, and it can only do that from
+        // a RegSlot or a SlotConst, so without either there is nothing to look for.
+        if (m_state.hasNoSlotAlias())
+            return;
+
+        // It also needs the instruction to mention a spill slot at all. Deciding that does not need
+        // the Arg roles, and iterating args() can only over-approximate what forEachArg reports, so
+        // this cannot skip an instruction the scan below would have changed. Worth doing before the
+        // Inst copy, which is otherwise paid by every instruction that gets this far.
+        bool mentionsSpillSlot = false;
+        for (Arg& arg : inst.args()) {
+            if (isSpillSlot(arg)) {
+                mentionsSpillSlot = true;
+                break;
+            }
+        }
+        if (!mentionsSpillSlot)
+            return;
 
         // Create a copy in case we invalidate the instruction. That doesn't happen often.
         Inst instCopy = inst;
@@ -289,14 +395,12 @@ private:
                 case Width64:
                     if (alias->mode != RegSlot::AllBits)
                         return;
-                    if (AirFixObviousSpillsInternal::verbose)
-                        dataLog("    Replacing ", arg, " with ", alias->reg, "\n");
+                    dataLogLnIf(AirFixObviousSpillsInternal::verbose, "    Replacing ", arg, " with ", alias->reg);
                     arg = Tmp(alias->reg);
                     didThings = true;
                     return;
                 case Width32:
-                    if (AirFixObviousSpillsInternal::verbose)
-                        dataLog("    Replacing ", arg, " with ", alias->reg, " (subwidth case)\n");
+                    dataLogLnIf(AirFixObviousSpillsInternal::verbose, "    Replacing ", arg, " with ", alias->reg, " (subwidth case)");
                     arg = Tmp(alias->reg);
                     didThings = true;
                     return;
@@ -307,8 +411,7 @@ private:
 
             // Revert to immediate if that didn't work.
             if (const SlotConst* alias = m_state.getSlotConst(arg.stackSlot())) {
-                if (AirFixObviousSpillsInternal::verbose)
-                    dataLog("    Replacing ", arg, " with constant ", alias->constant, "\n");
+                dataLogLnIf(AirFixObviousSpillsInternal::verbose, "    Replacing ", arg, " with constant ", alias->constant);
                 if (Arg::isValidImmForm(alias->constant))
                     arg = Arg::imm(alias->constant);
                 else
@@ -334,39 +437,18 @@ private:
             });
     }
     
-    static bool isSpillSlot(const Arg& arg)
+    static bool NODELETE isSpillSlot(const Arg& arg)
     {
         return arg.isStack() && arg.stackSlot()->isSpill();
     }
-    
+
     struct RegConst {
-        RegConst()
-        {
-        }
-        
         RegConst(Reg reg, int64_t constant)
             : reg(reg)
             , constant(constant)
         {
         }
 
-        explicit operator bool() const
-        {
-            return !!reg;
-        }
-        
-        friend bool operator==(const RegConst&, const RegConst&) = default;
-
-        bool operator<(const RegConst& other) const
-        {
-            return reg < other.reg || (reg == other.reg && constant < other.constant);
-        }
-
-        void dump(PrintStream& out) const
-        {
-            out.print(reg, "->", constant);
-        }
-        
         Reg reg;
         int64_t constant { 0 };
     };
@@ -394,9 +476,9 @@ private:
             return slot && reg;
         }
         
-        friend bool operator==(const RegSlot&, const RegSlot&) = default;
+        friend bool NODELETE operator==(const RegSlot&, const RegSlot&) = default;
 
-        bool operator<(const RegSlot& other) const
+        bool NODELETE operator<(const RegSlot& other) const
         {
             // We ignore `mode` on purpose, see merge() for how we deal with it.
             return slot < other.slot || (slot == other.slot && reg < other.reg);
@@ -438,10 +520,10 @@ private:
         {
             return slot;
         }
-        
-        friend bool operator==(const SlotConst&, const SlotConst&) = default;
 
-        bool operator<(const SlotConst& other) const
+        friend bool NODELETE operator==(const SlotConst&, const SlotConst&) = default;
+
+        bool NODELETE operator<(const SlotConst& other) const
         {
             return slot < other.slot || (slot == other.slot && constant < other.constant);
         }
@@ -456,16 +538,21 @@ private:
     };
 
     struct State {
+        bool NODELETE isEmpty() const { return constRegs.isEmpty() && slotConst.isEmpty() && regSlot.isEmpty(); }
+
+        bool NODELETE hasNoSlotAlias() const { return slotConst.isEmpty() && regSlot.isEmpty(); }
+
+        bool NODELETE hasNoRegAlias() const { return constRegs.isEmpty() && regSlot.isEmpty(); }
+
         void addAlias(const RegConst& newAlias)
         {
-            regConst.append(newAlias);
-#if ASSERT_ENABLED
-            m_isSorted = false;
-#endif
+            constRegs.add(newAlias.reg);
+            constants[newAlias.reg.index()] = newAlias.constant;
         }
         void addAlias(const RegSlot& newAlias)
         {
             regSlot.append(newAlias);
+            regSlotRegs.add(newAlias.reg);
 #if ASSERT_ENABLED
             m_isSorted = false;
 #endif
@@ -477,13 +564,15 @@ private:
             m_isSorted = false;
 #endif
         }
-        
-        bool contains(const RegConst& alias)
+
+        bool contains(const RegConst& alias) const
         {
-            return regConst.contains(alias);
+            return constantForReg(alias.reg) == alias.constant;
         }
         bool contains(const RegSlot& alias)
         {
+            if (!regSlotRegs.contains(alias.reg))
+                return false;
             return regSlot.contains(alias);
         }
         bool contains(const SlotConst& alias)
@@ -491,25 +580,14 @@ private:
             return slotConst.contains(alias);
         }
 
-        const RegConst* getRegConst(Reg reg) const
+        std::optional<int64_t> NODELETE constantForReg(Reg reg) const
         {
-            for (const RegConst& alias : regConst) {
-                if (alias.reg == reg)
-                    return &alias;
-            }
-            return nullptr;
+            if (!constRegs.contains(reg))
+                return std::nullopt;
+            return constants[reg.index()];
         }
 
-        const RegSlot* getRegSlot(Reg reg) const
-        {
-            for (const RegSlot& alias : regSlot) {
-                if (alias.reg == reg)
-                    return &alias;
-            }
-            return nullptr;
-        }
-
-        const RegSlot* getRegSlot(StackSlot* slot) const
+        const RegSlot* NODELETE getRegSlot(StackSlot* slot) const
         {
             for (const RegSlot& alias : regSlot) {
                 if (alias.slot == slot)
@@ -518,16 +596,7 @@ private:
             return nullptr;
         }
 
-        const RegSlot* getRegSlot(Reg reg, StackSlot* slot) const
-        {
-            for (const RegSlot& alias : regSlot) {
-                if (alias.reg == reg && alias.slot == slot)
-                    return &alias;
-            }
-            return nullptr;
-        }
-
-        const SlotConst* getSlotConst(StackSlot* slot) const
+        const SlotConst* NODELETE getSlotConst(StackSlot* slot) const
         {
             for (const SlotConst& alias : slotConst) {
                 if (alias.slot == slot)
@@ -536,13 +605,10 @@ private:
             return nullptr;
         }
 
-        std::optional<int64_t> constantFor(const Arg& arg)
+        std::optional<int64_t> NODELETE constantFor(const Arg& arg)
         {
-            if (arg.isReg()) {
-                if (const RegConst* alias = getRegConst(arg.reg()))
-                    return alias->constant;
-                return std::nullopt;
-            }
+            if (arg.isReg())
+                return constantForReg(arg.reg());
             if (arg.isStack()) {
                 if (const SlotConst* alias = getSlotConst(arg.stackSlot()))
                     return alias->constant;
@@ -551,16 +617,17 @@ private:
             return std::nullopt;
         }
 
-        void clobber(const Reg& reg)
+        void clobber(Reg reg)
         {
-            regConst.removeAllMatching(
-                [&] (const RegConst& alias) -> bool {
-                    return alias.reg == reg;
-                });
-            regSlot.removeAllMatching(
+            constRegs.remove(reg);
+            if (!regSlotRegs.contains(reg))
+                return;
+            unsigned matchCount = regSlot.removeAllMatching(
                 [&] (const RegSlot& alias) -> bool {
                     return alias.reg == reg;
                 });
+            ASSERT_UNUSED(matchCount, matchCount);
+            regSlotRegs.remove(reg);
         }
 
         void clobber(StackSlot* slot)
@@ -569,17 +636,12 @@ private:
                 [&] (const SlotConst& alias) -> bool {
                     return alias.slot == slot;
                 });
-            regSlot.removeAllMatching(
-                [&] (const RegSlot& alias) -> bool {
-                    return alias.slot == slot;
-                });
+            if (regSlot.removeAllMatching([&] (const RegSlot& alias) -> bool { return alias.slot == slot; }))
+                rebuildRegSlotRegs();
         }
 
         void sort()
         {
-            std::ranges::sort(regConst, [](const auto& a, const auto& b) {
-                return a < b;
-            });
             std::ranges::sort(slotConst, [](const auto& a, const auto& b) {
                 return a < b;
             });
@@ -617,7 +679,16 @@ private:
             ASSERT(other.m_isSorted);
             bool changed = false;
 
-            changed |= filterVectorAgainst(regConst, other.regConst, [](RegConst& a, const RegConst& b) { return a == b; });
+            ScalarRegisterSet survivingConstRegs;
+            for (Reg reg : constRegs) {
+                if (other.constantForReg(reg) == constants[reg.index()])
+                    survivingConstRegs.add(reg);
+            }
+            if (survivingConstRegs != constRegs) {
+                constRegs = survivingConstRegs;
+                changed = true;
+            }
+
             changed |= filterVectorAgainst(slotConst, other.slotConst, [](SlotConst& a, const SlotConst& b) { return a == b; });
             changed |= filterVectorAgainst(regSlot, other.regSlot, [&](RegSlot& alias, const RegSlot& otherAlias) {
                 if (alias.reg != otherAlias.reg || alias.slot != otherAlias.slot)
@@ -629,19 +700,35 @@ private:
                 return true;
             });
 
+            if (changed)
+                rebuildRegSlotRegs();
+
             return changed;
+        }
+
+        void rebuildRegSlotRegs()
+        {
+            regSlotRegs = { };
+            for (const RegSlot& alias : regSlot)
+                regSlotRegs.add(alias.reg);
         }
 
         void dump(PrintStream& out) const
         {
+            out.print("{regConst = [");
+            CommaPrinter comma;
+            for (Reg reg : constRegs)
+                out.print(comma, reg, "->", constants[reg.index()]);
             out.print(
-                "{regConst = [", listDump(regConst), "], slotConst = [", listDump(slotConst),
+                "], slotConst = [", listDump(slotConst),
                 "], regSlot = [", listDump(regSlot), "]}");
         }
 
-        Vector<RegConst> regConst;
+        ScalarRegisterSet constRegs;
+        std::array<int64_t, Reg::maxIndex() + 1> constants { };
         Vector<SlotConst> slotConst;
         Vector<RegSlot> regSlot;
+        ScalarRegisterSet regSlotRegs;
 #if ASSERT_ENABLED
         bool m_isSorted { true };
 #endif
@@ -650,8 +737,6 @@ private:
     Code& m_code;
     IndexMap<BasicBlock*, State> m_atHead;
     State m_state;
-    BitVector m_notBottom;
-    BitVector m_shouldVisit;
     BasicBlock* m_block { nullptr };
     unsigned m_instIndex { 0 };
 };

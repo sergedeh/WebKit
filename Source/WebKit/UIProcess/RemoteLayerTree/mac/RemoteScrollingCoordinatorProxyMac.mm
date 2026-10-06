@@ -29,6 +29,7 @@
 #if PLATFORM(MAC) && ENABLE(UI_SIDE_COMPOSITING)
 
 #import "RemoteLayerTreeDrawingAreaProxy.h"
+#import "RemoteLayerTreeDrawingAreaProxyMac.h"
 #import "RemoteLayerTreeEventDispatcher.h"
 #import "WebPageProxy.h"
 #import <WebCore/PerformanceLoggingClient.h>
@@ -70,9 +71,9 @@ void RemoteScrollingCoordinatorProxyMac::cacheWheelEventScrollingAccelerationCur
     m_eventDispatcher->cacheWheelEventScrollingAccelerationCurve(nativeWheelEvent);
 }
 
-void RemoteScrollingCoordinatorProxyMac::handleWheelEvent(const WebWheelEvent& wheelEvent, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
+void RemoteScrollingCoordinatorProxyMac::handleWheelEvent(Ref<WebWheelEvent>&& wheelEvent, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
 {
-    m_eventDispatcher->handleWheelEvent(wheelEvent, rubberBandableEdges);
+    m_eventDispatcher->handleWheelEvent(WTF::move(wheelEvent), rubberBandableEdges);
 }
 
 void RemoteScrollingCoordinatorProxyMac::wheelEventHandlingCompleted(const PlatformWheelEvent& wheelEvent, std::optional<ScrollingNodeID> scrollingNodeID, std::optional<WheelScrollGestureState> gestureState, bool wasHandled)
@@ -80,10 +81,10 @@ void RemoteScrollingCoordinatorProxyMac::wheelEventHandlingCompleted(const Platf
     m_eventDispatcher->wheelEventHandlingCompleted(wheelEvent, scrollingNodeID, gestureState, wasHandled);
 }
 
-bool RemoteScrollingCoordinatorProxyMac::scrollingTreeNodeRequestsScroll(ScrollingNodeID, const RequestedScrollData&)
+RequestsScrollHandling RemoteScrollingCoordinatorProxyMac::scrollingTreeNodeRequestsScroll(ScrollingNodeID, const RequestedScrollData&)
 {
     // Unlike iOS, we handle scrolling requests for the main frame in the same way we handle them for subscrollers.
-    return false;
+    return RequestsScrollHandling::Unhandled;
 }
 
 bool RemoteScrollingCoordinatorProxyMac::scrollingTreeNodeRequestsKeyboardScroll(ScrollingNodeID, const RequestedKeyboardScrollData&)
@@ -104,7 +105,7 @@ void RemoteScrollingCoordinatorProxyMac::setRubberBandingInProgressForNode(Scrol
 #if ENABLE(THREADED_ANIMATIONS)
             m_eventDispatcher->didStartRubberbanding();
 #endif
-            protectedWebPageProxy()->logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::StartedRubberbanding), MonotonicTime::now(), 0);
+            protect(webPageProxy())->logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::StartedRubberbanding), MonotonicTime::now(), 0);
         }
         m_uiState.addNodeWithActiveRubberband(nodeID);
     } else
@@ -129,6 +130,21 @@ void RemoteScrollingCoordinatorProxyMac::scrollingTreeNodeDidEndScroll(Scrolling
 {
     m_uiState.removeNodeWithActiveUserScroll(nodeID);
     sendUIStateChangedIfNecessary();
+
+    // Updates sent during the scroll were unstable, so the web process deferred layout. Send a stable one now
+    // that the gesture is over.
+    if (rootScrollingNodeID() == nodeID) {
+        if (RefPtr drawingArea = dynamicDowncast<RemoteLayerTreeDrawingAreaProxyMac>(protect(webPageProxy())->drawingArea()))
+            drawingArea->updateLayoutViewportForScroll(RemoteLayerTreeDrawingAreaProxyMac::IsStableState::Yes);
+    }
+}
+
+void RemoteScrollingCoordinatorProxyMac::mainFrameScrollPositionDidChange()
+{
+    // We own the scroll position the layout viewport comes from, so push the new viewport ourselves.
+    // scrollingTreeNodeDidEndScroll() sends the stable update once the scroll is done.
+    if (RefPtr drawingArea = dynamicDowncast<RemoteLayerTreeDrawingAreaProxyMac>(protect(webPageProxy())->drawingArea()))
+        drawingArea->updateLayoutViewportForScroll(RemoteLayerTreeDrawingAreaProxyMac::IsStableState::No);
 }
 
 void RemoteScrollingCoordinatorProxyMac::scrollingTreeNodeDidBeginScrollSnapping(ScrollingNodeID nodeID)
@@ -147,73 +163,73 @@ void RemoteScrollingCoordinatorProxyMac::connectStateNodeLayers(ScrollingStateTr
 {
     for (auto& currNode : stateTree.nodeMap().values()) {
         if (currNode->hasChangedProperty(ScrollingStateNode::Property::Layer))
-            currNode->setLayer(layerTreeHost.layerForID(currNode->layer().layerID()));
+            currNode->setLayer(layerTreeHost.layerForID(currNode->layer().layerID()).get());
 
         switch (currNode->nodeType()) {
         case ScrollingNodeType::MainFrame:
         case ScrollingNodeType::Subframe: {
             Ref scrollingStateNode = downcast<ScrollingStateFrameScrollingNode>(currNode);
-            
+
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::ScrollContainerLayer))
-                scrollingStateNode->setScrollContainerLayer(layerTreeHost.layerForID(scrollingStateNode->scrollContainerLayer().layerID()));
+                scrollingStateNode->setScrollContainerLayer(layerTreeHost.layerForID(scrollingStateNode->scrollContainerLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::ScrolledContentsLayer))
-                scrollingStateNode->setScrolledContentsLayer(layerTreeHost.layerForID(scrollingStateNode->scrolledContentsLayer().layerID()));
+                scrollingStateNode->setScrolledContentsLayer(layerTreeHost.layerForID(scrollingStateNode->scrolledContentsLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::CounterScrollingLayer))
-                scrollingStateNode->setCounterScrollingLayer(layerTreeHost.layerForID(scrollingStateNode->counterScrollingLayer().layerID()));
+                scrollingStateNode->setCounterScrollingLayer(layerTreeHost.layerForID(scrollingStateNode->counterScrollingLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::InsetClipLayer))
-                scrollingStateNode->setInsetClipLayer(layerTreeHost.layerForID(scrollingStateNode->insetClipLayer().layerID()));
+                scrollingStateNode->setInsetClipLayer(layerTreeHost.layerForID(scrollingStateNode->insetClipLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::ContentShadowLayer))
-                scrollingStateNode->setContentShadowLayer(layerTreeHost.layerForID(scrollingStateNode->contentShadowLayer().layerID()));
+                scrollingStateNode->setContentShadowLayer(layerTreeHost.layerForID(scrollingStateNode->contentShadowLayer().layerID()).get());
 
             // FIXME: we should never have header and footer layers coming from the WebProcess.
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::HeaderLayer))
-                scrollingStateNode->setHeaderLayer(layerTreeHost.layerForID(scrollingStateNode->headerLayer().layerID()));
+                scrollingStateNode->setHeaderLayer(layerTreeHost.layerForID(scrollingStateNode->headerLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::FooterLayer))
-                scrollingStateNode->setFooterLayer(layerTreeHost.layerForID(scrollingStateNode->footerLayer().layerID()));
+                scrollingStateNode->setFooterLayer(layerTreeHost.layerForID(scrollingStateNode->footerLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::VerticalScrollbarLayer))
-                scrollingStateNode->setVerticalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->verticalScrollbarLayer().layerID()));
+                scrollingStateNode->setVerticalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->verticalScrollbarLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::HorizontalScrollbarLayer))
-                scrollingStateNode->setHorizontalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->horizontalScrollbarLayer().layerID()));
+                scrollingStateNode->setHorizontalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->horizontalScrollbarLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::RootContentsLayer))
-                scrollingStateNode->setRootContentsLayer(layerTreeHost.layerForID(scrollingStateNode->rootContentsLayer().layerID()));
+                scrollingStateNode->setRootContentsLayer(layerTreeHost.layerForID(scrollingStateNode->rootContentsLayer().layerID()).get());
             break;
         }
         case ScrollingNodeType::Overflow: {
             Ref scrollingStateNode = downcast<ScrollingStateOverflowScrollingNode>(currNode);
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::ScrollContainerLayer))
-                scrollingStateNode->setScrollContainerLayer(layerTreeHost.layerForID(scrollingStateNode->scrollContainerLayer().layerID()));
+                scrollingStateNode->setScrollContainerLayer(layerTreeHost.layerForID(scrollingStateNode->scrollContainerLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::ScrolledContentsLayer))
-                scrollingStateNode->setScrolledContentsLayer(layerTreeHost.layerForID(scrollingStateNode->scrolledContentsLayer().layerID()));
+                scrollingStateNode->setScrolledContentsLayer(layerTreeHost.layerForID(scrollingStateNode->scrolledContentsLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::VerticalScrollbarLayer))
-                scrollingStateNode->setVerticalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->verticalScrollbarLayer().layerID()));
+                scrollingStateNode->setVerticalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->verticalScrollbarLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::HorizontalScrollbarLayer))
-                scrollingStateNode->setHorizontalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->horizontalScrollbarLayer().layerID()));
+                scrollingStateNode->setHorizontalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->horizontalScrollbarLayer().layerID()).get());
             break;
         }
         case ScrollingNodeType::PluginScrolling: {
             Ref scrollingStateNode = downcast<ScrollingStatePluginScrollingNode>(currNode);
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::ScrollContainerLayer))
-                scrollingStateNode->setScrollContainerLayer(layerTreeHost.layerForID(scrollingStateNode->scrollContainerLayer().layerID()));
+                scrollingStateNode->setScrollContainerLayer(layerTreeHost.layerForID(scrollingStateNode->scrollContainerLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::ScrolledContentsLayer))
-                scrollingStateNode->setScrolledContentsLayer(layerTreeHost.layerForID(scrollingStateNode->scrolledContentsLayer().layerID()));
+                scrollingStateNode->setScrolledContentsLayer(layerTreeHost.layerForID(scrollingStateNode->scrolledContentsLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::VerticalScrollbarLayer))
-                scrollingStateNode->setVerticalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->verticalScrollbarLayer().layerID()));
+                scrollingStateNode->setVerticalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->verticalScrollbarLayer().layerID()).get());
 
             if (scrollingStateNode->hasChangedProperty(ScrollingStateNode::Property::HorizontalScrollbarLayer))
-                scrollingStateNode->setHorizontalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->horizontalScrollbarLayer().layerID()));
+                scrollingStateNode->setHorizontalScrollbarLayer(layerTreeHost.layerForID(scrollingStateNode->horizontalScrollbarLayer().layerID()).get());
             break;
         }
         case ScrollingNodeType::OverflowProxy:
@@ -223,7 +239,7 @@ void RemoteScrollingCoordinatorProxyMac::connectStateNodeLayers(ScrollingStateTr
         case ScrollingNodeType::Sticky: {
             if (RefPtr stickyStateNode = dynamicDowncast<ScrollingStateStickyNode>(currNode)) {
                 if (stickyStateNode->hasChangedProperty(ScrollingStateNode::Property::ViewportAnchorLayer))
-                    stickyStateNode->setViewportAnchorLayer(layerTreeHost.layerForID(stickyStateNode->viewportAnchorLayer().layerID()));
+                    stickyStateNode->setViewportAnchorLayer(layerTreeHost.layerForID(stickyStateNode->viewportAnchorLayer().layerID()).get());
             }
             break;
         }
@@ -231,10 +247,6 @@ void RemoteScrollingCoordinatorProxyMac::connectStateNodeLayers(ScrollingStateTr
             break;
         }
     }
-}
-
-void RemoteScrollingCoordinatorProxyMac::establishLayerTreeScrollingRelations(const RemoteLayerTreeHost&)
-{
 }
 
 void RemoteScrollingCoordinatorProxyMac::displayDidRefresh(PlatformDisplayID displayID)
@@ -290,6 +302,11 @@ void RemoteScrollingCoordinatorProxyMac::updateTimelinesRegistration(WebCore::Pr
     m_eventDispatcher->updateTimelinesRegistration(processIdentifier, timelinesUpdate, now);
 }
 
+void RemoteScrollingCoordinatorProxyMac::removeTimelines(WebCore::ProcessIdentifier processIdentifier)
+{
+    m_eventDispatcher->removeTimelines(processIdentifier);
+}
+
 RefPtr<const RemoteAnimationTimeline> RemoteScrollingCoordinatorProxyMac::timeline(const TimelineID& timelineID) const
 {
     return m_eventDispatcher->timeline(timelineID);
@@ -306,6 +323,14 @@ RefPtr<const RemoteAnimationStack> RemoteScrollingCoordinatorProxyMac::animation
 HashSet<Ref<RemoteProgressBasedTimeline>> RemoteScrollingCoordinatorProxyMac::timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID scrollingNodeID) const
 {
     return m_eventDispatcher->timelinesForScrollingNodeIDForTesting(scrollingNodeID);
+}
+
+HashSet<Ref<RemoteMonotonicTimeline>> RemoteScrollingCoordinatorProxyMac::monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier processIdentifier) const
+{
+    m_eventDispatcher->lockForAnimationChanges();
+    auto timelines = m_eventDispatcher->monotonicTimelinesForProcessForTesting(processIdentifier);
+    m_eventDispatcher->unlockForAnimationChanges();
+    return timelines;
 }
 #endif
 

@@ -35,40 +35,45 @@ namespace WebCore {
 bool PixelBuffer::supportedPixelFormat(PixelFormat pixelFormat)
 {
     switch (pixelFormat) {
+    case PixelFormat::RGBX8:
     case PixelFormat::RGBA8:
+    case PixelFormat::BGRX8:
     case PixelFormat::BGRA8:
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     case PixelFormat::RGBA16F:
 #endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case PixelFormat::RGBA16:
+#endif
         return true;
 
-    case PixelFormat::BGRX8:
 #if ENABLE(PIXEL_FORMAT_RGB10)
     case PixelFormat::RGB10:
+        return false;
 #endif
 #if ENABLE(PIXEL_FORMAT_RGB10A8)
     case PixelFormat::RGB10A8:
-#endif
         return false;
+#endif
     }
 
     ASSERT_NOT_REACHED();
     return false;
 }
 
-static CheckedUint32 mustFitInInt32(CheckedUint32 uint32)
+static CheckedUint32 NODELETE mustFitInInt32(CheckedUint32 uint32)
 {
     if (!uint32.hasOverflowed() && !isInBounds<int32_t>(uint32.value()))
         uint32.overflowed();
     return uint32;
 }
 
-static CheckedUint32 computeRawPixelCount(const IntSize& size)
+static CheckedUint32 NODELETE computeRawPixelCount(const IntSize& size)
 {
     return CheckedUint32 { size.width() } * size.height();
 }
 
-static CheckedUint32 computeRawPixelComponentCount(PixelFormat pixelFormat, const IntSize& size)
+static CheckedUint32 NODELETE computeRawPixelComponentCount(PixelFormat pixelFormat, const IntSize& size)
 {
     ASSERT(PixelBuffer::supportedPixelFormat(pixelFormat));
     return computeRawPixelCount(size) * PixelBuffer::componentsPerPixel(pixelFormat);
@@ -96,8 +101,6 @@ PixelBuffer::PixelBuffer(const PixelBufferFormat& format, const IntSize& size, s
 {
     RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(computeBufferSize(format.pixelFormat, size).value() <= bytes.size());
 }
-
-PixelBuffer::~PixelBuffer() = default;
 
 bool PixelBuffer::setRange(std::span<const uint8_t> data, size_t byteOffset)
 {

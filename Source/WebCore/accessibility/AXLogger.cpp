@@ -34,10 +34,13 @@
 #endif
 #include "AXNotifications.h"
 #include "AXObjectCache.h"
+#include "AXRemoteFrame.h"
 #include "AXSearchManager.h"
 #include "AXTextRun.h"
 #include "AXUtilities.h"
+#include "AccessibilityNodeObject.h"
 #include "DocumentView.h"
+#include "HTMLTableElement.h"
 #include "LocalFrameView.h"
 #include "LogInitialization.h"
 #include "Logging.h"
@@ -113,7 +116,7 @@ AXLogger::~AXLogger()
 void AXLogger::log(const String& message)
 {
     if (shouldLog())
-        LOG(Accessibility, "%s", message.utf8().data());
+        LOG_WITH_STREAM(Accessibility, stream << message);
 }
 
 void AXLogger::log(const char* message)
@@ -137,7 +140,7 @@ void AXLogger::log(RefPtr<AXCoreObject> object)
         else
             stream << "null";
 
-        LOG(Accessibility, "%s", stream.release().utf8().data());
+        LOG(Accessibility, "%s", stream.release().utf8());
     }
 }
 
@@ -151,7 +154,7 @@ void AXLogger::log(const Vector<Ref<AXCoreObject>>& objects)
             stream << object.get();
         stream << "]";
 
-        LOG(Accessibility, "%s", stream.release().utf8().data());
+        LOG(Accessibility, "%s", stream.release().utf8());
     }
 }
 
@@ -161,7 +164,7 @@ void AXLogger::log(const std::pair<Ref<AccessibilityObject>, AXNotificationWithD
         TextStream stream(TextStream::LineMode::MultipleLine);
         stream << "Notification " << notification.second.notification << " for object ";
         stream << notification.first.get();
-        LOG(Accessibility, "%s", stream.release().utf8().data());
+        LOG(Accessibility, "%s", stream.release().utf8());
     }
 }
 
@@ -174,7 +177,7 @@ void AXLogger::log(const std::pair<RefPtr<AXCoreObject>, AXNotification>& notifi
             stream << *notification.first;
         else
             stream << "null";
-        LOG(Accessibility, "%s", stream.release().utf8().data());
+        LOG(Accessibility, "%s", stream.release().utf8());
     }
 }
 
@@ -185,7 +188,7 @@ void AXLogger::log(const AccessibilitySearchCriteria& criteria)
 
     TextStream stream(TextStream::LineMode::MultipleLine);
     stream << criteria;
-    LOG(Accessibility, "%s", stream.release().utf8().data());
+    LOG(Accessibility, "%s", stream.release().utf8());
 }
 
 void AXLogger::log(AccessibilityObjectInclusion inclusion)
@@ -195,7 +198,7 @@ void AXLogger::log(AccessibilityObjectInclusion inclusion)
 
     TextStream stream(TextStream::LineMode::SingleLine);
     stream.dumpProperty("ObjectInclusion"_s, inclusion);
-    LOG(Accessibility, "%s", stream.release().utf8().data());
+    LOG(Accessibility, "%s", stream.release().utf8());
 }
 
 void AXLogger::log(AXRelation relation)
@@ -205,7 +208,7 @@ void AXLogger::log(AXRelation relation)
 
     TextStream stream(TextStream::LineMode::SingleLine);
     stream.dumpProperty("RelationType"_s, relation);
-    LOG(Accessibility, "%s", stream.release().utf8().data());
+    LOG(Accessibility, "%s", stream.release().utf8());
 }
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -214,7 +217,7 @@ void AXLogger::log(AXIsolatedTree& tree)
     if (shouldLog()) {
         TextStream stream(TextStream::LineMode::MultipleLine);
         stream << tree;
-        LOG(Accessibility, "%s", stream.release().utf8().data());
+        LOG(Accessibility, "%s", stream.release().utf8());
     }
 }
 #endif
@@ -224,7 +227,7 @@ void AXLogger::log(AXObjectCache& axObjectCache)
     if (shouldLog()) {
         TextStream stream(TextStream::LineMode::MultipleLine);
         stream << axObjectCache;
-        LOG(Accessibility, "%s", stream.release().utf8().data());
+        LOG(Accessibility, "%s", stream.release().utf8());
     }
 }
 
@@ -237,6 +240,7 @@ void AXLogger::log(const String& collectionName, const AXObjectCache::DeferredCo
         [&size] (const ListHashSet<Node*>& typedCollection) { size = typedCollection.size(); },
         [&size] (const ListHashSet<Ref<AccessibilityObject>>& typedCollection) { size = typedCollection.size(); },
         [&size] (const Vector<AXObjectCache::AttributeChange>& typedCollection) { size = typedCollection.size(); },
+        [&size] (const Vector<AXObjectCache::CanvasFocusPathBoundsChange>& typedCollection) { size = typedCollection.size(); },
         [&size] (const Vector<std::pair<Node*, Node*>>& typedCollection) { size = typedCollection.size(); },
         [&size] (const WeakHashSet<Element, WeakPtrImplWithEventTargetData>& typedCollection) { size = typedCollection.computeSize(); },
         [&size] (const WeakHashSet<HTMLTableElement, WeakPtrImplWithEventTargetData>& typedCollection) { size = typedCollection.computeSize(); },
@@ -401,6 +405,9 @@ TextStream& operator<<(TextStream& stream, AccessibilitySearchKey searchKey)
     case AccessibilitySearchKey::VisitedLink:
         stream << "VisitedLink";
         break;
+    case AccessibilitySearchKey::FormFieldWithError:
+        stream << "FormFieldWithError";
+        break;
     };
 
     return stream;
@@ -518,6 +525,12 @@ TextStream& operator<<(TextStream& stream, AXRelation relation)
     case AXRelation::None:
         stream << "None";
         break;
+    case AXRelation::Actions:
+        stream << "Actions";
+        break;
+    case AXRelation::ActionsOf:
+        stream << "ActionsOf";
+        break;
     case AXRelation::ActiveDescendant:
         stream << "ActiveDescendant";
         break;
@@ -565,6 +578,12 @@ TextStream& operator<<(TextStream& stream, AXRelation relation)
         break;
     case AXRelation::LabelFor:
         stream << "LabelFor";
+        break;
+    case AXRelation::NativeLabeledBy:
+        stream << "NativeLabeledBy";
+        break;
+    case AXRelation::NativeLabelFor:
+        stream << "NativeLabelFor";
         break;
     case AXRelation::OwnedBy:
         stream << "OwnedBy";
@@ -626,6 +645,12 @@ TextStream& operator<<(TextStream& stream, AXNotification notification)
 #undef WEBCORE_LOG_AXNOTIFICATION
     }
 
+    return stream;
+}
+
+TextStream& operator<<(TextStream& stream, const AXNotificationWithData& notification)
+{
+    stream << notification.debugDescription();
     return stream;
 }
 
@@ -731,6 +756,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
     case AXProperty::ColumnIndexRange:
         stream << "ColumnIndexRange";
         break;
+    case AXProperty::IsFocusedWebArea:
+        stream << "IsFocusedWebArea";
+        break;
     case AXProperty::CrossFrameChildFrameID:
         stream << "CrossFrameChildFrameID";
         break;
@@ -782,9 +810,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
     case AXProperty::ExplicitAutoCompleteValue:
         stream << "ExplicitAutoCompleteValue";
         break;
-    case AXProperty::ExplicitInvalidStatus:
-        stream << "ExplicitInvalidStatus";
-        break;
     case AXProperty::ExplicitLiveRegionRelevant:
         stream << "ExplicitLiveRegionRelevant";
         break;
@@ -793,9 +818,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
         break;
     case AXProperty::ExplicitOrientation:
         stream << "ExplicitOrientation";
-        break;
-    case AXProperty::ExplicitPopupValue:
-        stream << "ExplicitPopupValue";
         break;
     case AXProperty::ExtendedDescription:
         stream << "ExtendedDescription";
@@ -837,6 +859,18 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
         break;
     case AXProperty::HasRemoteFrameChild:
         stream << "HasRemoteFrameChild";
+        break;
+    case AXProperty::HeadingLevel:
+        stream << "HeadingLevel";
+        break;
+    case AXProperty::HasExplicitGroupRole:
+        stream << "HasExplicitGroupRole";
+        break;
+    case AXProperty::InvalidStatus:
+        stream << "InvalidStatus";
+        break;
+    case AXProperty::IsARIAHidden:
+        stream << "IsARIAHidden";
         break;
     case AXProperty::IsBlockFlow:
         stream << "IsBlockFlow";
@@ -913,14 +947,17 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
     case AXProperty::IsExposedTableCell:
         stream << "IsExposedTableCell";
         break;
-    case AXProperty::IsFieldset:
-        stream << "IsFieldset";
-        break;
     case AXProperty::IsIgnored:
         stream << "IsIgnored";
         break;
     case AXProperty::IsIndeterminate:
         stream << "IsIndeterminate";
+        break;
+    case AXProperty::IsInsideNativeTextControl:
+        stream << "IsInsideNativeTextControl";
+        break;
+    case AXProperty::IsInUserAgentShadowTree:
+        stream << "IsInUserAgentShadowTree";
         break;
     case AXProperty::IsInlineText:
         stream << "IsInlineText";
@@ -979,6 +1016,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
     case AXProperty::IsPressed:
         stream << "IsPressed";
         break;
+    case AXProperty::IsReplacedElementForTextEmission:
+        stream << "IsReplacedElementForTextEmission";
+        break;
     case AXProperty::IsRequired:
         stream << "IsRequired";
         break;
@@ -1035,9 +1075,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
         break;
     case AXProperty::LinethroughColor:
         stream << "LinethroughColor";
-        break;
-    case AXProperty::ListMarkerLineID:
-        stream << "ListMarkerLineID";
         break;
     case AXProperty::ListMarkerText:
         stream << "ListMarkerText";
@@ -1102,9 +1139,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
     case AXProperty::OuterHTML:
         stream << "OuterHTML";
         break;
-    case AXProperty::Path:
-        stream << "Path";
-        break;
     case AXProperty::PlaceholderValue:
         stream << "PlaceholderValue";
         break;
@@ -1113,6 +1147,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
         stream << "PlatformWidget";
         break;
 #endif
+    case AXProperty::PopupValue:
+        stream << "PopupValue";
+        break;
     case AXProperty::PosInSet:
         stream << "PosInSet";
         break;
@@ -1132,6 +1169,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
         stream << "RemoteFramePlatformElement";
         break;
 #if PLATFORM(COCOA)
+    case AXProperty::RemoteFrameProcessIdentifier:
+        stream << "RemoteFrameProcessIdentifier";
+        break;
     case AXProperty::RemoteParent:
         stream << "RemoteParent";
         break;
@@ -1156,6 +1196,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
         break;
     case AXProperty::ScreenRelativePosition:
         stream << "ScreenRelativePosition";
+        break;
+    case AXProperty::SelectedOptionCheckmark:
+        stream << "SelectedOptionCheckmark";
         break;
     case AXProperty::SelectedTextRange:
         stream << "SelectedTextRange";
@@ -1250,6 +1293,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
     case AXProperty::WebAreaTitle:
         stream << "WebAreaTitle";
         break;
+    case AXProperty::RemoteFrameID:
+        stream << "RemoteFrameID";
+        break;
     }
     return stream;
 }
@@ -1305,7 +1351,7 @@ TextStream& operator<<(TextStream& stream, AXObjectCache& axObjectCache)
     RefPtr document = axObjectCache.document();
     if (!document)
         stream << "No document!";
-    else if (RefPtr root = axObjectCache.get(document->protectedView().get())) {
+    else if (RefPtr root = axObjectCache.get(protect(document->view()).get())) {
         constexpr OptionSet<AXStreamOptions> options = { AXStreamOptions::ObjectID, AXStreamOptions::Role, AXStreamOptions::ParentID, AXStreamOptions::IdentifierAttribute, AXStreamOptions::OuterHTML, AXStreamOptions::DisplayContents, AXStreamOptions::Address, AXStreamOptions::RendererOrNode };
         streamSubtree(stream, root.releaseNonNull(), options);
     } else
@@ -1328,6 +1374,13 @@ void streamAXCoreObject(TextStream& stream, const AXCoreObject& object, const Op
 
     if (options & AXStreamOptions::Role)
         stream.dumpProperty("role"_s, object.role());
+
+#if PLATFORM(COCOA)
+    if (object.role() == AccessibilityRole::RemoteFrame) {
+        pid_t pid = object.remoteFramePID();
+        stream.dumpProperty("remotePID"_s, pid);
+    }
+#endif
 
     auto* axObject = dynamicDowncast<AccessibilityObject>(object);
     if (axObject) {

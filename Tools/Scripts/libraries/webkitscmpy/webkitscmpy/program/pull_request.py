@@ -20,9 +20,11 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import argparse
 import os
 import re
 import sys
+import time
 
 from .command import Command
 from .commit import Commit
@@ -69,6 +71,13 @@ class PullRequest(Command):
         parser.add_argument(
             '--defaults', '--no-defaults', action=arguments.NoAction, default=None,
             help='Do not prompt the user for defaults, always use (or do not use) them',
+        )
+        parser.add_argument(
+            '--reopen-closed', '--no-reopen-closed',
+            dest='reopen_closed', default=None,
+            help='Re-use and re-open (or never re-use) an existing closed pull-request associated with the current branch. '
+                 'Without this argument, non-interactive runs always create a new pull-request.',
+            action=arguments.NoAction,
         )
         parser.add_argument(
             '--overwrite', '--amend', action='store_const', const='overwrite',
@@ -126,14 +135,22 @@ class PullRequest(Command):
         )
         parser.add_argument(
             '--update-title', '--no-update-title',
-            dest='update_title', default=True,
-            help="When updating a pull request, update (or do not update) its title with the commits' common prefix.",
+            dest='update_title', default=None,
+            help="When updating a pull request, update (or don't update) its title with the commits' common prefix (also configurable via webkitscmpy.update-title).",
             action=arguments.NoAction,
         )
         parser.add_argument(
             '--no-issue', '--no-bug',
             dest='update_issue', default=True,
             help='Disable automatic bug creation and updates',
+            action=arguments.NoAction,
+        )
+        parser.add_argument(
+            '--update-radar', '--no-update-radar',
+            dest='update_radar', default=True,
+            help=('Update the state of the associated Radar when creating a pull request'
+                  if radar.Tracker.radarclient() is not None
+                  else argparse.SUPPRESS),
             action=arguments.NoAction,
         )
         parser.add_argument(
@@ -160,16 +177,17 @@ class PullRequest(Command):
         # Then, see if we already have a commit associated with this branch we need to modify
         has_commit = repository.commit(include_log=False, include_identifier=False).branch == repository.branch and repository.branch != repository.default_branch
         if not modified and has_commit:
-            log.info('Using committed changes...')
-            return 0
+            if not getattr(args, '_bug_urls', None) or os.environ.get('COMMIT_MESSAGE_REVERT'):
+                log.info('Using committed changes...')
+                return 0
 
         bug_urls = getattr(args, '_bug_urls', None) or ''
         if isinstance(bug_urls, (list, tuple)):
             bug_urls = '\n'.join(bug_urls)
 
         # Otherwise, we need to create a commit
-        will_amend = has_commit and args.technique == 'overwrite'
-        if not modified:
+        will_amend = has_commit and (args.technique == 'overwrite' or bool(getattr(args, '_bug_urls', None)))
+        if not modified and not will_amend:
             sys.stderr.write('No modified files\n')
             return 1
         log.info('Amending commit...' if will_amend else 'Creating commit...')
@@ -197,6 +215,22 @@ class PullRequest(Command):
         return title[:-5].rstrip() if title.endswith('(Part') else title
 
     @classmethod
+    def issue_from_commits(cls, repository, source_remote, branch_point):
+        head = repository.commit(include_log=True, include_identifier=False)
+        if run([
+            repository.executable(), 'merge-base', '--is-ancestor',
+            head.hash, 'remotes/{}/{}'.format(source_remote, branch_point.branch),
+        ], capture_output=True, cwd=repository.root_path).returncode:
+            if head.issues:
+                return head.issues[0].link
+            revert_message = os.environ.get('COMMIT_MESSAGE_REVERT', '')
+            for line in revert_message.splitlines():
+                issue = Tracker.from_string(line)
+                if issue:
+                    return issue.link
+        return None
+
+    @classmethod
     def check_pull_request_args(cls, repository, args):
         if not args.technique:
             args.technique = repository.config()['webkitscmpy.pull-request']
@@ -212,7 +246,7 @@ class PullRequest(Command):
         return True
 
     @classmethod
-    def pull_request_branch_point(cls, repository, args, **kwargs):
+    def pull_request_branch_point(cls, repository, args, name_prefix=None, **kwargs):
         if args.redact and len(repository.source_remotes()) <= 1:
             sys.stderr.write('No secure remotes found in the current checkout\n')
             return None
@@ -261,19 +295,14 @@ class PullRequest(Command):
 
         if not repository.is_suitable_branch_for_pull_request(repository.branch, source_remote):
             if not args.issue:
-                head = repository.commit(include_log=True, include_identifier=False)
-                if run([
-                    repository.executable(), 'merge-base', '--is-ancestor',
-                    head.hash, 'remotes/{}/{}'.format(source_remote, branch_point.branch),
-                ], capture_output=True, cwd=repository.root_path).returncode:
-                    if head.issues:
-                        args.issue = head.issues[0].link
+                args.issue = cls.issue_from_commits(repository, source_remote, branch_point)
 
             if Branch.main(
                 args, repository,
                 why="'{}' is not a pull request branch".format(repository.branch),
                 redact=source_remote != repository.default_remote,
                 target_remote='fork' if source_remote == repository.default_remote else '{}-fork'.format(source_remote),
+                name_prefix=name_prefix,
                 **kwargs
             ):
                 sys.stderr.write("Abandoning pushing pull-request because '{}' could not be created\n".format(args.issue))
@@ -292,13 +321,26 @@ class PullRequest(Command):
             if not issue:
                 sys.stderr.write(error)
                 return None
-            if not repository.branch.endswith('/{}'.format(issue.id)) and not repository.branch.endswith('/{}'.format(Branch.to_branch_name(issue.title))):
+            if not Branch.branch_matches_issue(repository, repository.branch, issue):
                 sys.stderr.write(error)
                 return None
 
             if not issue.tracker.hide_title:
                 args._title = issue.title
             args._bug_urls = Commit.bug_urls(issue)
+
+        elif not args.issue and getattr(args, 'update_issue', True) and Tracker.instance():
+            args.issue = cls.issue_from_commits(repository, source_remote, branch_point)
+            if not args.issue:
+                issue, result = Branch.ensure_issue(args, repository, redact=source_remote != repository.default_remote)
+                if result:
+                    return None
+
+                cls.write_branch_variables(
+                    repository, repository.branch,
+                    title=getattr(args, '_title', None) or '',
+                    bug=getattr(args, '_bug_urls', None) or [],
+                )
 
         if not repository.config().get('remote.{}.url'.format(source_remote)):
             sys.stderr.write("'{}' is not a remote in this repository\n".format(source_remote))
@@ -327,12 +369,32 @@ class PullRequest(Command):
             # GitHub's search apparently uses substring matching, so check for an exact match.
             if branch != pr.head:
                 continue
+            if existing_pr and existing_pr.opened and not pr.opened:
+                continue
             existing_pr = pr
             if not existing_pr.opened:
                 continue
             if user and existing_pr.author == user:
                 break
         return existing_pr
+
+    @classmethod
+    def will_reopen_closed_pull_request(cls, args, repository, existing_pr):
+        """Decide if a closed pull-request should be re-used (and re-opened) instead of creating a new one.
+
+        Non-interactive invocations never re-use a closed pull-request unless '--reopen-closed' is
+        explicitly passed, since a closed pull-request usually means the change it described is no
+        longer the change being pushed.
+        """
+        reopen_closed = getattr(args, 'reopen_closed', None)
+        if reopen_closed is not None:
+            return reopen_closed
+        if args.defaults is not None:
+            return False
+        return Terminal.choose(
+            "'{}' is already associated with '{}', which is closed.\nWould you like to create a new pull-request?".format(repository.branch, existing_pr),
+            default='No',
+        ) != 'Yes'
 
     @classmethod
     def pre_pr_checks(cls, repository, add_edits=True):
@@ -414,17 +476,23 @@ class PullRequest(Command):
         return 0
 
     @classmethod
-    def add_comment_to_issue(cls, issue, pr):
+    def add_comment_to_issue(cls, issue, pr, commit_class=None):
         log.info('Checking issue assignee...')
-        if issue.assignee != issue.tracker.me():
+        assigned = False
+        if issue.assignee != issue.tracker.me() and commit_class != 'Gardening':
             issue.assign(issue.tracker.me())
+            assigned = True
             print('Assigning associated issue to {}'.format(issue.tracker.me()))
         log.info('Checking for pull request link in associated issue...')
+        pr_label = 'Test gardening pull request' if commit_class == 'Gardening' else 'Pull request'
         if pr.url and not any([pr.url in comment.content for comment in issue.comments]):
             if issue.opened:
-                issue.add_comment('Pull request: {}'.format(pr.url))
-            else:
-                issue.open(why='Re-opening for pull request {}'.format(pr.url))
+                # Wait until the next second so Bugzilla sends a notification for the PR opening comment
+                if assigned:
+                    time.sleep(1.1)
+                issue.add_comment('{}: {}'.format(pr_label, pr.url))
+            elif commit_class != 'Gardening':
+                issue.open(why='Re-opening for {} {}'.format(pr_label.lower(), pr.url))
             print('Posted pull request link to {}'.format(issue.link))
 
     @classmethod
@@ -447,7 +515,7 @@ class PullRequest(Command):
                 sys.stderr.write("Failed to rebase '{}' on '{},' please resolve conflicts\n".format(repository.branch, branch_point.branch))
                 return 1
             log.info("Rebased '{}' on '{}!'".format(repository.branch, branch_point.branch))
-            branch_point = repository.commit(branch=branch_point.branch)
+            branch_point = repository.commit(branch='{}/{}'.format(source_remote, branch_point.branch))
 
         if args.checks is None:
             args.checks = repository.config().get('webkitscmpy.auto-check', 'false') == 'true'
@@ -461,6 +529,26 @@ class PullRequest(Command):
             for commit in commits
             for issue in commit.issues
         ]
+
+        unreviewed = re.compile(r'(Unreviewed|Versioning.)', re.IGNORECASE)
+        reviewed = re.compile(r'^Reviewed by .+', re.IGNORECASE | re.MULTILINE)
+        bad_commits = [c for c in commits if c.message and unreviewed.search(c.message) and reviewed.search(c.message)]
+
+        if bad_commits:
+            if len(bad_commits) > 1:
+                sys.stderr.write("Multiple commits are marked 'Unreviewed' or 'Versioning' but contain a 'Reviewed by' line, please fix before posting\n")
+                return 1
+            response = Terminal.choose(
+                "Commit message is marked 'Unreviewed' or 'Versioning' but contains a 'Reviewed by' line. Remove it?",
+                options=('Yes', 'No'),
+                default='Yes',
+            )
+            if response == 'Yes':
+                cleaned = re.sub(r'Reviewed by .+\n?', '', bad_commits[0].message)
+                if run([repository.executable(), 'commit', '--amend', '-m', cleaned], cwd=repository.root_path).returncode:
+                    sys.stderr.write("Failed to amend commit message\n")
+                    return 1
+                commits = list(repository.commits(begin={'hash': branch_point.hash}, end={'branch': repository.branch}))
 
         radar_issue = next(iter(filter(lambda issue: isinstance(issue.tracker, radar.Tracker), issues)), None)
         not_radar = next(iter(filter(lambda issue: not isinstance(issue.tracker, radar.Tracker), issues)), None)
@@ -562,11 +650,7 @@ class PullRequest(Command):
             log.info("Checking if PR already exists...")
             existing_pr = cls.find_existing_pull_request(repository, remote_repo)
             log.info("PR #{} found.".format(existing_pr.number) if existing_pr else "PR not found.")
-            if existing_pr and not existing_pr.opened and not args.defaults and (
-                args.defaults is False or Terminal.choose(
-                    "'{}' is already associated with '{}', which is closed.\nWould you like to create a new pull-request?".format(repository.branch, existing_pr),
-                    default='No',
-            ) == 'Yes'):
+            if existing_pr and not existing_pr.opened and not cls.will_reopen_closed_pull_request(args, repository, existing_pr):
                 existing_pr = None
 
             if existing_pr and user and existing_pr.author != user and (args.defaults or Terminal.choose(
@@ -697,6 +781,8 @@ class PullRequest(Command):
             sys.stderr.write("'{}' does not support draft pull requests, aborting\n".format(remote_repo.url))
             return 1
 
+        if args.update_title is None:
+            args.update_title = repository.config().get('webkitscmpy.update-title', 'true') == 'true'
 
         if existing_pr:
             log.info("Updating pull-request for '{}'...".format(repository.branch))
@@ -732,10 +818,27 @@ class PullRequest(Command):
             if cls.is_revert_commit(commits[0]) and update_issue:
                 cls.add_comment_to_reverted_commit_bug_tracker(repository, args, pr, commits[0])
 
+        commit_class = None
+        if repository.classifier and repository.classifier.classes and commits:
+            classes = [repository.classifier.classify(commit, repository) for commit in commits]
+            classes = [klass for klass in classes if klass]
+            if classes and len(classes) == len(commits) and len(set(klass.name for klass in classes)) == 1:
+                commit_class = classes[0].name
+
         if issue and update_issue and isinstance(issue.tracker, radar.Tracker) and not_radar:
-            cls.add_comment_to_issue(not_radar, pr)
+            cls.add_comment_to_issue(not_radar, pr, commit_class=commit_class)
         elif issue and update_issue:
-            cls.add_comment_to_issue(issue, pr)
+            cls.add_comment_to_issue(issue, pr, commit_class=commit_class)
+
+        if radar_issue and update_issue and radar_issue.tracker.radarclient():
+            if args.update_radar and radar_issue.state == 'Analyze' and radar_issue.substate in ['Investigate', 'Fix']:
+                try:
+                    new_state = 'Fix' if pr.draft else 'Review'
+                    radar_issue.set_state(state='Analyze', substate=new_state)
+                    print(f'Updated {radar_issue.link} to Analyze/{new_state}')
+                except radar_issue.tracker.radarclient().exceptions.UnsuccessfulResponseException as e:
+                    sys.stderr.write(f'Failed to update {radar_issue.link}:\n')
+                    sys.stderr.write(f'{e}\n')
 
         if issue and pr._metadata and pr._metadata.get('issue'):
             log.info('Syncing PR labels with issue component...')

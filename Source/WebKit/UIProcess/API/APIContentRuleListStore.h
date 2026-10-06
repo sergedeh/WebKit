@@ -29,6 +29,7 @@
 #include <WebCore/ContentExtensionParser.h>
 #include <system_error>
 #include <wtf/Forward.h>
+#include <wtf/WorkQueue.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -82,10 +83,11 @@ private:
     WTF::String defaultStorePath();
 
     const WTF::String m_storePath;
+    const Ref<WorkQueue> m_workQueue;
 #endif // ENABLE(CONTENT_EXTENSIONS)
 };
 
-const std::error_category& contentRuleListStoreErrorCategory();
+const std::error_category& NODELETE contentRuleListStoreErrorCategory();
 
 inline std::error_code make_error_code(ContentRuleListStore::Error error)
 {

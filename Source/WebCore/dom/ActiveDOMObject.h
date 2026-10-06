@@ -28,13 +28,11 @@
 
 #include <WebCore/ContextDestructionObserver.h>
 #include <WebCore/TaskSource.h>
-#include <wtf/AbstractRefCounted.h>
-#include <wtf/Assertions.h>
 #include <wtf/CancellableTask.h>
+#include <wtf/CurrentThread.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
 #include <wtf/RefCounted.h>
-#include <wtf/Threading.h>
 
 namespace WebCore {
 
@@ -103,8 +101,8 @@ public:
         return adoptRef(*new PendingActivity<T>(thisObject));
     }
 
-    bool isContextStopped() const;
-    bool isAllowedToRunScript() const;
+    bool NODELETE isContextStopped() const;
+    bool NODELETE isAllowedToRunScript() const;
 
     template<typename T, typename Task>
     static void queueTaskKeepingObjectAlive(T& object, TaskSource source, Task&& task)
@@ -162,7 +160,7 @@ private:
     uint64_t m_pendingActivityInstanceCount { 0 };
 #if ASSERT_ENABLED
     bool m_suspendIfNeededWasCalled { false };
-    const Ref<Thread> m_creationThread { Thread::currentSingleton() };
+    const uint32_t m_creationThreadID { currentThreadID() };
 #endif
 
     friend class ActiveDOMObjectEventDispatchTask;

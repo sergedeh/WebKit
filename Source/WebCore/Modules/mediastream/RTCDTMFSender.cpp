@@ -29,6 +29,7 @@
 #if ENABLE(WEB_RTC)
 
 #include "ContextDestructionObserverInlines.h"
+#include "ExceptionOr.h"
 #include "RTCDTMFSenderBackend.h"
 #include "RTCDTMFToneChangeEvent.h"
 #include "RTCRtpSender.h"
@@ -69,7 +70,7 @@ bool RTCDTMFSender::canInsertDTMF() const
     if (!m_sender || m_sender->isStopped())
         return false;
 
-    auto currentDirection = m_sender->currentTransceiverDirection();
+    auto currentDirection = protect(m_sender)->currentTransceiverDirection();
     if (!currentDirection)
         return false;
     if (*currentDirection != RTCRtpTransceiverDirection::Sendrecv && *currentDirection != RTCRtpTransceiverDirection::Sendonly)
@@ -83,7 +84,7 @@ String RTCDTMFSender::toneBuffer() const
     return m_tones;
 }
 
-static inline bool isToneCharacterInvalid(char16_t character)
+static inline bool NODELETE isToneCharacterInvalid(char16_t character)
 {
     if (character >= '0' && character <= '9')
         return false;
@@ -109,7 +110,7 @@ ExceptionOr<void> RTCDTMFSender::insertDTMF(const String& tones, size_t duration
         return { };
 
     m_isPendingPlayoutTask = true;
-    protectedScriptExecutionContext()->postTask([protectedThis = Ref { *this }](auto&) {
+    protect(scriptExecutionContext())->postTask([protectedThis = Ref { *this }](auto&) {
         protectedThis->playNextTone();
     });
     return { };

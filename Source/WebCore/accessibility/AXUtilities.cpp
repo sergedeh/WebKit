@@ -27,9 +27,10 @@
 
 #include "AXLoggerBase.h"
 #include "AXObjectCache.h"
-#include "CSSPrimitiveValueMappings.h"
 #include "CSSProperty.h"
 #include "CSSValueList.h"
+#include "Document.h"
+#include "DocumentPage.h"
 #include "DocumentView.h"
 #include "ElementInlines.h"
 #include "HTMLImageElement.h"
@@ -40,6 +41,8 @@
 #include "RenderImage.h"
 #include "RenderStyleConstants.h"
 #include "RenderTreeBuilder.h"
+#include "SpaceSplitString.h"
+#include "StyleKeyword+Mappings.h"
 #include "StylePropertiesInlines.h"
 #include <wtf/CheckedPtr.h>
 #include <wtf/RefPtr.h>
@@ -50,8 +53,8 @@ using namespace HTMLNames;
 
 RefPtr<ContainerNode> composedParentIgnoringDocumentFragments(const Node& node)
 {
-    RefPtr ancestor = node.parentInComposedTree();
-    while (is<DocumentFragment>(ancestor.get()))
+    auto* ancestor = node.parentInComposedTree();
+    while (is<DocumentFragment>(ancestor))
         ancestor = ancestor->parentInComposedTree();
     return ancestor;
 }
@@ -73,14 +76,14 @@ NodeName elementName(Node& node)
     return element ? element->elementName() : ElementName::Unknown;
 }
 
-const RenderStyle* safeStyleFrom(Element& element)
+const Style::ComputedStyle* safeStyleFrom(Element& element)
 {
     // We cannot resolve style (as computedStyle() does) if we are downstream of an existing render tree
     // update. Otherwise, a RELEASE_ASSERT preventing re-entrancy will be hit inside RenderTreeBuilder.
     return RenderTreeBuilder::current() ? element.existingComputedStyle() : element.computedStyle();
 }
 
-bool hasAccNameAttribute(Element& element)
+bool hasARIAAccNameAttribute(Element& element)
 {
     auto trimmed = [&] (const auto& attribute) {
         const auto& value = element.attributeWithDefaultARIA(attribute);
@@ -90,14 +93,55 @@ bool hasAccNameAttribute(Element& element)
         return copy.trim(isASCIIWhitespace);
     };
 
-    // Avoid calculating the actual description here (e.g. resolving aria-labelledby), as it's expensive.
-    // The spec is generally permissive in allowing user agents to not ensure complete validity of these attributes.
-    // For example, https://w3c.github.io/svg-aam/#include_elements:
-    // "It has an ‘aria-labelledby’ attribute or ‘aria-describedby’ attribute containing valid IDREF tokens. User agents MAY include elements with these attributes without checking for validity."
-    if (trimmed(aria_labelAttr).length() || trimmed(aria_labelledbyAttr).length() || trimmed(aria_labeledbyAttr).length() || trimmed(aria_descriptionAttr).length() || trimmed(aria_describedbyAttr).length())
+    // Check aria-label first - it's the simplest check.
+    if (trimmed(aria_labelAttr).length())
         return true;
 
-    return element.attributeWithoutSynchronization(titleAttr).length();
+    // Check aria-description - just need non-empty, non-whitespace.
+    if (trimmed(aria_descriptionAttr).length())
+        return true;
+
+    // For aria-labelledby/aria-describedby, we need to validate that the referenced IDs
+    // actually exist and have text content. Per HTML-AAM, if aria-labelledby references
+    // non-existing elements, empty elements, or elements with only whitespace text,
+    // it should not provide an accessible name.
+    auto hasValidIdRef = [&] (const auto& attribute) {
+        const auto& value = element.attributeWithDefaultARIA(attribute);
+        if (value.isEmpty())
+            return false;
+
+        SpaceSplitString ids(value, SpaceSplitString::ShouldFoldCase::No);
+        if (ids.isEmpty())
+            return false;
+
+        Ref document = element.document();
+        for (auto& id : ids) {
+            if (RefPtr referencedElement = document->getElementById(id)) {
+                String elementText = referencedElement->textContent();
+                if (!elementText.isEmpty() && !elementText.containsOnly<isASCIIWhitespace>())
+                    return true;
+            }
+        }
+        return false;
+    };
+
+    if (hasValidIdRef(aria_labelledbyAttr) || hasValidIdRef(aria_labeledbyAttr) || hasValidIdRef(aria_describedbyAttr))
+        return true;
+
+    return false;
+}
+
+bool hasAccNameAttribute(Element& element)
+{
+    if (hasARIAAccNameAttribute(element))
+        return true;
+
+    // For title, check that it's not whitespace-only.
+    const auto& titleValue = element.attributeWithoutSynchronization(titleAttr);
+    if (!titleValue.string().containsOnly<isASCIIWhitespace>())
+        return true;
+
+    return false;
 }
 
 RenderImage* toSimpleImage(RenderObject& renderer)
@@ -136,26 +180,31 @@ bool hasRole(Element& element, StringView role)
     if (roleValue.isEmpty())
         return false;
 
-    return SpaceSplitString::spaceSplitStringContainsValue(roleValue, role, SpaceSplitString::ShouldFoldCase::Yes);
+    // Lowercase the role value ourselves (allocation-free when it's already lowercase, the common case for
+    // ARIA roles) and match without folding, so spaceSplitStringContainsValue doesn't allocate a lowercased copy.
+    return SpaceSplitString::spaceSplitStringContainsValue(roleValue.convertToASCIILowercase(), role, SpaceSplitString::ShouldFoldCase::No);
 }
 
-bool hasAnyRole(Element& element, Vector<StringView>&& roles)
+bool hasAnyRole(Element& element, std::initializer_list<StringView> roles)
 {
     auto roleValue = element.attributeWithDefaultARIA(roleAttr);
     if (roleValue.isEmpty())
         return false;
 
+    // Lowercase the role value once (allocation-free when it's already lowercase, the common case for ARIA
+    // roles) and match each candidate without folding, rather than lowercasing it once per candidate role.
+    AtomString lowercasedRoleValue = roleValue.convertToASCIILowercase();
     for (const auto& role : roles) {
         AX_ASSERT(!role.isEmpty());
-        if (SpaceSplitString::spaceSplitStringContainsValue(roleValue, role, SpaceSplitString::ShouldFoldCase::Yes))
+        if (SpaceSplitString::spaceSplitStringContainsValue(lowercasedRoleValue, role, SpaceSplitString::ShouldFoldCase::No))
             return true;
     }
     return false;
 }
 
-bool hasAnyRole(Element* element, Vector<StringView>&& roles)
+bool hasAnyRole(Element* element, std::initializer_list<StringView> roles)
 {
-    return element ? hasAnyRole(*element, WTF::move(roles)) : false;
+    return element ? hasAnyRole(*element, roles) : false;
 }
 
 bool hasTableRole(Element& element)
@@ -471,39 +520,42 @@ String roleToString(AccessibilityRole role)
     return ""_s;
 }
 
-bool needsLayoutOrStyleRecalc(const Document& document)
+OptionSet<DocumentNeeds> needsLayoutOrStyleRecalc(const Document& document)
 {
+    OptionSet<DocumentNeeds> needs;
     if (RefPtr frameView = document.view()) {
-        if (frameView->needsLayout() || frameView->checkedLayoutContext()->isLayoutPending())
-            return true;
+        if (frameView->needsLayout() || frameView->layoutContext().isLayoutPending())
+            needs.add(DocumentNeeds::Layout);
     }
-    return document.hasPendingStyleRecalc();
+    if (document.hasPendingStyleRecalc())
+        needs.add(DocumentNeeds::StyleRecalc);
+    return needs;
 }
 
 std::optional<CursorType> cursorTypeFrom(const StyleProperties& properties)
 {
     for (auto property : properties) {
         if (property.id() == CSSPropertyCursor) {
-            if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(property.value()))
-                return fromCSSValue<CursorType>(*primitiveValue);
+            if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(property.value()))
+                return fromCSSValue<CursorType>(*keywordValue);
             if (RefPtr valueList = dynamicDowncast<CSSValueList>(property.value()); valueList && valueList->size() >= 2) {
-                if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>((*valueList)[valueList->size() - 1]))
-                    return fromCSSValue<CursorType>(*primitiveValue);
+                if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>((*valueList)[valueList->size() - 1]))
+                    return fromCSSValue<CursorType>(*keywordValue);
             }
         }
     }
     return std::nullopt;
 }
 
-RefPtr<Node> lastNode(const FixedVector<AXID>& axIDs, AXObjectCache& cache)
+RefPtr<Node> lastNonAriaHiddenNode(const FixedVector<AXID>& axIDs, AXObjectCache& cache)
 {
     AX_ASSERT(isMainThread());
 
     for (auto axID = axIDs.rbegin(); axID != axIDs.rend(); ++axID) {
-        if (RefPtr object = cache.objectForID(*axID)) {
-            if (RefPtr node = object->node())
-                return node;
-        }
+        RefPtr object = cache.objectForID(*axID);
+        RefPtr node = object ? object->node() : nullptr;
+        if (node && !object->isAXHidden())
+            return node;
     }
     return nullptr;
 }

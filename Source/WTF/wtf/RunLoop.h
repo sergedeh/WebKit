@@ -39,8 +39,7 @@
 #include <wtf/RetainPtr.h>
 #include <wtf/Seconds.h>
 #include <wtf/ThreadSafetyAnalysis.h>
-#include <wtf/ThreadSpecific.h>
-#include <wtf/Threading.h>
+#include <wtf/ThreadingEnums.h>
 #include <wtf/ThreadingPrimitives.h>
 #include <wtf/TypeTraits.h>
 #include <wtf/WeakHashSet.h>
@@ -52,6 +51,8 @@
 
 #if USE(GLIB_EVENT_LOOP)
 #include <wtf/OptionCountedSet.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/glib/GRefPtr.h>
 #endif
 
@@ -61,6 +62,8 @@
 
 namespace WTF {
 
+template<typename, CanBeGCThread> class ThreadSpecific;
+
 #if USE(GLIB_EVENT_LOOP)
 class ActivityObserver;
 #endif
@@ -68,7 +71,7 @@ class ActivityObserver;
 #if USE(COCOA_EVENT_LOOP)
 class SchedulePair;
 struct SchedulePairHash;
-using SchedulePairHashSet = HashSet<RefPtr<SchedulePair>, SchedulePairHash>;
+using SchedulePairHashSet = HashSet<Ref<SchedulePair>, SchedulePairHash>;
 #endif
 
 #if USE(CF)
@@ -94,12 +97,12 @@ public:
 #endif
 
     WTF_EXPORT_PRIVATE static RunLoop& currentSingleton();
-    WTF_EXPORT_PRIVATE static RunLoop& mainSingleton();
+    WTF_EXPORT_PRIVATE static RunLoop& NODELETE mainSingleton();
 #if USE(WEB_THREAD)
     WTF_EXPORT_PRIVATE static RunLoop& webSingleton();
     WTF_EXPORT_PRIVATE static RunLoop* webIfExists();
 #endif
-    WTF_EXPORT_PRIVATE static Ref<RunLoop> create(ASCIILiteral threadName, ThreadType = ThreadType::Unknown, Thread::QOS = Thread::QOS::UserInitiated);
+    WTF_EXPORT_PRIVATE static Ref<RunLoop> create(ASCIILiteral threadName, ThreadType = ThreadType::Unknown, ThreadQOS = ThreadQOS::UserInitiated);
 
     static bool isMain() { return mainSingleton().isCurrent(); }
     WTF_EXPORT_PRIVATE bool isCurrent() const final;
@@ -146,19 +149,32 @@ public:
 #endif
 
 #if USE(WINDOWS_EVENT_LOOP)
+    using WindowsMessageHandler = Function<bool(MSG&)>;
+    WTF_EXPORT_PRIVATE static void setWindowsMessageHandler(WindowsMessageHandler&&);
     static void registerRunLoopMessageWindowClass();
 #endif
 
+    // A RunLoop::Timer is owned by the thread whose run loop it is constructed with: it fires on that
+    // run loop's thread, and stop() and the destructor must run on that thread. Stopping or destroying
+    // a timer from another thread races with an in-flight callback and is a use-after-free; both assert
+    // RunLoop::isCurrent() in debug builds (see assertIsCurrent()). Starting/re-arming a timer from
+    // another thread is allowed -- it only schedules onto the run loop and never frees the timer -- which
+    // is how RunLoop::dispatch()/dispatchAfter() and cross-thread timer schedulers (e.g. JSRunLoopTimer)
+    // work.
     class TimerBase {
         friend class RunLoop;
     public:
         WTF_EXPORT_PRIVATE explicit TimerBase(Ref<RunLoop>&&, ASCIILiteral description);
+        // Must run on the run loop's thread if the timer is active (asserted in debug); see class comment.
         WTF_EXPORT_PRIVATE virtual ~TimerBase();
 
+        // May be called from any thread; (re)schedules the timer onto its run loop's thread.
         void startRepeating(Seconds interval) { start(std::max(interval, 0_s), true); }
         void startOneShot(Seconds interval) { start(std::max(interval, 0_s), false); }
 
+        // Must be called on the run loop's thread when the timer is active (asserted in debug).
         WTF_EXPORT_PRIVATE void stop();
+
         WTF_EXPORT_PRIVATE bool isActive() const;
         WTF_EXPORT_PRIVATE Seconds secondsUntilFire() const;
 
@@ -168,7 +184,7 @@ public:
         WTF_EXPORT_PRIVATE void setPriority(int);
 #endif
 
-        const ASCIILiteral& description() const { return m_description; }
+        ASCIILiteral description() const { return m_description; }
 
     private:
         WTF_EXPORT_PRIVATE void start(Seconds interval, bool repeat);
@@ -203,7 +219,7 @@ public:
         WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Timer);
     public:
         template <typename TimerFiredClass>
-        requires (WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>::value)
+        requires (WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>)
         Timer(Ref<RunLoop>&& runLoop, ASCIILiteral description, TimerFiredClass* object, void (TimerFiredClass::*function)())
             : Timer(WTF::move(runLoop), description, [weakObject = ThreadSafeWeakPtr { *object }, function] {
                 if (RefPtr object = weakObject.get())
@@ -213,7 +229,7 @@ public:
         }
 
         template <typename TimerFiredClass>
-        requires (!WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>::value && WTF::HasWeakPtrFunctions<TimerFiredClass>::value && WTF::HasRefPtrMemberFunctions<TimerFiredClass>::value)
+        requires (!WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass> && WTF::HasWeakPtrFunctions<TimerFiredClass> && WTF::HasRefPtrMemberFunctions<TimerFiredClass>)
         Timer(Ref<RunLoop>&& runLoop, ASCIILiteral description, TimerFiredClass* object, void (TimerFiredClass::*function)())
             : Timer(WTF::move(runLoop), description, [weakObject = WeakPtr { *object }, function] {
                 if (RefPtr object = weakObject.get())
@@ -223,17 +239,17 @@ public:
         }
 
         template <typename TimerFiredClass>
-        requires (!WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>::value && WTF::HasWeakPtrFunctions<TimerFiredClass>::value && !WTF::HasRefPtrMemberFunctions<TimerFiredClass>::value && WTF::HasCheckedPtrMemberFunctions<TimerFiredClass>::value)
+        requires (!WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass> && WTF::HasWeakPtrFunctions<TimerFiredClass> && !WTF::HasRefPtrMemberFunctions<TimerFiredClass> && WTF::HasCheckedPtrMemberFunctions<TimerFiredClass>)
         Timer(Ref<RunLoop>&& runLoop, ASCIILiteral description, TimerFiredClass* object, void (TimerFiredClass::*function)())
             : Timer(WTF::move(runLoop), description, [weakObject = WeakPtr { *object }, function] {
-                if (CheckedPtr object = weakObject.get())
+                if (CheckedPtr object = weakObject)
                     (object.get()->*function)();
             })
         {
         }
 
         template <typename TimerFiredClass>
-        requires (!WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass>::value && !WTF::HasWeakPtrFunctions<TimerFiredClass>::value && WTF::HasCheckedPtrMemberFunctions<TimerFiredClass>::value)
+        requires (!WTF::HasThreadSafeWeakPtrFunctions<TimerFiredClass> && !WTF::HasWeakPtrFunctions<TimerFiredClass> && WTF::HasCheckedPtrMemberFunctions<TimerFiredClass>)
         Timer(Ref<RunLoop>&& runLoop, ASCIILiteral description, TimerFiredClass* object, void (TimerFiredClass::*function)())
             : Timer(WTF::move(runLoop), description, [object = CheckedRef { *object }, function] {
                 (object.ptr()->*function)();
@@ -250,7 +266,7 @@ public:
 #if !PLATFORM(COCOA)
         // FIXME: This constructor isn't as safe as the other ones and should be removed.
         template <typename TimerFiredClass>
-        requires (!WTF::HasRefPtrMemberFunctions<TimerFiredClass>::value && !WTF::HasCheckedPtrMemberFunctions<TimerFiredClass>::value)
+        requires (!WTF::HasRefPtrMemberFunctions<TimerFiredClass> && !WTF::HasCheckedPtrMemberFunctions<TimerFiredClass>)
         Timer(Ref<RunLoop>&& runLoop, ASCIILiteral description, TimerFiredClass* object, void (TimerFiredClass::*function)())
             : Timer(WTF::move(runLoop), description, std::bind(function, object))
         {
@@ -282,13 +298,15 @@ public:
         Function<void()> m_function;
     };
 
-    WTF_EXPORT_PRIVATE Ref<RunLoop::DispatchTimer> dispatchAfter(Seconds, Function<void()>&&);
+    WTF_EXPORT_PRIVATE Ref<RunLoop::DispatchTimer> scheduleTimer(Seconds, Function<void()>&&);
+
+    void dispatchAfter(Seconds delay, Function<void()>&& function) final { scheduleTimer(delay, WTF::move(function)); }
 
     WTF_EXPORT_PRIVATE String listActiveTimersForLogging() const;
 
 private:
     class Holder;
-    static ThreadSpecific<Holder>& runLoopHolder();
+    static ThreadSpecific<Holder, CanBeGCThread::False>& runLoopHolder();
 
     RunLoop();
 
@@ -302,7 +320,7 @@ private:
 #else
     mutable Lock m_registeredTimerLock;
 #endif
-    HashSet<TimerBase *> m_registeredTimers;
+    HashSet<TimerBase *> m_registeredTimers WTF_GUARDED_BY_LOCK(m_registeredTimerLock);
 
     Deque<Function<void()>> m_currentIteration;
 
@@ -319,10 +337,17 @@ private:
 #if USE(WINDOWS_EVENT_LOOP)
     static LRESULT CALLBACK RunLoopWndProc(HWND, UINT, WPARAM, LPARAM);
     LRESULT wndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+    void dispatchMessage(MSG&);
+    DWORD msTillNextTimer();
+    void fireTimers();
     HWND m_runLoopMessageWindow;
-    UncheckedKeyHashSet<UINT_PTR> m_liveTimers;
+    Deque<TimerBase*> m_timers;
 
     Lock m_loopLock;
+    // Due timers with a FireTimerMessage posted but not yet dispatched. The message carries no
+    // TimerBase* (the timer may be stopped/destroyed first); wndProc() takes the next live one here.
+    Deque<TimerBase*> m_timersToFire WTF_GUARDED_BY_LOCK(m_loopLock);
+    WindowsMessageHandler m_windowsMessageHandler;
 #elif USE(COCOA_EVENT_LOOP)
     static void performWork(void*);
     const RetainPtr<CFRunLoopRef> m_runLoop;
@@ -390,13 +415,108 @@ private:
 #endif
 };
 
+#if USE(GLIB_EVENT_LOOP)
+
+// Activity observers (used to implement WebCore::RunLoopObserver)
+//
+// This must be defined here rather than in its own header: RunLoop refers to it
+// through Ref<>, and the Swift C++ interop importer requires the definition of a
+// reference counted type to be reachable from every module which mentions it.
+class ActivityObserver : public ThreadSafeRefCounted<ActivityObserver> {
+    WTF_MAKE_TZONE_ALLOCATED(ActivityObserver);
+public:
+    using Callback = std::function<void()>;
+
+    static Ref<ActivityObserver> create(Ref<RunLoop>&& runLoop, bool isRepeating, uint8_t order, OptionSet<RunLoop::Activity> activities, Callback&& callback)
+    {
+        return adoptRef(*new ActivityObserver(WTF::move(runLoop), isRepeating, order, activities, WTF::move(callback)));
+    }
+
+    ~ActivityObserver()
+    {
+        ASSERT(!m_callback);
+    }
+
+    void start()
+    {
+        if (ASSERT_ENABLED) {
+            Locker lock { m_callbackLock };
+            ASSERT(m_callback);
+        }
+        if (auto runLoop = m_runLoop.get())
+            runLoop->observeActivity(*this);
+    }
+
+    void stop()
+    {
+        {
+            Locker lock { m_callbackLock };
+            if (!m_callback)
+                return;
+
+            m_callback = nullptr;
+        }
+
+        if (auto runLoop = m_runLoop.get())
+            runLoop->unobserveActivity(*this);
+    }
+
+    uint8_t order() const { return m_order; }
+    OptionSet<RunLoop::Activity> activities() const { return m_activities; }
+
+    void notify()
+    {
+        Callback callback;
+        {
+            Locker lock { m_callbackLock };
+            if (!m_callback)
+                return;
+
+            callback = m_callback;
+        }
+
+        callback();
+
+        if (!m_isRepeating)
+            stop();
+    }
+
+private:
+    ActivityObserver(Ref<RunLoop>&& runLoop, bool isRepeating, uint8_t order, OptionSet<RunLoop::Activity> activities, Callback&& callback)
+        : m_runLoop(WTF::move(runLoop))
+        , m_isRepeating(isRepeating)
+        , m_order(order)
+        , m_activities(activities)
+        , m_callback(WTF::move(callback))
+    {
+        ASSERT(m_callback);
+    }
+
+private:
+    ThreadSafeWeakPtr<RunLoop> m_runLoop;
+    bool m_isRepeating { false };
+    uint8_t m_order { 0 };
+    OptionSet<RunLoop::Activity> m_activities;
+    mutable Lock m_callbackLock;
+    Callback m_callback WTF_GUARDED_BY_LOCK(m_callbackLock);
+};
+
+#endif // USE(GLIB_EVENT_LOOP)
+
 inline void assertIsCurrent(const RunLoop& runLoop) WTF_ASSERTS_ACQUIRED_CAPABILITY(runLoop)
 {
-    ASSERT_UNUSED(runLoop, runLoop.isCurrent());
+    RELEASE_ASSERT(runLoop.isCurrent());
 }
+
+WTF_EXPORT_PRIVATE void callOnRunLoop(RunLoop&, Function<void()>&&);
 
 } // namespace WTF
 
 using WTF::RunLoop;
 using WTF::RunLoopMode;
 using WTF::assertIsCurrent;
+using WTF::callOnRunLoop;
+
+#if USE(GLIB_EVENT_LOOP)
+using WTF::ActivityObserver;
+#endif

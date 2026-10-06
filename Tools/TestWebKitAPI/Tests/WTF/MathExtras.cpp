@@ -89,7 +89,7 @@ TEST(WTF, clampToIntLongLong)
     EXPECT_EQ(clampTo<int>(underflowInt), minInt);
 }
 
-TEST(WTF, clampToIntegerFloat)
+TEST(WTF, clampToIntFloat)
 {
     // This test is inaccurate as floats will round the min / max integer
     // due to the narrow mantissa. However it will properly checks within
@@ -107,14 +107,14 @@ TEST(WTF, clampToIntegerFloat)
     EXPECT_GT(overflowInt, maxInt);
     EXPECT_LT(underflowInt, minInt);
 
-    EXPECT_EQ(clampToInteger(maxInt), static_cast<int>(maxInt));
-    EXPECT_EQ(clampToInteger(minInt), std::numeric_limits<int>::min());
+    EXPECT_EQ(clampTo<int>(maxInt), static_cast<int>(maxInt));
+    EXPECT_EQ(clampTo<int>(minInt), std::numeric_limits<int>::min());
 
-    EXPECT_EQ(clampToInteger(overflowInt), std::numeric_limits<int>::max());
-    EXPECT_EQ(clampToInteger(underflowInt), std::numeric_limits<int>::min());
+    EXPECT_EQ(clampTo<int>(overflowInt), std::numeric_limits<int>::max());
+    EXPECT_EQ(clampTo<int>(underflowInt), std::numeric_limits<int>::min());
 }
 
-TEST(WTF, clampToIntegerDouble)
+TEST(WTF, clampToIntDouble)
 {
     double maxInt = std::numeric_limits<int>::max();
     double minInt = std::numeric_limits<int>::min();
@@ -124,11 +124,35 @@ TEST(WTF, clampToIntegerDouble)
     EXPECT_GT(overflowInt, maxInt);
     EXPECT_LT(underflowInt, minInt);
 
-    EXPECT_EQ(clampToInteger(maxInt), maxInt);
-    EXPECT_EQ(clampToInteger(minInt), minInt);
+    EXPECT_EQ(clampTo<int>(maxInt), maxInt);
+    EXPECT_EQ(clampTo<int>(minInt), minInt);
 
-    EXPECT_EQ(clampToInteger(overflowInt), maxInt);
-    EXPECT_EQ(clampToInteger(underflowInt), minInt);
+    EXPECT_EQ(clampTo<int>(overflowInt), maxInt);
+    EXPECT_EQ(clampTo<int>(underflowInt), minInt);
+}
+
+TEST(WTF, clampToIntIntegral)
+{
+    constexpr int intMax = std::numeric_limits<int>::max();
+    constexpr int intMin = std::numeric_limits<int>::min();
+
+    // int64_t: values in range pass through, out-of-range clamps both ends.
+    EXPECT_EQ(clampTo<int>(int64_t { 0 }), 0);
+    EXPECT_EQ(clampTo<int>(int64_t { 42 }), 42);
+    EXPECT_EQ(clampTo<int>(int64_t { -42 }), -42);
+    EXPECT_EQ(clampTo<int>(int64_t { intMax }), intMax);
+    EXPECT_EQ(clampTo<int>(int64_t { intMin }), intMin);
+    EXPECT_EQ(clampTo<int>(static_cast<int64_t>(intMax) + 1), intMax);
+    EXPECT_EQ(clampTo<int>(static_cast<int64_t>(intMin) - 1), intMin);
+    EXPECT_EQ(clampTo<int>(std::numeric_limits<int64_t>::max()), intMax);
+    EXPECT_EQ(clampTo<int>(std::numeric_limits<int64_t>::min()), intMin);
+
+    // uint64_t: in-range values pass through, large values clamp to intMax.
+    EXPECT_EQ(clampTo<int>(uint64_t { 0 }), 0);
+    EXPECT_EQ(clampTo<int>(uint64_t { 42 }), 42);
+    EXPECT_EQ(clampTo<int>(static_cast<uint64_t>(intMax)), intMax);
+    EXPECT_EQ(clampTo<int>(static_cast<uint64_t>(intMax) + 1), intMax);
+    EXPECT_EQ(clampTo<int>(std::numeric_limits<uint64_t>::max()), intMax);
 }
 
 TEST(WTF, clampToFloat)
@@ -362,9 +386,9 @@ TEST(WTF, clampSameSignIntegers)
 {
     testClampSameSignIntegers<char, char>();
     testClampSameSignIntegers<unsigned char, unsigned char>();
-    testClampSameSignIntegers<char, int32_t>();
+    testClampSameSignIntegers<signed char, int32_t>();
     testClampSameSignIntegers<unsigned char, uint32_t>();
-    testClampSameSignIntegers<char, int64_t>();
+    testClampSameSignIntegers<signed char, int64_t>();
     testClampSameSignIntegers<unsigned char, uint64_t>();
 
     testClampSameSignIntegers<int32_t, int32_t>();
@@ -390,8 +414,8 @@ static void testClampUnsignedToSigned()
 
 TEST(WTF, clampUnsignedToSigned)
 {
-    testClampUnsignedToSigned<char, unsigned char>();
-    testClampUnsignedToSigned<char, uint32_t>();
+    testClampUnsignedToSigned<signed char, unsigned char>();
+    testClampUnsignedToSigned<signed char, uint32_t>();
     testClampUnsignedToSigned<int32_t, uint32_t>();
     testClampUnsignedToSigned<int64_t, uint64_t>();
     testClampUnsignedToSigned<int32_t, uint64_t>();
@@ -422,7 +446,7 @@ static void testClampSignedToUnsigned()
 
 TEST(WTF, clampSignedToUnsigned)
 {
-    testClampSignedToUnsigned<unsigned char, char>();
+    testClampSignedToUnsigned<unsigned char, signed char>();
     testClampSignedToUnsigned<unsigned char, int32_t>();
     testClampSignedToUnsigned<uint32_t, int32_t>();
     testClampSignedToUnsigned<uint64_t, int64_t>();
@@ -487,6 +511,24 @@ TEST(WTF, roundUpToPowerOfTwo)
     EXPECT_EQ(roundUpToPowerOfTwo(4U), 4U);
     EXPECT_EQ(roundUpToPowerOfTwo(120U), 128U);
     EXPECT_EQ(roundUpToPowerOfTwo(1U << 31), (1U << 31));
+}
+
+TEST(WTF, roundUpToPowerOfTwoSizeT)
+{
+    // Values that fit in 32 bits should still work.
+    EXPECT_EQ(roundUpToPowerOfTwo(static_cast<size_t>(1)), static_cast<size_t>(1));
+    EXPECT_EQ(roundUpToPowerOfTwo(static_cast<size_t>(120)), static_cast<size_t>(128));
+
+    // Values beyond 32 bits should not be truncated.
+#if CPU(ADDRESS64)
+    constexpr size_t twoTo33 = static_cast<size_t>(1) << 33;
+    EXPECT_EQ(roundUpToPowerOfTwo(twoTo33), twoTo33);
+    EXPECT_EQ(roundUpToPowerOfTwo(twoTo33 + 1), twoTo33 << 1);
+    EXPECT_EQ(roundUpToPowerOfTwo(twoTo33 - 1), twoTo33);
+
+    constexpr size_t twoTo63 = static_cast<size_t>(1) << 63;
+    EXPECT_EQ(roundUpToPowerOfTwo(twoTo63), twoTo63);
+#endif
 }
 
 TEST(WTF, clz)
@@ -563,80 +605,6 @@ TEST(WTF, getMSBSet)
     EXPECT_EQ(WTF::getMSBSet<uint64_t>(42), 5U);
 }
 
-TEST(WTF, clzConstexpr)
-{
-    EXPECT_EQ(WTF::clzConstexpr<int32_t>(1), 31U);
-    EXPECT_EQ(WTF::clzConstexpr<int32_t>(42), 26U);
-    EXPECT_EQ(WTF::clzConstexpr<uint32_t>(static_cast<uint32_t>(-1)), 0U);
-    EXPECT_EQ(WTF::clzConstexpr<uint32_t>(static_cast<uint32_t>(std::numeric_limits<int32_t>::min()) >> 1), 1U);
-    EXPECT_EQ(WTF::clzConstexpr<uint32_t>(0), 32U);
-
-    EXPECT_EQ(WTF::clzConstexpr<int8_t>(42), 2U);
-    EXPECT_EQ(WTF::clzConstexpr<int8_t>(3), 6U);
-    EXPECT_EQ(WTF::clzConstexpr<uint8_t>(static_cast<uint8_t>(-1)), 0U);
-    EXPECT_EQ(WTF::clzConstexpr<uint8_t>(0), 8U);
-
-    EXPECT_EQ(WTF::clzConstexpr<int64_t>(-1), 0U);
-    EXPECT_EQ(WTF::clzConstexpr<int64_t>(1), 63U);
-    EXPECT_EQ(WTF::clzConstexpr<int64_t>(3), 62U);
-    EXPECT_EQ(WTF::clzConstexpr<uint64_t>(42), 58U);
-    EXPECT_EQ(WTF::clzConstexpr<uint64_t>(0), 64U);
-}
-
-TEST(WTF, ctzConstexpr)
-{
-    EXPECT_EQ(WTF::ctzConstexpr<int32_t>(1), 0U);
-    EXPECT_EQ(WTF::ctzConstexpr<int32_t>(42), 1U);
-    EXPECT_EQ(WTF::ctzConstexpr<uint32_t>(static_cast<uint32_t>(-1)), 0U);
-    EXPECT_EQ(WTF::ctzConstexpr<uint32_t>(static_cast<uint32_t>(std::numeric_limits<int32_t>::min()) >> 1), 30U);
-    EXPECT_EQ(WTF::ctzConstexpr<uint32_t>(0), 32U);
-
-    EXPECT_EQ(WTF::ctzConstexpr<int8_t>(42), 1U);
-    EXPECT_EQ(WTF::ctzConstexpr<int8_t>(3), 0U);
-    EXPECT_EQ(WTF::ctzConstexpr<uint8_t>(static_cast<uint8_t>(-1)), 0U);
-    EXPECT_EQ(WTF::ctzConstexpr<uint8_t>(0), 8U);
-
-    EXPECT_EQ(WTF::ctzConstexpr<int64_t>(static_cast<uint32_t>(-1)), 0U);
-    EXPECT_EQ(WTF::ctzConstexpr<int64_t>(1), 0U);
-    EXPECT_EQ(WTF::ctzConstexpr<int64_t>(3), 0U);
-    EXPECT_EQ(WTF::ctzConstexpr<uint64_t>(42), 1U);
-    EXPECT_EQ(WTF::ctzConstexpr<uint64_t>(0), 64U);
-}
-
-TEST(WTF, getLSBSetConstexpr)
-{
-    EXPECT_EQ(WTF::getLSBSetConstexpr<int32_t>(1), 0U);
-    EXPECT_EQ(WTF::getLSBSetConstexpr<int32_t>(42), 1U);
-    EXPECT_EQ(WTF::getLSBSetConstexpr<uint32_t>(static_cast<uint32_t>(-1)), 0U);
-    EXPECT_EQ(WTF::getLSBSetConstexpr<uint32_t>(static_cast<uint32_t>(std::numeric_limits<int32_t>::min()) >> 1), 30U);
-
-    EXPECT_EQ(WTF::getLSBSetConstexpr<int8_t>(42), 1U);
-    EXPECT_EQ(WTF::getLSBSetConstexpr<int8_t>(3), 0U);
-    EXPECT_EQ(WTF::getLSBSetConstexpr<uint8_t>(static_cast<uint8_t>(-1)), 0U);
-
-    EXPECT_EQ(WTF::getLSBSetConstexpr<int64_t>(-1), 0U);
-    EXPECT_EQ(WTF::getLSBSetConstexpr<int64_t>(1), 0U);
-    EXPECT_EQ(WTF::getLSBSetConstexpr<int64_t>(3), 0U);
-    EXPECT_EQ(WTF::getLSBSetConstexpr<uint64_t>(42), 1U);
-}
-
-TEST(WTF, getMSBSetConstexpr)
-{
-    EXPECT_EQ(WTF::getMSBSetConstexpr<int32_t>(1), 0U);
-    EXPECT_EQ(WTF::getMSBSetConstexpr<int32_t>(42), 5U);
-    EXPECT_EQ(WTF::getMSBSetConstexpr<uint32_t>(static_cast<uint32_t>(-1)), 31U);
-    EXPECT_EQ(WTF::getMSBSetConstexpr<uint32_t>(static_cast<uint32_t>(std::numeric_limits<int32_t>::min()) >> 1), 30U);
-
-    EXPECT_EQ(WTF::getMSBSetConstexpr<int8_t>(42), 5U);
-    EXPECT_EQ(WTF::getMSBSetConstexpr<int8_t>(3), 1U);
-    EXPECT_EQ(WTF::getMSBSetConstexpr<uint8_t>(static_cast<uint8_t>(-1)), 7U);
-
-    EXPECT_EQ(WTF::getMSBSetConstexpr<int64_t>(-1), 63U);
-    EXPECT_EQ(WTF::getMSBSetConstexpr<int64_t>(1), 0U);
-    EXPECT_EQ(WTF::getMSBSetConstexpr<int64_t>(3), 1U);
-    EXPECT_EQ(WTF::getMSBSetConstexpr<uint64_t>(42), 5U);
-}
-
 TEST(WTF, fastLog2)
 {
     EXPECT_EQ(WTF::fastLog2(0u), 0u);
@@ -709,6 +677,154 @@ TEST(WTF, negate)
     EXPECT_EQ(WTF::negate<long long>(std::numeric_limits<long long>::min() + 1LL), std::numeric_limits<long long>::max());
     EXPECT_EQ(WTF::negate<long long>(-1LL), 1LL);
     EXPECT_EQ(WTF::negate<long long>(0LL), 0LL);
+}
+
+template<typename T>
+static void testHasZeroByte()
+{
+    constexpr size_t byteCount = sizeof(T);
+
+    // No zero byte anywhere.
+    EXPECT_FALSE(hasZeroByte<T>(static_cast<T>(~static_cast<T>(0))));
+
+    // A zero byte at every position, rest set to a clean nonzero byte (0x78).
+    auto wordWithByteAt = [](size_t position, uint8_t byteValue) {
+        T word = 0;
+        for (size_t i = 0; i < byteCount; ++i)
+            word |= static_cast<T>(i == position ? byteValue : 0x78) << (i * 8);
+        return word;
+    };
+    for (size_t position = 0; position < byteCount; ++position)
+        EXPECT_TRUE(hasZeroByte<T>(wordWithByteAt(position, 0x00)));
+
+    // Exhaustive: every byte value at every position must match a plain per-byte reference
+    // check, including values right at the 0x00/0x80/0xFF boundaries where the underlying
+    // subtract-and-mask trick is easiest to get wrong.
+    for (size_t position = 0; position < byteCount; ++position) {
+        for (unsigned byteValue = 0; byteValue <= 0xFF; ++byteValue) {
+            bool expected = !byteValue;
+            EXPECT_EQ(hasZeroByte<T>(wordWithByteAt(position, static_cast<uint8_t>(byteValue))), expected);
+        }
+    }
+
+    // Two zero bytes simultaneously, at every pair of positions, must not miscount or cancel out.
+    if (byteCount >= 2) {
+        for (size_t p1 = 0; p1 < byteCount; ++p1) {
+            for (size_t p2 = 0; p2 < byteCount; ++p2) {
+                if (p1 == p2)
+                    continue;
+                T word = wordWithByteAt(p1, 0x00);
+                word &= ~(static_cast<T>(0xFF) << (p2 * 8));
+                EXPECT_TRUE(hasZeroByte<T>(word));
+            }
+        }
+    }
+}
+
+TEST(WTF, hasZeroByte)
+{
+    testHasZeroByte<uint8_t>();
+    testHasZeroByte<uint16_t>();
+    testHasZeroByte<uint32_t>();
+    testHasZeroByte<uint64_t>();
+}
+
+TEST(WTF, zeroExtendBytesToHalfwords)
+{
+    auto referenceWiden = [](uint32_t value) -> uint64_t {
+        uint64_t result = 0;
+        for (unsigned i = 0; i < 4; ++i) {
+            uint8_t byte = static_cast<uint8_t>(value >> (i * 8));
+            result |= static_cast<uint64_t>(byte) << (i * 16);
+        }
+        return result;
+    };
+
+    EXPECT_EQ(zeroExtendBytesToHalfwords(0), 0ULL);
+    EXPECT_EQ(zeroExtendBytesToHalfwords(0xFFFFFFFFU), 0x00FF00FF00FF00FFULL);
+    EXPECT_EQ(zeroExtendBytesToHalfwords(0xDDCCBBAAU), 0x00DD00CC00BB00AAULL);
+
+    // Exhaustive per byte value at every position, with the other three bytes held to a
+    // clean nonzero pattern, matching testHasZeroByte's style above.
+    for (size_t position = 0; position < 4; ++position) {
+        for (unsigned byteValue = 0; byteValue <= 0xFF; ++byteValue) {
+            uint32_t word = 0;
+            for (size_t i = 0; i < 4; ++i)
+                word |= (i == position ? byteValue : 0x78) << (i * 8);
+            EXPECT_EQ(zeroExtendBytesToHalfwords(word), referenceWiden(word));
+        }
+    }
+
+    // A handful of full-width sampled values, cross-checked against the same reference.
+    static constexpr uint32_t samples[] = { 0x00000000, 0xFFFFFFFF, 0x01020304, 0x80808080, 0x7F7F7F7F, 0xA5A5A5A5, 0x12345678, 0xFF00FF00, 0x00FF00FF };
+    for (uint32_t sample : samples)
+        EXPECT_EQ(zeroExtendBytesToHalfwords(sample), referenceWiden(sample));
+}
+
+TEST(WTF, divideRoundedUp)
+{
+    // Basic rounding behavior.
+    EXPECT_EQ(divideRoundedUp<unsigned>(0, 3), 0U);
+    EXPECT_EQ(divideRoundedUp<unsigned>(1, 3), 1U);
+    EXPECT_EQ(divideRoundedUp<unsigned>(3, 3), 1U);
+    EXPECT_EQ(divideRoundedUp<unsigned>(4, 3), 2U);
+    EXPECT_EQ(divideRoundedUp<unsigned>(6, 3), 2U);
+    EXPECT_EQ(divideRoundedUp<unsigned>(7, 3), 3U);
+
+    // Divisor of 1 returns the dividend unchanged, even at the maximum.
+    EXPECT_EQ(divideRoundedUp<uint8_t>(std::numeric_limits<uint8_t>::max(), 1), std::numeric_limits<uint8_t>::max());
+    EXPECT_EQ(divideRoundedUp<size_t>(std::numeric_limits<size_t>::max(), 1), std::numeric_limits<size_t>::max());
+
+    // Dividends near the maximum must not overflow the (a + b - 1) intermediate.
+    EXPECT_EQ(divideRoundedUp<uint8_t>(std::numeric_limits<uint8_t>::max(), 2), 128U);
+    EXPECT_EQ(divideRoundedUp<uint16_t>(std::numeric_limits<uint16_t>::max(), 2), 32768U);
+    EXPECT_EQ(divideRoundedUp<uint32_t>(std::numeric_limits<uint32_t>::max(), 2), 2147483648U);
+    EXPECT_EQ(divideRoundedUp<uint64_t>(std::numeric_limits<uint64_t>::max(), 2), 9223372036854775808ULL);
+
+    EXPECT_EQ(divideRoundedUp<uint8_t>(std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()), 1U);
+    EXPECT_EQ(divideRoundedUp<size_t>(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()), 1U);
+    EXPECT_EQ(divideRoundedUp<size_t>(std::numeric_limits<size_t>::max() - 1, std::numeric_limits<size_t>::max()), 1U);
+}
+
+static bool isNegativeZero(float value)
+{
+    return !value && std::signbit(value);
+}
+
+static bool isNegativeZero(double value)
+{
+    return !value && std::signbit(value);
+}
+
+TEST(WTF, roundeven)
+{
+    EXPECT_EQ(roundevenf(0.5f), 0.0f);
+    EXPECT_EQ(roundevenf(1.5f), 2.0f);
+    EXPECT_EQ(roundevenf(2.5f), 2.0f);
+    EXPECT_EQ(roundevenf(3.5f), 4.0f);
+    EXPECT_EQ(roundevenf(-1.5f), -2.0f);
+    EXPECT_EQ(roundevenf(-2.5f), -2.0f);
+    EXPECT_EQ(roundevenf(-3.5f), -4.0f);
+
+    EXPECT_EQ(roundeven(0.5), 0.0);
+    EXPECT_EQ(roundeven(1.5), 2.0);
+    EXPECT_EQ(roundeven(2.5), 2.0);
+    EXPECT_EQ(roundeven(3.5), 4.0);
+    EXPECT_EQ(roundeven(-1.5), -2.0);
+    EXPECT_EQ(roundeven(-2.5), -2.0);
+    EXPECT_EQ(roundeven(-3.5), -4.0);
+
+    // A tie that rounds to zero keeps the sign of the operand. wasm's f32.nearest and
+    // f64.nearest are specified this way and the hardware instructions agree, so the
+    // polyfill used when __builtin_roundeven is unavailable must too.
+    EXPECT_TRUE(isNegativeZero(roundevenf(-0.5f)));
+    EXPECT_TRUE(isNegativeZero(roundeven(-0.5)));
+    EXPECT_TRUE(isNegativeZero(roundevenf(-0.0f)));
+    EXPECT_TRUE(isNegativeZero(roundeven(-0.0)));
+    EXPECT_TRUE(isNegativeZero(roundevenf(-0.25f)));
+    EXPECT_TRUE(isNegativeZero(roundeven(-0.25)));
+    EXPECT_FALSE(isNegativeZero(roundevenf(0.5f)));
+    EXPECT_FALSE(isNegativeZero(roundeven(0.5)));
 }
 
 } // namespace TestWebKitAPI

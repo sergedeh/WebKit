@@ -21,8 +21,8 @@
 #include "config.h"
 #include "JSTestDictionaryWithOnlyConditionalMembers.h"
 
+#include "JSDOMBindingFacade.h"
 #include "JSDOMGlobalObject.h"
-#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <type_traits>
 #include <wtf/IsIncreasing.h>
@@ -51,7 +51,7 @@ IGNORE_WARNINGS_END
 
 template<> ConversionResult<IDLDictionary<TestDictionaryWithOnlyConditionalMembers>> convertDictionary<TestDictionaryWithOnlyConditionalMembers>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
@@ -64,7 +64,7 @@ template<> ConversionResult<IDLDictionary<TestDictionaryWithOnlyConditionalMembe
     if (isNullOrUndefined)
         conditionalMemberValue = jsUndefined();
     else {
-        conditionalMemberValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "conditionalMember"_s));
+        conditionalMemberValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "conditionalMember"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
     auto conditionalMemberConversionResult = convert<IDLOptional<IDLDictionary<TestDictionary>>>(lexicalGlobalObject, conditionalMemberValue);
@@ -80,10 +80,10 @@ template<> ConversionResult<IDLDictionary<TestDictionaryWithOnlyConditionalMembe
 
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const TestDictionaryWithOnlyConditionalMembers& dictionary)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
+    auto result = WebCore::constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
 
 #if ENABLE(TEST_CONDITIONAL)
     if (!IDLDictionary<TestDictionary>::isNullValue(dictionary.conditionalMember)) {

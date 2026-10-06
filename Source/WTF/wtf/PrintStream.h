@@ -66,7 +66,9 @@ public:
     // Typically a no-op for many subclasses of PrintStream, this is a hint that
     // the implementation should flush its buffers if it had not done so already.
     WTF_EXPORT_PRIVATE virtual void flush();
-    
+
+    virtual bool truncatesLongStrings() const { return true; }
+
     template<typename Func>
     void atomically(NOESCAPE const Func& func)
     {
@@ -112,13 +114,19 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, StringView);
-WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const CString&);
+// A PrintStream's contents are read back as UTF-8 (see StringPrintStream::toString()), so Latin-1
+// is transcoded on the way in. A CStringBase does not know its encoding and therefore cannot be
+// printed: use one of the CString aliases below.
+void printInternal(PrintStream&, const CStringBase&) = delete;
+WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const UTF8CString&);
+WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const Latin1CString&);
+WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const ASCIICString&);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const String&);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const AtomString&);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const StringImpl*);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, std::span<const char8_t>);
+WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const char8_t*);
 inline void printInternal(PrintStream& out, char* value) { printInternal(out, static_cast<const char*>(value)); }
-inline void printInternal(PrintStream& out, CString& value) { printInternal(out, static_cast<const CString&>(value)); }
 inline void printInternal(PrintStream& out, String& value) { printInternal(out, static_cast<const String&>(value)); }
 inline void printInternal(PrintStream& out, StringImpl* value) { printInternal(out, static_cast<const StringImpl*>(value)); }
 
@@ -200,7 +208,7 @@ public:
 
     void dump(PrintStream& out) const
     {
-        if (auto str = enumName(m_e); !str.empty())
+        if (auto str = enumName(m_e); !str.isEmpty())
             out.print(str);
         else
             out.print(m_default);

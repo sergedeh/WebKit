@@ -20,7 +20,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#if PLATFORM(COCOA) && HAVE(WK_SECURE_CODING_NSURLREQUEST)
+#if PLATFORM(COCOA)
 
 webkit_platform_headers: "CoreIPCNSURLRequest.h"
 
@@ -95,10 +95,34 @@ header: "CoreIPCNSURLRequest.h"
 
 using WebKit::CoreIPCNSURLRequestData::BodyParts = Variant<WebKit::CoreIPCString, WebKit::CoreIPCData>;
 using WebKit::CoreIPCNSURLRequestData::HeaderField = std::pair<String, Variant<String, Vector<String>>>;
+using WebKit::ProtocolProperties::AppPropertyValue = Variant<bool, WebKit::CoreIPCNumber, WebKit::CoreIPCString, WebKit::CoreIPCData>;
+
+header: "CoreIPCNSURLRequest.h"
+[CustomHeader, WebKitPlatform] enum class WebKit::APProxyRequestType : uint8_t {
+    Undefined,
+    WebView,
+    Video
+}
+
+[CustomHeader, WebKitPlatform] struct WebKit::ProtocolProperties {
+    std::optional<bool> isTopLevelNavigation;
+    std::optional<bool> allowAllPOSTCaching;
+    std::optional<WebKit::CoreIPCString> siteForCookies;
+    std::optional<WebKit::CoreIPCString> cachePartitionKey;
+    std::optional<bool> wkVeryLowLoadPriority;
+    std::optional<WebKit::CoreIPCNumber> fileProtocolExpectedDevice;
+    std::optional<bool> shouldSniff;
+    std::optional<bool> contentDecoderSkipURLCheck;
+    std::optional<WebKit::CoreIPCString> adIdentifier;
+    std::optional<WebKit::CoreIPCNumber> maximumRequestCount;
+    std::optional<bool> apProxyIsRecursive;
+    std::optional<WebKit::APProxyRequestType> requestType;
+    HashMap<String, WebKit::ProtocolProperties::AppPropertyValue> appProperties;
+}
 
 header: "CoreIPCNSURLRequest.h"
 [CustomHeader, WebKitPlatform] struct WebKit::CoreIPCNSURLRequestData {
-    std::optional<WebKit::CoreIPCPlistDictionary> protocolProperties;
+    std::optional<WebKit::ProtocolProperties> protocolProperties;
     bool isMutable;
     WebKit::CoreIPCURL url;
     double timeout;

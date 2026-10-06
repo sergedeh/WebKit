@@ -31,6 +31,7 @@
 #include "ContextDestructionObserverInlines.h"
 #include "DocumentLoader.h"
 #include "DocumentPage.h"
+#include "DocumentQuirks.h"
 #include "EventLoop.h"
 #include "EventNames.h"
 #include "HTMLMediaElement.h"
@@ -41,9 +42,11 @@
 #include "LocalDOMWindow.h"
 #include "Logging.h"
 #include "MediaMetadata.h"
+#include "MediaSessionCaptionTrack.h"
 #include "MediaSessionCoordinator.h"
 #include "Navigator.h"
 #include "NowPlayingInfo.h"
+#include "PageGroup.h"
 #include "PlatformMediaSessionManager.h"
 #include "Settings.h"
 #include "UserMediaController.h"
@@ -61,7 +64,7 @@ static uint64_t nextLogIdentifier()
 }
 
 #if !RELEASE_LOG_DISABLED
-static WTFLogChannel& logChannel()
+static WTFLogChannel& NODELETE logChannel()
 {
     return LogMedia;
 }
@@ -74,7 +77,7 @@ static ASCIILiteral logClassName()
 
 static PlatformMediaSession::RemoteControlCommandType platformCommandForMediaSessionAction(MediaSessionAction action)
 {
-    static constexpr SortedArrayMap map { std::to_array<std::pair<MediaSessionAction, PlatformMediaSession::RemoteControlCommandType>>({
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<MediaSessionAction, PlatformMediaSession::RemoteControlCommandType>>({
         { MediaSessionAction::Play, PlatformMediaSession::RemoteControlCommandType::PlayCommand },
         { MediaSessionAction::Pause, PlatformMediaSession::RemoteControlCommandType::PauseCommand },
         { MediaSessionAction::Seekbackward, PlatformMediaSession::RemoteControlCommandType::SkipBackwardCommand },
@@ -84,11 +87,13 @@ static PlatformMediaSession::RemoteControlCommandType platformCommandForMediaSes
         { MediaSessionAction::Skipad, PlatformMediaSession::RemoteControlCommandType::NextTrackCommand },
         { MediaSessionAction::Stop, PlatformMediaSession::RemoteControlCommandType::StopCommand },
         { MediaSessionAction::Seekto, PlatformMediaSession::RemoteControlCommandType::SeekToPlaybackPositionCommand },
+        { MediaSessionAction::Previousslide, PlatformMediaSession::RemoteControlCommandType::PreviousTrackCommand },
+        { MediaSessionAction::Nextslide, PlatformMediaSession::RemoteControlCommandType::NextTrackCommand },
     }) };
     return map.get(action, PlatformMediaSession::RemoteControlCommandType::NoCommand);
 }
 
-static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, PlatformMediaSession::RemoteCommandArgument>> platformCommandForMediaSessionAction(const MediaSessionActionDetails& actionDetails)
+static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, PlatformMediaSession::RemoteCommandArgument>> NODELETE platformCommandForMediaSessionAction(const MediaSessionActionDetails& actionDetails)
 {
     PlatformMediaSession::RemoteControlCommandType command = PlatformMediaSession::RemoteControlCommandType::NoCommand;
     PlatformMediaSession::RemoteCommandArgument argument;
@@ -125,13 +130,23 @@ static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, P
         argument.time = actionDetails.seekTime;
         argument.fastSeek = actionDetails.fastSeek;
         break;
+    case MediaSessionAction::Previousslide:
+        command = PlatformMediaSession::RemoteControlCommandType::PreviousTrackCommand;
+        break;
+    case MediaSessionAction::Nextslide:
+        command = PlatformMediaSession::RemoteControlCommandType::NextTrackCommand;
+        break;
     case MediaSessionAction::Settrack:
+    case MediaSessionAction::Hangup:
+    case MediaSessionAction::Enterpictureinpicture:
         // Not supported at present.
         break;
     case MediaSessionAction::Togglecamera:
     case MediaSessionAction::Togglemicrophone:
     case MediaSessionAction::Togglescreenshare:
     case MediaSessionAction::Voiceactivity:
+    case MediaSessionAction::Togglecaptions:
+    case MediaSessionAction::Selectcaptiontrack:
         break;
     }
     if (command == PlatformMediaSession::RemoteControlCommandType::NoCommand)
@@ -162,12 +177,19 @@ MediaSession::MediaSession(Navigator& navigator)
     : ActiveDOMObject(navigator.scriptExecutionContext())
     , m_navigator(navigator)
     , m_platformSession { PlatformMediaSession::create(*this) }
+    , m_logger(Document::sharedLogger())
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
-    , m_coordinator(MediaSessionCoordinator::create(navigator.protectedScriptExecutionContext().get()))
+    , m_coordinator(MediaSessionCoordinator::create(protect(navigator.scriptExecutionContext()).get()))
 #endif
 {
-    m_logger = Document::sharedLogger();
+    if (RefPtr document = this->document())
+        m_needsYouTubeCaptionsQuirk = document->quirks().needsYouTubeCaptionsQuirk();
+
     m_logIdentifier = nextLogIdentifier();
+#if PLATFORM(COCOA)
+    if (RefPtr document = navigator.document())
+        m_shouldSuppressMediaSessionPauseActionOnInterruption = document->quirks().shouldSuppressMediaSessionPauseActionOnInterruption();
+#endif
 
     ALWAYS_LOG(LOGIDENTIFIER);
 }
@@ -177,7 +199,7 @@ MediaSession::~MediaSession()
     m_platformSession->invalidateClient();
 
     if (m_metadata)
-        m_metadata->resetMediaSession();
+        protect(m_metadata)->resetMediaSession();
     if (m_defaultMetadata)
         m_defaultMetadata->resetMediaSession();
 }
@@ -208,10 +230,10 @@ void MediaSession::setMetadata(RefPtr<MediaMetadata>&& metadata)
 {
     ALWAYS_LOG(LOGIDENTIFIER);
     if (m_metadata)
-        m_metadata->resetMediaSession();
+        protect(m_metadata)->resetMediaSession();
     m_metadata = WTF::move(metadata);
     if (m_metadata)
-        m_metadata->setMediaSession(*this);
+        protect(m_metadata)->setMediaSession(*this);
     notifyMetadataObservers(m_metadata);
 }
 
@@ -259,9 +281,14 @@ void MediaSession::setPlaybackState(MediaSessionPlaybackState state)
 
     updateReportedPosition();
 
-    if (state == MediaSessionPlaybackState::Playing)
-        m_platformSession->clientWillBeginPlayback([] (bool) { });
-    else if (m_playbackState == MediaSessionPlaybackState::Playing)
+    if (state == MediaSessionPlaybackState::Playing) {
+        // Registers this session in the manager's sessions() set synchronously, the same way
+        // HTMLMediaElement::playInternal() already does — independent of whether the admission below
+        // ever completes, so beginInterruption()'s forEachSession() can find this session immediately,
+        // not just once its (now always asynchronous) admission settles.
+        m_platformSession->setActive(true);
+        m_platformSession->clientWillBeginPlayback();
+    } else if (m_playbackState == MediaSessionPlaybackState::Playing)
         m_platformSession->clientWillPausePlayback();
 
     m_playbackState = state;
@@ -270,8 +297,8 @@ void MediaSession::setPlaybackState(MediaSessionPlaybackState state)
 
 ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefPtr<MediaSessionActionHandler>&& handler)
 {
-#if ENABLE(MEDIA_STREAM)
     RefPtr document = this->document();
+#if ENABLE(MEDIA_STREAM)
     if (document && !document->settings().mediaSessionCaptureToggleAPIEnabled() && (action == MediaSessionAction::Togglecamera || action == MediaSessionAction::Togglemicrophone || action == MediaSessionAction::Togglescreenshare || action == MediaSessionAction::Voiceactivity))
         return Exception { ExceptionCode::TypeError, makeString("Argument 1 ('action') to MediaSession.setActionHandler must be a value other than '"_s, convertEnumerationToString(action), "'"_s) };
 
@@ -284,6 +311,9 @@ ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefP
         document->setShouldListenToVoiceActivity(!!handler);
 #endif
 
+    if (document && !document->settings().mediaSessionExtendedActionsEnabled() && (action == MediaSessionAction::Hangup || action == MediaSessionAction::Previousslide || action == MediaSessionAction::Nextslide || action == MediaSessionAction::Enterpictureinpicture))
+        return Exception { ExceptionCode::TypeError, makeString("Argument 1 ('action') to MediaSession.setActionHandler must be a value other than '"_s, convertEnumerationToString(action), "'"_s) };
+
     RefPtr sessionManager = this->sessionManager();
     if (!sessionManager)
         ERROR_LOG(LOGIDENTIFIER, "NULL session manager");
@@ -291,7 +321,7 @@ ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefP
         ALWAYS_LOG(LOGIDENTIFIER, "adding ", action);
         {
             Locker lock { m_actionHandlersLock };
-            m_actionHandlers.set(action, handler);
+            m_actionHandlers.set(action, handler.releaseNonNull());
         }
 
         if (sessionManager) {
@@ -302,16 +332,27 @@ ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefP
             }
         }
     } else {
-        bool containedAction;
+        bool containedAction = false;
+        bool anotherActionNeedsCommand = false;
+        auto platformCommand = platformCommandForMediaSessionAction(action);
         {
             Locker lock { m_actionHandlersLock };
             containedAction = m_actionHandlers.remove(action);
+            if (containedAction) {
+                for (auto registeredAction : m_actionHandlers.keys()) {
+                    if (platformCommandForMediaSessionAction(registeredAction) == platformCommand) {
+                        anotherActionNeedsCommand = true;
+                        break;
+                    }
+                }
+            }
         }
 
         if (sessionManager) {
             if (containedAction)
                 ALWAYS_LOG(LOGIDENTIFIER, "removing ", action);
-            sessionManager->removeSupportedCommand(platformCommandForMediaSessionAction(action));
+            if (!anotherActionNeedsCommand)
+                sessionManager->removeSupportedCommand(platformCommand);
         }
     }
 
@@ -322,6 +363,11 @@ ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefP
 void MediaSession::callActionHandler(const MediaSessionActionDetails& actionDetails, DOMPromiseDeferred<void>&& promise)
 {
     ALWAYS_LOG(LOGIDENTIFIER);
+
+    if (RefPtr document = this->document(); document && !document->settings().mediaSessionExtendedActionsEnabled() && (actionDetails.action == MediaSessionAction::Hangup || actionDetails.action == MediaSessionAction::Previousslide || actionDetails.action == MediaSessionAction::Nextslide || actionDetails.action == MediaSessionAction::Enterpictureinpicture)) {
+        promise.reject(ExceptionCode::TypeError);
+        return;
+    }
 
     if (!callActionHandler(actionDetails, TriggerGestureIndicator::No)) {
         promise.reject(ExceptionCode::InvalidStateError);
@@ -340,16 +386,28 @@ bool MediaSession::hasActionHandler(const MediaSessionAction action) const
 bool MediaSession::callActionHandler(const MediaSessionActionDetails& actionDetails, TriggerGestureIndicator triggerGestureIndicator)
 {
     RefPtr<MediaSessionActionHandler> handler;
+    MediaSessionActionDetails effectiveActionDetails = actionDetails;
     {
         Locker lock { m_actionHandlersLock };
         handler = m_actionHandlers.get(actionDetails.action);
+        if (!handler) {
+            if (actionDetails.action == MediaSessionAction::Nexttrack) {
+                handler = m_actionHandlers.get(MediaSessionAction::Nextslide);
+                if (handler)
+                    effectiveActionDetails.action = MediaSessionAction::Nextslide;
+            } else if (actionDetails.action == MediaSessionAction::Previoustrack) {
+                handler = m_actionHandlers.get(MediaSessionAction::Previousslide);
+                if (handler)
+                    effectiveActionDetails.action = MediaSessionAction::Previousslide;
+            }
+        }
     }
 
     if (handler) {
         std::optional<UserGestureIndicator> maybeGestureIndicator;
         if (triggerGestureIndicator == TriggerGestureIndicator::Yes)
             maybeGestureIndicator.emplace(IsProcessingUserGesture::Yes, document());
-        handler->invoke(actionDetails);
+        handler->invoke(effectiveActionDetails);
         return true;
     }
     auto element = activeMediaElement();
@@ -408,11 +466,6 @@ Document* MediaSession::document() const
     if (!m_navigator || !m_navigator->window())
         return nullptr;
     return m_navigator->window()->document();
-}
-
-RefPtr<Document> MediaSession::protectedDocument() const
-{
-    return document();
 }
 
 RefPtr<MediaSessionManagerInterface> MediaSession::sessionManager() const
@@ -554,13 +607,13 @@ void MediaSession::updateNowPlayingInfo(NowPlayingInfo& info)
 
     if (!m_defaultArtworkAttempted && (!m_metadata || m_metadata->artwork().isEmpty())) {
         m_defaultArtworkAttempted = true;
-        if (auto images = fallbackArtwork(protectedDocument() ? protectedDocument()->loader() : nullptr); images.size())
-            m_defaultMetadata = MediaMetadata::create(*this, WTF::move(images));
+        if (auto images = fallbackArtwork(document() ? protect(document()->loader()) : nullptr); images.size())
+            lazyInitialize(m_defaultMetadata, MediaMetadata::create(*this, WTF::move(images)));
     }
 
     if (RefPtr metadataWithImage = m_metadata && m_metadata->artworkImage() ? m_metadata : (m_defaultMetadata && m_defaultMetadata->artworkImage() ? m_defaultMetadata : nullptr)) {
         ASSERT(metadataWithImage->artworkImage()->data(), "An image must always have associated data");
-        info.metadata.artwork = { { metadataWithImage->artworkSrc(), metadataWithImage->artworkImage()->mimeType(), metadataWithImage->artworkImage() } };
+        info.metadata.artwork = { { metadataWithImage->artworkSrc(), protect(metadataWithImage->artworkImage())->mimeType(), metadataWithImage->artworkImage() } };
     }
     if (m_metadata) {
         info.metadata.title = m_metadata->title();
@@ -583,7 +636,7 @@ void MediaSession::updateCaptureState(bool isActive, DOMPromiseDeferred<void>&& 
         return;
     }
 
-    auto* controller = UserMediaController::from(document->page());
+    auto* controller = UserMediaController::from(protect(document->page()));
     if (!controller) {
         promise.reject(Exception { ExceptionCode::InvalidStateError, "Unable to proceed with the request."_s });
         return;
@@ -595,14 +648,15 @@ void MediaSession::updateCaptureState(bool isActive, DOMPromiseDeferred<void>&& 
     }
 
     controller->updateCaptureState(*document, isActive, kind, [weakDocument = WeakPtr { document.get() }, promise = WTF::move(promise)] (auto&& exception) mutable {
-        RefPtr protectedDocument = weakDocument.get();
-        if (!protectedDocument)
+        RefPtr document = weakDocument;
+        if (!document)
             return;
-        protectedDocument->eventLoop().queueTask(TaskSource::MediaElement, [promise = WTF::move(promise), exception = WTF::move(exception)] () mutable {
+        protect(document->eventLoop())->queueTask(TaskSource::MediaElement, [promise = WTF::move(promise), exception = WTF::move(exception)] () mutable {
             if (exception) {
                 promise.reject(WTF::move(*exception));
                 return;
             }
+
             promise.resolve();
         });
     });
@@ -638,6 +692,11 @@ void MediaSession::mayResumePlayback(bool shouldResume)
 
 void MediaSession::suspendPlayback()
 {
+#if PLATFORM(COCOA)
+    if (m_shouldSuppressMediaSessionPauseActionOnInterruption)
+        return;
+#endif
+
     ALWAYS_LOG(LOGIDENTIFIER);
     callActionHandler({ MediaSessionAction::Pause });
 }
@@ -663,8 +722,106 @@ MediaTime MediaSession::mediaSessionDuration() const
 
 std::optional<MediaSessionGroupIdentifier> MediaSession::mediaSessionGroupIdentifier() const
 {
-    RefPtr document = this->document();
-    return document && document->page() ? document->protectedPage()->mediaSessionGroupIdentifier() : std::nullopt;
+    auto* document = this->document();
+    return document && document->page() ? document->page()->mediaSessionGroupIdentifier() : std::nullopt;
+}
+
+RefPtr<CaptionUserPreferences> MediaSession::captionPreferences()
+{
+    if (RefPtr document = this->document()) {
+        if (RefPtr page = document->page())
+            return &protect(page->group())->ensureCaptionPreferences();
+    }
+
+    return nullptr;
+}
+
+void MediaSession::captionPreferencesChanged()
+{
+    RefPtr captionPreferences = this->captionPreferences();
+    if (!captionPreferences)
+        return;
+
+    auto newDisplayMode = captionPreferences->captionDisplayMode();
+    if (newDisplayMode == m_captionDisplayMode)
+        return;
+    m_captionDisplayMode = newDisplayMode;
+
+    if (!m_needsYouTubeCaptionsQuirk)
+        return;
+
+    switch (newDisplayMode) {
+    case CaptionUserPreferencesDisplayMode::AlwaysOn:
+        if (m_captionsEnabled)
+            break;
+
+        ALWAYS_LOG(LOGIDENTIFIER, "newMode: ", newDisplayMode, ", sending toggle action");
+        callActionHandler({ .action = MediaSessionAction::Togglecaptions }, { });
+        break;
+    case CaptionUserPreferencesDisplayMode::ForcedOnly:
+        if (!m_captionsEnabled)
+            break;
+
+        ALWAYS_LOG(LOGIDENTIFIER, "newMode: ", newDisplayMode, ", sending toggle action");
+        callActionHandler({ .action = MediaSessionAction::Togglecaptions }, { });
+        break;
+    case CaptionUserPreferencesDisplayMode::Automatic:
+    case CaptionUserPreferencesDisplayMode::Manual:
+        // No-op
+        break;
+    }
+}
+
+CaptionUserPreferencesDisplayMode MediaSession::captionDisplayMode()
+{
+    if (m_captionDisplayMode)
+        return *m_captionDisplayMode;
+
+    if (RefPtr captionPreferences = this->captionPreferences()) {
+        m_captionDisplayMode = captionPreferences->captionDisplayMode();
+        return *m_captionDisplayMode;
+    }
+
+    return CaptionUserPreferencesDisplayMode::ForcedOnly;
+}
+
+void MediaSession::setCaptionTracks(Vector<MediaSessionCaptionTrack>&& tracks)
+{
+    ALWAYS_LOG(LOGIDENTIFIER, "count: ", tracks.size());
+    m_captionTracks = WTF::move(tracks);
+    if (RefPtr mediaElement = activeMediaElement())
+        mediaElement->mediaSessionCaptionTracksChanged();
+}
+
+void MediaSession::setCaptionsEnabled(bool enabled)
+{
+    if (m_captionsEnabled == enabled)
+        return;
+    m_captionsEnabled = enabled;
+
+    ALWAYS_LOG(LOGIDENTIFIER, enabled);
+
+    if (RefPtr mediaElement = activeMediaElement())
+        mediaElement->mediaSessionCaptionsEnabledChanged();
+}
+
+void MediaSession::presentationModeChanged()
+{
+    RefPtr mediaElement = activeMediaElement();
+    if (!mediaElement)
+        return;
+
+    auto fullscreenMode = mediaElement->fullscreenMode();
+    if (fullscreenMode == MediaPlayerEnums::VideoFullscreenModeNone)
+        return;
+
+    if (captionDisplayMode() == CaptionUserPreferencesDisplayMode::AlwaysOn && !m_captionsEnabled) {
+        ALWAYS_LOG(LOGIDENTIFIER, "newMode: ", fullscreenMode, ", sending toggle action");
+        callActionHandler({ .action = MediaSessionAction::Togglecaptions }, { });
+    } else if (captionDisplayMode() == CaptionUserPreferencesDisplayMode::ForcedOnly && !m_captionsEnabled) {
+        ALWAYS_LOG(LOGIDENTIFIER, "newMode: ", fullscreenMode, ", sending toggle action");
+        callActionHandler({ .action = MediaSessionAction::Togglecaptions }, { });
+    }
 }
 
 }

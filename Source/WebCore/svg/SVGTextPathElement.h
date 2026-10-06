@@ -21,7 +21,10 @@
 #pragma once
 
 #include "CommonAtomStrings.h"
+#include "Path.h"
 #include "SVGNames.h"
+#include "SVGPath.h"
+#include "SVGPathByteStream.h"
 #include "SVGTextContentElement.h"
 #include "SVGURIReference.h"
 #include <wtf/TZoneMalloc.h>
@@ -114,9 +117,12 @@ public:
 
     static Ref<SVGTextPathElement> create(const QualifiedName&, Document&);
 
-    const SVGLengthValue& startOffset() const { return m_startOffset->currentValue(); }
+    const SVGLengthValue& startOffset() const LIFETIME_BOUND { return m_startOffset->currentValue(); }
     SVGTextPathMethodType method() const { return m_method->currentValue<SVGTextPathMethodType>(); }
     SVGTextPathSpacingType spacing() const { return m_spacing->currentValue<SVGTextPathSpacingType>(); }
+
+    const SVGPathByteStream& byteStreamForPathAttribute() const LIFETIME_BOUND;
+    Path pathForPathAttribute() const;
 
     SVGAnimatedLength& startOffsetAnimated() { return m_startOffset; }
     SVGAnimatedEnumeration& methodAnimated() { return m_method; }
@@ -128,25 +134,26 @@ private:
     SVGTextPathElement(const QualifiedName&, Document&);
     virtual ~SVGTextPathElement();
 
-    void didFinishInsertingNode() override;
+    void postConnectionSteps() override;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
     bool childShouldCreateRenderer(const Node&) const override;
-    bool rendererIsNeeded(const RenderStyle&) override;
+    bool rendererIsNeeded(const Style::ComputedStyle&) override;
 
     void clearResourceReferences();
     void buildPendingResource() override;
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) override;
-    void removedFromAncestor(RemovalType, ContainerNode&) override;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) override;
+    void removingSteps(RemovalType, ContainerNode&) override;
 
     bool selfHasRelativeLengths() const override;
 
-    Ref<SVGAnimatedLength> m_startOffset { SVGAnimatedLength::create(this, SVGLengthMode::Other) };
-    Ref<SVGAnimatedEnumeration> m_method { SVGAnimatedEnumeration::create(this, SVGTextPathMethodAlign) };
-    Ref<SVGAnimatedEnumeration> m_spacing { SVGAnimatedEnumeration::create(this, SVGTextPathSpacingExact) };
+    const Ref<SVGAnimatedLength> m_startOffset { SVGAnimatedLength::create(this, SVGLengthMode::Other) };
+    const Ref<SVGAnimatedEnumeration> m_method { SVGAnimatedEnumeration::create(this, SVGTextPathMethodAlign) };
+    const Ref<SVGAnimatedEnumeration> m_spacing { SVGAnimatedEnumeration::create(this, SVGTextPathSpacingExact) };
+    const Ref<SVGAnimatedPath> m_pathAttribute { SVGAnimatedPath::create(this) };
 };
 
 } // namespace WebCore

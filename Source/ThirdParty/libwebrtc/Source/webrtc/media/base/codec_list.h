@@ -12,6 +12,7 @@
 #define MEDIA_BASE_CODEC_LIST_H_
 
 #include <cstddef>
+#include <span>
 #include <vector>
 
 #include "api/rtc_error.h"
@@ -35,12 +36,19 @@ class CodecList {
 
   // Creates a codec list on untrusted data. If successful, the
   // resulting CodecList satisfies all the CodecList invariants.
-  static RTCErrorOr<CodecList> Create(const std::vector<Codec>& codecs);
+  static RTCErrorOr<CodecList> Create(std::span<const Codec> codecs);
   // Creates a codec list on trusted data. Only for use when
   // the codec list is generated from internal code.
-  static CodecList CreateFromTrustedData(const std::vector<Codec>& codecs) {
+  static CodecList CreateFromTrustedData(std::span<const Codec> codecs) {
     return CodecList(codecs);
   }
+  // Inserts a codec into the list if it was not already present.
+  // Returns true if inserted, false if the exact same codec was in the list.
+  // Will DCHECK if the IDs were the same, but codecs were not (binary) equal.
+  // This is consistent with CheckConsistency() only being effective in debug.
+  // TODO: https://issues.webrtc.org/455503439 - consider CHECK.
+  bool PushIfNotPresent(const Codec& codec);
+
   // Vector-compatible API to access the codecs.
   iterator begin() { return codecs_.begin(); }
   iterator end() { return codecs_.end(); }
@@ -75,8 +83,8 @@ class CodecList {
 
  private:
   // Creates a codec list on trusted data.
-  explicit CodecList(const std::vector<Codec>& codecs) {
-    codecs_ = codecs;
+  explicit CodecList(std::span<const Codec> codecs)
+      : codecs_(codecs.begin(), codecs.end()) {
     CheckConsistency();
   }
 

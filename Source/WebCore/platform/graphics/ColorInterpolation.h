@@ -40,7 +40,7 @@ class Color;
 template<AlphaPremultiplication, typename InterpolationMethodColorSpace>
 typename InterpolationMethodColorSpace::ColorType interpolateColorComponents(InterpolationMethodColorSpace, typename InterpolationMethodColorSpace::ColorType color1, double color1Multiplier, typename InterpolationMethodColorSpace::ColorType color2, double color2Multiplier);
 
-Color interpolateColors(ColorInterpolationMethod, Color color1, double color1Multiplier, Color color2, double color2Multiplier);
+Color interpolateColors(ColorInterpolationMethod, const Color& color1, double color1Multiplier, const Color& color2, double color2Multiplier);
 
 template<AlphaPremultiplication, typename InterpolationMethodColorSpace>
 typename InterpolationMethodColorSpace::ColorType addColorComponents(InterpolationMethodColorSpace, typename InterpolationMethodColorSpace::ColorType color1, typename InterpolationMethodColorSpace::ColorType color2);
@@ -69,10 +69,15 @@ inline float interpolateComponentAccountingForNaN(float componentFromColor1, dou
 template<typename InterpolationMethodColorSpace>
 float interpolateHue(InterpolationMethodColorSpace interpolationMethodColorSpace, float componentFromColor1, double color1Multiplier, float componentFromColor2, double color2Multiplier)
 {
-    if (std::isnan(componentFromColor1))
-        return componentFromColor2;
-    if (std::isnan(componentFromColor2))
+    bool componentFromColor1IsNaN = std::isnan(componentFromColor1);
+    bool componentFromColor2IsNaN = std::isnan(componentFromColor2);
+    if (componentFromColor1IsNaN && componentFromColor2IsNaN)
         return componentFromColor1;
+
+    if (componentFromColor1IsNaN)
+        componentFromColor1 = componentFromColor2;
+    else if (componentFromColor2IsNaN)
+        componentFromColor2 = componentFromColor1;
 
     auto [fixedupComponent1, fixedupComponent2] = fixupHueComponentsPriorToInterpolation(interpolationMethodColorSpace.hueInterpolationMethod, componentFromColor1, componentFromColor2);
     return interpolateComponentWithoutAccountingForNaN(fixedupComponent1, color1Multiplier, fixedupComponent2, color2Multiplier);

@@ -48,7 +48,7 @@ SerializedPlatformDataCueValue::SerializedPlatformDataCueValue(AVMetadataItem *i
         NSString *value = [extras objectForKey:key];
         if (![value isKindOfClass:NSString.class])
             continue;
-        NSString *keyString = key;
+        RetainPtr<NSString> keyString = key;
 
         if ([key isEqualToString:@"MIMEtype"])
             keyString = @"type";
@@ -68,7 +68,7 @@ SerializedPlatformDataCueValue::SerializedPlatformDataCueValue(AVMetadataItem *i
         if ([keyString isEqualToString:@"type"])
             m_data->type = value;
         else
-            m_data->otherAttributes.add(keyString, value);
+            m_data->otherAttributes.add(keyString.get(), value);
     }
 
     if (auto *keyString = dynamic_objc_cast<NSString>(item.key))
@@ -122,10 +122,7 @@ RetainPtr<NSDictionary> SerializedPlatformDataCueValue::toNSDictionary() const
 
 bool SerializedPlatformDataCueValue::operator==(const SerializedPlatformDataCueValue& other) const
 {
-    if (!m_data || !other.m_data)
-        return false;
-
-    return *m_data == *other.m_data;
+    return m_data == other.m_data;
 }
 
 bool SerializedPlatformDataCueValue::Data::operator==(const Data& other) const

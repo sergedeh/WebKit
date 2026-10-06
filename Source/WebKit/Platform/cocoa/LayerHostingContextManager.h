@@ -29,6 +29,7 @@
 #include <WebCore/FloatSize.h>
 #include <WebCore/PlatformLayer.h>
 #include <wtf/CompletionHandler.h>
+#include <wtf/NativePromise.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
@@ -45,17 +46,17 @@ public:
     LayerHostingContextManager& operator=(LayerHostingContextManager&&);
     ~LayerHostingContextManager();
 
-    using LayerHostingContextCallback = CompletionHandler<void(WebCore::HostingContext)>;
-
-    void requestHostingContext(LayerHostingContextCallback&&);
+    using HostingContextPromise = NativePromise<WebCore::HostingContext, void, WTF::PromiseOption::Default | WTF::PromiseOption::WithoutCrossThreadCopy>;
+    Ref<HostingContextPromise> requestHostingContext();
     std::optional<WebCore::HostingContext> createHostingContextIfNeeded(const PlatformLayerContainer&, bool canShowWhileLocked);
+    void setVideoLayerSize(const WebCore::FloatSize&);
     void setVideoLayerSizeFenced(const WebCore::FloatSize&, WTF::MachSendRightAnnotated&&, NOESCAPE CompletionHandler<void()>&& postCommitAction);
     WebCore::FloatSize videoLayerSize() const { return m_videoLayerSize; }
     void setVideoLayerSizeIfPossible();
-    void setInitialVideoLayerSize(const WebCore::FloatSize&);
+    void NODELETE setInitialVideoLayerSize(const WebCore::FloatSize&);
 
 private:
-    Vector<LayerHostingContextCallback> m_layerHostingContextRequests;
+    Vector<HostingContextPromise::AutoRejectProducer> m_layerHostingContextRequests;
     std::unique_ptr<LayerHostingContext> m_inlineLayerHostingContext;
     WebCore::FloatSize m_videoLayerSize;
 };

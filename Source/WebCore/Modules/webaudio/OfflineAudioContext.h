@@ -51,9 +51,7 @@ public:
     bool shouldSuspend();
 
     OfflineAudioDestinationNode& destination() final { return m_destinationNode.get(); }
-    Ref<OfflineAudioDestinationNode> protectedDestination() { return destination(); }
     const OfflineAudioDestinationNode& destination() const final { return m_destinationNode.get(); }
-    Ref<const OfflineAudioDestinationNode> protectedDestination() const { return destination(); }
 
 private:
     OfflineAudioContext(Document&, const OfflineAudioContextOptions&);
@@ -64,7 +62,7 @@ private:
     AudioBuffer* renderTarget() const { return destination().renderTarget(); }
 
     // ActiveDOMObject
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     void settleRenderingPromise(ExceptionOr<Ref<AudioBuffer>>&&);
     void uninitialize() final;

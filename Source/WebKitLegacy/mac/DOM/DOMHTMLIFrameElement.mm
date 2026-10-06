@@ -30,16 +30,18 @@
 #import "DOMNodeInternal.h"
 #import "ExceptionHandlers.h"
 #import <WebCore/Document.h>
+#import <WebCore/ElementInlines.h>
 #import <WebCore/HTMLIFrameElement.h>
 #import <WebCore/HTMLNames.h>
 #import <WebCore/JSExecState.h>
 #import <WebCore/LocalDOMWindow.h>
 #import <WebCore/ThreadCheck.h>
 #import <WebCore/WebScriptObjectPrivate.h>
+#import <WebCore/WindowProxy.h>
 #import <wtf/GetPtr.h>
 #import <wtf/URL.h>
 
-#define IMPL static_cast<WebCore::HTMLIFrameElement*>(reinterpret_cast<WebCore::Node*>(_internal))
+#define IMPL protect(downcast<WebCore::HTMLIFrameElement>(reinterpret_cast<WebCore::Node*>(_internal)))
 
 @implementation DOMHTMLIFrameElement
 

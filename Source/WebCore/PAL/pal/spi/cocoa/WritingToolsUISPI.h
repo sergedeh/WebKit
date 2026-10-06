@@ -30,9 +30,18 @@
 
 DECLARE_SYSTEM_HEADER
 
-#if ENABLE(WRITING_TOOLS) && PLATFORM(MAC)
+#if ENABLE(WRITING_TOOLS)
 
-// FIXME: (rdar://149216417) Import WritingToolsUI when using the internal SDK instead of using forward declarations.
+#import <Foundation/Foundation.h>
+
+@class WTSession;
+@class WTContext;
+
+@interface NSObject (WritingToolsSPI)
+- (void)willBeginWritingToolsSession:(WTSession *)session forProofreadingReview:(BOOL)proofreadingReview requestContexts:(void (^)(NSArray<WTContext *> *))completion;
+@end
+
+#if PLATFORM(MAC)
 
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -42,16 +51,6 @@ DECLARE_SYSTEM_HEADER
 typedef NS_ENUM(NSInteger, WTRequestedTool);
 
 @protocol WTWritingToolsDelegate;
-
-// MARK: _WTTextChunk
-
-@interface _WTTextChunk : NSObject
-
-@property (readonly) NSString *identifier;
-
-- (instancetype)initChunkWithIdentifier:(NSString *)identifier;
-
-@end
 
 // MARK: _WTTextPreview
 
@@ -76,6 +75,16 @@ typedef NS_ENUM(NSInteger, WTRequestedTool);
 - (instancetype)initWithSnapshotImage:(CGImageRef)snapshotImage presentationFrame:(CGRect)presentationFrame backgroundColor:(CGColorRef)backgroundColor clippingPath:(CGPathRef)clippingPath scale:(CGFloat)scale;
 
 - (instancetype)initWithSnapshotImage:(CGImageRef)snapshotImage presentationFrame:(CGRect)presentationFrame backgroundColor:(CGColorRef)backgroundColor clippingPath:(CGPathRef)clippingPath scale:(CGFloat)scale candidateRects:(NSArray <NSValue *> *)candidateRects;
+
+@end
+
+// MARK: _WTTextChunk
+
+@interface _WTTextChunk : NSObject
+
+@property (readonly) NSString *identifier;
+
+- (instancetype)initChunkWithIdentifier:(NSString *)identifier;
 
 @end
 
@@ -163,7 +172,7 @@ NS_ASSUME_NONNULL_END
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface WTWritingToolsViewController
+@interface WTWritingToolsViewController : NSObject
 
 @property (class, assign, readonly, getter=isAvailable) BOOL available;
 
@@ -207,4 +216,6 @@ NS_ASSUME_NONNULL_END
 
 @end
 
-#endif // ENABLE(WRITING_TOOLS) && PLATFORM(MAC)
+#endif // PLATFORM(MAC)
+
+#endif // ENABLE(WRITING_TOOLS)

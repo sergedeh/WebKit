@@ -37,6 +37,10 @@
 /**
  * WPEBufferAndroid:
  *
+ * A #WPEBuffer backed by an AHardwareBuffer.
+ *
+ * #WPEBufferAndroid is a #WPEBuffer that wraps an Android `AHardwareBuffer`.
+ * It is only available on Android builds of the WPE platform library.
  */
 struct _WPEBufferAndroidPrivate {
     AHardwareBuffer* ahb;
@@ -63,11 +67,11 @@ static EGLImage createImageKHRImageBase(EGLDisplay display, EGLClientBuffer clie
 
 static void wpeBufferAndroidDisposeEGLImageIfNeeded(WPEBufferAndroid* androidBuffer)
 {
-    RELEASE_ASSERT(s_eglDestroyImage);
-
     auto* priv = androidBuffer->priv;
     if (priv->eglImage == EGL_NO_IMAGE)
         return;
+
+    RELEASE_ASSERT(s_eglDestroyImage);
 
     auto* eglImage = std::exchange(priv->eglImage, EGL_NO_IMAGE);
     auto* display = wpe_buffer_get_display(WPE_BUFFER(androidBuffer));
@@ -152,14 +156,14 @@ static void wpe_buffer_android_class_init(WPEBufferAndroidClass* bufferAndroidCl
 }
 
 /**
- * wpe_buffer_android_new: (constructor):
+ * wpe_buffer_android_new: (constructor)
  * @display: a #WPEDisplay
  * @ahb: an #AHardwareBuffer
  *
  * Create a new #WPEBufferAndroid for the given buffer.
  *
  * The reference count of the @ahb will be incremented using
- * %AHardwareBuffer_acquire().
+ * `AHardwareBuffer_acquire()`.
  *
  * Returns: (transfer full): a #WPEBufferAndroid
  */

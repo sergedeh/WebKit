@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Google Inc.
+ * Copyright 2021 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -20,7 +20,7 @@
 #include "include/core/SkString.h"
 #include "include/core/SkTileMode.h"
 #include "include/effects/SkRuntimeEffect.h"
-#include "include/private/base/SkAssert.h"
+#include "include/private/SkAssert.h"
 #include "modules/skottie/src/Adapter.h"
 #include "modules/skottie/src/SkottiePriv.h"
 #include "modules/skottie/src/SkottieValue.h"
@@ -128,9 +128,9 @@ private:
         }
 
         SkRuntimeShaderBuilder builder(bulge_effect());
-        float adjHeight = std::abs(fHeight)/4;
-        float r = (1 + adjHeight)/2/sqrt(adjHeight);
-        float h = std::pow(adjHeight, 3)*1.3;
+        float adjHeight = std::abs(fHeight)/4.f;
+        float r = (1.f + adjHeight)/2.f/sqrt(adjHeight);
+        float h = std::pow(adjHeight, 3)*1.3f;
         builder.uniform("u_center")       = fCenter;
         builder.uniform("u_radius")       = fRadius;
         builder.uniform("u_radius_inv")   = SkVector{1/fRadius.fX, 1/fRadius.fY};

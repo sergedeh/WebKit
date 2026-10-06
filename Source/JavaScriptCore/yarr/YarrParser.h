@@ -51,6 +51,8 @@ enum class CharacterClassSetOp : uint8_t {
 template <class T> concept YarrSyntaxCheckable = requires (T& checker, Vector<Vector<char32_t>>& disjunctionStrings, const String& subpatternName) {
     { checker.assertionBOL() } -> std::same_as<void>;
     { checker.assertionEOL() } -> std::same_as<void>;
+    { checker.assertionBOI() } -> std::same_as<void>;
+    { checker.assertionEOI(bool { }) } -> std::same_as<void>;
     { checker.assertionWordBoundary(bool { }) } -> std::same_as<void>;
     { checker.atomPatternCharacter(char32_t { }, bool { }) } -> std::same_as<void>;
     { checker.atomBuiltInCharacterClass(BuiltInCharacterClassID { }, bool { }) } -> std::same_as<void>;
@@ -65,7 +67,6 @@ template <class T> concept YarrSyntaxCheckable = requires (T& checker, Vector<Ve
     { checker.atomCharacterClassPushNested(bool { }) } -> std::same_as<void>;
     { checker.atomCharacterClassPopNested(bool { }) } -> std::same_as<void>;
     { checker.atomCharacterClassEnd() } -> std::same_as<void>;
-    { checker.atomParenthesesSubpatternBegin() } -> std::same_as<void>;
     { checker.atomParenthesesSubpatternBegin(bool { }) } -> std::same_as<void>;
     { checker.atomParenthesesSubpatternBegin(bool { }, std::optional<String> { }) } -> std::same_as<void>;
     { checker.atomParentheticalAssertionBegin(bool { }, MatchDirection { }) } -> std::same_as<void>;
@@ -85,13 +86,14 @@ template <class T> concept YarrSyntaxCheckable = requires (T& checker, Vector<Ve
 template<YarrSyntaxCheckable Delegate, typename CharType>
 class Parser {
 public:
-    Parser(Delegate& delegate, std::span<const CharType> pattern, CompileMode compileMode, unsigned backReferenceLimit, bool isNamedForwardReferenceAllowed)
+    Parser(Delegate& delegate, std::span<const CharType> pattern, CompileMode compileMode, unsigned backReferenceLimit, bool isNamedForwardReferenceAllowed, bool allowRegExpBufferBoundaries)
         : m_delegate(delegate)
         , m_data(pattern.data())
         , m_size(pattern.size())
         , m_compileMode(compileMode)
         , m_backReferenceLimit(backReferenceLimit)
         , m_isNamedForwardReferenceAllowed(isNamedForwardReferenceAllowed)
+        , m_allowRegExpBufferBoundaries(allowRegExpBufferBoundaries)
     {
     }
 
@@ -102,7 +104,7 @@ public:
      */
     ErrorCode parse()
     {
-        if (m_size > MAX_PATTERN_SIZE)
+        if (m_size > maxPatternSize)
             return ErrorCode::PatternTooLarge;
 
         parseTokens();
@@ -120,7 +122,7 @@ private:
     static constexpr char32_t errorCodePoint = 0xFFFFFFFFu;
 
     template<YarrSyntaxCheckable FriendDelegate>
-    friend ErrorCode parse(FriendDelegate&, StringView pattern, CompileMode, unsigned backReferenceLimit, bool isNamedForwardReferenceAllowed);
+    friend ErrorCode parse(FriendDelegate&, StringView pattern, CompileMode, unsigned backReferenceLimit, bool isNamedForwardReferenceAllowed, bool allowRegExpBufferBoundaries);
 
     enum class UnicodeParseContext : uint8_t { PatternCodePoint, GroupName };
 
@@ -364,6 +366,8 @@ private:
 
         // parseEscape() should never call these delegate methods when
         // invoked with inCharacterClass set.
+        NO_RETURN_DUE_TO_ASSERT void assertionBOI() { RELEASE_ASSERT_NOT_REACHED(); }
+        NO_RETURN_DUE_TO_ASSERT void assertionEOI(bool) { RELEASE_ASSERT_NOT_REACHED(); }
         NO_RETURN_DUE_TO_ASSERT void assertionWordBoundary(bool) { RELEASE_ASSERT_NOT_REACHED(); }
         NO_RETURN_DUE_TO_ASSERT void atomBackReference(unsigned) { RELEASE_ASSERT_NOT_REACHED(); }
         NO_RETURN_DUE_TO_ASSERT void atomNamedBackReference(const String&) { RELEASE_ASSERT_NOT_REACHED(); }
@@ -446,6 +450,7 @@ private:
         bool nestedClassEnd()
         {
             flushCachedCharacterIfNeeded();
+            m_processingEscape = false;
 
             if (m_inverted && m_mayContainStrings)
                 m_errorCode = ErrorCode::NegatedClassSetMayContainStrings;
@@ -537,12 +542,14 @@ private:
             if (m_state == ClassSetConstructionState::CachedCharacter) {
                 m_delegate.atomCharacterClassAtom(m_character);
                 m_state = ClassSetConstructionState::Empty;
-            }
+            } else if (m_state == ClassSetConstructionState::CachedCharacterHyphen || m_state == ClassSetConstructionState::AfterCharacterClassHyphen)
+                m_errorCode = ErrorCode::InvalidClassSetCharacter;
         }
 
         void afterSetOperand()
         {
             flushCachedCharacterIfNeeded();
+            m_processingEscape = false;
             m_state = ClassSetConstructionState::AfterSetOperand;
         }
 
@@ -669,10 +676,9 @@ private:
                 if (!unionOpActive)
                     m_errorCode = ErrorCode::InvalidClassSetOperation;
 
-                if (ch == '-')
+                if (!processingEscape && ch == '-')
                     m_errorCode = ErrorCode::InvalidClassSetOperation;
                 else {
-                    m_delegate.atomCharacterClassAtom(m_character);
                     switchFromDefaultOpToUnionOpIfNeeded();
                     processCharacter();
                 }
@@ -757,10 +763,7 @@ private:
         {
             if (m_state == ClassSetConstructionState::CachedCharacter)
                 m_delegate.atomCharacterClassAtom(m_character);
-            else if (m_state == ClassSetConstructionState::CachedCharacterHyphen) {
-                m_delegate.atomCharacterClassAtom(m_character);
-                m_delegate.atomCharacterClassAtom('-');
-            } else if (m_state == ClassSetConstructionState::AfterSetOperator)
+            else if (m_state == ClassSetConstructionState::CachedCharacterHyphen || m_state == ClassSetConstructionState::AfterCharacterClassHyphen || m_state == ClassSetConstructionState::AfterSetOperator)
                 m_errorCode = ErrorCode::InvalidClassSetCharacter;
 
             if (isInverted() && m_mayContainStrings)
@@ -775,6 +778,8 @@ private:
 
         // parseEscape() should never call these delegate methods when
         // invoked with inCharacterClass set.
+        NO_RETURN_DUE_TO_ASSERT void assertionBOI() { RELEASE_ASSERT_NOT_REACHED(); }
+        NO_RETURN_DUE_TO_ASSERT void assertionEOI(bool) { RELEASE_ASSERT_NOT_REACHED(); }
         NO_RETURN_DUE_TO_ASSERT void assertionWordBoundary(bool) { RELEASE_ASSERT_NOT_REACHED(); }
         NO_RETURN_DUE_TO_ASSERT void atomBackReference(unsigned) { RELEASE_ASSERT_NOT_REACHED(); }
         NO_RETURN_DUE_TO_ASSERT void atomNamedBackReference(const String&) { RELEASE_ASSERT_NOT_REACHED(); }
@@ -845,6 +850,8 @@ private:
         bool mayContainStrings() { return m_mayContainStrings; }
 
         // parseEscape() should never call these delegate methods when parsing a class string disjunction.
+        NO_RETURN_DUE_TO_ASSERT void assertionBOI() { RELEASE_ASSERT_NOT_REACHED(); }
+        NO_RETURN_DUE_TO_ASSERT void assertionEOI(bool) { RELEASE_ASSERT_NOT_REACHED(); }
         NO_RETURN_DUE_TO_ASSERT void assertionWordBoundary(bool) { RELEASE_ASSERT_NOT_REACHED(); }
         NO_RETURN_DUE_TO_ASSERT void atomBackReference(unsigned) { RELEASE_ASSERT_NOT_REACHED(); }
         NO_RETURN_DUE_TO_ASSERT void atomNamedBackReference(const String&) { RELEASE_ASSERT_NOT_REACHED(); }
@@ -898,6 +905,8 @@ private:
      *    void atomPatternCharacter(char32_t ch, bool hyphenIsRange);
      *
      *   Optional methods based on parseEscapeMode:
+     *    void assertionBOI();
+     *    void assertionEOI(bool withOptionalLineTerminator);
      *    void assertionWordBoundary(bool invert);
      *    void atomBuiltInCharacterClass(BuiltInCharacterClassID classID, bool invert);
      *    void atomBackReference(unsigned subpatternId);
@@ -914,6 +923,29 @@ private:
         if (atEndOfPattern()) {
             m_errorCode = ErrorCode::EscapeUnterminated;
             return TokenType::NotAtom;
+        }
+
+        if (m_allowRegExpBufferBoundaries && isEitherUnicodeCompilation()) [[unlikely]] {
+            switch (peek()) {
+            case 'A':
+                consume();
+                if (parseEscapeMode != ParseEscapeMode::Normal) {
+                    m_errorCode = ErrorCode::InvalidIdentityEscape;
+                    return TokenType::Atom;
+                }
+                delegate.assertionBOI();
+                return TokenType::NotAtom;
+            case 'z':
+            case 'Z': {
+                char32_t escapeChar = consume();
+                if (parseEscapeMode != ParseEscapeMode::Normal) {
+                    m_errorCode = ErrorCode::InvalidIdentityEscape;
+                    return TokenType::Atom;
+                }
+                delegate.assertionEOI(/* withOptionalLineTerminator */ escapeChar == 'Z');
+                return TokenType::NotAtom;
+            }
+            }
         }
 
         switch (peek()) {
@@ -1519,6 +1551,7 @@ private:
         consume();
 
         auto type = ParenthesesType::Subpattern;
+        bool isNonCapturingGroup = false;
 
         if (tryConsume('?')) {
             if (atEndOfPattern()) {
@@ -1530,6 +1563,7 @@ private:
             case ':':
                 consume();
                 m_delegate.atomParenthesesSubpatternBegin(false);
+                isNonCapturingGroup = true;
                 break;
             
             case '=':
@@ -1557,9 +1591,10 @@ private:
                     }
 
                     auto setAddResult = m_namedCaptureGroups.add(groupName.value());
-                    if (setAddResult.isNewEntry)
+                    if (setAddResult.isNewEntry) {
                         m_delegate.atomParenthesesSubpatternBegin(true, groupName);
-                    else
+                        countCaptures();
+                    } else
                         m_errorCode = ErrorCode::DuplicateGroupName;
                 } else {
                     if (tryConsume('=')) {
@@ -1592,6 +1627,7 @@ private:
                 OptionSet<Flags> set;
                 OptionSet<Flags> unset;
                 bool hasHitNegation = false;
+                isNonCapturingGroup = true;
                 char32_t c;
                 while (!atEndOfPattern() && (c = consume()) != ':') {
                     switch (c) {
@@ -1643,10 +1679,12 @@ private:
             default:
                 m_errorCode = ErrorCode::ParenthesesTypeInvalid;
             }
-        } else
-            m_delegate.atomParenthesesSubpatternBegin();
+        } else {
+            m_delegate.atomParenthesesSubpatternBegin(true);
+            countCaptures();
+        }
 
-        if (type == ParenthesesType::Subpattern)
+        if (type == ParenthesesType::Subpattern && !isNonCapturingGroup)
             ++m_numSubpatterns;
 
         m_parenthesesStack.append(type);
@@ -2187,6 +2225,12 @@ private:
         return std::nullopt;
     }
 
+    void countCaptures()
+    {
+        if (++m_numCaptures > maxCapturesCount)
+            m_errorCode = ErrorCode::TooManyCaptures;
+    }
+
     bool isLegacyCompilation() const { return m_compileMode == CompileMode::Legacy; }
     bool isUnicodeCompilation() const { return m_compileMode == CompileMode::Unicode; }
     bool isUnicodeSetsCompilation() const { return m_compileMode == CompileMode::UnicodeSets; }
@@ -2203,14 +2247,16 @@ private:
     unsigned m_backReferenceLimit;
     unsigned m_numSubpatterns { 0 };
     unsigned m_maxSeenBackReference { 0 };
+    unsigned m_numCaptures { 0 };
     bool m_isNamedForwardReferenceAllowed;
+    bool m_allowRegExpBufferBoundaries;
     bool m_kIdentityEscapeSeen { false };
     Vector<ParenthesesType, 16> m_parenthesesStack;
     NamedCaptureGroups m_namedCaptureGroups;
     UncheckedKeyHashSet<String> m_forwardReferenceNames;
 
-    // Derived by empirical testing of compile time in PCRE and WREC.
-    static constexpr unsigned MAX_PATTERN_SIZE = 1024 * 1024;
+    static constexpr unsigned maxPatternSize = 1024 * 1024; // Derived by empirical testing of compile time in PCRE and WREC.
+    static constexpr unsigned maxCapturesCount = (1 << 16) / 2; // Derived from V8's configuration.
 };
 
 /*
@@ -2265,11 +2311,11 @@ inline CompileMode compileMode(std::optional<OptionSet<Flags>> flags)
 }
 
 template<YarrSyntaxCheckable Delegate>
-ErrorCode parse(Delegate& delegate, const StringView pattern, CompileMode compileMode, unsigned backReferenceLimit = quantifyInfinite, bool isNamedForwardReferenceAllowed = true)
+ErrorCode parse(Delegate& delegate, const StringView pattern, CompileMode compileMode, unsigned backReferenceLimit = quantifyInfinite, bool isNamedForwardReferenceAllowed = true, bool allowRegExpBufferBoundaries = false)
 {
     if (pattern.is8Bit())
-        return Parser<Delegate, Latin1Character>(delegate, pattern.span8(), compileMode, backReferenceLimit, isNamedForwardReferenceAllowed).parse();
-    return Parser<Delegate, char16_t>(delegate, pattern.span16(), compileMode, backReferenceLimit, isNamedForwardReferenceAllowed).parse();
+        return Parser<Delegate, Latin1Character>(delegate, pattern.span8(), compileMode, backReferenceLimit, isNamedForwardReferenceAllowed, allowRegExpBufferBoundaries).parse();
+    return Parser<Delegate, char16_t>(delegate, pattern.span16(), compileMode, backReferenceLimit, isNamedForwardReferenceAllowed, allowRegExpBufferBoundaries).parse();
 }
 
 } } // namespace JSC::Yarr

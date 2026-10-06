@@ -33,7 +33,6 @@
 #include "HTMLObjectElement.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
-#include "NodeInlines.h"
 #include "NodeName.h"
 #include "PluginDocument.h"
 #include "RenderEmbeddedObject.h"
@@ -84,13 +83,13 @@ void HTMLEmbedElement::collectPresentationalHintsForAttribute(const QualifiedNam
 {
     if (name == hiddenAttr) {
         ASSERT(!value.isNull());
-        addPropertyToPresentationalHintStyle(style, CSSPropertyWidth, 0, CSSUnitType::CSS_PX);
-        addPropertyToPresentationalHintStyle(style, CSSPropertyHeight, 0, CSSUnitType::CSS_PX);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyWidth, 0, CSSUnitType::Px);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyHeight, 0, CSSUnitType::Px);
     } else
         HTMLPlugInElement::collectPresentationalHintsForAttribute(name, value, style);
 }
 
-static bool hasTypeOrSrc(const HTMLEmbedElement& embed)
+static bool NODELETE hasTypeOrSrc(const HTMLEmbedElement& embed)
 {
     return embed.hasAttributeWithoutSynchronization(typeAttr) || embed.hasAttributeWithoutSynchronization(srcAttr);
 }
@@ -183,7 +182,7 @@ void HTMLEmbedElement::updateWidget(CreatePlugins createPlugins)
     requestObject(m_url, m_serviceType, paramNames, paramValues);
 }
 
-bool HTMLEmbedElement::rendererIsNeeded(const RenderStyle& style)
+bool HTMLEmbedElement::rendererIsNeeded(const Style::ComputedStyle& style)
 {
     if (!hasTypeOrSrc(*this))
         return false;
@@ -210,16 +209,16 @@ bool HTMLEmbedElement::isURLAttribute(const Attribute& attribute) const
     return attribute.name() == srcAttr || HTMLPlugInElement::isURLAttribute(attribute);
 }
 
-const AtomString& HTMLEmbedElement::imageSourceURL() const
+String HTMLEmbedElement::imageSourceURL() const
 {
     return attributeWithoutSynchronization(srcAttr);
 }
 
-void HTMLEmbedElement::addSubresourceAttributeURLs(ListHashSet<URL>& urls) const
+void HTMLEmbedElement::addSubresourceAttributeURLs(OrderedHashSet<URL>& urls) const
 {
     HTMLPlugInElement::addSubresourceAttributeURLs(urls);
 
-    addSubresourceURL(urls, protectedDocument()->completeURL(attributeWithoutSynchronization(srcAttr)));
+    addSubresourceURL(urls, protect(document())->encodingParseURL(attributeWithoutSynchronization(srcAttr)));
 }
 
 }

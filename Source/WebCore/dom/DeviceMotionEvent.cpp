@@ -28,6 +28,8 @@
 
 #include "DeviceMotionData.h"
 #include "DeviceOrientationAndMotionAccessController.h"
+#include "DocumentPage.h"
+#include "JSDOMConvertEnumeration.h"
 #include "JSDOMPromiseDeferred.h"
 #include "LocalDOMWindow.h"
 #include <JavaScriptCore/ConsoleTypes.h>
@@ -66,7 +68,7 @@ DeviceMotionEvent::DeviceMotionEvent(const AtomString& eventType, DeviceMotionDa
 {
 }
 
-static std::optional<DeviceMotionEvent::Acceleration> convert(const DeviceMotionData::Acceleration* acceleration)
+static std::optional<DeviceMotionEvent::Acceleration> NODELETE convert(const DeviceMotionData::Acceleration* acceleration)
 {
     if (!acceleration)
         return std::nullopt;
@@ -74,7 +76,7 @@ static std::optional<DeviceMotionEvent::Acceleration> convert(const DeviceMotion
     return DeviceMotionEvent::Acceleration { acceleration->x(), acceleration->y(), acceleration->z() };
 }
 
-static std::optional<DeviceMotionEvent::RotationRate> convert(const DeviceMotionData::RotationRate* rotationRate)
+static std::optional<DeviceMotionEvent::RotationRate> NODELETE convert(const DeviceMotionData::RotationRate* rotationRate)
 {
     if (!rotationRate)
         return std::nullopt;
@@ -82,7 +84,7 @@ static std::optional<DeviceMotionEvent::RotationRate> convert(const DeviceMotion
     return DeviceMotionEvent::RotationRate { rotationRate->alpha(), rotationRate->beta(), rotationRate->gamma() };
 }
 
-static RefPtr<DeviceMotionData::Acceleration> convert(std::optional<DeviceMotionEvent::Acceleration>&& acceleration)
+static RefPtr<DeviceMotionData::Acceleration> NODELETE convert(std::optional<DeviceMotionEvent::Acceleration>&& acceleration)
 {
     if (!acceleration)
         return nullptr;
@@ -93,7 +95,7 @@ static RefPtr<DeviceMotionData::Acceleration> convert(std::optional<DeviceMotion
     return DeviceMotionData::Acceleration::create(acceleration->x, acceleration->y, acceleration->z);
 }
 
-static RefPtr<DeviceMotionData::RotationRate> convert(std::optional<DeviceMotionEvent::RotationRate>&& rotationRate)
+static RefPtr<DeviceMotionData::RotationRate> NODELETE convert(std::optional<DeviceMotionEvent::RotationRate>&& rotationRate)
 {
     if (!rotationRate)
         return nullptr;
@@ -106,20 +108,20 @@ static RefPtr<DeviceMotionData::RotationRate> convert(std::optional<DeviceMotion
 
 std::optional<DeviceMotionEvent::Acceleration> DeviceMotionEvent::acceleration() const
 {
-    RefPtr acceleration = m_deviceMotionData->acceleration();
-    return convert(acceleration.get());
+    auto* acceleration = m_deviceMotionData->acceleration();
+    return convert(acceleration);
 }
 
 std::optional<DeviceMotionEvent::Acceleration> DeviceMotionEvent::accelerationIncludingGravity() const
 {
-    RefPtr accelerationIncludingGravity = m_deviceMotionData->accelerationIncludingGravity();
-    return convert(accelerationIncludingGravity.get());
+    auto* accelerationIncludingGravity = m_deviceMotionData->accelerationIncludingGravity();
+    return convert(accelerationIncludingGravity);
 }
 
 std::optional<DeviceMotionEvent::RotationRate> DeviceMotionEvent::rotationRate() const
 {
-    RefPtr rotationRate = m_deviceMotionData->rotationRate();
-    return convert(rotationRate.get());
+    auto* rotationRate = m_deviceMotionData->rotationRate();
+    return convert(rotationRate);
 }
 
 std::optional<double> DeviceMotionEvent::interval() const
@@ -149,7 +151,7 @@ void DeviceMotionEvent::requestPermission(Document& document, PermissionPromise&
         return promise.resolve(PermissionState::Denied);
     }
 
-    document.checkedDeviceOrientationAndMotionAccessController()->shouldAllowAccess(document, [promise = WTF::move(promise)](auto permissionState) mutable {
+    protect(protect(document.page())->deviceOrientationAndMotionAccessController())->shouldAllowAccess(protect(document), [promise = WTF::move(promise)](auto permissionState) mutable {
         if (permissionState == PermissionState::Prompt)
             return promise.reject(Exception { ExceptionCode::NotAllowedError, "Requesting device motion access requires a user gesture to prompt"_s });
         promise.resolve(permissionState);

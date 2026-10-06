@@ -65,12 +65,10 @@ public:
         virtual void addMessageReceiver(IPC::ReceiverName, IPC::MessageReceiver&) = 0;
         virtual void removeMessageReceiver(IPC::ReceiverName) = 0;
         virtual IPC::Connection& connection() = 0;
-        Ref<IPC::Connection> protectedConnection() { return connection(); }
         virtual bool willStartCapture(WebCore::CaptureDevice::DeviceType, WebCore::PageIdentifier) const = 0;
         virtual Logger& logger() = 0;
-        Ref<Logger> protectedLogger() { return logger(); };
         virtual bool setCaptureAttributionString() { return true; }
-        virtual const WebCore::ProcessIdentity& resourceOwner() const = 0;
+        virtual WebCore::ProcessIdentity resourceOwner() const = 0;
 #if ENABLE(APP_PRIVACY_REPORT)
         virtual void setTCCIdentity() { }
 #endif
@@ -102,7 +100,7 @@ public:
     void didReceiveMessageFromGPUProcess(IPC::Connection& connection, IPC::Decoder& decoder) { didReceiveMessage(connection, decoder); }
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
-    bool hasSourceProxies() const;
+    bool NODELETE hasSourceProxies() const;
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
@@ -125,13 +123,13 @@ private:
     void setIsInBackground(WebCore::RealtimeMediaSourceIdentifier, bool);
     void isPowerEfficient(WebCore::RealtimeMediaSourceIdentifier, CompletionHandler<void(bool)>&&);
 
-    using TakePhotoCallback = CompletionHandler<void(Expected<std::pair<Vector<uint8_t>, String>, String>&&)>;
+    using TakePhotoCallback = CompletionHandler<void(std::expected<std::pair<Vector<uint8_t>, String>, String>&&)>;
     void takePhoto(WebCore::RealtimeMediaSourceIdentifier, WebCore::PhotoSettings&&, TakePhotoCallback&&);
 
-    using GetPhotoCapabilitiesCallback = CompletionHandler<void(Expected<WebCore::PhotoCapabilities, String>&&)>;
+    using GetPhotoCapabilitiesCallback = CompletionHandler<void(std::expected<WebCore::PhotoCapabilities, String>&&)>;
     void getPhotoCapabilities(WebCore::RealtimeMediaSourceIdentifier, GetPhotoCapabilitiesCallback&&);
 
-    using GetPhotoSettingsCallback = CompletionHandler<void(Expected<WebCore::PhotoSettings, String>&&)>;
+    using GetPhotoSettingsCallback = CompletionHandler<void(std::expected<WebCore::PhotoSettings, String>&&)>;
     void getPhotoSettings(WebCore::RealtimeMediaSourceIdentifier, GetPhotoSettingsCallback&&);
 
     WebCore::CaptureSourceOrError createMicrophoneSource(const WebCore::CaptureDevice&, WebCore::MediaDeviceHashSalts&&, const WebCore::MediaConstraints*, WebCore::PageIdentifier);
@@ -144,7 +142,7 @@ private:
     HashMap<WebCore::RealtimeMediaSourceIdentifier, Ref<UserMediaCaptureManagerProxySourceProxy>> m_proxies;
     const UniqueRef<ConnectionProxy> m_connectionProxy;
     WebCore::OrientationNotifier m_orientationNotifier { 0 };
-    Ref<GenericPromise> m_pendingAction { GenericPromise::createAndResolve() };
+    const Ref<GenericPromise> m_pendingAction { GenericPromise::createAndResolve() };
 
     struct PageSources {
 #if PLATFORM(IOS_FAMILY)

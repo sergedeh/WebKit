@@ -29,12 +29,15 @@
 #include "AXLogger.h"
 #include "AXLoggerBase.h"
 #include "AXObjectCacheInlines.h"
+#include "AXRemoteFrame.h"
 #include "AXTreeStoreInlines.h"
 #include "AXUtilities.h"
 #include "AccessibilityObject.h"
+#include "AccessibilityScrollView.h"
 #include "FrameDestructionObserverInlines.h"
-#include "Logging.h"
 #include "LocalFrameInlines.h"
+#include "LocalFrameView.h"
+#include "Logging.h"
 #include "TextIterator.h"
 #include <ranges>
 
@@ -92,7 +95,7 @@ bool AXSearchManager::matchForSearchKeyAtIndex(Ref<AXCoreObject> axObject, const
     case AccessibilitySearchKey::Frame:
         return axObject->isWebArea();
     case AccessibilitySearchKey::Graphic:
-        return axObject->isImage();
+        return axObject->isImage() && !axObject->isInImage();
     case AccessibilitySearchKey::HeadingLevel1:
         return axObject->headingLevel() == 1;
     case AccessibilitySearchKey::HeadingLevel2:
@@ -113,6 +116,8 @@ bool AXSearchManager::matchForSearchKeyAtIndex(Ref<AXCoreObject> axObject, const
         return axObject->isHeading();
     case AccessibilitySearchKey::Highlighted:
         return axObject->hasHighlighting();
+    case AccessibilitySearchKey::FormFieldWithError:
+        return axObject->isControl() && axObject->invalidStatusIncludingInferred() != "false"_s;
     case AccessibilitySearchKey::KeyboardFocusable:
         return axObject->isKeyboardFocusable();
     case AccessibilitySearchKey::ItalicFont:
@@ -191,19 +196,6 @@ bool AXSearchManager::matchText(Ref<AXCoreObject> axObject, const String& search
         || containsPlainText(axObject->stringValue(), searchText, FindOption::CaseInsensitive);
 }
 
-bool AXSearchManager::matchWithResultsLimit(Ref<AXCoreObject> object, const AccessibilitySearchCriteria& criteria, AXCoreObject::AccessibilityChildrenVector& results)
-{
-    if (match(object, criteria) && matchText(object, criteria.searchText)) {
-        results.append(object);
-
-        // Enough results were found to stop searching.
-        if (results.size() >= criteria.resultsLimit)
-            return true;
-    }
-
-    return false;
-}
-
 static void appendAccessibilityObject(Ref<AXCoreObject> object, AccessibilityObject::AccessibilityChildrenVector& results)
 {
     if (!object->isAttachment()) [[likely]]
@@ -211,11 +203,29 @@ static void appendAccessibilityObject(Ref<AXCoreObject> object, AccessibilityObj
     else if (RefPtr axObject = dynamicDowncast<AccessibilityObject>(object)) {
         // Find the next descendant of this attachment object so search can continue through frames.
         RefPtr widget = axObject->widgetForAttachmentView();
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+        if (widget && widget->isRemoteFrameView()) {
+            // For an out-of-process (site-isolated) iframe, the content lives in another process, so we can't
+            // descend into it. Append the AXRemoteFrame placeholder instead so the search records the iframe in
+            // tree order; the client descends into it via the placeholder's platform element (AXRemoteElement).
+            CheckedPtr cache = axObject->axObjectCache();
+            if (RefPtr remoteFrameHost = cache ? cache->getOrCreate(*widget) : nullptr) {
+                remoteFrameHost->updateChildrenIfNecessary();
+                if (RefPtr scrollView = dynamicDowncast<AccessibilityScrollView>(*remoteFrameHost)) {
+                    if (RefPtr remoteFrame = scrollView->remoteFrame())
+                        results.append(remoteFrame.releaseNonNull());
+                }
+            }
+            return;
+        }
+#endif // ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+
         RefPtr frameView = dynamicDowncast<LocalFrameView>(widget);
         if (!frameView)
             return;
         RefPtr document = frameView->frame().document();
-        if (!document || !document->hasLivingRenderTree())
+        if (!document || document->renderTreeState() != Document::RenderTreeState::Built)
             return;
 
         CheckedPtr cache = axObject->axObjectCache();
@@ -237,6 +247,11 @@ static void appendChildrenToArray(AXCoreObject& object, bool isForward, RefPtr<A
     size_t startIndex = isForward ? childrenSize : 0;
     size_t endIndex = isForward ? 0 : childrenSize;
 
+    // Save the original startObject before the ignored-element handling may
+    // modify or nullify it. We need the original for the descendant-lookup
+    // fallback below.
+    RefPtr<AXCoreObject> originalStartObject = startObject;
+
     // If the startObject is ignored, we should use an accessible sibling as a start element instead.
     if (startObject && startObject->isIgnored() && startObject->crossFrameIsDescendantOfObject(object)) {
         RefPtr<AXCoreObject> parentObject = startObject->parentObjectIncludingCrossFrame();
@@ -248,16 +263,9 @@ static void appendChildrenToArray(AXCoreObject& object, bool isForward, RefPtr<A
             parentObject = parentObject->parentObjectIncludingCrossFrame();
         }
 
-        // We should only ever hit this case with a live object (not an isolated object), as it would require startObject to be ignored,
-        // and we should never have created an isolated object from an ignored live object.
-        // FIXME: This is not true for ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE), fix this before shipping it.
-        // FIXME: We hit this ASSERT on google.com. https://bugs.webkit.org/show_bug.cgi?id=293263
-        AX_BROKEN_ASSERT(is<AccessibilityObject>(startObject));
-        RefPtr newStartObject = dynamicDowncast<AccessibilityObject>(startObject);
         // Get the un-ignored sibling based on the search direction, and update the searchPosition.
-        if (newStartObject && newStartObject->isIgnored())
-            newStartObject = isForward ? newStartObject->previousSiblingUnignored() : newStartObject->nextSiblingUnignored();
-        startObject = newStartObject;
+        if (startObject->isIgnored())
+            startObject = isForward ? startObject->previousSiblingUnignored() : startObject->nextSiblingUnignored();
     }
 
     size_t searchPosition = notFound;
@@ -265,6 +273,22 @@ static void appendChildrenToArray(AXCoreObject& object, bool isForward, RefPtr<A
         searchPosition = searchChildren.findIf([&](const Ref<AXCoreObject>& object) {
             return startObject == object.ptr();
         });
+    }
+
+    // If startObject wasn't found directly in children, it may be an ignored
+    // ancestor of one of the children. For example, an iframe's FrameHost
+    // (AccessibilityScrollView) is ignored, but its child RemoteFrame appears
+    // directly in the parent's unignored children. Since crossFrameUnignoredChildren()
+    // replaces ignored parents with their children, we can find the right position
+    // by looking up the ignored element's direct children in searchChildren.
+    if (searchPosition == notFound && originalStartObject) {
+        for (const auto& child : originalStartObject->children()) {
+            searchPosition = searchChildren.findIf([&](const Ref<AXCoreObject>& searchChild) {
+                return searchChild.ptr() == child.ptr();
+            });
+            if (searchPosition != notFound)
+                break;
+        }
     }
 
     if (searchPosition != notFound) {
@@ -323,43 +347,38 @@ DidTimeout AXSearchManager::revealHiddenMatchWithTimeout(AXCoreObject& matchedOb
     return didTimeout;
 }
 
-AXCoreObject::AccessibilityChildrenVector AXSearchManager::findMatchingObjectsInternal(const AccessibilitySearchCriteria& criteria)
+AccessibilitySearchResultStream AXSearchManager::findMatchingObjectsAsStream(AccessibilitySearchCriteria&& criteria, NOESCAPE const RemoteFrameSearchCallback& remoteFrameCallback)
 {
-    AXTRACE("AXSearchManager::findMatchingObjectsInternal"_s);
+    return findMatchingObjectsInternalAsStream(criteria, remoteFrameCallback);
+}
+
+AccessibilitySearchResultStream AXSearchManager::findMatchingObjectsInternalAsStream(const AccessibilitySearchCriteria& criteria, NOESCAPE const RemoteFrameSearchCallback& remoteFrameCallback)
+{
+    AXTRACE("AXSearchManager::findMatchingObjectsInternalAsStream"_s);
     AXLOG(criteria);
 
+    AccessibilitySearchResultStream stream;
+    stream.setResultsLimit(criteria.resultsLimit);
+
     if (!criteria.searchKeys.size())
-        return { };
+        return stream;
 
     RefPtr anchorObject = criteria.anchorObject.get();
-#if PLATFORM(MAC) && !ENABLE_ACCESSIBILITY_LOCAL_FRAME
-    if (criteria.searchKeys.size() == 1) {
-        // Only perform these optimizations if we aren't expected to start from somewhere mid-tree.
-        // We could probably implement these optimizations when we do have a startObject and get
-        // performance benefits, but no known assistive technology needs this right now.
-        if (!criteria.startObject) {
-            if (criteria.searchKeys[0] == AccessibilitySearchKey::LiveRegion) {
-                if (anchorObject->isRootWebArea()) {
-                    // All live regions will be descendants of the root webarea, so we don't need to do
-                    // any ancestry walks as `sortedDescendants` does.
-                    auto liveRegions = anchorObject->allSortedLiveRegions();
-                    return liveRegions.subvector(0, std::min(liveRegions.size(), static_cast<size_t>(criteria.resultsLimit)));
-                }
-                return anchorObject->crossFrameSortedDescendants(criteria.resultsLimit, PreSortedObjectType::LiveRegion);
-            }
+    if (!anchorObject)
+        return stream;
 
-            if (criteria.searchKeys[0] == AccessibilitySearchKey::Frame) {
-                if (anchorObject->isRootWebArea()) {
-                    auto webAreas = anchorObject->allSortedNonRootWebAreas();
-                    return webAreas.subvector(0, std::min(webAreas.size(), static_cast<size_t>(criteria.resultsLimit)));
-                }
-                return anchorObject->crossFrameSortedDescendants(criteria.resultsLimit, PreSortedObjectType::WebArea);
-            }
-        }
+    if (anchorObject->isIgnored() && criteria.immediateDescendantsOnly) {
+        // If the anchor is ignored (e.g. a FrameHost for a cross-origin iframe with
+        // ENABLE_ACCESSIBILITY_LOCAL_FRAME), it's not really in the outwardly exposed
+        // accessibility tree, and thus doesn't have any true immediate descendants.
+        // Allowing these searches would cause issues for ATs, e.g. infinite navigation
+        // loops in VoiceOver.
+        return stream;
     }
-#endif // PLATFORM(MAC)
 
-    AXCoreObject::AccessibilityChildrenVector results;
+    // Track how many local results we've found to determine when to stop searching.
+    unsigned localResultCount = 0;
+
     bool shouldCheckForRevealableText = !criteria.visibleOnly && !criteria.immediateDescendantsOnly && !criteria.searchText.isEmpty();
     auto matchWithinRevealableContainer = [&] (AXCoreObject& object) -> bool {
         if (!shouldCheckForRevealableText)
@@ -369,13 +388,22 @@ AXCoreObject::AccessibilityChildrenVector AXSearchManager::findMatchingObjectsIn
             RefPtr descendant = revealableContainer.get();
             while ((descendant = descendant ? descendant->nextInPreOrder(/* updateChildren */ true, /* stayWithin */ revealableContainer.ptr(), /* crossFrame */ true) : nullptr)) {
                 if (match(*descendant, criteria) && containsPlainText(descendant->revealableText(), criteria.searchText, FindOption::CaseInsensitive)) {
-
                     if (revealHiddenMatchWithTimeout(*descendant, 100_ms) == DidTimeout::No) {
-                        results.append(*descendant);
+                        stream.appendLocalResult(*descendant);
+                        ++localResultCount;
                         return true;
                     }
                 }
             }
+        }
+        return false;
+    };
+
+    auto addMatchToStream = [&](Ref<AXCoreObject> matchObject) -> bool {
+        if (match(matchObject, criteria) && matchText(matchObject, criteria.searchText)) {
+            stream.appendLocalResult(matchObject);
+            ++localResultCount;
+            return localResultCount >= criteria.resultsLimit;
         }
         return false;
     };
@@ -385,22 +413,68 @@ AXCoreObject::AccessibilityChildrenVector AXSearchManager::findMatchingObjectsIn
 
     // If there's no start object, it means we want to search everything.
     RefPtr startObject = criteria.startObject.get();
+    // Whether the caller passed an explicit start, as opposed to startObject being defaulted to the anchor below.
+    bool hasExplicitStartObject = startObject;
     if (!startObject)
         startObject = anchorObject;
 
     bool isForward = criteria.searchDirection == AccessibilitySearchDirection::Next;
 
+#if PLATFORM(COCOA)
+    // For backward search starting from a remote frame, we need to handle that frame first so its
+    // content isn't skipped (otherwise the backward search would only see elements before it in the parent).
+    if (!isForward && startObject != anchorObject && startObject->isRemoteFrame()) {
+        if (std::optional frameID = startObject->remoteFrameID(); frameID && startObject->remoteFramePID()) {
+#if PLATFORM(IOS_FAMILY)
+            // iOS returns the remote frame's AXRemoteElement placeholder inline; VoiceOver descends into it.
+            stream.appendRemoteFrame(*frameID, startObject);
+#else
+            // macOS forwards the search into the remote frame via IPC.
+            stream.appendRemoteFrame(*frameID);
+            if (remoteFrameCallback)
+                remoteFrameCallback(*frameID, stream.entryCount(), localResultCount);
+#endif
+        }
+    }
+#endif // PLATFORM(COCOA)
+
+    // Handle the case where the startObject we received is ignored, because the search algorithm only
+    // walks the unignored tree. This happens when the start becomes ignored after a dynamic update,
+    // for example in response to a focus handler the assistive technology triggered by moving onto a
+    // new element. Resolve the positioning start to the nearest unignored element in the resume direction:
+    // the unignored element just before the start for a forward search, just after it for a backward search.
+    //
+    // criteria.startObject is deliberately left unchanged, so relative search keys (SameType, DifferentType,
+    // HeadingSameLevel, BlockquoteSameLevel, TableSameLevel, FontChange, FontColorChange, StyleChange) still
+    // compare candidates against the original start. Once the positioning start is resolved, the normal
+    // parent-walk below handles everything.
+    if (startObject && startObject != anchorObject && startObject->isIgnored()) {
+        // The neighbor is almost always a few steps away; the bound just guards against a pathologically
+        // large run of ignored elements rather than walking the whole document.
+        constexpr unsigned ignoredStartResolveStepLimit = 250;
+        RefPtr<AXCoreObject> resolved = startObject;
+        for (unsigned step = 0; step < ignoredStartResolveStepLimit; ++step) {
+            resolved = isForward
+                ? resolved->previousInPreOrder(/* updateChildrenIfNeeded */ true, anchorObject.get(), /* includeCrossFrame */ true)
+                : resolved->nextInPreOrder(/* updateChildrenIfNeeded */ true, anchorObject.get(), /* includeCrossFrame */ true);
+            if (!resolved || !resolved->isIgnored())
+                break;
+        }
+        if (resolved && !resolved->isIgnored())
+            startObject = resolved;
+    }
+
     // The first iteration of the outer loop will examine the children of the start object for matches. However, when
     // iterating backwards, the start object children should not be considered, so the loop is skipped ahead. We make an
     // exception when no start object was specified because we want to search everything regardless of search direction.
     RefPtr<AXCoreObject> previousObject;
-    if (!isForward && startObject != anchorObject) {
+    if (!isForward && hasExplicitStartObject) {
         previousObject = startObject;
         startObject = startObject->crossFrameParentObjectUnignored();
     }
 
-    if (startObject && matchWithinRevealableContainer(*startObject) && results.size() >= criteria.resultsLimit)
-        return results;
+    if (startObject && matchWithinRevealableContainer(*startObject) && localResultCount >= criteria.resultsLimit)
+        return stream;
 
     // The outer loop steps up the parent chain each time (unignored is important here because otherwise elements would be searched twice)
     for (RefPtr stopSearchElement = anchorObject->crossFrameParentObjectUnignored(); startObject && startObject != stopSearchElement; startObject = startObject->crossFrameParentObjectUnignored()) {
@@ -414,28 +488,61 @@ AXCoreObject::AccessibilityChildrenVector AXSearchManager::findMatchingObjectsIn
         // This now does a DFS at the current level of the parent.
         while (!searchStack.isEmpty()) {
             Ref searchObject = searchStack.takeLast();
-            if (matchWithResultsLimit(searchObject, criteria, results))
+
+#if PLATFORM(COCOA)
+            // Check if this is a remote frame - if so, record it in the stream to maintain tree order.
+            if (searchObject->isRemoteFrame()) {
+                std::optional frameID = searchObject->remoteFrameID();
+#if PLATFORM(IOS_FAMILY)
+                // iOS returns the remote frame's AXRemoteElement placeholder inline and lets VoiceOver
+                // descend into it; there's no in-WebProcess cross-process coordination like on macOS.
+                if (frameID && searchObject->remoteFramePID())
+                    stream.appendRemoteFrame(*frameID, RefPtr { searchObject.ptr() });
+                UNUSED_PARAM(remoteFrameCallback);
+#else // !PLATFORM(IOS_FAMILY)
+                // macOS forwards the search into the remote frame via IPC.
+                if (frameID && searchObject->remoteFramePID()) {
+                    stream.appendRemoteFrame(*frameID);
+                    // Invoke callback to allow eager IPC dispatch while search continues.
+                    if (remoteFrameCallback)
+                        remoteFrameCallback(*frameID, stream.entryCount(), localResultCount);
+                }
+#endif // PLATFORM(IOS_FAMILY)
+                // Don't descend into remote frames - we'll forward the search to them
+                // via IPC in |remoteFrameCallback|.
+                continue;
+            }
+#else // !PLATFORM(COCOA)
+            UNUSED_PARAM(remoteFrameCallback);
+#endif // PLATFORM(COCOA)
+
+            if (addMatchToStream(searchObject))
                 break;
 
-            if (matchWithinRevealableContainer(searchObject.get()) && results.size() >= criteria.resultsLimit)
+            if (matchWithinRevealableContainer(searchObject.get()) && localResultCount >= criteria.resultsLimit)
                 break;
 
             if (!criteria.immediateDescendantsOnly)
                 appendChildrenToArray(searchObject, isForward, nullptr, searchStack);
         }
 
-        if (results.size() >= criteria.resultsLimit)
+        if (localResultCount >= criteria.resultsLimit)
             break;
 
         // When moving backwards, the parent object needs to be checked, because technically it's "before" the starting element.
-        if (!isForward && startObject != anchorObject && matchWithResultsLimit(*startObject, criteria, results))
+        // Only an object within the anchor is eligible. A search is scoped to its receiver, so if the start element lies outside
+        // the anchor's subtree this walk begins above the anchor, never reaches the stop element below it, and would otherwise
+        // match the anchor's own ancestors. That hands the client an element it is already above, which looks like navigation
+        // escaping the page: walking up out of an iframe returned the main frame's root scroll area.
+        if (!isForward && startObject != anchorObject && startObject->crossFrameIsDescendantOfObject(*anchorObject)
+            && addMatchToStream(*startObject))
             break;
 
         previousObject = startObject;
     }
 
-    AXLOG(results);
-    return results;
+    AXLOG(makeString("Stream total entries count: %zu. Local result count: %u"_s, stream.entryCount(), localResultCount));
+    return stream;
 }
 
 std::optional<AXTextMarkerRange> AXSearchManager::findMatchingRange(AccessibilitySearchCriteria&& criteria)
@@ -476,13 +583,19 @@ std::optional<AXTextMarkerRange> AXSearchManager::findMatchingRange(Accessibilit
     }
 
     // Didn't find a matching range for startObject, thus move to the next/previous object.
-    auto objects = findMatchingObjectsInternal(criteria);
-    if (!objects.isEmpty()) {
-        Ref object = objects[0];
-        AX_ASSERT(m_misspellingRanges.contains(object->objectID()));
-        const auto& ranges = m_misspellingRanges.get(object->objectID());
-        AX_ASSERT(!ranges.isEmpty());
-        return forward ? ranges[0] : ranges.last();
+    auto stream = findMatchingObjectsInternalAsStream(criteria, /* remoteFrameSearchCallback */ { });
+    // Misspelling search is local-only, so just get the first local result from the stream.
+    for (const auto& entry : stream.entries()) {
+        if (RefPtr object = entry.objectIfLocalResult()) {
+            auto axID = object->objectID();
+            AX_ASSERT(m_misspellingRanges.contains(axID));
+            const auto& ranges = m_misspellingRanges.get(axID);
+            if (ranges.isEmpty()) {
+                AX_ASSERT_NOT_REACHED();
+                return std::nullopt;
+            }
+            return forward ? ranges[0] : ranges.last();
+        }
     }
     return std::nullopt;
 }

@@ -33,7 +33,9 @@
 #include "FloatQuad.h"
 
 #include "GeometryUtilities.h"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <wtf/MathExtras.h>
@@ -44,17 +46,17 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FloatQuad);
 
-inline float dot(const FloatSize& a, const FloatSize& b)
+inline float NODELETE dot(const FloatSize& a, const FloatSize& b)
 {
     return a.width() * b.width() + a.height() * b.height();
 }
 
-inline float determinant(const FloatSize& a, const FloatSize& b)
+inline float NODELETE determinant(const FloatSize& a, const FloatSize& b)
 {
     return a.width() * b.height() - a.height() * b.width();
 }
 
-inline bool isPointInTriangle(const FloatPoint& p, const FloatPoint& t1, const FloatPoint& t2, const FloatPoint& t3)
+inline bool NODELETE isPointInTriangle(const FloatPoint& p, const FloatPoint& t1, const FloatPoint& t2, const FloatPoint& t3)
 {
     // Compute vectors        
     FloatSize v0 = t3 - t1;
@@ -77,7 +79,7 @@ inline bool isPointInTriangle(const FloatPoint& p, const FloatPoint& t1, const F
     return (u >= 0) && (v >= 0) && (u + v <= 1);
 }
 
-static inline float clampToIntRange(float value)
+static inline float NODELETE clampToIntRange(float value)
 {
     if (std::isinf(value) || std::abs(value) > (static_cast<float>(std::numeric_limits<int>::max()))) [[unlikely]]
         return std::signbit(value) ? std::numeric_limits<int>::min() : (static_cast<float>(std::numeric_limits<int>::max()));
@@ -113,7 +115,7 @@ bool FloatQuad::containsQuad(const FloatQuad& other) const
     return containsPoint(other.p1()) && containsPoint(other.p2()) && containsPoint(other.p3()) && containsPoint(other.p4());
 }
 
-static inline FloatPoint rightMostCornerToVector(const FloatRect& rect, const FloatSize& vector)
+static inline FloatPoint NODELETE rightMostCornerToVector(const FloatRect& rect, const FloatSize& vector)
 {
     // Return the corner of the rectangle that if it is to the left of the vector
     // would mean all of the rectangle is to the left of the vector.
@@ -178,7 +180,7 @@ bool FloatQuad::intersectsRect(const FloatRect& rect) const
 }
 
 // Tests whether the line is contained by or intersected with the circle.
-static inline bool lineIntersectsCircle(const FloatPoint& center, float radius, const FloatPoint& p0, const FloatPoint& p1)
+static inline bool NODELETE lineIntersectsCircle(const FloatPoint& center, float radius, const FloatPoint& p0, const FloatPoint& p1)
 {
     float x0 = p0.x() - center.x(), y0 = p0.y() - center.y();
     float x1 = p1.x() - center.x(), y1 = p1.y() - center.y();
@@ -224,6 +226,33 @@ bool FloatQuad::intersectsEllipse(const FloatPoint& center, const FloatSize& rad
     FloatPoint originPoint;
     return transformedQuad.intersectsCircle(originPoint, radii.height() * radii.width());
 
+}
+
+// Returns positive if point is to the right of edgeStart→edgeEnd, negative if to the left, zero if on the line.
+static inline float sideOf(FloatPoint edgeStart, FloatPoint edgeEnd, FloatPoint point)
+{
+    FloatSize edge = edgeEnd - edgeStart;
+    FloatSize toPoint = point - edgeStart;
+    return toPoint.height() * edge.width() - edge.height() * toPoint.width();
+}
+
+bool FloatQuad::intersectsQuad(const FloatQuad& other) const
+{
+    const std::array<FloatPoint, 4> thisVertices = { m_p1, m_p2, m_p3, m_p4 };
+    const std::array<FloatPoint, 4> otherVertices = { other.m_p1, other.m_p2, other.m_p3, other.m_p4 };
+
+    for (int edgeA = 0; edgeA < 4; ++edgeA) {
+        FloatPoint aStart = thisVertices[edgeA], aEnd = thisVertices[(edgeA + 1) % 4];
+        for (int edgeB = 0; edgeB < 4; ++edgeB) {
+            FloatPoint bStart = otherVertices[edgeB], bEnd = otherVertices[(edgeB + 1) % 4];
+            // Edges cross if each one's endpoints land on opposite sides of the other edge
+            if ((sideOf(bStart, bEnd, aStart) > 0) != (sideOf(bStart, bEnd, aEnd) > 0)
+                && (sideOf(aStart, aEnd, bStart) > 0) != (sideOf(aStart, aEnd, bEnd) > 0))
+                return true;
+        }
+    }
+    // Check if quad is entirely inside the other
+    return containsPoint(other.m_p1) || other.containsPoint(m_p1);
 }
 
 bool FloatQuad::isCounterclockwise() const

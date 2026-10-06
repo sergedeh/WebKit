@@ -10,9 +10,9 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColorSpace.h"
 #include "include/gpu/graphite/Recorder.h"
+#include "include/private/SkLog.h"
 #include "src/gpu/graphite/AtlasProvider.h"
 #include "src/gpu/graphite/DrawContext.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/ProxyCache.h"
 #include "src/gpu/graphite/RasterPathUtils.h"
 #include "src/gpu/graphite/RecorderPriv.h"
@@ -83,7 +83,7 @@ sk_sp<TextureProxy> RasterPathAtlas::onAddShape(const Shape& shape,
 
     // Try to add to uncached DrawAtlas
     if (!proxy) {
-        AtlasLocator loc;
+        DrawAtlas::AtlasLocator loc;
         proxy = fUncachedAtlasMgr.addToAtlas(fRecorder,
                                              shape,
                                              localToDevice,
@@ -134,7 +134,7 @@ bool RasterPathAtlas::RasterAtlasMgr::onAddToAtlas(const Shape& shape,
                                                    const SkStrokeRec& strokeRec,
                                                    SkIRect shapeBounds,
                                                    SkIVector transformedMaskOffset,
-                                                   const AtlasLocator& locator) {
+                                                   const DrawAtlas::AtlasLocator& locator) {
     SkPixmap pixmap = fDrawAtlas->prepForRender(locator, kEntryPadding);
 
     RasterMaskHelper helper(pixmap, -transformedMaskOffset);

@@ -26,13 +26,16 @@
 #pragma once
 
 #include "InlineDamage.h"
-#include <WebCore/InlineDisplayContent.h>
+#include "InlineDisplayContent.h"
+#include "StyleDifference.h"
 #include <optional>
 #include <wtf/Forward.h>
 
 namespace WebCore {
 
-class RenderStyle;
+namespace Style {
+class ComputedStyle;
+}
 
 namespace Layout {
 
@@ -45,8 +48,8 @@ class InlineInvalidation {
 public:
     InlineInvalidation(InlineDamage&, const InlineItemList&, const InlineDisplay::Content&);
 
-    bool rootStyleWillChange(const ElementBox& formattingContextRoot, const RenderStyle& newStyle);
-    bool styleWillChange(const Box&, const RenderStyle& newStyle, Style::Difference);
+    bool rootStyleWillChange(const ElementBox& formattingContextRoot, const Style::ComputedStyle& newStyle);
+    bool styleWillChange(const Box&, const Style::ComputedStyle& newStyle, Style::Difference);
 
     bool textInserted(const InlineTextBox& newOrDamagedInlineTextBox, std::optional<size_t> offset = { });
     bool textWillBeRemoved(const InlineTextBox&, std::optional<size_t> offset = { });
@@ -64,8 +67,8 @@ private:
     enum class ShouldApplyRangeLayout : bool { No, Yes };
     bool updateInlineDamage(const InvalidatedLine&, InlineDamage::Reason, ShouldApplyRangeLayout = ShouldApplyRangeLayout::No, LayoutUnit restartPaginationAdjustment = 0_lu);
     bool setFullLayoutIfNeeded(const Box&);
-    const InlineDisplay::Boxes& displayBoxes() const { return m_displayContent.boxes; }
-    const InlineDisplay::Lines& displayLines() const { return m_displayContent.lines; }
+    const InlineDisplay::Boxes& displayBoxes() const LIFETIME_BOUND { return m_displayContent.boxes; }
+    const InlineDisplay::Lines& displayLines() const LIFETIME_BOUND { return m_displayContent.lines; }
 
     InlineDamage& m_inlineDamage;
 

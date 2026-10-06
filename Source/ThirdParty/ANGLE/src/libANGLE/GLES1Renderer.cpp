@@ -18,8 +18,10 @@
 #include <vector>
 
 #include "common/hash_utils.h"
+#include "common/span.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/Context.inl.h"
+#include "libANGLE/ErrorStrings.h"
 #include "libANGLE/Program.h"
 #include "libANGLE/ResourceManager.h"
 #include "libANGLE/Shader.h"
@@ -64,7 +66,7 @@ bool operator!=(const GLES1ShaderState &a, const GLES1ShaderState &b)
 
 size_t GLES1ShaderState::hash() const
 {
-    return angle::ComputeGenericHash(*this);
+    return angle::ComputeGenericHash(angle::byte_span_from_ref(*this));
 }
 
 GLES1Renderer::GLES1Renderer() : mRendererProgramInitialized(false) {}
@@ -145,7 +147,7 @@ angle::Result GLES1Renderer::prepareForDraw(PrimitiveMode mode,
         if (texCubeEnables[i] && currCubeTexture &&
             IsMipmapFiltered(currCubeTexture->getMinFilter()))
         {
-            texCubeEnables[i] = curr2DTexture->isMipmapComplete();
+            texCubeEnables[i] = currCubeTexture->isMipmapComplete();
         }
     }
 
@@ -314,6 +316,23 @@ angle::Result GLES1Renderer::prepareForDraw(PrimitiveMode mode,
     setUniform4fv(&executable, programState.drawTextureNormalizedCropRectLoc, kTexUnitCount,
                   reinterpret_cast<GLfloat *>(cropRectBuffer));
 
+    for (int i = 0; i < kTexUnitCount; i++)
+    {
+        // To avoid GL_INVALID_OPERATION caused by samplers of different types pointing to the same
+        // texture unit, the inactive sampler is shifted to a dummy unit (i + kTexUnitCount).
+        if (texCubeEnables[i])
+        {
+            setUniform1i(context, &executable, programState.tex2DSamplerLocs[i], i + kTexUnitCount);
+            setUniform1i(context, &executable, programState.texCubeSamplerLocs[i], i);
+        }
+        else
+        {
+            setUniform1i(context, &executable, programState.tex2DSamplerLocs[i], i);
+            setUniform1i(context, &executable, programState.texCubeSamplerLocs[i],
+                         i + kTexUnitCount);
+        }
+    }
+
     if (gles1State->isDirty(GLES1State::DIRTY_GLES1_LOGIC_OP) && hasLogicOpANGLE)
     {
         // Note: ContextPrivateEnable(GL_COLOR_LOGIC_OP) is not used because that entry point
@@ -413,6 +432,7 @@ angle::Result GLES1Renderer::prepareForDraw(PrimitiveMode mode,
 
     if (gles1State->isDirty(GLES1State::DIRTY_GLES1_TEXTURE_ENVIRONMENT))
     {
+        float maxLodBias = context->getCaps().maxLODBias;
         for (int i = 0; i < kTexUnitCount; i++)
         {
             const auto &env = gles1State->textureEnvironment(i);
@@ -424,6 +444,7 @@ angle::Result GLES1Renderer::prepareForDraw(PrimitiveMode mode,
 
             uniformBuffers.texEnvRgbScales[i]   = env.rgbScale;
             uniformBuffers.texEnvAlphaScales[i] = env.alphaScale;
+            uniformBuffers.texEnvLodBiases[i]   = gl::clamp(env.lodBias, -maxLodBias, maxLodBias);
         }
 
         setUniform4fv(&executable, programState.textureEnvColorLoc, kTexUnitCount,
@@ -432,6 +453,8 @@ angle::Result GLES1Renderer::prepareForDraw(PrimitiveMode mode,
                       uniformBuffers.texEnvRgbScales.data());
         setUniform1fv(&executable, programState.alphaScaleLoc, kTexUnitCount,
                       uniformBuffers.texEnvAlphaScales.data());
+        setUniform1fv(&executable, programState.lodBiasLoc, kTexUnitCount,
+                      uniformBuffers.texEnvLodBiases.data());
     }
 
     // Alpha test
@@ -661,15 +684,17 @@ angle::Result GLES1Renderer::compileShader(Context *context,
     rx::ContextImpl *implementation = context->getImplementation();
     const Limitations &limitations  = implementation->getNativeLimitations();
 
-    ShaderProgramID shader = mShaderPrograms->createShader(implementation, limitations, shaderType);
+    if (!mShaderPrograms->createShader(implementation, limitations, shaderType, shaderOut))
+    {
+        ANGLE_CHECK(context, false, err::kHandleExhaustion, GL_OUT_OF_MEMORY);
+        return angle::Result::Stop;
+    }
 
-    Shader *shaderObject = getShader(shader);
+    Shader *shaderObject = getShader(*shaderOut);
     ANGLE_CHECK(context, shaderObject, "Missing shader object", GL_INVALID_OPERATION);
 
     shaderObject->setSource(context, 1, &src, nullptr);
     shaderObject->compile(context, angle::JobResultExpectancy::Immediate);
-
-    *shaderOut = shader;
 
     if (!shaderObject->isCompiled(context))
     {
@@ -693,12 +718,14 @@ angle::Result GLES1Renderer::linkProgram(Context *context,
                                          const angle::HashMap<GLint, std::string> &attribLocs,
                                          ShaderProgramID *programOut)
 {
-    ShaderProgramID program = mShaderPrograms->createProgram(context->getImplementation());
+    if (!mShaderPrograms->createProgram(context->getImplementation(), programOut))
+    {
+        ANGLE_CHECK(context, false, err::kHandleExhaustion, GL_OUT_OF_MEMORY);
+        return angle::Result::Stop;
+    }
 
-    Program *programObject = getProgram(program);
+    Program *programObject = getProgram(*programOut);
     ANGLE_CHECK(context, programObject, "Missing program object", GL_INVALID_OPERATION);
-
-    *programOut = program;
 
     programObject->attachShader(context, getShader(vertexShader));
     programObject->attachShader(context, getShader(fragmentShader));
@@ -1063,6 +1090,7 @@ angle::Result GLES1Renderer::initializeRendererProgram(Context *context,
     programState.textureEnvColorLoc = executable.getUniformLocation("texture_env_color");
     programState.rgbScaleLoc        = executable.getUniformLocation("texture_env_rgb_scale");
     programState.alphaScaleLoc      = executable.getUniformLocation("texture_env_alpha_scale");
+    programState.lodBiasLoc         = executable.getUniformLocation("texture_env_lod_bias");
 
     programState.alphaTestRefLoc = executable.getUniformLocation("alpha_test_ref");
 
@@ -1115,6 +1143,8 @@ angle::Result GLES1Renderer::initializeRendererProgram(Context *context,
 
     for (int i = 0; i < kTexUnitCount; i++)
     {
+        // To avoid GL_INVALID_OPERATION caused by samplers of different types pointing to the same
+        // texture unit, the inactive sampler is shifted to a dummy unit (i + kTexUnitCount).
         setUniform1i(context, &executable, programState.tex2DSamplerLocs[i], i);
         setUniform1i(context, &executable, programState.texCubeSamplerLocs[i], i + kTexUnitCount);
     }

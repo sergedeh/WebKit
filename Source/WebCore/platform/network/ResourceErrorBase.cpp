@@ -35,9 +35,6 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ResourceErrorBase);
 
-const ASCIILiteral errorDomainWebKitInternal = "WebKitInternal"_s;
-const ASCIILiteral errorDomainWebKitServiceWorker = "WebKitServiceWorker"_s;
-
 inline const ResourceError& ResourceErrorBase::asResourceError() const
 {
     return *static_cast<const ResourceError*>(this);
@@ -92,6 +89,11 @@ bool ResourceErrorBase::compare(const ResourceError& a, const ResourceError& b)
         return false;
 
     return ResourceError::platformCompare(a, b);
+}
+
+bool operator==(const ResourceError& a, const ResourceError& b)
+{
+    return ResourceErrorBase::compare(a, b);
 }
 
 ResourceError internalError(const URL& url, std::source_location location)

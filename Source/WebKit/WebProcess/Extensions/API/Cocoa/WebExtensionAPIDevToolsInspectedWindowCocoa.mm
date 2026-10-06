@@ -29,6 +29,7 @@
 
 #import "config.h"
 #import "WebExtensionAPIDevToolsInspectedWindow.h"
+#import "WebExtensionAPIKeys.h"
 
 #if ENABLE(WK_WEB_EXTENSIONS) && ENABLE(INSPECTOR_EXTENSIONS)
 
@@ -36,16 +37,11 @@
 #import "JSWebExtensionWrapper.h"
 #import "JavaScriptEvaluationResult.h"
 #import "MessageSenderInlines.h"
+#import "RunJavaScriptResult.h"
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionTabIdentifier.h"
 #import "WebExtensionUtilities.h"
 #import "WebProcess.h"
-
-static NSString * const frameURLKey = @"frameURL";
-static NSString * const ignoreCacheKey = @"ignoreCache";
-
-static NSString * const isExceptionKey = @"isException";
-static NSString * const valueKey = @"value";
 
 namespace WebKit {
 
@@ -67,12 +63,12 @@ void WebExtensionAPIDevToolsInspectedWindow::eval(WebPageProxyIdentifier webPage
         frameURL = URL { url };
 
         if (!frameURL.value().isValid()) {
-            *outExceptionString = toErrorString(nullString(), frameURLKey, @"'%@' is not a valid URL", url).createNSString().autorelease();
+            *outExceptionString = toErrorString(nullString(), frameURLKey, makeString("'"_s, String(url), "' is not a valid URL"_s)).createNSString().autorelease();
             return;
         }
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DevToolsInspectedWindowEval(webPageProxyIdentifier, expression, frameURL), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<Expected<JavaScriptEvaluationResult, std::optional<WebCore::ExceptionDetails>>, WebExtensionError>&& result) mutable {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DevToolsInspectedWindowEval(webPageProxyIdentifier, expression, frameURL), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<RunJavaScriptResult, WebExtensionError>&& result) mutable {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -84,18 +80,19 @@ void WebExtensionAPIDevToolsInspectedWindow::eval(WebPageProxyIdentifier webPage
         if (!result.value()) {
             // If an error occurred, element 0 will be undefined, and element 1 will contain an object giving details about the error.
             String valueKey = result.value().error() ? result.value().error()->message : emptyString();
-            SUPPRESS_UNCOUNTED_ARG auto valueData = JSValueMakeString(globalContext, toJSString(valueKey).get());
-            callback->call(fromArray(globalContext, { undefinedValue, fromObject(globalContext, {
-                { "isExceptionKey"_s, JSValueMakeBoolean(globalContext, true) },
-                { "valueKey"_s, valueData }
-            }) }));
+            auto valueData = JSValueMakeString(globalContext, toJSString(valueKey).get());
+            SUPPRESS_UNCOUNTED_ARG auto resultObject = fromObject(globalContext, {
+                { "isExceptionKey"_s, Protected(globalContext, JSValueMakeBoolean(globalContext, true)) },
+                { "valueKey"_s, Protected(globalContext, valueData) }
+            });
+            callback->call(fromArray(globalContext, { Protected(globalContext, undefinedValue), Protected(globalContext, resultObject) }));
             return;
         }
 
         auto scriptResult = result.value()->toJS(globalContext);
 
         // If no error occurred, element 0 will contain the result of evaluating the expression, and element 1 will be undefined.
-        callback->call(fromArray(globalContext, { scriptResult.get(), undefinedValue }));
+        callback->call(fromArray(globalContext, { Protected(globalContext, scriptResult.get()), Protected(globalContext, undefinedValue) }));
     }, extensionContext().identifier());
 }
 
@@ -123,7 +120,7 @@ double WebExtensionAPIDevToolsInspectedWindow::tabId(WebPage& page)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/devtools/inspectedWindow/tabId
 
-    auto result = protectedExtensionContext()->tabIdentifier(page);
+    auto result = extensionContext().tabIdentifier(page);
     return toWebAPI(result ? result.value() : WebExtensionTabConstants::NoneIdentifier);
 }
 

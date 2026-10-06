@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -88,6 +88,42 @@ TEST(MIMETypeRegistry, PreferredExtensionForMIMEType)
 TEST(MIMETypeRegistry, ExtensionsForMIMEType)
 {
     EXPECT_EQ(MIMETypeRegistry::extensionsForMIMEType({ }).size(), 0U);
+}
+
+TEST(MIMETypeRegistry, CorrectExtensionForMIMEType)
+{
+    EXPECT_TRUE(MIMETypeRegistry::correctExtensionForMIMEType({ }, "image/png"_s).isEmpty());
+    EXPECT_EQ("file.png"_s, MIMETypeRegistry::correctExtensionForMIMEType("file.png"_s, { }));
+    EXPECT_EQ("file.png"_s, MIMETypeRegistry::correctExtensionForMIMEType("file.png"_s, "application/octet-stream"_s));
+    EXPECT_EQ("file.html"_s, MIMETypeRegistry::correctExtensionForMIMEType("file.html"_s, "text/plain"_s));
+
+    EXPECT_EQ("image.png"_s, MIMETypeRegistry::correctExtensionForMIMEType("image.png"_s, "image/png"_s));
+
+    EXPECT_EQ("video.mp4"_s, MIMETypeRegistry::correctExtensionForMIMEType("video.gif"_s, "video/mp4"_s));
+    EXPECT_EQ("file.png"_s, MIMETypeRegistry::correctExtensionForMIMEType("file.gif"_s, "image/png"_s));
+
+    EXPECT_EQ("file.png"_s, MIMETypeRegistry::correctExtensionForMIMEType("file"_s, "image/png"_s));
+
+#if PLATFORM(COCOA)
+    EXPECT_EQ("archive.tar.gz"_s, MIMETypeRegistry::correctExtensionForMIMEType("archive.tar.gz"_s, "application/gzip"_s));
+
+    EXPECT_EQ("resource.tgz"_s, MIMETypeRegistry::correctExtensionForMIMEType("resource.tgz"_s, "application/gzip"_s));
+
+    EXPECT_EQ("resource.tgz"_s, MIMETypeRegistry::correctExtensionForMIMEType("resource.tgz"_s, "application/x-gzip"_s));
+    EXPECT_EQ("file.zip"_s, MIMETypeRegistry::correctExtensionForMIMEType("file.zip"_s, "application/x-zip-compressed"_s));
+    EXPECT_EQ("file.gz"_s, MIMETypeRegistry::correctExtensionForMIMEType("file.gz"_s, "application/gzip"_s));
+    EXPECT_EQ("file.gz"_s, MIMETypeRegistry::correctExtensionForMIMEType("file.gz"_s, "application/x-gzip"_s));
+
+    EXPECT_EQ("resource.TGZ"_s, MIMETypeRegistry::correctExtensionForMIMEType("resource.TGZ"_s, "application/gzip"_s));
+    EXPECT_EQ("resource.tgz"_s, MIMETypeRegistry::correctExtensionForMIMEType("resource.tgz"_s, "Application/X-Gzip"_s));
+
+    EXPECT_EQ("archive.cpgz"_s, MIMETypeRegistry::correctExtensionForMIMEType("archive.cpgz"_s, "application/zip"_s));
+    EXPECT_EQ("archive.cpgz"_s, MIMETypeRegistry::correctExtensionForMIMEType("archive.cpgz"_s, "application/gzip"_s));
+    EXPECT_EQ("data.tar"_s, MIMETypeRegistry::correctExtensionForMIMEType("data.tar"_s, "application/gzip"_s));
+    EXPECT_EQ("data.tgz"_s, MIMETypeRegistry::correctExtensionForMIMEType("data.tgz"_s, "application/zip"_s));
+    EXPECT_EQ("file.gz"_s, MIMETypeRegistry::correctExtensionForMIMEType("file.gz"_s, "application/zip"_s));
+    EXPECT_EQ("app.jar"_s, MIMETypeRegistry::correctExtensionForMIMEType("app.jar"_s, "application/zip"_s));
+#endif
 }
 
 } // namespace TestWebKitAPI

@@ -29,12 +29,11 @@
 FrameCanCreatePaymentSession : bool
 FrameDocumentSecurityOrigin : RefPtr<WebCore::SecurityOrigin> [Headers=<WebCore/SecurityOrigin.h>]
 FrameDocumentSecurityPolicy : std::optional<WebCore::DocumentSecurityPolicy> [Headers=<WebCore/DocumentSecurityPolicy.h>]
+FrameDocumentIsSandboxedOrigin : bool
 FrameURLProtocol : String [Headers=<wtf/text/WTFString.h>]
 FrameRect : WebCore::IntRect [Headers=<WebCore/IntRect.h>]
 
 ## Layout information for Intersection Observer
 
-FrameLayoutViewportRect : WebCore::LayoutRect [Headers=<WebCore/LayoutRect.h>]
-
-# Collection of layout info regarding children frames of this frame.
-ChildrenFrameLayoutInfo : HashMap<WebCore::FrameIdentifier, WebCore::RemoteFrameLayoutInfo> [Headers=<WebCore/FrameIdentifier.h>,<WebCore/RemoteFrameLayoutInfo.h>]
+FrameGeometry : WebCore::FrameGeometrySyncData [Headers=<WebCore/FrameGeometrySyncData.h>]
+FrameViewportInfo : WebCore::FrameViewportInfo [Headers=<WebCore/FrameGeometrySyncData.h>]

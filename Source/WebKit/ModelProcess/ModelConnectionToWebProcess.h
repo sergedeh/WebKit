@@ -84,8 +84,7 @@ public:
     void updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess&& sharedPreferencesForWebProcess) { m_sharedPreferencesForWebProcess = WTF::move(sharedPreferencesForWebProcess); }
 
     IPC::Connection& connection() { return m_connection.get(); }
-    Ref<IPC::Connection> protectedConnection() { return m_connection; }
-    IPC::MessageReceiverMap& messageReceiverMap() { return m_messageReceiverMap; }
+    IPC::MessageReceiverMap& messageReceiverMap() LIFETIME_BOUND { return m_messageReceiverMap; }
     ModelProcess& modelProcess() { return m_modelProcess.get(); }
     WebCore::ProcessIdentifier webProcessIdentifier() const { return m_webProcessIdentifier; }
 
@@ -93,9 +92,9 @@ public:
 
     ModelProcessModelPlayerManagerProxy& modelProcessModelPlayerManagerProxy() { return m_modelProcessModelPlayerManagerProxy.get(); }
 
-    Logger& logger();
+    Logger& NODELETE logger();
 
-    const WebCore::ProcessIdentity& webProcessIdentity() const { return m_webProcessIdentity; }
+    const WebCore::ProcessIdentity& webProcessIdentity() const LIFETIME_BOUND { return m_webProcessIdentity; }
 
     void didUnloadModelPlayer(WebCore::ModelPlayerIdentifier);
     bool allowsExitUnderMemoryPressure() const;
@@ -108,6 +107,7 @@ public:
 
     const std::optional<String> attributionTaskID() const { return m_attributionTaskID; };
     std::optional<int> debugEntityMemoryLimit() const;
+    std::optional<int> debugImmersiveEntityMemoryLimit() const;
 
 private:
     ModelConnectionToWebProcess(ModelProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, ModelProcessConnectionParameters&&, const std::optional<String>&);
@@ -130,13 +130,13 @@ private:
 
     static uint64_t gObjectCountForTesting;
 
-    Ref<ModelProcessModelPlayerManagerProxy> m_modelProcessModelPlayerManagerProxy;
+    const Ref<ModelProcessModelPlayerManagerProxy> m_modelProcessModelPlayerManagerProxy;
 
-    RefPtr<Logger> m_logger;
+    const RefPtr<Logger> m_logger;
 
-    Ref<IPC::Connection> m_connection;
+    const Ref<IPC::Connection> m_connection;
     IPC::MessageReceiverMap m_messageReceiverMap;
-    Ref<ModelProcess> m_modelProcess;
+    const Ref<ModelProcess> m_modelProcess;
     const WebCore::ProcessIdentifier m_webProcessIdentifier;
     const WebCore::ProcessIdentity m_webProcessIdentity;
     PAL::SessionID m_sessionID;

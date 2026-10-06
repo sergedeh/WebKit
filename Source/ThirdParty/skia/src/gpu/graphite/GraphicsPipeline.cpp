@@ -23,10 +23,9 @@ GraphicsPipeline::GraphicsPipeline(const SharedContext* sharedContext,
                                    std::string_view label)
         : Resource(sharedContext,
                    Ownership::kOwned,
-                   /*gpuMemorySize=*/0)
-        , fPipelineInfo(pipelineInfo) {
-    this->setLabel(label);
-}
+                   /*gpuMemorySize=*/0,
+                   label)
+        , fPipelineInfo(pipelineInfo) {}
 
 GraphicsPipeline::~GraphicsPipeline() {
 #if defined(SK_PIPELINE_LIFETIME_LOGGING)
@@ -47,7 +46,7 @@ GraphicsPipeline::PipelineInfo::PipelineInfo(
         : fDstReadStrategy(shaderInfo.dstReadStrategy())
         , fNumFragTexturesAndSamplers(shaderInfo.numFragmentTexturesAndSamplers())
         , fHasCombinedUniforms(shaderInfo.hasCombinedUniforms())
-        , fHasGradientBuffer(shaderInfo.hasGradientBuffer())
+        , fStorageBufferStages(shaderInfo.storageBufferStages())
         , fUniqueKeyHash(uniqueKeyHash)
         , fCompilationID(compilationID)
         , fFromPrecompile(pipelineCreationFlags & PipelineCreationFlags::kForPrecompilation) {

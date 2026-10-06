@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -68,6 +68,24 @@ WI.WorkerTreeElement = class WorkerTreeElement extends WI.ScriptTreeElement
 
     get target() { return this._target; }
 
+    descendantResourceTreeElementTypeDidChange(resourceTreeElement, oldType)
+    {
+        // Called by descendant ResourceTreeElements.
+
+        // Add the tree element again, which will move it to the new location
+        // based on sorting and possible folder changes.
+        this._addTreeElement(resourceTreeElement);
+    }
+
+    descendantResourceTreeElementMainTitleDidChange(resourceTreeElement, oldMainTitle)
+    {
+        // Called by descendant ResourceTreeElements.
+
+        // Add the tree element again, which will move it to the new location
+        // based on sorting and possible folder changes.
+        this._addTreeElement(resourceTreeElement);
+    }
+
     // Protected (TreeElement)
 
     onexpand()
@@ -106,7 +124,7 @@ WI.WorkerTreeElement = class WorkerTreeElement extends WI.ScriptTreeElement
     populateContextMenu(contextMenu, event)
     {
         // FIXME: <https://webkit.org/b/164427> Web Inspector: WorkerTarget's mainResource should be a Resource not a Script
-        WI.appendContextMenuItemsForSourceCode(contextMenu, this.script.resource ? this.script.resource : this.script);
+        WI.appendContextMenuItemsForNetworkResource(contextMenu, this.script.resource ? this.script.resource : this.script);
 
         super.populateContextMenu(contextMenu, event);
     }

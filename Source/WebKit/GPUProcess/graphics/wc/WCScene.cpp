@@ -34,7 +34,8 @@
 #include "WCRemoteFrameHostLayerManager.h"
 #include "WCSceneContext.h"
 #include "WCUpdateInfo.h"
-#include <WebCore/BitmapTexture.h>
+#include <WebCore/BitmapTexturePool.h>
+#include <WebCore/NativeImage.h>
 #include <WebCore/ShareableBitmap.h>
 #include <WebCore/TextureMapper.h>
 #include <WebCore/TextureMapperGLHeaders.h>
@@ -163,8 +164,8 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
                     else {
                         auto bitmap = tileUpdate.backingStore.bitmap();
                         if (bitmap) {
-                            auto image = bitmap->createImage();
-                            backingStore.updateContents(tileUpdate.index, *image, tileUpdate.dirtyRect);
+                            if (RefPtr image = WebCore::NativeImage::create(bitmap->createPlatformImage(WebCore::BackingStoreCopy::DontCopyBackingStore)))
+                                backingStore.updateContents(tileUpdate.index, *image, tileUpdate.dirtyRect);
                         }
                     }
                 }
@@ -261,11 +262,11 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
 
     if (update.remoteContextHostedIdentifier) {
         showFPS = false;
-        texture = m_textureMapper->acquireTextureFromPool(update.viewport, { WebCore::BitmapTexture::Flags::SupportsAlpha });
+        texture = WebCore::BitmapTexturePool::singleton().acquireTexture(update.viewport, { WebCore::BitmapTexture::Flags::SupportsAlpha });
         surface = texture.get();
     } else if (m_usesOffscreenRendering) {
         readPixel = true;
-        texture = m_textureMapper->acquireTextureFromPool(update.viewport, { WebCore::BitmapTexture::Flags::SupportsAlpha });
+        texture = WebCore::BitmapTexturePool::singleton().acquireTexture(update.viewport, { WebCore::BitmapTexture::Flags::SupportsAlpha });
         surface = texture.get();
     } else
         glViewport(0, 0, update.viewport.width(), update.viewport.height());

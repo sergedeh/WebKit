@@ -39,8 +39,9 @@
 #include <wtf/HashMap.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/MediaTime.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/NativePromise.h>
-#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
@@ -66,13 +67,14 @@ class VideoMediaSampleRenderer;
 class VideoTrackPrivate;
 
 class MediaPlayerPrivateMediaSourceAVFObjC
-    : public RefCountedAndCanMakeWeakPtr<MediaPlayerPrivateMediaSourceAVFObjC>
-    , public MediaPlayerPrivateInterface
+    : public MediaPlayerPrivateInterface
+    , public ThreadSafeRefCounted<MediaPlayerPrivateMediaSourceAVFObjC, WTF::DestructionThread::Main>
+    , public CanMakeWeakPtr<MediaPlayerPrivateMediaSourceAVFObjC>
     , private LoggerHelper
 {
 public:
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
 
     explicit MediaPlayerPrivateMediaSourceAVFObjC(MediaPlayer&);
     virtual ~MediaPlayerPrivateMediaSourceAVFObjC();
@@ -99,18 +101,16 @@ public:
     void setReadyState(MediaPlayer::ReadyState);
     void setNetworkState(MediaPlayer::NetworkState);
 
-    void seekInternal();
-    void startSeek(const MediaTime&);
-    void cancelPendingSeek();
-    void completeSeek(const MediaTime&);
-    void setLoadingProgresssed(bool);
+    void NODELETE setLoadingProgresssed(bool);
     void setHasAvailableVideoFrame(bool);
     bool hasAvailableVideoFrame() const override;
     void durationChanged();
 
     void effectiveRateChanged();
+    void notifyEndOfMediaIfNeeded();
     void setNaturalSize(const FloatSize&);
     void characteristicsFromMediaSourceChanged() final;
+    void seekableRangesFromMediaSourceChanged() final;
 
     MediaTime currentTime() const override;
     MediaTime currentOrPendingSeekTime() const final { return currentTime(); }
@@ -173,7 +173,7 @@ public:
     const Logger& mediaPlayerLogger() { return logger(); }
 #endif
 
-    bool supportsLimitedMatroska() const;
+    bool NODELETE supportsLimitedMatroska() const;
 
 private:
     // MediaPlayerPrivateInterface
@@ -209,13 +209,16 @@ private:
     bool hasAudio() const override;
 
     void setPageIsVisible(bool) final;
+    void setViewportVisibility(ViewportVisibility) final;
+    void updateRendererVisibility();
+    bool shouldTeardownOnVisibilityChange() const;
 
     MediaTime duration() const override;
     MediaTime startTime() const override;
     MediaTime initialTime() const override;
 
-    void seekToTarget(const SeekTarget&) final;
-    bool seeking() const final;
+    Ref<MediaTimePromise> seekToTarget(const SeekTarget&) final;
+    bool seeking() const;
     void setRateDouble(double) override;
     double rate() const override;
     double effectiveRate() const override;
@@ -235,7 +238,8 @@ private:
     void paint(GraphicsContext&, const FloatRect&) override;
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&) override;
     RefPtr<VideoFrame> videoFrameForCurrentTime() final;
-    DestinationColorSpace colorSpace() final;
+    Ref<BitmapImagePromise> bitmapImageForCurrentTime() final;
+    ColorSpace colorSpace() final;
 
     bool supportsAcceleratedRendering() const override;
     // called when the rendering system flips the into or out of accelerated rendering mode.
@@ -244,9 +248,8 @@ private:
 
     void setPresentationSize(const IntSize&) final;
 
-    Ref<AudioVideoRenderer> audioVideoRenderer() const;
+    Ref<AudioVideoRenderer> NODELETE audioVideoRenderer() const;
 
-    RefPtr<MediaSourcePrivateAVFObjC> protectedMediaSourcePrivate() const;
 
     // NOTE: Because the only way for MSE to recieve data is through an ArrayBuffer provided by
     // javascript running in the page, the video will, by necessity, always be CORS correct and
@@ -308,7 +311,7 @@ private:
     void updateStateFromReadyState();
     void mediaSourceHasRetrievedAllData() final;
 
-    bool supportsProgressMonitoring() const final { return false; }
+    bool supportsProgressMonitoring() const final;
 
 #if ENABLE(LINEAR_MEDIA_PLAYER)
     bool supportsLinearMediaPlayer() const final { return true; }
@@ -316,20 +319,32 @@ private:
 
     friend class MediaSourcePrivateAVFObjC;
     void bufferedChanged();
+    void resetStallForTime(const MediaTime&);
     void stall();
     void timeChanged();
 
     void setLayerRequiresFlush();
-    void flush();
     void flushVideoIfNeeded();
-    void reenqueueMediaForTime(const MediaTime&);
+
+    void seekInternal();
+    void continueSeek(const MediaTime&);
+    void reenqueueMediaForTimeAndFinishSeek(const MediaTime&);
+    void cancelPendingSeek();
+    void completeSeek(const MediaTime&);
+
+#if PLATFORM(MAC)
+    void screenReservedChanged(bool) final;
+#endif
 
     // Remote layer support
     WebCore::HostingContext hostingContext() const final;
+    Ref<HostingContextPromise> requestHostingContext() final;
     void setVideoLayerSizeFenced(const WebCore::FloatSize&, WTF::MachSendRightAnnotated&&) final;
     std::optional<MediaPlayerIdentifier> identifier() const final { return m_playerIdentifier; }
 
     static Ref<AudioVideoRenderer> createRenderer(LoggerHelper&, HTMLMediaElementIdentifier, MediaPlayerIdentifier);
+
+    void dispatchToRendererQueue(Function<void(AudioVideoRenderer&)>&&);
 
     const ThreadSafeWeakPtr<MediaPlayer> m_player;
     RefPtr<MediaSourcePrivateAVFObjC> m_mediaSourcePrivate; // set on load, immutable after.
@@ -343,9 +358,13 @@ private:
 
     // Seeking
     Timer m_seekTimer WTF_GUARDED_BY_CAPABILITY(mainThread);
-    bool m_seeking  WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
     std::optional<SeekTarget> m_pendingSeek WTF_GUARDED_BY_CAPABILITY(mainThread);
-    const Ref<NativePromiseRequest> m_rendererSeekRequest WTF_GUARDED_BY_CAPABILITY(mainThread);
+    const Ref<NativePromiseRequest> m_waitForTargetRequest WTF_GUARDED_BY_CAPABILITY(mainThread);
+    const Ref<NativePromiseRequest> m_rendererPrepareSeekRequest WTF_GUARDED_BY_CAPABILITY(mainThread);
+    const Ref<NativePromiseRequest> m_rendererFinishSeekRequest WTF_GUARDED_BY_CAPABILITY(mainThread);
+    const Ref<NativePromiseRequest> m_stallRequest WTF_GUARDED_BY_CAPABILITY(mainThread);
+    std::optional<MediaTimePromise::AutoRejectProducer> m_seekPromise WTF_GUARDED_BY_CAPABILITY(mainThread);
+    bool m_seeking WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     ThreadSafeWeakPtr<CDMSessionAVContentKeySession> m_session;
@@ -360,8 +379,8 @@ private:
     mutable bool m_loadingProgressed WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
     bool m_hasAvailableVideoFrame WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
     bool m_allRenderersHaveAvailableSamples WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
-    bool m_visible WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
-    RetainPtr<CVOpenGLTextureRef> m_lastTexture WTF_GUARDED_BY_CAPABILITY(mainThread);
+    bool m_pageIsVisible WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
+    ViewportVisibility m_viewportVisibility WTF_GUARDED_BY_CAPABILITY(mainThread) { ViewportVisibility::NotVisible };
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     RefPtr<MediaPlaybackTarget> m_playbackTarget WTF_GUARDED_BY_CAPABILITY(mainThread);
     bool m_shouldPlayToTarget WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
@@ -379,6 +398,7 @@ private:
 #endif
 
     bool m_layerRequiresFlush WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
+    bool m_isInFullscreenOrPictureInPicture WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
 #if PLATFORM(IOS_FAMILY)
     bool m_applicationIsActive WTF_GUARDED_BY_CAPABILITY(mainThread) { true };
 #endif

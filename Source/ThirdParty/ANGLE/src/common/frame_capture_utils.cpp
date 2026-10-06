@@ -7,11 +7,11 @@
 //   ANGLE Frame capture common classes.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "common/frame_capture_utils.h"
+
+#include <array>
+
+#include "common/unsafe_buffers.h"
 
 namespace angle
 {
@@ -28,19 +28,13 @@ ParamCapture::ParamCapture()
 {}
 
 ParamCapture::ParamCapture(const char *nameIn, ParamType typeIn)
-    : name(nameIn),
-      type(typeIn),
-      enumGroup(gl::GLESEnum::AllEnums),
-      bigGLEnum(gl::BigGLEnum::AllEnums),
-      uniqueID(nextID++)
+    : name(nameIn), type(typeIn), enumGroup(gl::GLESEnum::AllEnums), uniqueID(nextID++)
 {}
 
 ParamCapture::~ParamCapture() = default;
 
 ParamCapture::ParamCapture(ParamCapture &&other)
-    : type(ParamType::TGLenum),
-      enumGroup(gl::GLESEnum::AllEnums),
-      bigGLEnum(gl::BigGLEnum::AllEnums)
+    : type(ParamType::TGLenum), enumGroup(gl::GLESEnum::AllEnums)
 {
     *this = std::move(other);
 }
@@ -51,9 +45,10 @@ ParamCapture &ParamCapture::operator=(ParamCapture &&other)
     std::swap(type, other.type);
     std::swap(value, other.value);
     std::swap(enumGroup, other.enumGroup);
-    std::swap(bigGLEnum, other.bigGLEnum);
     std::swap(data, other.data);
     std::swap(arrayClientPointerIndex, other.arrayClientPointerIndex);
+    std::swap(arrayClientPointerMergedIndex, other.arrayClientPointerMergedIndex);
+    std::swap(arrayClientPointerOffset, other.arrayClientPointerOffset);
     std::swap(readBufferSizeBytes, other.readBufferSizeBytes);
     std::swap(dataNElements, other.dataNElements);
     std::swap(uniqueID, other.uniqueID);
@@ -132,10 +127,11 @@ void ParamBuffer::addReturnValue(ParamCapture &&returnValue)
 
 const char *ParamBuffer::getNextParamName()
 {
-    static const char *kParamNames[] = {"p0",  "p1",  "p2",  "p3",  "p4",  "p5",  "p6",  "p7",
-                                        "p8",  "p9",  "p10", "p11", "p12", "p13", "p14", "p15",
-                                        "p16", "p17", "p18", "p19", "p20", "p21", "p22"};
-    ASSERT(mParamCaptures.size() < ArraySize(kParamNames));
+    static constexpr std::array<const char *, 23> kParamNames = {
+        "p0",  "p1",  "p2",  "p3",  "p4",  "p5",  "p6",  "p7",  "p8",  "p9",  "p10", "p11",
+        "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22",
+    };
+    ASSERT(mParamCaptures.size() < kParamNames.size());
     return kParamNames[mParamCaptures.size()];
 }
 
@@ -200,7 +196,7 @@ void WriteParamValueReplay<ParamType::TGLboolean>(std::ostream &os,
             os << "GL_FALSE";
             break;
         default:
-            os << "0x" << std::hex << std::uppercase << GLint(value);
+            os << "0x" << std::hex << std::uppercase << GLint(value) << std::dec;
     }
 }
 
@@ -535,7 +531,16 @@ void WriteParamValueReplay<ParamType::TSurfaceID>(std::ostream &os,
                                                   const CallCapture &call,
                                                   egl::SurfaceID value)
 {
-    os << "gSurfaceMap2[" << value.value << "]";
+    // Real EGL surfaces will never be assigned 0 so value 0 always means EGL_NO_SURFACE.
+    // Emit that directly instead of 'gSurfaceMap2[0]' which can be indeterminate at replay time
+    if (value.value == 0)
+    {
+        os << "EGL_NO_SURFACE";
+    }
+    else
+    {
+        os << "gSurfaceMap2[" << value.value << "]";
+    }
 }
 
 template <>

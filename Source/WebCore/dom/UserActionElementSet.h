@@ -28,7 +28,9 @@
 #pragma once
 
 #include <wtf/Forward.h>
+#include <wtf/HashMap.h>
 #include <wtf/OptionSet.h>
+#include <wtf/OptionSetHash.h>
 #include <wtf/Ref.h>
 #include <wtf/WeakHashMap.h>
 
@@ -74,7 +76,7 @@ private:
     void setFlags(Element& element, bool enable, OptionSet<Flag> flags) { enable ? setFlags(element, flags) : clearFlags(element, flags); }
     void setFlags(Element&, OptionSet<Flag>);
     void clearFlags(Element&, OptionSet<Flag>);
-    bool hasFlag(const Element&, Flag) const;
+    bool NODELETE hasFlag(const Element&, Flag) const;
 
     WeakHashMap<Element, OptionSet<Flag>, WeakPtrImplWithEventTargetData> m_elements;
 };

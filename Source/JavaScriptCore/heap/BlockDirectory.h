@@ -25,22 +25,18 @@
 
 #pragma once
 
-#include <JavaScriptCore/AllocationFailureMode.h>
 #include <JavaScriptCore/BlockDirectoryBits.h>
 #include <JavaScriptCore/CellAttributes.h>
 #include <JavaScriptCore/FreeList.h>
+#include <JavaScriptCore/JSExportMacros.h>
 #include <JavaScriptCore/LocalAllocator.h>
 #include <JavaScriptCore/MarkedBlock.h>
+#include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
 #include <wtf/DebugHeap.h>
-#include <wtf/FastBitVector.h>
-#include <wtf/MonotonicTime.h>
+#include <wtf/Lock.h>
 #include <wtf/SharedTask.h>
 #include <wtf/Vector.h>
-
-namespace WTF {
-class SimpleStats;
-}
 
 namespace JSC {
 
@@ -61,16 +57,16 @@ class BlockDirectory {
 public:
     BlockDirectory(size_t cellSize);
     ~BlockDirectory();
-    void setSubspace(Subspace*);
+    void NODELETE setSubspace(Subspace*);
     void lastChanceToFinalize();
     void prepareForAllocation();
     void stopAllocating();
     void stopAllocatingForGood();
     void resumeAllocating();
-    void beginMarkingForFullCollection();
+    void NODELETE beginMarkingForFullCollection();
     void endMarking();
-    void snapshotUnsweptForEdenCollection();
-    void snapshotUnsweptForFullCollection();
+    void NODELETE snapshotUnsweptForEdenCollection();
+    void NODELETE snapshotUnsweptForFullCollection();
     void sweep();
     void shrink();
     void assertNoUnswept();
@@ -79,9 +75,12 @@ public:
     DestructionMode destruction() const { return m_attributes.destruction; }
     HeapCell::Kind cellKind() const { return m_attributes.cellKind; }
 
-    inline void forEachBlock(const std::invocable<MarkedBlock::Handle*> auto&);
-    inline void forEachNotEmptyBlock(const std::invocable<MarkedBlock::Handle*> auto&);
-    
+    inline void forEachBlock(NOESCAPE const std::invocable<MarkedBlock::Handle*> auto&);
+    inline void forEachNotEmptyBlock(NOESCAPE const std::invocable<MarkedBlock::Handle*> auto&);
+
+    // Intended for diagnostics only (rdar://157153895)
+    bool isFreeListedCell(const void*);
+
     RefPtr<SharedTask<MarkedBlock::Handle*()>> parallelNotEmptyBlockSource();
     
     void addBlock(MarkedBlock::Handle*);
@@ -89,10 +88,8 @@ public:
     // If WillDeleteBlock::Yes is passed then the block will be left in an invalid state. We do this, however, to avoid potentially paging in / decompressing old blocks to update their handle just before freeing them.
     void removeBlock(MarkedBlock::Handle*, WillDeleteBlock = WillDeleteBlock::No);
 
-    void updatePercentageOfPagedOutPages(WTF::SimpleStats&);
-    
 #if ASSERT_ENABLED
-    void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock);
+    JS_EXPORT_PRIVATE void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock);
     void assertSweeperIsSuspended() const WTF_ASSERTS_ACQUIRED_LOCK(m_bitvectorLock);
 #else
     ALWAYS_INLINE void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock) { }
@@ -102,7 +99,7 @@ public:
     // to release the capability.
     ALWAYS_INLINE void releaseAssertAcquiredBitVectorLock() const WTF_RELEASES_SHARED_CAPABILITY(m_bitvectorLock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS { }
 
-    Lock& bitvectorLock() WTF_RETURNS_LOCK(m_bitvectorLock) { return m_bitvectorLock; }
+    Lock& bitvectorLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_bitvectorLock) { return m_bitvectorLock; }
 
 #define BLOCK_DIRECTORY_BIT_ACCESSORS(lowerBitName, capitalBitName)     \
     bool is ## capitalBitName(size_t index) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return m_bits.is ## capitalBitName(index); } \
@@ -116,8 +113,14 @@ public:
     FOR_EACH_BLOCK_DIRECTORY_BIT(BLOCK_DIRECTORY_BIT_ACCESSORS)
 #undef BLOCK_DIRECTORY_BIT_ACCESSORS
 
+    // A destructible block still owes its old owner a destructor pass over every one of its cells,
+    // and whoever took it would have to pay that inline, so it stays with the sweeper until the bit
+    // says the destructors have run.
+    auto stealableBits() const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return emptyBitsView() & ~destructibleBitsView() & ~inUseBitsView(); }
+    bool isStealable(size_t index) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return stealableBits()[index]; }
+
     template<typename Func>
-    void forEachBitVector(const Func& func) WTF_REQUIRES_LOCK(m_bitvectorLock)
+    void forEachBitVector(NOESCAPE const Func& func) WTF_REQUIRES_LOCK(m_bitvectorLock)
     {
 #define BLOCK_DIRECTORY_BIT_CALLBACK(lowerBitName, capitalBitName) \
         func(m_bits.lowerBitName());
@@ -126,7 +129,7 @@ public:
     }
     
     template<typename Func>
-    void forEachBitVectorWithName(const Func& func) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock)
+    void forEachBitVectorWithName(NOESCAPE const Func& func) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock)
     {
 #define BLOCK_DIRECTORY_BIT_CALLBACK(lowerBitName, capitalBitName) \
         func(m_bits.lowerBitName(), #capitalBitName);
@@ -136,30 +139,32 @@ public:
     
     BlockDirectory* nextDirectory() const { return m_nextDirectory; }
     BlockDirectory* nextDirectoryInSubspace() const { return m_nextDirectoryInSubspace; }
-    BlockDirectory* nextDirectoryInAlignedMemoryAllocator() const { return m_nextDirectoryInAlignedMemoryAllocator; }
-    
+
     void setNextDirectory(BlockDirectory* directory) { m_nextDirectory = directory; }
     void setNextDirectoryInSubspace(BlockDirectory* directory) { m_nextDirectoryInSubspace = directory; }
-    void setNextDirectoryInAlignedMemoryAllocator(BlockDirectory* directory) { m_nextDirectoryInAlignedMemoryAllocator = directory; }
-    
+
     MarkedBlock::Handle* findEmptyBlockToSteal();
-    
-    MarkedBlock::Handle* findBlockToSweep() { return findBlockToSweep(m_unsweptCursor); }
+
+    // Callers must already have cleared the block's in-use bit.
+    void noteBlockMayBeStealable(unsigned index) WTF_REQUIRES_LOCK(m_bitvectorLock);
+
+    inline MarkedBlock::Handle* findBlockToSweep();
     MarkedBlock::Handle* findBlockToSweep(unsigned& unsweptCursor);
 
     // FIXME: rdar://139998916
-    MarkedBlock::Handle* findMarkedBlockHandleDebug(MarkedBlock*);
+    MarkedBlock::Handle* NODELETE findMarkedBlockHandleDebug(MarkedBlock*);
 
     void didFinishUsingBlock(MarkedBlock::Handle*);
     void didFinishUsingBlock(AbstractLocker&, MarkedBlock::Handle*) WTF_REQUIRES_LOCK(m_bitvectorLock);
 
     Subspace* subspace() const { return m_subspace; }
-    MarkedSpace& markedSpace() const;
+    MarkedSpace& NODELETE markedSpace() const;
     
     void dump(PrintStream&) const;
     void dumpBits(PrintStream& = WTF::dataFile()) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock);
 
 private:
+    friend class AlignedMemoryAllocator;
     friend class IsoCellSet;
     friend class LocalAllocator;
     friend class LocalSideAllocator;
@@ -169,7 +174,9 @@ private:
     
     MarkedBlock::Handle* tryAllocateBlock(Heap&);
     
-    Vector<MarkedBlock::Handle*> m_blocks;
+    // The MarkedBlock is stored next to its Handle so that we can prefetch its header without chasing through
+    // the Handle first. MarkedBlocks are often cold when first accessed so this can accelerate sweeping.
+    Vector<std::pair<MarkedBlock::Handle*, MarkedBlock*>> m_blocks;
     Vector<unsigned> m_freeBlockIndices;
 
     // Mutator uses this to guard resizing the bitvectors. Those things in the GC that may run
@@ -186,13 +193,14 @@ private:
     // this number is bound by capacity of Vector m_blocks, which must be within unsigned.
     unsigned m_emptyCursor { 0 };
     unsigned m_unsweptCursor { 0 }; // Points to the next block that is a candidate for incremental sweeping.
-    
+
     // FIXME: All of these should probably be references.
     // https://bugs.webkit.org/show_bug.cgi?id=166988
     Subspace* m_subspace { nullptr };
     BlockDirectory* m_nextDirectory { nullptr };
     BlockDirectory* m_nextDirectoryInSubspace { nullptr };
-    BlockDirectory* m_nextDirectoryInAlignedMemoryAllocator { nullptr };
+    BlockDirectory* m_nextDirectoryWithEmptyBlocks { nullptr };
+    Atomic<bool> m_isOnEmptyBlocksList { false };
     
     SentinelLinkedList<LocalAllocator, BasicRawSentinelNode<LocalAllocator>> m_localAllocators;
 };

@@ -24,11 +24,14 @@
 
 #include "Document.h"
 #include "Element.h"
+#include "Event.h"
+#include "EventNames.h"
 #include "SVGElement.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGUseElement.h"
 #include "StyleSVGMarkerResource.h"
 #include "XLinkNames.h"
+#include <pal/text/TextEncoding.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 
@@ -49,7 +52,9 @@ SVGURIReference::SVGURIReference(SVGElement* contextElement)
 
 bool SVGURIReference::isKnownAttribute(const QualifiedName& attributeName)
 {
-    return PropertyRegistry::isKnownAttribute(attributeName);
+    auto result = attributeName.matches(SVGNames::hrefAttr) || attributeName.matches(XLinkNames::hrefAttr);
+    ASSERT(result == PropertyRegistry::isKnownAttribute(attributeName));
+    return result;
 }
 
 SVGElement& SVGURIReference::contextElement() const
@@ -60,8 +65,8 @@ SVGElement& SVGURIReference::contextElement() const
 void SVGURIReference::parseAttribute(const QualifiedName& name, const AtomString& value)
 {
     if (name.matches(SVGNames::hrefAttr))
-        m_href->setBaseValInternal(value.isNull() ? contextElement().getAttribute(XLinkNames::hrefAttr) : value);
-    else if (name.matches(XLinkNames::hrefAttr) && !contextElement().hasAttribute(SVGNames::hrefAttr))
+        m_href->setBaseValInternal(value.isNull() ? protect(contextElement())->getAttribute(XLinkNames::hrefAttr) : value);
+    else if (name.matches(XLinkNames::hrefAttr) && !protect(contextElement())->hasAttribute(SVGNames::hrefAttr))
         m_href->setBaseValInternal(value);
 }
 
@@ -72,15 +77,12 @@ AtomString SVGURIReference::fragmentIdentifierFromIRIString(const String& url, c
         return emptyAtom();
 
     if (!start)
-        return StringView(url).substring(1).toAtomString();
+        return AtomString(PAL::decodeURLEscapeSequences(StringView(url).substring(1)));
 
-    URL base = URL(document.baseURL(), url.left(start));
-    String fragmentIdentifier = url.substring(start);
-    URL urlWithFragment(base, fragmentIdentifier);
+    URL urlWithFragment = document.encodingParseURL(url);
     if (equalIgnoringFragmentIdentifier(urlWithFragment, document.url()))
-        return StringView(fragmentIdentifier).substring(1).toAtomString();
+        return AtomString(PAL::decodeURLEscapeSequences(urlWithFragment.fragmentIdentifier()));
 
-    // The url doesn't have any fragment identifier.
     return emptyAtom();
 }
 
@@ -98,18 +100,25 @@ AtomString SVGURIReference::fragmentIdentifierFromIRIString(const Style::SVGMark
 
 auto SVGURIReference::targetElementFromIRIString(const String& iri, const TreeScope& treeScope, RefPtr<Document> externalDocument) -> TargetElementResult
 {
-    // If there's no fragment identifier contained within the IRI string, we can't lookup an element.
+    // SVG 2 allows <use href="file.svg"> (no fragment) to reference the root
+    // element of the external document. This only applies when an external
+    // document is supplied by the caller — today only SVGUseElement does.
+    // https://svgwg.org/svg2-draft/struct.html#UseElementHrefAttribute
     size_t startOfFragmentIdentifier = iri.find('#');
-    if (startOfFragmentIdentifier == notFound)
+    if (startOfFragmentIdentifier == notFound) {
+        if (externalDocument)
+            return { externalDocument->documentElement(), nullAtom() };
         return { };
+    }
 
     // Exclude the '#' character when determining the fragmentIdentifier.
-    auto id = StringView(iri).substring(startOfFragmentIdentifier + 1).toAtomString();
+    // Percent-decode the fragment so that url(#%66%6f%6f) resolves to id="foo".
+    auto id = AtomString(PAL::decodeURLEscapeSequences(StringView(iri).substring(startOfFragmentIdentifier + 1)));
     if (id.isEmpty())
         return { };
 
     Ref document = treeScope.documentScope();
-    auto url = document->completeURL(iri);
+    auto url = document->encodingParseURL(iri);
     if (externalDocument) {
         // Enforce that the referenced url matches the url of the document that we've loaded for it!
         ASSERT(equalIgnoringFragmentIdentifier(url, externalDocument->url()));
@@ -128,7 +137,7 @@ auto SVGURIReference::targetElementFromIRIString(const String& iri, const TreeSc
 
     RefPtr shadowHost = treeScope.rootNode().shadowHost();
     if (is<SVGUseElement>(shadowHost))
-        return { shadowHost->treeScope().getElementById(id), WTF::move(id) };
+        return { protect(shadowHost->treeScope())->getElementById(id), WTF::move(id) };
 
     return { treeScope.getElementById(id), WTF::move(id) };
 }
@@ -142,9 +151,9 @@ bool SVGURIReference::haveLoadedRequiredResources() const
 {
     if (href().isEmpty())
         return true;
-    if (contextElement().protectedDocument()->completeURL(href()).protocolIsData())
+    if (protect(contextElement().document())->encodingParseURL(href()).protocolIsData())
         return true;
-    if (!isExternalURIReference(href(), contextElement().protectedDocument()))
+    if (!isExternalURIReference(href(), protect(contextElement().document())))
         return true;
     return errorOccurred() || haveFiredLoadEvent();
 }
@@ -158,7 +167,7 @@ void SVGURIReference::dispatchLoadEvent()
     setHaveFiredLoadEvent(true);
     ASSERT(contextElement().haveLoadedRequiredResources());
 
-    contextElement().sendLoadEventIfPossible();
+    protect(contextElement())->dispatchEvent(Event::create(eventNames().loadEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
 }

@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/KeyAtomStringCache.h>
 #include <JavaScriptCore/SmallStrings.h>
@@ -34,7 +33,7 @@
 namespace JSC {
 
 template<typename Buffer, typename Func>
-ALWAYS_INLINE JSString* KeyAtomStringCache::make(VM& vm, Buffer& buffer, const Func& func)
+ALWAYS_INLINE JSString* KeyAtomStringCache::make(VM& vm, Buffer& buffer, NOESCAPE const Func& func)
 {
     if (buffer.characters.empty())
         return jsEmptyString(vm);

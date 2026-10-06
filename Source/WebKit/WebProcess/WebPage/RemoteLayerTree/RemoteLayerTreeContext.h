@@ -32,7 +32,6 @@
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/GraphicsLayerFactory.h>
 #include <WebCore/HTMLMediaElementIdentifier.h>
-#include <WebCore/LayerPool.h>
 #include <WebCore/PlatformCALayer.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
@@ -67,21 +66,21 @@ public:
     void layerDidEnterContext(PlatformCALayerRemote&, WebCore::PlatformCALayer::LayerType);
 #if HAVE(AVKIT)
     void layerDidEnterContext(PlatformCALayerRemote&, WebCore::PlatformCALayer::LayerType, WebCore::HTMLVideoElement&);
+
+    RefPtr<WebCore::HTMLVideoElement> videoElementForLayer(WebCore::PlatformLayerIdentifier) const;
 #endif
     void layerWillLeaveContext(PlatformCALayerRemote&);
 
     void graphicsLayerDidEnterContext(GraphicsLayerCARemote&);
     void graphicsLayerWillLeaveContext(GraphicsLayerCARemote&);
 
-    WebCore::LayerPool& layerPool() { return m_layerPool.get(); }
-
-    float deviceScaleFactor() const;
+    float NODELETE deviceScaleFactor() const;
     
-    std::optional<WebCore::DestinationColorSpace> displayColorSpace() const;
+    std::optional<WebCore::ColorSpace> displayColorSpace() const;
 
-    std::optional<DrawingAreaIdentifier> drawingAreaIdentifier() const;
+    std::optional<DrawingAreaIdentifier> NODELETE drawingAreaIdentifier() const;
 
-    WebCore::UseLosslessCompression useIOSurfaceLosslessCompression() const;
+    WebCore::UseLosslessCompression NODELETE useIOSurfaceLosslessCompression() const;
 
     void buildTransaction(RemoteLayerTreeTransaction&, WebCore::PlatformCALayer& rootLayer, WebCore::FrameIdentifier);
 
@@ -93,12 +92,11 @@ public:
 
     void willStartAnimationOnLayer(PlatformCALayerRemote&);
 
-    RemoteLayerBackingStoreCollection& backingStoreCollection() { return m_backingStoreCollection; }
+    RemoteLayerBackingStoreCollection& backingStoreCollection() LIFETIME_BOUND { return m_backingStoreCollection; }
 
     void adoptLayersFromContext(RemoteLayerTreeContext&);
 
     RemoteRenderingBackendProxy& ensureRemoteRenderingBackendProxy();
-    Ref<RemoteRenderingBackendProxy> ensureProtectedRemoteRenderingBackendProxy();
 
     bool useDynamicContentScalingDisplayListsForDOMRendering() const { return m_useDynamicContentScalingDisplayListsForDOMRendering; }
     void setUseDynamicContentScalingDisplayListsForDOMRendering(bool useDynamicContentScalingDisplayLists) { m_useDynamicContentScalingDisplayListsForDOMRendering = useDynamicContentScalingDisplayLists; }
@@ -109,9 +107,7 @@ public:
     bool canShowWhileLocked() const;
 #endif
 
-    WebPage& webPage();
-    Ref<WebPage> protectedWebPage();
-    Ref<const WebPage> protectedWebPage() const;
+    WebPage& NODELETE webPage() const;
 
 private:
     explicit RemoteLayerTreeContext(WebPage&);
@@ -133,8 +129,6 @@ private:
     HashSet<WeakRef<GraphicsLayerCARemote>> m_liveGraphicsLayers;
 
     const UniqueRef<RemoteLayerBackingStoreCollection> m_backingStoreCollection;
-
-    const UniqueRef<WebCore::LayerPool> m_layerPool;
 
     CheckedPtr<RemoteLayerTreeTransaction> m_currentTransaction;
 

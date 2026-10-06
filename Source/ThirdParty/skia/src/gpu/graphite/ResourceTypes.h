@@ -12,9 +12,9 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkTileMode.h"
 #include "include/gpu/graphite/GraphiteTypes.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkEnumBitMask.h"
-#include "src/base/SkMathPriv.h"
+#include "include/private/SkEnumBitMask.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkMathPriv.h"
 
 namespace skgpu::graphite {
 
@@ -25,14 +25,14 @@ class Buffer;
 // it to appear as just an enum class.
 SK_MAKE_BITMASK_OPS(DepthStencilFlags)
 // The same goes for SampleCount
-SK_MAKE_BITMASK_OPS(SampleCount::V)
+SK_MAKE_BITMASK_OPS(SampleCount)
 
 /**
  * There are only a few possible valid sample counts (1, 2, 4, 8, 16). So we can key on those 5
  * options instead of the actual sample value. The resulting key value only requires 3 bits of space
  */
 static constexpr uint32_t SamplesToKey(SampleCount numSamples) {
-    switch ((SampleCount::V) numSamples) {
+    switch (numSamples) {
         case SampleCount::k1:
             return 0;
         case SampleCount::k2:
@@ -48,7 +48,7 @@ static constexpr uint32_t SamplesToKey(SampleCount numSamples) {
 }
 static constexpr SampleCount KeyToSamples(uint32_t keyBits) {
     SkASSERT(keyBits <= 4);
-    return static_cast<SampleCount::V>(1 << keyBits);
+    return static_cast<SampleCount>(1 << keyBits);
 }
 static constexpr int kNumSampleKeyBits = 3;
 
@@ -116,16 +116,20 @@ static const int kBufferTypeCount = static_cast<int>(BufferType::kLast) + 1;
 enum class Layout : uint8_t {
     kInvalid = 0,
     kStd140,
+    kStd140_F16,
     kStd430,
+    kStd430_F16,
     kMetal,
 };
 
 static constexpr const char* LayoutString(Layout layout) {
     switch(layout) {
-        case Layout::kStd140:  return "std140";
-        case Layout::kStd430:  return "std430";
-        case Layout::kMetal:   return "metal";
-        case Layout::kInvalid: return "invalid";
+        case Layout::kStd140:     return "std140";
+        case Layout::kStd140_F16: return "std140-f16";
+        case Layout::kStd430:     return "std430";
+        case Layout::kStd430_F16: return "std430-f16";
+        case Layout::kMetal:      return "metal";
+        case Layout::kInvalid:    return "invalid";
     }
     SkUNREACHABLE;
 }
@@ -202,6 +206,27 @@ struct BindBufferInfo {
     }
     bool operator!=(const BindBufferInfo& o) const { return !(*this == o); }
 };
+
+// How texture memory is arranged on the GPU, which can impact what operations are supported.
+enum class Tiling : uint8_t {
+    kOptimal,
+    kLinear
+};
+
+// Coarse ways in which a specific texture can be used, or the theoretic set of usages a texture
+// format supports.
+enum class TextureUsage : uint8_t {
+    kRender   = 0x01, // Can be used as a rendering attachment
+    kMSRTSS   = 0x02, // Can be rendered with MSAA-render-to-single-sampled functionality
+    kSample   = 0x04, // Can be sampled within a shader with linear filtering
+    kCopySrc  = 0x08, // Can be copied into another texture or buffer
+    kCopyDst  = 0x10, // Can be the copy target of another texture or buffer
+    kStorage  = 0x20, // Can be read and written to in a compute pipeline
+    kHostCopy = 0x40, // Can be written to directly from host memory
+    kRead     = 0x80, // Can be read in a shader (point/nearest sampling or texel fetch; used as
+                      // readonly proxy for storage buffers)
+};
+SK_MAKE_BITMASK_OPS(TextureUsage)
 
 struct ImmutableSamplerInfo {
     // If the sampler requires YCbCr conversion, backends can place that information here.
@@ -299,9 +324,9 @@ struct SamplerDesc {
 
     // These are public such that backends can bitshift data in order to determine whatever
     // sampler qualities they need from fDesc.
-    static constexpr int kNumTileModeBits   = SkNextLog2_portable(int(SkTileMode::kLastTileMode)+1);
-    static constexpr int kNumFilterModeBits = SkNextLog2_portable(int(SkFilterMode::kLast)+1);
-    static constexpr int kNumMipmapModeBits = SkNextLog2_portable(int(SkMipmapMode::kLast)+1);
+    static constexpr int kNumTileModeBits   = SkNextLog2(int(SkTileMode::kLastTileMode)+1);
+    static constexpr int kNumFilterModeBits = SkNextLog2(int(SkFilterMode::kLast)+1);
+    static constexpr int kNumMipmapModeBits = SkNextLog2(int(SkMipmapMode::kLast)+1);
     static constexpr int kMaxNumConversionInfoBits =
             32 - kNumFilterModeBits - kNumMipmapModeBits - kNumTileModeBits;
 

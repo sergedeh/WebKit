@@ -27,59 +27,21 @@
 #include "config.h"
 #include "AutosizeStatus.h"
 
-#if ENABLE(TEXT_AUTOSIZING)
-
-#include "RenderStyle+SettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 
-bool AutosizeStatus::probablyContainsASmallFixedNumberOfLines(const RenderStyle& style)
-{
-    auto& lineHeightAsLength = style.specifiedLineHeight();
-    auto lineHeightAsFixed = lineHeightAsLength.tryFixed();
-    auto lineHeightAsPercentage = lineHeightAsLength.tryPercentage();
-    if (!lineHeightAsFixed && !lineHeightAsPercentage)
-        return false;
-
-    auto& maxHeight = style.maxHeight();
-    std::optional<float> heightOrMaxHeightAsLength;
-    if (auto fixedMaxHeight = maxHeight.tryFixed())
-        heightOrMaxHeightAsLength = fixedMaxHeight->resolveZoom(style.usedZoomForLength());
-    else if (auto fixedHeight = style.height().tryFixed(); fixedHeight && (!maxHeight.isSpecified() || maxHeight.isNone()))
-        heightOrMaxHeightAsLength = fixedHeight->resolveZoom(style.usedZoomForLength());
-
-    if (!heightOrMaxHeightAsLength)
-        return false;
-
-    float heightOrMaxHeight = *heightOrMaxHeightAsLength;
-    if (heightOrMaxHeight <= 0)
-        return false;
-
-    float approximateLineHeight = lineHeightAsPercentage ? lineHeightAsPercentage->value * style.specifiedFontSize() / 100 : lineHeightAsFixed->resolveZoom(style.usedZoomForLength());
-    if (approximateLineHeight <= 0)
-        return false;
-
-    float approximateNumberOfLines = heightOrMaxHeight / approximateLineHeight;
-    if (auto integerLineClamp = style.lineClamp().tryInteger())
-        return std::floor(approximateNumberOfLines) == integerLineClamp->value;
-
-    const int maximumNumberOfLines = 5;
-    const float thresholdForConsideringAnApproximateNumberOfLinesToBeCloseToAnInteger = 0.01;
-    return approximateNumberOfLines <= maximumNumberOfLines + thresholdForConsideringAnApproximateNumberOfLinesToBeCloseToAnInteger
-        && approximateNumberOfLines - std::floor(approximateNumberOfLines) <= thresholdForConsideringAnApproximateNumberOfLinesToBeCloseToAnInteger;
-}
-
-auto AutosizeStatus::computeStatus(const RenderStyle& style) -> AutosizeStatus
+auto AutosizeStatus::compute(const Style::ComputedStyle& style) -> AutosizeStatus
 {
     auto result = style.autosizeStatus().fields();
 
     auto shouldAvoidAutosizingEntireSubtree = [&] {
-        if (style.display() == DisplayType::None)
+        if (style.display() == Style::DisplayType::None)
             return true;
 
         const float maximumDifferenceBetweenFixedLineHeightAndFontSize = 5;
-        auto& lineHeight = style.specifiedLineHeight();
-        if (auto fixedLineHeight = lineHeight.tryFixed(); fixedLineHeight && fixedLineHeight->resolveZoom(style.usedZoomForLength()) - style.specifiedFontSize() > maximumDifferenceBetweenFixedLineHeightAndFontSize)
+        auto& lineHeight = style.lineHeight();
+        if (auto fixedLineHeight = lineHeight.tryFixed(); fixedLineHeight && fixedLineHeight->resolveZoom(style.usedZoomForLength()) - style.fontSize() > maximumDifferenceBetweenFixedLineHeightAndFontSize)
             return false;
 
         if (style.whiteSpaceCollapse() == WhiteSpaceCollapse::Collapse && style.textWrapMode() == TextWrapMode::NoWrap)
@@ -100,21 +62,126 @@ auto AutosizeStatus::computeStatus(const RenderStyle& style) -> AutosizeStatus
     if (style.overflowX() == Overflow::Hidden)
         result.add(Fields::OverflowXHidden);
 
-    if (style.isFloating())
+    if (style.floating() != Float::None)
         result.add(Fields::Floating);
 
     return AutosizeStatus(result);
 }
 
-void AutosizeStatus::updateStatus(RenderStyle& style)
+auto AutosizeStatus::isIdempotentTextAutosizingCandidate(const Style::ComputedStyle& style) -> bool
 {
-    style.setAutosizeStatus(AutosizeStatus(computeStatus(style)));
+    // Refer to <rdar://problem/51826266> for more information regarding how this function was generated.
+    auto fields = this->fields();
+
+    if (fields.contains(AutosizeStatus::Fields::AvoidSubtree))
+        return false;
+
+    constexpr auto smallMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText = 5.0f;
+    constexpr auto largeMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText = 25.0f;
+
+    if (fields.contains(AutosizeStatus::Fields::FixedHeight)) {
+        if (fields.contains(AutosizeStatus::Fields::FixedWidth)) {
+            if (style.whiteSpaceCollapse() == WhiteSpaceCollapse::Collapse && style.textWrapMode() == TextWrapMode::NoWrap) {
+                if (style.width().isFixed())
+                    return false;
+                if (auto fixedHeight = style.height().tryFixed(); fixedHeight && style.lineHeight().isFixed()) {
+                    if (auto fixedLineHeight = style.lineHeight().tryFixed()) {
+                        auto size = style.fontSize();
+                        auto zoomFactor = style.usedZoomForLength();
+                        if (fixedHeight->resolveZoom(zoomFactor) == size && fixedLineHeight->resolveZoom(zoomFactor) == size)
+                            return false;
+                    }
+                }
+                return true;
+            }
+            if (fields.contains(AutosizeStatus::Fields::Floating)) {
+                if (auto fixedHeight = style.height().tryFixed(); style.lineHeight().isFixed() && fixedHeight) {
+                    if (auto fixedLineHeight = style.lineHeight().tryFixed()) {
+                        auto size = style.fontSize();
+                        auto zoomFactor = style.usedZoomForLength();
+                        if (fixedLineHeight->resolveZoom(Style::ZoomFactor { 1.0f }) - size > smallMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText
+                            && fixedHeight->resolveZoom(zoomFactor) - size > smallMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText)
+                            return true;
+                    }
+                }
+                return false;
+            }
+            if (fields.contains(AutosizeStatus::Fields::OverflowXHidden))
+                return false;
+            return true;
+        }
+        if (fields.contains(AutosizeStatus::Fields::OverflowXHidden)) {
+            if (fields.contains(AutosizeStatus::Fields::Floating))
+                return false;
+            return true;
+        }
+        return true;
+    }
+
+    if (style.width().isFixed()) {
+        if (style.breakWords())
+            return true;
+        return false;
+    }
+
+    if (auto percentage = style.textSizeAdjust().tryPercentage(); percentage == 100) {
+        if (fields.contains(AutosizeStatus::Fields::Floating))
+            return true;
+        if (fields.contains(AutosizeStatus::Fields::FixedWidth))
+            return true;
+        if (auto fixedLineHeight = style.lineHeight().tryFixed(); fixedLineHeight && fixedLineHeight->resolveZoom(style.usedZoomForLength()) - style.fontSize() > largeMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText)
+            return true;
+        return false;
+    }
+
+    if (auto& backgroundLayers = style.backgroundLayers(); Style::hasImageInAnyLayer(backgroundLayers) && backgroundLayers.usedFirst().repeat() == FillRepeat::NoRepeat)
+        return false;
+
+    return true;
 }
 
-float AutosizeStatus::idempotentTextSize(float specifiedSize, float pageScale)
+bool AutosizeStatus::probablyContainsASmallFixedNumberOfLines(const Style::ComputedStyle& style)
+{
+    auto& lineHeight = style.lineHeight();
+    auto lineHeightAsLength = lineHeight.tryLength();
+    auto lineHeightAsNumber = lineHeight.tryNumber();
+    if (!lineHeightAsLength && !lineHeightAsNumber)
+        return false;
+
+    auto zoomFactor = style.usedZoomForLength();
+    auto& maxHeight = style.maxHeight();
+    std::optional<float> heightOrMaxHeightAsLength;
+    if (auto fixedMaxHeight = maxHeight.tryFixed())
+        heightOrMaxHeightAsLength = fixedMaxHeight->resolveZoom(zoomFactor);
+    else if (auto fixedHeight = style.height().tryFixed(); fixedHeight && (!maxHeight.isSpecified() || maxHeight.isNone()))
+        heightOrMaxHeightAsLength = fixedHeight->resolveZoom(zoomFactor);
+
+    if (!heightOrMaxHeightAsLength)
+        return false;
+
+    float heightOrMaxHeight = *heightOrMaxHeightAsLength;
+    if (heightOrMaxHeight <= 0)
+        return false;
+
+    float approximateLineHeight = lineHeightAsNumber ? lineHeightAsNumber->value * style.fontSize() : lineHeightAsLength->resolveZoom(zoomFactor);
+    if (approximateLineHeight <= 0)
+        return false;
+
+    float approximateNumberOfLines = heightOrMaxHeight / approximateLineHeight;
+    if (auto integerMaxLines = style.maxLines().tryValue())
+        return std::floor(approximateNumberOfLines) == integerMaxLines->value;
+
+    constexpr auto maximumNumberOfLines = 5;
+    constexpr auto thresholdForConsideringAnApproximateNumberOfLinesToBeCloseToAnInteger = 0.01f;
+
+    return approximateNumberOfLines <= maximumNumberOfLines + thresholdForConsideringAnApproximateNumberOfLinesToBeCloseToAnInteger
+        && approximateNumberOfLines - std::floor(approximateNumberOfLines) <= thresholdForConsideringAnApproximateNumberOfLinesToBeCloseToAnInteger;
+}
+
+float AutosizeStatus::idempotentTextSize(float size, float pageScale)
 {
     if (pageScale >= 1)
-        return specifiedSize;
+        return size;
 
     // This describes a piecewise curve when the page scale is 2/3.
     static constexpr std::array points = {
@@ -133,23 +200,21 @@ float AutosizeStatus::idempotentTextSize(float specifiedSize, float pageScale)
         return point;
     };
 
-    if (specifiedSize <= 0)
+    if (size <= 0)
         return 0;
 
     float result = scalePoint(points.back()).y();
     for (size_t i = 1; i < points.size(); ++i) {
-        if (points[i].x() < specifiedSize)
+        if (points[i].x() < size)
             continue;
         auto leftPoint = scalePoint(points[i - 1]);
         auto rightPoint = scalePoint(points[i]);
-        float fraction = (specifiedSize - leftPoint.x()) / (rightPoint.x() - leftPoint.x());
+        float fraction = (size - leftPoint.x()) / (rightPoint.x() - leftPoint.x());
         result = leftPoint.y() + fraction * (rightPoint.y() - leftPoint.y());
         break;
     }
 
-    return std::max(std::round(result), specifiedSize);
+    return std::max(std::round(result), size);
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(TEXT_AUTOSIZING)

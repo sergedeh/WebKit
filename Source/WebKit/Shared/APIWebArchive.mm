@@ -92,14 +92,12 @@ WebArchive::WebArchive(RefPtr<LegacyWebArchive>&& legacyWebArchive)
 {
 }
 
-WebArchive::~WebArchive()
-{
-}
+WebArchive::~WebArchive() = default;
 
 WebArchiveResource* WebArchive::mainResource()
 {
     if (!m_cachedMainResource)
-        m_cachedMainResource = WebArchiveResource::create(m_legacyWebArchive->mainResource());
+        lazyInitialize(m_cachedMainResource, WebArchiveResource::create(m_legacyWebArchive->mainResource()));
     return m_cachedMainResource.get();
 }
 

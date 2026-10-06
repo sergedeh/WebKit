@@ -28,7 +28,7 @@
 #include <wtf/Platform.h>
 #if PLATFORM(MAC)
 
-#include <WebCore/ThemeCocoa.h>
+#include "ThemeCocoa.h"
 
 namespace WebCore {
 
@@ -37,7 +37,7 @@ private:
     friend NeverDestroyed<ThemeMac>;
     ThemeMac() = default;
 
-    bool userPrefersContrast() const final;
+    InterfaceContrastPreference userPreferredContrast() const final;
     bool userPrefersDifferentiationWithoutColor() const final;
     bool userPrefersReducedMotion() const final;
 };

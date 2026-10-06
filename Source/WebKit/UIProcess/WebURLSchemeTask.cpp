@@ -33,6 +33,7 @@
 #include "WebErrors.h"
 #include "WebPageMessages.h"
 #include "WebPageProxy.h"
+#include "WebProcessProxy.h"
 #include "WebURLSchemeHandler.h"
 #include "WebURLSchemeHandlerIdentifier.h"
 #include <WebCore/ResourceLoaderIdentifier.h>
@@ -244,12 +245,7 @@ void WebURLSchemeTask::stop()
 NSURLRequest *WebURLSchemeTask::nsRequest() const
 {
     Locker locker { m_requestLock };
-    return m_request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).autorelease();
-}
-
-RetainPtr<NSURLRequest> WebURLSchemeTask::protectedNSRequest() const
-{
-    return nsRequest();
+    return RetainPtr { m_request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody) }.autorelease();
 }
 #endif
 

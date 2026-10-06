@@ -25,16 +25,29 @@
 
 #pragma once
 
+#include "BackendResourceDataStore.h"
 #include "Connection.h"
 #include "MessageReceiver.h"
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/HTTPHeaderMap.h>
 #include <WebCore/InspectorBackendClient.h>
+#include <WebCore/ResourceLoaderIdentifier.h>
+#include <utility>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/WTFString.h>
 
+namespace Inspector {
+struct FrameResourceData;
+struct SearchMatch;
+struct SearchResult;
+}
+
 namespace WebKit {
 
+class FrameNetworkAgentProxy;
+class PageAgentProxy;
 class WebPage;
 
 class WebInspectorBackend : public ThreadSafeRefCounted<WebInspectorBackend>, private IPC::Connection::Client {
@@ -47,7 +60,7 @@ public:
     void ref() const final { ThreadSafeRefCounted::ref(); }
     void deref() const final { ThreadSafeRefCounted::deref(); }
 
-    WebPage* page() const;
+    WebPage* NODELETE page() const;
 
     void updateDockingAvailability();
 
@@ -58,7 +71,7 @@ public:
     void didClose(IPC::Connection&) override { close(); }
     void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) override { close(); }
 
-    void show(CompletionHandler<void()>&&);
+    void show(CompletionHandler<void(bool success)>&&);
     void close();
 
     void canAttachWindow(bool& result);
@@ -79,11 +92,39 @@ public:
     void stopElementSelection();
     void elementSelectionChanged(bool);
     void timelineRecordingChanged(bool);
+    void showPaintRectsChanged(bool);
 
     void setDeveloperPreferenceOverride(WebCore::InspectorBackendClient::DeveloperPreference, std::optional<bool>);
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    void setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit);
+    void setEmulatedConditions(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency);
 #endif
+
+    void enableNetworkInstrumentation();
+    void disableNetworkInstrumentation();
+    void getResponseBody(WebCore::ResourceLoaderIdentifier, CompletionHandler<void(std::expected<std::pair<String, bool>, String>&&)>&&);
+    void getSerializedCertificate(WebCore::ResourceLoaderIdentifier, CompletionHandler<void(std::expected<String, String>&&)>&&);
+    void loadResource(WebCore::FrameIdentifier, const String& url, CompletionHandler<void(std::expected<std::tuple<String, String, int>, String>&&)>&&);
+
+    void setExtraHTTPHeaders(WebCore::HTTPHeaderMap&&);
+    void setResourceCachingDisabled(bool);
+
+    void enablePageInstrumentation();
+    void disablePageInstrumentation();
+    void getFrameResourceData(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>>&&)>&&);
+    void getFrameResourceContent(WebCore::FrameIdentifier, String url, CompletionHandler<void(String content, bool base64Encoded, String errorString)>&&);
+
+    void searchInRequest(WebCore::ResourceLoaderIdentifier, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);
+    void searchInFrameResource(WebCore::FrameIdentifier, const String& url, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);
+    void searchInFramesAndRequests(Vector<WebCore::FrameIdentifier>&& frameIDs, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchResult>&&)>&&);
+
+    // Fan the paint-rects toggle out to every per-frame PageAgentProxy this process hosts.
+    void setShowPaintRects(bool);
+
+    // Set up / tear down every per-frame instrumentation agent for a frame. Callers
+    // don't need to know which agents are frame-scoped; each helper no-ops unless its
+    // domain is enabled.
+    void ensureInstrumentationForFrame(WebCore::LocalFrame&);
+    void removeInstrumentationForFrame(WebCore::FrameIdentifier);
 
     void setFrontendConnection(IPC::Connection::Handle&&);
 
@@ -104,6 +145,9 @@ private:
 
     void whenFrontendConnectionEstablished(Function<void(IPC::Connection&)>&&);
 
+    void ensureNetworkInstrumentationForFrame(WebCore::LocalFrame&);
+    void ensurePageInstrumentationForFrame(WebCore::LocalFrame&);
+
     WeakPtr<WebPage> m_page;
 
     RefPtr<IPC::Connection> m_frontendConnection;
@@ -111,6 +155,23 @@ private:
 
     bool m_attached { false };
     bool m_previousCanAttach { false };
+
+    // Must outlive m_frameNetworkAgentProxies below: each proxy holds a reference to
+    // m_extraRequestHeaders and reads it in willSendRequest.
+    WebCore::HTTPHeaderMap m_extraRequestHeaders;
+    bool m_resourceCachingDisabled { false };
+
+    HashMap<WebCore::FrameIdentifier, std::unique_ptr<FrameNetworkAgentProxy>> m_frameNetworkAgentProxies;
+    const UniqueRef<BackendResourceDataStore> m_resourceDataStore;
+    bool m_networkInstrumentationEnabled { false };
+
+    HashMap<WebCore::FrameIdentifier, std::unique_ptr<PageAgentProxy>> m_framePageAgentProxies;
+    bool m_pageInstrumentationEnabled { false };
+
+    // Latest paint-rects toggle for this process, remembered so a proxy created later by
+    // ensurePageInstrumentationForFrame starts in the correct state (the UIProcess replays state
+    // only on the first (process, page) registration).
+    bool m_showPaintRects { false };
 };
 
 } // namespace WebKit

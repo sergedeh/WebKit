@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2020-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +28,7 @@
 #include "IntlListFormat.h"
 
 #include "IntlObjectInlines.h"
+#include "IntlPartObject.h"
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
@@ -132,7 +134,7 @@ void IntlListFormat::initializeListFormat(JSGlobalObject* globalObject, JSValue 
     };
 
     UErrorCode status = U_ZERO_ERROR;
-    m_listFormat = std::unique_ptr<UListFormatter, UListFormatterDeleter>(ulistfmt_openForType(m_locale.utf8().data(), toUListFormatterType(m_type), toUListFormatterWidth(m_style), &status));
+    m_listFormat = std::unique_ptr<UListFormatter, UListFormatterDeleter>(ulistfmt_openForType(m_locale.ascii().data(), toUListFormatterType(m_type), toUListFormatterWidth(m_style), &status));
     if (U_FAILURE(status)) {
         throwTypeError(globalObject, scope, "failed to initialize ListFormat"_s);
         return;
@@ -226,10 +228,7 @@ JSValue IntlListFormat::formatToParts(JSGlobalObject* globalObject, JSValue list
     auto elementString = jsNontrivialString(vm, "element"_s);
 
     auto createPart = [&] (JSString* type, JSString* value) {
-        JSObject* part = constructEmptyObject(globalObject);
-        part->putDirect(vm, vm.propertyNames->type, type);
-        part->putDirect(vm, vm.propertyNames->value, value);
-        return part;
+        return createIntlPartObject(globalObject, type, value);
     };
 
     int32_t resultLength = resultStringView.length();
@@ -250,21 +249,21 @@ JSValue IntlListFormat::formatToParts(JSGlobalObject* globalObject, JSValue list
         if (previousEndIndex < beginIndex) {
             auto value = jsString(vm, resultStringView.substring(previousEndIndex, beginIndex - previousEndIndex));
             JSObject* part = createPart(literalString, value);
-            parts->push(globalObject, part);
+            parts->putDirectIndex(globalObject, parts->length(), part);
             RETURN_IF_EXCEPTION(scope, { });
         }
         previousEndIndex = endIndex;
 
         auto value = jsString(vm, resultStringView.substring(beginIndex, endIndex - beginIndex));
         JSObject* part = createPart(elementString, value);
-        parts->push(globalObject, part);
+        parts->putDirectIndex(globalObject, parts->length(), part);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
     if (previousEndIndex < resultLength) {
         auto value = jsString(vm, resultStringView.substring(previousEndIndex, resultLength - previousEndIndex));
         JSObject* part = createPart(literalString, value);
-        parts->push(globalObject, part);
+        parts->putDirectIndex(globalObject, parts->length(), part);
         RETURN_IF_EXCEPTION(scope, { });
     }
 

@@ -26,6 +26,7 @@
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
+#include "JSDOMBindingFacade.h"
 #include "JSDOMConstructorNotCallable.h"
 #include "JSDOMConvertAny.h"
 #include "JSDOMConvertBoolean.h"
@@ -43,7 +44,6 @@
 #include "Settings.h"
 #include "TestNamespaceObject.h"
 #include "WebCoreJSClientData.h"
-#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/ObjectPrototype.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -105,24 +105,24 @@ template<> JSValue JSTestNamespaceObjectDOMConstructor::prototypeForStructure(JS
 
 template<> void JSTestNamespaceObjectDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    WebCore::putDirectWithoutTransition(this, vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, info()->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
     reifyStaticProperties(vm, JSTestNamespaceObject::info(), JSTestNamespaceObjectConstructorTableValues, *this);
 #if ENABLE(Condition1)
-    if (!jsCast<JSDOMGlobalObject*>(&globalObject)->scriptExecutionContext()->settingsValues().testSetting1Enabled) {
+    if (!(&globalObject)->scriptExecutionContext()->settingsValues().testSetting1Enabled) {
         auto propertyName = Identifier::fromString(vm, "namespaceAttributeFromPartial"_s);
         VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
         DeletePropertySlot slot;
         JSObject::deleteProperty(this, &globalObject, propertyName, slot);
     }
 #endif
-    if (!jsCast<JSDOMGlobalObject*>(&globalObject)->scriptExecutionContext()->settingsValues().testSetting2Enabled) {
+    if (!(&globalObject)->scriptExecutionContext()->settingsValues().testSetting2Enabled) {
         auto propertyName = Identifier::fromString(vm, "enabledBySettingNamespaceOperation"_s);
         VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
         DeletePropertySlot slot;
         JSObject::deleteProperty(this, &globalObject, propertyName, slot);
     }
 #if ENABLE(Condition1)
-    if (!jsCast<JSDOMGlobalObject*>(&globalObject)->scriptExecutionContext()->settingsValues().testSetting1Enabled) {
+    if (!(&globalObject)->scriptExecutionContext()->settingsValues().testSetting1Enabled) {
         auto propertyName = Identifier::fromString(vm, "namespaceOperationFromPartial"_s);
         VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
         DeletePropertySlot slot;
@@ -138,9 +138,22 @@ JSTestNamespaceObject::JSTestNamespaceObject(Structure* structure, JSDOMGlobalOb
 
 static_assert(!std::is_base_of<ActiveDOMObject, TestNamespaceObject>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
+JSTestNamespaceObject* JSTestNamespaceObject::create(JSC::Structure* structure, JSDOMGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    JSTestNamespaceObject* ptr = new (NotNull, JSC::allocateCell<JSTestNamespaceObject>(vm)) JSTestNamespaceObject(structure, *globalObject);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+JSC::Structure* JSTestNamespaceObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+{
+    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+}
+
 JSValue JSTestNamespaceObject::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSTestNamespaceObjectDOMConstructor, DOMConstructorID::TestNamespaceObject>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSTestNamespaceObjectDOMConstructor, DOMConstructorID::TestNamespaceObject>(vm, *uncheckedDowncast<JSDOMGlobalObject>(globalObject));
 }
 
 void JSTestNamespaceObject::destroy(JSC::JSCell* cell)
@@ -151,7 +164,7 @@ void JSTestNamespaceObject::destroy(JSC::JSCell* cell)
 
 static inline JSValue jsTestNamespaceObjectConstructor_namespaceAttributeGetter(JSGlobalObject& lexicalGlobalObject)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLong>(lexicalGlobalObject, throwScope, TestNamespaceObject::namespaceAttribute())));
 }
@@ -164,7 +177,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTestNamespaceObjectConstructor_namespaceAttribute, (J
 #if ENABLE(Condition1)
 static inline JSValue jsTestNamespaceObjectConstructor_namespaceAttributeFromPartialGetter(JSGlobalObject& lexicalGlobalObject)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDouble>(lexicalGlobalObject, throwScope, WebCore::TestNamespaceObjectImpl::namespaceAttributeFromPartial())));
 }
@@ -178,7 +191,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTestNamespaceObjectConstructor_namespaceAttributeFrom
 
 static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overloadedNamespaceOperation1Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
@@ -195,7 +208,7 @@ static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overl
 
 static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overloadedNamespaceOperation2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
@@ -212,7 +225,7 @@ static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overl
 
 static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overloadedNamespaceOperationOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
@@ -233,12 +246,12 @@ static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overl
 
 JSC_DEFINE_HOST_FUNCTION(jsTestNamespaceObjectConstructorFunction_overloadedNamespaceOperation, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSTestNamespaceObject>::callStatic<jsTestNamespaceObjectConstructorFunction_overloadedNamespaceOperationOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "overloadedNamespaceOperation");
+    return IDLOperation<JSTestNamespaceObject>::callStatic<jsTestNamespaceObjectConstructorFunction_overloadedNamespaceOperationOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "overloadedNamespaceOperation"_s);
 }
 
 static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_enabledBySettingNamespaceOperationBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
@@ -251,22 +264,22 @@ static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_enabl
 
 JSC_DEFINE_HOST_FUNCTION(jsTestNamespaceObjectConstructorFunction_enabledBySettingNamespaceOperation, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSTestNamespaceObject>::callStatic<jsTestNamespaceObjectConstructorFunction_enabledBySettingNamespaceOperationBody>(*lexicalGlobalObject, *callFrame, "enabledBySettingNamespaceOperation");
+    return IDLOperation<JSTestNamespaceObject>::callStatic<jsTestNamespaceObjectConstructorFunction_enabledBySettingNamespaceOperationBody>(*lexicalGlobalObject, *callFrame, "enabledBySettingNamespaceOperation"_s);
 }
 
 #if ENABLE(Condition1)
 static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_namespaceOperationFromPartialBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return WebCore::TestNamespaceObjectImpl::operationFromPartialImpl(); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return WebCore::TestNamespaceObjectImpl::operationFromPartialImpl(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsTestNamespaceObjectConstructorFunction_namespaceOperationFromPartial, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSTestNamespaceObject>::callStatic<jsTestNamespaceObjectConstructorFunction_namespaceOperationFromPartialBody>(*lexicalGlobalObject, *callFrame, "namespaceOperationFromPartial");
+    return IDLOperation<JSTestNamespaceObject>::callStatic<jsTestNamespaceObjectConstructorFunction_namespaceOperationFromPartialBody>(*lexicalGlobalObject, *callFrame, "namespaceOperationFromPartial"_s);
 }
 
 #endif

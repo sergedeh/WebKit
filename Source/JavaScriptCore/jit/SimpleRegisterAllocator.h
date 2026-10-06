@@ -95,7 +95,7 @@ public:
         m_bindings[reg] = RegisterBinding();
     }
 
-    void flushIf(JITBackend& backend, const Invocable<bool(Register, const RegisterBinding&)> auto& functor)
+    void flushIf(JITBackend& backend, NOESCAPE const Invocable<bool(Register, const RegisterBinding&)> auto& functor)
     {
         for (Reg r : m_validRegisters) {
             Register reg = fromJSCReg(r);
@@ -110,6 +110,13 @@ public:
             backend.flush(reg, m_bindings[reg]);
             unbind(reg, "Flushing"_s);
         }
+    }
+
+    void flush(JITBackend& backend, const RegisterBinding& binding)
+    {
+        flushIf(backend, [&](Register, const RegisterBinding& b) ALWAYS_INLINE_LAMBDA {
+            return b == binding;
+        });
     }
 
     void flushAllRegisters(JITBackend& backend)
@@ -127,7 +134,7 @@ public:
 
     RegisterSet validRegisters() const { return m_validRegisters; }
     RegisterSet freeRegisters() const { return m_freeRegisters; }
-    RegisterSet allocatedRegisters() const { return RegisterSetBuilder(m_validRegisters).exclude(m_freeRegisters).buildAndValidate(); }
+    RegisterSet allocatedRegisters() const { return RegisterSet(m_validRegisters).exclude(m_freeRegisters); }
     const RegisterBinding& bindingFor(Register reg) const { return m_bindings[reg]; }
     // FIXME: We should really compress this since it's copied by slow paths to know how to restore the correct state.
     RegisterBindings copyBindings() const { return m_bindings; }

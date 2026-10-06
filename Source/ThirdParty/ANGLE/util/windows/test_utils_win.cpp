@@ -6,10 +6,7 @@
 
 // test_utils_win.cpp: Implementation of OS-specific functions for Windows
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include "common/unsafe_buffers.h"
 #include "util/test_utils.h"
 
 #include <aclapi.h>
@@ -152,7 +149,8 @@ class WindowsProcess : public Process
                 {
                     commandLineString.push_back(' ');
                 }
-                commandLineString.insert(commandLineString.end(), arg, arg + strlen(arg));
+                commandLineString.insert(commandLineString.end(), arg,
+                                         ANGLE_UNSAFE_TODO(arg + strlen(arg)));
             }
         }
         commandLineString.push_back('\0');
@@ -282,6 +280,16 @@ class WindowsProcess : public Process
 
     bool finish() override
     {
+        if (!mStarted)
+        {
+            return false;
+        }
+
+        if (mFinished)
+        {
+            return true;
+        }
+
         if (mStdoutPipe.valid())
         {
             ReadFromFile(true, mStdoutPipe.readHandle, &mStdout);
@@ -293,14 +301,24 @@ class WindowsProcess : public Process
         }
 
         DWORD result = ::WaitForSingleObject(mProcessInfo.hProcess, INFINITE);
+
+        mFinished = true;
         mTimer.stop();
+
         return result == WAIT_OBJECT_0;
     }
 
     bool finished() override
     {
         if (!mStarted)
+        {
             return false;
+        }
+
+        if (mFinished)
+        {
+            return true;
+        }
 
         // Pipe stdin and stdout.
         if (mStdoutPipe.valid())
@@ -316,12 +334,14 @@ class WindowsProcess : public Process
         DWORD result = ::WaitForSingleObject(mProcessInfo.hProcess, 0);
         if (result == WAIT_OBJECT_0)
         {
+            mFinished = true;
             mTimer.stop();
             return true;
         }
         if (result == WAIT_TIMEOUT)
             return false;
 
+        mFinished = true;
         mTimer.stop();
         std::cerr << "Unexpected result from WaitForSingleObject: " << result
                   << ". Last error: " << ::GetLastError() << "\n";
@@ -346,7 +366,14 @@ class WindowsProcess : public Process
     bool kill() override
     {
         if (!mStarted)
+        {
+            return false;
+        }
+
+        if (mFinished)
+        {
             return true;
+        }
 
         HANDLE newHandle;
         if (::DuplicateHandle(::GetCurrentProcess(), mProcessInfo.hProcess, ::GetCurrentProcess(),
@@ -373,13 +400,14 @@ class WindowsProcess : public Process
             return false;
         }
 
-        mStarted = false;
+        mFinished = true;
         mTimer.stop();
         return true;
     }
 
   private:
-    bool mStarted = false;
+    bool mStarted  = false;
+    bool mFinished = false;
     ScopedPipe mStdoutPipe;
     ScopedPipe mStderrPipe;
     PROCESS_INFORMATION mProcessInfo = {};
@@ -396,12 +424,12 @@ void WriteDebugMessage(const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    int size = vsnprintf(nullptr, 0, format, args);
+    int size = ANGLE_UNSAFE_TODO(vsnprintf(nullptr, 0, format, args));
     va_end(args);
 
     std::vector<char> buffer(size + 2);
     va_start(args, format);
-    vsnprintf(buffer.data(), size + 1, format, args);
+    ANGLE_UNSAFE_TODO(vsnprintf(buffer.data(), size + 1, format, args));
     va_end(args);
 
     OutputDebugStringA(buffer.data());

@@ -28,6 +28,10 @@
 
 namespace WebCore {
 
+namespace Style {
+class ComputedStyle;
+}
+
 class HitTestRequest {
 public:
     enum class Type {
@@ -109,6 +113,8 @@ public:
     bool touchRelease() const { return release() && touchEvent(); }
 
     OptionSet<Type> type() const { return m_type; }
+
+    bool NODELETE isVisibleForStyle(const Style::ComputedStyle&) const;
 
 private:
     OptionSet<Type> m_type;

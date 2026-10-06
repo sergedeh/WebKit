@@ -27,6 +27,7 @@
 
 #include <WebCore/Document.h>
 #include <WebCore/Element.h>
+#include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/NodeDocument.h>
 #include <WebCore/RenderObject.h>
@@ -34,21 +35,30 @@
 namespace WebCore {
 
 inline Document& RenderObject::document() const { return m_node.get().document(); }
-inline Ref<Document> RenderObject::protectedDocument() const { return document(); }
 
 inline bool RenderObject::isDocumentElementRenderer() const
 {
     return document().documentElement() == m_node.ptr();
 }
 
-inline RenderView& RenderObject::view() const
+inline RenderView& RenderObject::view() const LIFETIME_BOUND
 {
     return *document().renderView();
 }
 
+inline LocalFrame& RenderObject::frame() const
+{
+    return *document().frame();
+}
+
+inline const Settings& RenderObject::settings() const
+{
+    return document().settings();
+}
+
 inline bool RenderObject::renderTreeBeingDestroyed() const
 {
-    return document().renderTreeBeingDestroyed();
+    return document().renderTreeState() == Document::RenderTreeState::BeingDestroyed;
 }
 
 }

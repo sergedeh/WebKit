@@ -26,8 +26,10 @@
 #include "config.h"
 #include "NetworkResourceLoadParameters.h"
 
+#include "Logging.h"
 #include "NetworkProcessConnection.h"
 #include "WebProcess.h"
+#include <WebCore/SecurityOriginData.h>
 #include <wtf/RuntimeApplicationChecks.h>
 
 namespace WebKit {
@@ -35,29 +37,27 @@ using namespace WebCore;
 
 void NetworkResourceLoadParameters::createSandboxExtensionHandlesIfNecessary()
 {
-    if (request.httpBody()) {
-        for (const FormDataElement& element : request.httpBody()->elements()) {
-            auto* fileData = std::get_if<FormDataElement::EncodedFileData>(&element.data);
-            if (!fileData)
-                continue;
-            const String& path = fileData->filename;
-            if (auto handle = SandboxExtension::createHandle(path, SandboxExtension::Type::ReadOnly))
-                requestBodySandboxExtensions.append(WTF::move(*handle));
-        }
-    }
+    if (!request.url().protocolIsFile())
+        return;
 
-    if (request.url().protocolIsFile()) {
+    String path = request.url().fileSystemPath();
+    // Log the file-load sandbox extension mint outcome at release level for diagnosis when it fails.
 #if HAVE(AUDIT_TOKEN)
-        if (auto networkProcessAuditToken = WebProcess::singleton().ensureNetworkProcessConnection().networkProcessAuditToken()) {
-            if (auto handle = SandboxExtension::createHandleForReadByAuditToken(request.url().fileSystemPath(), *networkProcessAuditToken))
-                resourceSandboxExtension = WTF::move(*handle);
-        } else
-#endif
-        {
-            if (auto handle = SandboxExtension::createHandle(request.url().fileSystemPath(), SandboxExtension::Type::ReadOnly))
-                resourceSandboxExtension = WTF::move(*handle);
-        }
+    if (auto networkProcessAuditToken = WebProcess::singleton().ensureNetworkProcessConnection().networkProcessAuditToken()) {
+        auto handle = SandboxExtension::createHandleForReadByAuditToken(path, *networkProcessAuditToken);
+        if (handle)
+            resourceSandboxExtension = WTF::move(*handle);
+        else
+            RELEASE_LOG_ERROR(Sandbox, "NetworkResourceLoadParameters::createSandboxExtensionHandlesIfNecessary: file load, createHandleForReadByAuditToken(networkProcess) failed for '%" PRIVATE_LOG_STRING "'", path.utf8());
+        return;
     }
+    RELEASE_LOG_ERROR(Sandbox, "NetworkResourceLoadParameters::createSandboxExtensionHandlesIfNecessary: file load, network process audit token unavailable; falling back to non-targeted read handle for '%" PRIVATE_LOG_STRING "'", path.utf8());
+#endif
+    auto handle = SandboxExtension::createHandle(path, SandboxExtension::Type::ReadOnly);
+    if (handle)
+        resourceSandboxExtension = WTF::move(*handle);
+    else
+        RELEASE_LOG_ERROR(Sandbox, "NetworkResourceLoadParameters::createSandboxExtensionHandlesIfNecessary: file load, createHandle(ReadOnly) failed for '%" PRIVATE_LOG_STRING "'", path.utf8());
 }
 
 RefPtr<SecurityOrigin> NetworkResourceLoadParameters::parentOrigin() const
@@ -65,6 +65,15 @@ RefPtr<SecurityOrigin> NetworkResourceLoadParameters::parentOrigin() const
     if (frameAncestorOrigins.isEmpty())
         return nullptr;
     return frameAncestorOrigins.first().ptr();
+}
+
+SecurityOriginData NetworkResourceLoadParameters::topOriginForServiceWorkers(const URL& requestURL) const
+{
+    if (isMainFrameNavigation) {
+        auto url = requestURL.protocolIsBlob() ? URL { requestURL.path().toString() } : requestURL;
+        return SecurityOriginData::fromURLWithoutStrictOpaqueness(url);
+    }
+    return topOrigin->data();
 }
 
 NetworkLoadParameters NetworkResourceLoadParameters::networkLoadParameters() const
@@ -93,7 +102,8 @@ NetworkLoadParameters NetworkResourceLoadParameters::networkLoadParameters() con
         allowPrivacyProxy,
         advancedPrivacyProtections,
         isInitiatedByDedicatedWorker,
-        requiredCookiesVersion
+        requiredCookiesVersion,
+        navigationLosesFrameSpecificStorageAccess
     };
 }
 

@@ -50,7 +50,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    void setH2PingCallback(const URL&, CompletionHandler<void(Expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
+    void setH2PingCallback(const URL&, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
     void start(CompletionHandler<void(const WebCore::ResourceError&, const WebCore::NetworkLoadMetrics&)>&& = { }, Seconds timeout = 60_s);
 
 private:
@@ -70,7 +70,7 @@ private:
 
     const Ref<NetworkLoad> m_networkLoad;
     CompletionHandler<void(const WebCore::ResourceError&, const WebCore::NetworkLoadMetrics&)> m_completionHandler;
-    std::unique_ptr<WebCore::Timer> m_timeoutTimer;
+    const std::unique_ptr<WebCore::Timer> m_timeoutTimer;
 };
 
 } // namespace WebKit

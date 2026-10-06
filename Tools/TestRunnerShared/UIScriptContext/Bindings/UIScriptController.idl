@@ -47,15 +47,18 @@ dictionary TextExtractionTestOptions {
     boolean clipToBounds = false;
     boolean includeRects = false;
     boolean includeURLs = false;
+    boolean includeSelectOptions = false;
     boolean shortenURLs = false;
     DOMString nodeIdentifierInclusion = "none";
-    boolean includeEventListeners = false;
+    object eventListenerCategories;
     boolean includeAccessibilityAttributes = false;
     boolean includeTextInAutoFilledControls = false;
+    boolean includeOffscreenPasswordFields = false;
     boolean mergeParagraphs = false;
     boolean skipNearlyTransparentContent = false;
     DOMString outputFormat;
     object dataDetectorTypes;
+    DOMString wordLimitPolicy;
 };
 
 dictionary TextExtractionInteractionOptions {
@@ -81,11 +84,13 @@ interface UIScriptController {
     undefined doAfterDoubleTapDelay(object callback);
 
     undefined simulateAccessibilitySettingsChangeNotification(object callback);
+    undefined simulateAvailableSpeechVoicesDidChangeOnBackgroundThread(object callback);
 
     // Interaction.
     // These functions post events asynchronously. The callback is fired when the events have been dispatched, but any
     // resulting behavior may also be asynchronous. Points are in "global" (WKWebView) coordinates.
     undefined touchDownAtPoint(long x, long y, long touchCount, object callback);
+    undefined touchDownAtPointWithMajorRadius(long x, long y, float majorRadius, float majorRadiusTolerance, object callback);
     undefined liftUpAtPoint(long x, long y, long touchCount, object callback);
     undefined singleTapAtPoint(long x, long y, object callback);
     undefined singleTapAtPointWithModifiers(long x, long y, object modifierArray, object callback);
@@ -261,6 +266,7 @@ interface UIScriptController {
     readonly attribute double timePickerValueMinute;
 
     readonly attribute boolean isShowingDateTimePicker;
+    readonly attribute object dateTimePickerRect;
     readonly attribute double dateTimePickerValue;
     undefined chooseDateTimePickerValue();
 
@@ -268,8 +274,12 @@ interface UIScriptController {
     readonly attribute boolean isShowingDataListSuggestions;
     undefined activateDataListSuggestion(unsigned long index, object callback);
 
+    // Login credential autofill (UITextAutofillSuggestion).
+    undefined insertAutofillSuggestion(DOMString username, DOMString password, object callback);
+
     // <input type=color>
     undefined setSelectedColorForColorPicker(double red, double green, double blue);
+    readonly attribute boolean isShowingColorPicker;
 
     undefined keyboardAccessoryBarNext();
     undefined keyboardAccessoryBarPrevious();
@@ -286,6 +296,7 @@ interface UIScriptController {
     readonly attribute boolean isShowingKeyboard;
     readonly attribute boolean hasInputSession;
     attribute object willStartInputSessionCallback;
+    attribute object didStartInputSessionCallback;
 
     attribute double suppressSoftwareKeyboard;
     attribute boolean windowIsKey;
@@ -356,6 +367,7 @@ interface UIScriptController {
     readonly attribute double minimumZoomScale;
     readonly attribute double maximumZoomScale;
     readonly attribute boolean isZoomingOrScrolling;
+    readonly attribute boolean enhancedWindowingEnabled;
 
     // Overides the "in stable state" behavior of WKWebView (only applies to iOS)
     // When false, content rect updates to the web process have inStableState=false, as if a scroll or zoom were in progress.
@@ -373,6 +385,7 @@ interface UIScriptController {
     readonly attribute object calendarType;
     undefined setDefaultCalendarType(DOMString calendarIdentifier, DOMString localeIdentifier);
     readonly attribute object inputViewBounds;
+    readonly attribute object inputViewBoundsInWebView;
 
     undefined setKeyboardInputModeIdentifier(DOMString identifier);
     undefined setFocusStartsInputSessionPolicy(DOMString policy);
@@ -380,6 +393,7 @@ interface UIScriptController {
     undefined replaceTextAtRange(DOMString text, long location, long length);
 
     readonly attribute DOMString scrollingTreeAsText;
+    readonly attribute DOMString scrollingTreeIncludingNodeIDsAsText;
     readonly attribute DOMString uiViewTreeAsText;
     readonly attribute DOMString caLayerTreeAsText;
     DOMString caLayerTreeAsTextForLayerWithID(unsigned long long layerID);
@@ -388,7 +402,10 @@ interface UIScriptController {
     boolean mayContainEditableElementsInRect(unsigned long x, unsigned long y, unsigned long width, unsigned long height);
 
     object propertiesOfLayerWithID(unsigned long long layerID);
-    
+
+    // Empty when no magnification gesture has an override installed on the scrolled-contents layer. macOS only.
+    readonly attribute DOMString delegatedZoomOverrideAsText;
+
     DOMString scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, boolean isVertical);
 
     undefined retrieveSpeakSelectionContent(object callback);
@@ -398,6 +415,8 @@ interface UIScriptController {
     undefined simulateRotationLikeSafari(DeviceOrientation orientation, object callback);
 
     undefined findString(DOMString string, unsigned long options, unsigned long maxCount);
+
+    undefined findStringMatchesUsingFindInteraction(DOMString string, object callback);
 
     undefined presentFindNavigator();
     undefined dismissFindNavigator();
@@ -422,6 +441,7 @@ interface UIScriptController {
     readonly attribute boolean isWebContentFirstResponder;
 
     undefined setHardwareKeyboardAttached(boolean attached);
+    undefined setShowKeyboardAfterElementFocusDelay(double delay);
 
     undefined setWebViewEditable(boolean editable);
 
@@ -469,4 +489,5 @@ interface UIScriptController {
     DOMString animationStackForLayerWithID(unsigned long long layerID);
     DOMString progressBasedTimelinesForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID);
 #endif
+    boolean displayLinkWantsHighFrameRate();
 };

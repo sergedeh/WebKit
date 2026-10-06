@@ -35,6 +35,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakHashMap.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -77,7 +78,7 @@ public:
 
     IDBTransactionInfo info() const { return m_info; }
 
-    MemoryCursor* cursor(const IDBResourceIdentifier&) const;
+    MemoryCursor* NODELETE cursor(const IDBResourceIdentifier&) const;
     void addCursor(MemoryCursor&);
 
 private:
@@ -87,7 +88,7 @@ private:
     const CheckedRef<MemoryIDBBackingStore> m_backingStore;
     IDBTransactionInfo m_info;
 
-    std::unique_ptr<IDBDatabaseInfo> m_originalDatabaseInfo;
+    const std::unique_ptr<IDBDatabaseInfo> m_originalDatabaseInfo;
 
     bool m_inProgress { true };
     bool m_isAborting { false };
@@ -97,9 +98,9 @@ private:
     HashSet<Ref<MemoryIndex>> m_indexes;
     HashSet<Ref<MemoryIndex>> m_versionChangeAddedIndexes;
 
-    HashMap<String, RefPtr<MemoryObjectStore>> m_deletedObjectStores;
+    HashMap<String, Ref<MemoryObjectStore>> m_deletedObjectStores;
     HashSet<Ref<MemoryIndex>> m_deletedIndexes;
-    HashMap<MemoryObjectStore*, String> m_originalObjectStoreNames;
+    WeakHashMap<MemoryObjectStore, String> m_originalObjectStoreNames;
     HashMap<Ref<MemoryIndex>, String> m_originalIndexNames;
 
     HashMap<IDBResourceIdentifier, WeakPtr<MemoryCursor>> m_cursors;

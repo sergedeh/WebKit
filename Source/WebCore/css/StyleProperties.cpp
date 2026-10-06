@@ -25,13 +25,14 @@
 
 #include "CSSColorValue.h"
 #include "CSSCustomPropertyValue.h"
-#include "CSSPendingSubstitutionValue.h"
+#include "CSSMarkup.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSPropertyInitialValues.h"
 #include "CSSPropertyNames.h"
 #include "CSSPropertyParserConsumer+Color.h"
 #include "CSSPropertyParserConsumer+Font.h"
 #include "CSSSerializationContext.h"
+#include "CSSShorthandSubstitutionValue.h"
 #include "CSSStyleProperties.h"
 #include "CSSValueKeywords.h"
 #include "CSSValueList.h"
@@ -67,7 +68,7 @@ String serializeLonghandValue(const CSS::SerializationContext& context, CSSPrope
     // We need to serialize those lists with the actual values, not as "initial".
     // Doing this for all CSSValueList with comma separators is better than checking the property is one of those longhands.
     // Serializing this way is harmless for other properties; those won't have any implicit initial values.
-    if (auto* list = dynamicDowncast<CSSValueList>(value); list && list->separator() == CSSValueList::CommaSeparator) {
+    if (auto* list = dynamicDowncast<CSSValueList>(value); list && list->separator() == CSSValueList::ValueSeparator::Comma) {
         StringBuilder result;
         auto separator = ""_s;
         for (Ref individualValue : *list)
@@ -192,7 +193,7 @@ AtomString StyleProperties::asTextAtom(const CSS::SerializationContext& context)
     return asTextInternal(context).toAtomString();
 }
 
-static constexpr bool canUseShorthandForLonghand(CSSPropertyID shorthandID, CSSPropertyID longhandID)
+static constexpr bool NODELETE canUseShorthandForLonghand(CSSPropertyID shorthandID, CSSPropertyID longhandID)
 {
     ASSERT(isShorthand(shorthandID));
     ASSERT(isLonghand(longhandID));
@@ -218,6 +219,14 @@ static constexpr bool canUseShorthandForLonghand(CSSPropertyID shorthandID, CSSP
     // No other browser currently supports text-decoration-skip, so it's currently more web
     // compatible to avoid collapsing text-decoration-skip-ink, its only longhand.
     case CSSPropertyTextDecorationSkip:
+        return false;
+
+    // Avoid collapsing width/height into the new `size` shorthand for copy/paste interop
+    // with engines and older WebKit that don't support it yet. See csswg-drafts#820.
+    // The min-size and max-size shorthands are avoided for the same reason.
+    case CSSPropertySize:
+    case CSSPropertyMinSize:
+    case CSSPropertyMaxSize:
         return false;
 
     // FIXME: -webkit-mask is a legacy shorthand but it's used to serialize -webkit-mask-clip,
@@ -264,7 +273,7 @@ StringBuilder StyleProperties::asTextInternal(const CSS::SerializationContext& c
         ASSERT(isLonghand(propertyID) || propertyID == CSSPropertyCustom);
         Vector<CSSPropertyID, maxShorthandsForLonghand> shorthands;
 
-        if (RefPtr substitutionValue = dynamicDowncast<CSSPendingSubstitutionValue>(property.value()))
+        if (RefPtr substitutionValue = dynamicDowncast<CSSShorthandSubstitutionValue>(property.value()))
             shorthands.append(substitutionValue->shorthandPropertyId());
         else {
             for (auto& shorthand : matchingShorthandsForLonghand(propertyID)) {
@@ -299,14 +308,17 @@ StringBuilder StyleProperties::asTextInternal(const CSS::SerializationContext& c
             continue;
 
         if (value.isNull())
-            value = WebCore::serializeLonghandValue(context, propertyID, *property.value());
+            value = WebCore::serializeLonghandValue(context, propertyID, protect(*property.value()));
 
         if (numDecls++)
             result.append(' ');
 
         if (propertyID == CSSPropertyCustom)
-            result.append(downcast<CSSCustomPropertyValue>(*property.value()).name());
-        else
+            serializeIdentifier(result, downcast<CSSCustomPropertyValue>(*property.value()).name());
+        else if (propertyID == CSSPropertyPageSize) {
+            // `page-size` is stored under its own id but exposed to authors as `size`.
+            result.append(nameLiteral(CSSPropertySize));
+        } else
             result.append(nameLiteral(propertyID));
 
         result.append(": "_s, value, property.isImportant() ? " !important"_s : ""_s, ';');
@@ -325,7 +337,7 @@ bool StyleProperties::hasCSSOMWrapper() const
 bool StyleProperties::traverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>& handler) const
 {
     for (auto property : *this) {
-        if (property.value()->traverseSubresources(handler))
+        if (protect(property.value())->traverseSubresources(handler))
             return true;
     }
     return false;
@@ -343,7 +355,7 @@ bool StyleProperties::mayDependOnBaseURL() const
     };
 
     for (auto property : *this) {
-        if (func(*property.value()) == IterationStatus::Done)
+        if (func(protect(*property.value())) == IterationStatus::Done)
             return result;
     }
     return false;
@@ -354,7 +366,7 @@ bool StyleProperties::propertyMatches(CSSPropertyID propertyID, const CSSValue* 
     int foundPropertyIndex = findPropertyIndex(propertyID);
     if (foundPropertyIndex == -1)
         return false;
-    return propertyAt(foundPropertyIndex).value()->equals(*propertyValue);
+    return protect(propertyAt(foundPropertyIndex).value())->equals(*propertyValue);
 }
 
 Ref<MutableStyleProperties> StyleProperties::mutableCopy() const
@@ -407,16 +419,19 @@ void StyleProperties::showStyle()
 }
 #endif
 
-String StyleProperties::PropertyReference::cssName() const
+const AtomString& StyleProperties::PropertyReference::cssName() const
 {
     if (id() == CSSPropertyCustom)
         return downcast<CSSCustomPropertyValue>(*value()).name();
+    // `page-size` is stored under its own id but exposed to authors as `size`.
+    if (id() == CSSPropertyPageSize)
+        return nameString(CSSPropertySize);
     return nameString(id());
 }
 
 String StyleProperties::PropertyReference::cssText(const CSS::SerializationContext& context) const
 {
-    return makeString(cssName(), ": "_s, WebCore::serializeLonghandValue(context, id(), *m_value), isImportant() ? " !important;"_s : ";"_s);
+    return makeString(cssName(), ": "_s, WebCore::serializeLonghandValue(context, id(), protect(*m_value)), isImportant() ? " !important;"_s : ";"_s);
 }
 
 } // namespace WebCore

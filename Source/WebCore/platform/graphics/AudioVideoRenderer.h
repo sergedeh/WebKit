@@ -29,6 +29,7 @@
 #include <WebCore/MediaPlayerEnums.h>
 #include <WebCore/MediaPromiseTypes.h>
 #include <WebCore/PlatformLayer.h>
+#include <WebCore/ShareableBitmap.h>
 #include <WebCore/TrackInfo.h>
 #include <WebCore/VideoPlaybackQualityMetrics.h>
 #include <WebCore/VideoTarget.h>
@@ -36,6 +37,7 @@
 #include <wtf/AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/MediaTime.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/NativePromise.h>
 #include <wtf/ObjectIdentifier.h>
 
@@ -50,6 +52,7 @@ class MediaSample;
 class NativeImage;
 class PlatformDynamicRangeLimit;
 class ProcessIdentity;
+class SharedTimebase;
 class TextTrackRepresentation;
 class VideoFrame;
 
@@ -86,16 +89,19 @@ public:
     virtual RefPtr<VideoFrame> currentVideoFrame() const = 0;
     virtual void paintCurrentVideoFrameInContext(GraphicsContext&, const FloatRect&) { }
     virtual RefPtr<NativeImage> currentNativeImage() const { return nullptr; }
+    using BitmapImagePromise = NativePromise<Ref<ShareableBitmap>, void>;
+    virtual Ref<BitmapImagePromise> currentBitmapImage() const { return BitmapImagePromise::createAndReject(); }
 #if ENABLE(VIDEO)
     virtual std::optional<VideoPlaybackQualityMetrics> videoPlaybackQualityMetrics() = 0;
 #endif
     virtual PlatformLayer* platformVideoLayer() const { return nullptr; }
 
-    using LayerHostingContextCallback = CompletionHandler<void(HostingContext)>;
-    virtual void requestHostingContext(LayerHostingContextCallback&& completionHandler) { completionHandler({ }); }
+    using HostingContextPromise = NativePromise<WebCore::HostingContext, void, WTF::PromiseOption::Default | WTF::PromiseOption::WithoutCrossThreadCopy>;
+    virtual Ref<HostingContextPromise> requestHostingContext() { return HostingContextPromise::createAndReject(); }
     virtual HostingContext hostingContext() const { return { }; }
     virtual WebCore::FloatSize videoLayerSize() const { return { }; }
     virtual void notifyVideoLayerSizeChanged(Function<void(const MediaTime&, FloatSize)>&&) { }
+    virtual void setVideoLayerSize(const FloatSize&) { }
     virtual void setVideoLayerSizeFenced(const FloatSize&, WTF::MachSendRightAnnotated&&) { }
 };
 
@@ -121,9 +127,13 @@ public:
     virtual void setRate(double) = 0;
     virtual double effectiveRate() const = 0;
     virtual void stall() { };
-    virtual void prepareToSeek() { }
-    virtual Ref<MediaTimePromise> seekTo(const MediaTime&) = 0;
+    virtual Ref<MediaTimePromise> prepareToSeek(const MediaTime&) = 0;
+    virtual Ref<GenericPromise> finishSeek(const MediaTime&) = 0;
     virtual bool seeking() const = 0;
+    virtual void setScreenReserved(bool) = 0;
+
+    // The timebase the renderer keeps up to date as time/rate change. Null if unavailable.
+    virtual SharedTimebase* sharedTimebase() = 0;
 };
 
 struct SamplesRendererTrackIdentifierType;
@@ -139,10 +149,16 @@ public:
     virtual void setPreferences(VideoRendererPreferences) { }
     virtual void setHasProtectedVideoContent(bool) { }
 
-    virtual TrackIdentifier addTrack(TrackType) = 0;
+    virtual std::optional<TrackIdentifier> addTrack(TrackType) = 0;
     virtual void removeTrack(TrackIdentifier) = 0;
 
-    virtual void enqueueSample(TrackIdentifier, Ref<MediaSample>&&, std::optional<MediaTime> = std::nullopt) = 0;
+    // Tri-state on minimumUpcomingFrame:
+    //   nullopt            -> Assume content doesn't have b-frame.
+    //   !isFinite()        -> Content with b-frame: a future compressed frame
+    //                         with a lower presentation state may be incoming,
+    //                         not enough frames buffered ahead to make a determination.
+    //   finite MediaTime   -> Minimum upcoming presentation time known.
+    virtual void enqueueSample(TrackIdentifier, Ref<MediaSample>&&, std::optional<MediaTime> minimumUpcomingTime = std::nullopt) = 0;
     virtual bool isReadyForMoreSamples(TrackIdentifier) = 0;
     using RequestPromise = NativePromise<TrackIdentifier, PlatformMediaError>;
     virtual Ref<RequestPromise> requestMediaDataWhenReady(TrackIdentifier) = 0;
@@ -151,8 +167,8 @@ public:
     virtual bool timeIsProgressing() const = 0;
     virtual void notifyEffectiveRateChanged(Function<void(double)>&&) { }
     virtual MediaTime currentTime() const = 0;
-    virtual void notifyTimeReachedAndStall(const MediaTime&, Function<void(const MediaTime&)>&&) { }
-    virtual void cancelTimeReachedAction() { }
+    virtual Ref<MediaTimePromise> notifyTimeReachedAndStall(const MediaTime&) = 0;
+    virtual void cancelTimeReachedAction() = 0;
     virtual void performTaskAtTime(const MediaTime&, Function<void(const MediaTime&)>&&) { }
     virtual void setTimeObserver(Seconds, Function<void(const MediaTime&)>&&) { }
 

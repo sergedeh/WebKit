@@ -39,7 +39,7 @@ Ref<RealtimeMediaSource> RemoteRealtimeVideoSource::create(const CaptureDevice& 
 {
     auto source = adoptRef(*new RemoteRealtimeVideoSource(RealtimeMediaSourceIdentifier::generate(), device, constraints, WTF::move(hashSalts), manager, shouldCaptureInGPUProcess, pageIdentifier));
     manager.addSource(source.copyRef());
-    manager.protectedRemoteCaptureSampleManager()->addSource(source.copyRef());
+    protect(manager.remoteCaptureSampleManager())->addSource(source.copyRef());
     source->createRemoteMediaSource();
     return source;
 }
@@ -58,10 +58,9 @@ RemoteRealtimeVideoSource::RemoteRealtimeVideoSource(RemoteRealtimeMediaSourcePr
 
 RemoteRealtimeVideoSource::~RemoteRealtimeVideoSource() = default;
 
-bool RemoteRealtimeVideoSource::setShouldApplyRotation()
+void RemoteRealtimeVideoSource::setShouldApplyRotation()
 {
     Ref { connection() }->send(Messages::UserMediaCaptureManagerProxy::SetShouldApplyRotation { identifier() }, 0);
-    return true;
 }
 
 Ref<RealtimeMediaSource> RemoteRealtimeVideoSource::clone()
@@ -81,7 +80,7 @@ Ref<RealtimeMediaSource> RemoteRealtimeVideoSource::clone()
         clone->setMuted(muted());
 
         manager().addSource(*clone);
-        manager().protectedRemoteCaptureSampleManager()->addSource(*clone);
+        protect(manager().remoteCaptureSampleManager())->addSource(*clone);
         proxy().createRemoteCloneSource(clone->identifier(), *pageIdentifier());
 
         bool isNewClonedSource = true;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,16 +33,20 @@
 #include "MessageReceiver.h"
 #include "MessageSender.h"
 #include "SimulatedInputDispatcher.h"
+#include "Untrusted.h"
 #include "WebEvent.h"
 #include "WebPageProxyIdentifier.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/NavigationIdentifier.h>
+#include <WebCore/SecurityOriginData.h>
 #include <WebCore/ShareableBitmap.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
+#include <wtf/HashSet.h>
+#include <wtf/ListHashSet.h>
 #include <wtf/RunLoop.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/WallTime.h>
@@ -50,6 +54,10 @@
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteAutomationTarget.h>
+#endif
+
+#if ENABLE(WEBDRIVER_BIDI)
+#include "IdentifierTypes.h"
 #endif
 
 namespace API {
@@ -87,7 +95,12 @@ class ViewSnapshot;
 class WebFrameProxy;
 class WebOpenPanelResultListenerProxy;
 class WebPageProxy;
+class WebPageInspectorController;
 class WebProcessPool;
+
+#if ENABLE(REMOTE_INSPECTOR)
+class InspectorPassthroughChannel;
+#endif
 
 #if ENABLE(WEBDRIVER_BIDI)
 class WebDriverBidiProcessor;
@@ -126,8 +139,12 @@ class WebAutomationSession final : public API::ObjectImpl<API::Object::Type::Aut
 friend class WebDriverBidiProcessor;
 #endif
 
+#if ENABLE(REMOTE_INSPECTOR)
+friend class InspectorPassthroughChannel;
+#endif
+
 public:
-    WebAutomationSession();
+    WebAutomationSession(bool siteIsolationEnabled = false);
     ~WebAutomationSession() override;
 
     void ref() const final { API::Object::ref(); }
@@ -139,7 +156,7 @@ public:
     public:
         static Ref<Debuggable> create(WebAutomationSession&);
 
-        void sessionDestroyed();
+        void NODELETE sessionDestroyed();
 
     // Inspector::RemoteAutomationTarget API
     String name() const;
@@ -159,7 +176,9 @@ public:
     void setSessionIdentifier(const String& sessionIdentifier) { m_sessionIdentifier = sessionIdentifier; }
     String sessionIdentifier() const { return m_sessionIdentifier; }
 
-    WebProcessPool* processPool() const;
+    bool siteIsolationEnabled() const { return m_siteIsolationEnabled; }
+
+    WebProcessPool* NODELETE processPool() const;
     void setProcessPool(WebProcessPool*);
 
     void navigationOccurredForFrame(const WebFrameProxy&);
@@ -182,6 +201,7 @@ public:
     void contextCreatedForFrame(const WebFrameProxy&);
     void contextDestroyedForPage(const WebPageProxy&);
     void contextDestroyedForFrame(const WebFrameProxy&);
+    void setViewportForPage(WebPageProxy&, std::optional<int> width, std::optional<int> height, std::optional<double> devicePixelRatio, Inspector::CommandCallback<void>&&);
 #endif
     void willClosePage(const WebPageProxy&);
     void handleRunOpenPanel(const WebPageProxy&, const WebFrameProxy&, const API::OpenPanelParameters&, WebOpenPanelResultListenerProxy&);
@@ -189,7 +209,7 @@ public:
     void didEnterFullScreenForPage(const WebPageProxy&);
     void didExitFullScreenForPage(const WebPageProxy&);
 
-    bool shouldAllowGetUserMediaForPage(const WebPageProxy&) const;
+    bool NODELETE shouldAllowGetUserMediaForPage(const WebPageProxy&) const;
 
 #if ENABLE(REMOTE_INSPECTOR)
     String name() const { return m_sessionIdentifier; }
@@ -198,8 +218,8 @@ public:
     void disconnect(Inspector::FrontendChannel&);
 
     void init();
-    bool isPaired() const;
-    bool isPendingTermination() const;
+    bool NODELETE isPaired() const;
+    bool NODELETE isPendingTermination() const;
 #endif
 
     void terminate();
@@ -246,6 +266,7 @@ public:
     void reloadBrowsingContext(const String&, std::optional<Inspector::Protocol::Automation::PageLoadStrategy>&&, std::optional<double>&& pageLoadTimeout, Inspector::CommandCallback<void>&&) override;
     void waitForNavigationToComplete(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, std::optional<Inspector::Protocol::Automation::PageLoadStrategy>&&, std::optional<double>&& pageLoadTimeout, Inspector::CommandCallback<void>&&) override;
     void evaluateJavaScriptFunction(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const String& function, Ref<JSON::Array>&& arguments, std::optional<bool>&& expectsImplicitCallbackArgument, std::optional<bool>&& forceUserGesture, std::optional<double>&& callbackTimeout, Inspector::CommandCallback<String>&&) override;
+    void evaluateBidiScript(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const String& expression, bool awaitPromise, int maxObjectDepth, std::optional<double>&& callbackTimeout, Inspector::CommandCallback<String>&&);
     void performMouseInteraction(const Inspector::Protocol::Automation::BrowsingContextHandle&, Ref<JSON::Object>&& requestedPosition, Inspector::Protocol::Automation::MouseButton, Inspector::Protocol::Automation::MouseInteraction, Ref<JSON::Array>&& keyModifiers, Inspector::CommandCallback<Ref<Inspector::Protocol::Automation::Point>>&&) override;
     void performKeyboardInteractions(const Inspector::Protocol::Automation::BrowsingContextHandle&, Ref<JSON::Array>&& interactions, Inspector::CommandCallback<void>&&) override;
     void performInteractionSequence(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, Ref<JSON::Array>&& sources, Ref<JSON::Array>&& steps, Inspector::CommandCallback<void>&&) override;
@@ -256,6 +277,7 @@ public:
     void computeElementLayout(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const Inspector::Protocol::Automation::NodeHandle&, std::optional<bool>&& scrollIntoViewIfNeeded, Inspector::Protocol::Automation::CoordinateSystem, Inspector::CommandCallbackOf<Ref<Inspector::Protocol::Automation::Rect>, RefPtr<Inspector::Protocol::Automation::Point>, bool>&&) override;
     void getComputedRole(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const Inspector::Protocol::Automation::NodeHandle&, Inspector::CommandCallback<String>&&) override;
     void getComputedLabel(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const Inspector::Protocol::Automation::NodeHandle&, Inspector::CommandCallback<String>&&) override;
+    void consumeUserActivation(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, Inspector::CommandCallback<bool>&&) override;
     void selectOptionElement(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const Inspector::Protocol::Automation::NodeHandle&, Inspector::CommandCallback<void>&&) override;
     Inspector::CommandResult<bool> isShowingJavaScriptDialog(const Inspector::Protocol::Automation::BrowsingContextHandle&) override;
     Inspector::CommandResult<void> dismissCurrentJavaScriptDialog(const Inspector::Protocol::Automation::BrowsingContextHandle&) override;
@@ -267,7 +289,7 @@ public:
     void getAllCookies(const Inspector::Protocol::Automation::BrowsingContextHandle&, Inspector::CommandCallback<Ref<JSON::ArrayOf<Inspector::Protocol::Automation::Cookie>>>&&) override;
     void deleteSingleCookie(const Inspector::Protocol::Automation::BrowsingContextHandle&, const String& cookieName, Inspector::CommandCallback<void>&&) override;
     void addSingleCookie(const Inspector::Protocol::Automation::BrowsingContextHandle&, Ref<JSON::Object>&& cookie, Inspector::CommandCallback<void>&&) override;
-    Inspector::CommandResult<void> deleteAllCookies(const Inspector::Protocol::Automation::BrowsingContextHandle&) override;
+    void deleteAllCookies(const Inspector::Protocol::Automation::BrowsingContextHandle&, Inspector::CommandCallback<void>&&) override;
     Inspector::CommandResult<Ref<JSON::ArrayOf<Inspector::Protocol::Automation::SessionPermissionData>>> getSessionPermissions() override;
     Inspector::CommandResult<void> setSessionPermissions(Ref<JSON::Array>&&) override;
 
@@ -289,15 +311,23 @@ public:
 
 #if ENABLE(WEBDRIVER_BIDI)
     Inspector::CommandResult<void> processBidiMessage(const String&) override;
+    Inspector::CommandResult<void> emitActiveBidiScriptRealmCreatedEvents() override;
     void sendBidiMessage(const String&);
+    WebDriverBidiProcessor& bidiProcessor() const { return m_bidiProcessor; }
 #endif
+
+#if ENABLE(REMOTE_INSPECTOR)
+    Inspector::CommandResult<void> sendInspectorMessage(const Inspector::Protocol::Automation::BrowsingContextHandle&, const String& message) override;
+#endif
+
+    void performApplicationCommand(const Inspector::Protocol::Automation::BrowsingContextHandle&, const String& commandName, const String& arguments, Inspector::CommandCallback<String>&&) override;
 
 #if PLATFORM(MAC)
     void inspectBrowsingContext(const Inspector::Protocol::Automation::BrowsingContextHandle&, std::optional<bool>&& enableAutoCapturing, Inspector::CommandCallback<void>&&) override;
 #endif
 
     // Event Simulation Support.
-    bool isSimulatingUserInteraction() const;
+    bool NODELETE isSimulatingUserInteraction() const;
 #if ENABLE(WEBDRIVER_ACTIONS_API)
     SimulatedInputDispatcher& inputDispatcherForPage(WebPageProxy&);
 #endif
@@ -309,12 +339,21 @@ public:
 
     void didDestroyFrame(WebCore::FrameIdentifier);
 
+    // A process swap replaces the main frame's proxy, and the replacement is given a
+    // freshly generated identifier, so references issued under the old one have to be
+    // re-keyed or they read as never having existed.
+    void transferKnownNodeReferences(WebCore::FrameIdentifier oldFrameID, WebCore::FrameIdentifier newFrameID);
+
     RefPtr<WebPageProxy> webPageProxyForHandle(const String&);
     String effectiveHandleForWebFrameProxy(const WebFrameProxy&);
     String handleForWebFrameID(std::optional<WebCore::FrameIdentifier>);
     String handleForWebPageProxy(const WebPageProxy&);
 
-    Expected<PageAndFrameHandle, AutomationCommandError> extractBrowsingContextHandles(const String&);
+    std::expected<PageAndFrameHandle, AutomationCommandError> extractBrowsingContextHandles(const String&);
+
+#if ENABLE(WEBDRIVER_BIDI)
+    bool isValidUserContext(const String& userContextID) const;
+#endif
 
 private:
     Ref<Inspector::Protocol::Automation::BrowsingContext> buildBrowsingContextForPage(WebPageProxy&, WebCore::FloatRect windowFrame);
@@ -324,8 +363,9 @@ private:
 
     void waitForNavigationToCompleteOnPage(WebPageProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&);
     void waitForNavigationToCompleteOnFrame(WebFrameProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&);
-    void respondToPendingPageNavigationCallbacksWithTimeout(HashMap<WebPageProxyIdentifier, Inspector::CommandCallback<void>>&);
-    void respondToPendingFrameNavigationCallbacksWithTimeout(HashMap<WebCore::FrameIdentifier, Inspector::CommandCallback<void>>&);
+    void respondToPendingPageNavigationCallbacksWithTimeout(HashMap<WebPageProxyIdentifier, Vector<Inspector::CommandCallback<void>>>&);
+    void respondToPendingFrameNavigationCallbacksWithTimeout(HashMap<WebCore::FrameIdentifier, Vector<Inspector::CommandCallback<void>>>&);
+    void respondToPendingNavigationCallbacksWithSuccess(Vector<Inspector::CommandCallback<void>>&&);
     void loadTimerFired();
 
     void exitFullscreenWindowForPage(WebPageProxy&, WTF::CompletionHandler<void()>&&);
@@ -340,17 +380,24 @@ private:
 
     // IPC::MessageReceiver (Implemented by generated code in WebAutomationSessionMessageReceiver.cpp).
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
+    void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) override;
 
     // Called by WebAutomationSession messages.
     void logEntryAdded(const JSC::MessageSource&, const JSC::MessageLevel&, const String& messageText, const JSC::MessageType&, const WallTime&);
+    void addKnownNodeReference(WebCore::FrameIdentifier, const String& nodeHandle);
+    void isKnownNodeReference(WebCore::FrameIdentifier, const String& nodeHandle, CompletionHandler<void(bool)>&&);
+#if ENABLE(WEBDRIVER_BIDI)
+    void scriptRealmCreated(WebCore::FrameIdentifier, RealmIdentifier, IPC::Untrusted<WebCore::SecurityOriginData>&&);
+    void scriptRealmDestroyed(WebCore::FrameIdentifier, RealmIdentifier);
+#endif
 
     // Platform-dependent implementations.
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
-    void resetMouseState();
+    void NODELETE resetMouseState();
     void updateClickCount(MouseButton, const WebCore::IntPoint&, Seconds maxTime = 0.5_s, int maxDistance = 0);
-    void updateLastPosition(const WebCore::IntPoint&, int maxDistance = 0);
+    void NODELETE updateLastPosition(const WebCore::IntPoint&, int maxDistance = 0);
     void platformSimulateMouseInteraction(WebPageProxy&, MouseInteraction, MouseButton, const WebCore::IntPoint& locationInViewport, OptionSet<WebEventModifier>, const String& pointerType);
-    static OptionSet<WebEventModifier> platformWebModifiersFromRaw(WebPageProxy&, unsigned modifiers);
+    static OptionSet<WebEventModifier> NODELETE platformWebModifiersFromRaw(WebPageProxy&, unsigned modifiers);
 #endif
 #if ENABLE(WEBDRIVER_TOUCH_INTERACTIONS)
     // Simulates a single touch point being pressed, moved, and released.
@@ -378,14 +425,22 @@ private:
     // The type parameter of the NSArray argument is platform-dependent.
     void sendSynthesizedEventsToPage(WebPageProxy&, NSArray *eventsToSend);
 
-    std::optional<unichar> charCodeForVirtualKey(Inspector::Protocol::Automation::VirtualKey) const;
-    std::optional<unichar> charCodeIgnoringModifiersForVirtualKey(Inspector::Protocol::Automation::VirtualKey) const;
+    std::optional<unichar> NODELETE charCodeForVirtualKey(Inspector::Protocol::Automation::VirtualKey) const;
+    std::optional<unichar> NODELETE charCodeIgnoringModifiersForVirtualKey(Inspector::Protocol::Automation::VirtualKey) const;
+
+#if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
+    // Where the WebDriver key table states a DOM identity for the key, attaches it to each of the
+    // synthesized events (see AutomationKeyIdentity.h). The type parameter of the NSArray argument
+    // is platform-dependent.
+    static void setKeyIdentityForVirtualKeyIfNeeded(NSArray *events, const Variant<VirtualKey, CharKey>&);
+#endif // ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
 #endif
 
     WeakPtr<WebProcessPool> m_processPool;
 
     std::unique_ptr<API::AutomationSessionClient> m_client;
     String m_sessionIdentifier { "Untitled Session"_s };
+    const bool m_siteIsolationEnabled;
     const Ref<Inspector::FrontendRouter> m_frontendRouter;
     const Ref<Inspector::BackendDispatcher> m_backendDispatcher;
     const Ref<Inspector::AutomationBackendDispatcher> m_domainDispatcher;
@@ -401,10 +456,20 @@ private:
     HashMap<WebCore::FrameIdentifier, String> m_webFrameHandleMap;
     HashMap<String, WebCore::FrameIdentifier> m_handleWebFrameMap;
 
-    HashMap<WebPageProxyIdentifier, Inspector::CommandCallback<void>> m_pendingNormalNavigationInBrowsingContextCallbacksPerPage;
-    HashMap<WebPageProxyIdentifier, Inspector::CommandCallback<void>> m_pendingEagerNavigationInBrowsingContextCallbacksPerPage;
-    HashMap<WebCore::FrameIdentifier, Inspector::CommandCallback<void>> m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame;
-    HashMap<WebCore::FrameIdentifier, Inspector::CommandCallback<void>> m_pendingEagerNavigationInBrowsingContextCallbacksPerFrame;
+    // The authoritative record of every node reference this session has issued, per
+    // navigable. It lives here rather than in the web process because a
+    // browsing-context-group swap replaces the web process, and a reference minted
+    // before the swap must still be reported stale after it.
+    //
+    // Insertion-ordered so the oldest entries can be dropped once a frame passes
+    // maxKnownNodeReferencesPerFrame. Evicting one costs accuracy, not safety: that
+    // reference reports "no such element" again instead of "stale element reference".
+    HashMap<WebCore::FrameIdentifier, ListHashSet<String>> m_knownNodeReferences;
+
+    HashMap<WebPageProxyIdentifier, Vector<Inspector::CommandCallback<void>>> m_pendingNormalNavigationInBrowsingContextCallbacksPerPage;
+    HashMap<WebPageProxyIdentifier, Vector<Inspector::CommandCallback<void>>> m_pendingEagerNavigationInBrowsingContextCallbacksPerPage;
+    HashMap<WebCore::FrameIdentifier, Vector<Inspector::CommandCallback<void>>> m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame;
+    HashMap<WebCore::FrameIdentifier, Vector<Inspector::CommandCallback<void>>> m_pendingEagerNavigationInBrowsingContextCallbacksPerFrame;
     HashMap<WebPageProxyIdentifier, Inspector::CommandCallback<void>> m_pendingInspectorCallbacksPerPage;
 #if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
     HashMap<WebPageProxyIdentifier, Inspector::CommandCallback<void>> m_pendingKeyboardEventsFlushedCallbacksPerPage;
@@ -457,6 +522,25 @@ private:
     const Ref<Debuggable> m_debuggable;
 #endif
 
+    // Web Inspector backend passthrough: clients with the
+    // shouldEnableInspectorTesting capability can issue
+    // Automation.sendInspectorMessage to forward an Inspector backend
+    // command into a page's WebPageInspectorController; the controller's
+    // responses and events come back as Automation.receiveInspectorMessage.
+    // Each connected page owns its own InspectorPassthroughChannel so the
+    // outgoing event can name its source browsing context.
+#if ENABLE(REMOTE_INSPECTOR)
+    void sendInspectorMessageToClient(const String& browsingContextHandle, const String& message);
+    void disconnectInspectorPassthroughChannel(WebPageProxyIdentifier);
+    void disconnectAllInspectorPassthroughChannels();
+
+    HashMap<WebPageProxyIdentifier, std::unique_ptr<InspectorPassthroughChannel>> m_inspectorPassthroughChannels;
+#endif
+
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebAutomationSession)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::AutomationSession; }
+SPECIALIZE_TYPE_TRAITS_END()

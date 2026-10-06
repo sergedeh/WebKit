@@ -23,7 +23,6 @@
 
 #include "ElementInlines.h"
 #include "EventNames.h"
-#include "EventTargetInlines.h"
 #include "HTMLDetailsElement.h"
 #include "HTMLFormControlElement.h"
 #include "HTMLSlotElement.h"
@@ -58,7 +57,7 @@ RefPtr<HTMLDetailsElement> HTMLSummaryElement::detailsElement() const
     if (auto* parent = dynamicDowncast<HTMLDetailsElement>(parentElement()))
         return parent;
     // Fallback summary element is in the shadow tree.
-    if (RefPtr details = dynamicDowncast<HTMLDetailsElement>(shadowHost()))
+    if (auto* details = dynamicDowncast<HTMLDetailsElement>(shadowHost()))
         return details;
     return nullptr;
 }
@@ -95,14 +94,14 @@ void HTMLSummaryElement::defaultEventHandler(Event& event)
 {
     if (isActiveSummary()) {
         auto& eventNames = WebCore::eventNames();
-        if (event.type() == eventNames.DOMActivateEvent && !isInSummaryInteractiveContent(event.protectedTarget().get())) {
+        if (event.type() == eventNames.DOMActivateEvent && !isInSummaryInteractiveContent(protect(event.target()).get())) {
             if (RefPtr<HTMLDetailsElement> details = detailsElement())
                 details->toggleOpen();
             event.setDefaultHandled();
             return;
         }
 
-        if (auto* keyboardEvent = dynamicDowncast<KeyboardEvent>(event)) {
+        if (auto* keyboardEvent = dynamicDowncast<KeyboardEvent>(event); keyboardEvent && document().focusedElement() == this) {
             if (keyboardEvent->type() == eventNames.keydownEvent && keyboardEvent->keyIdentifier() == "U+0020"_s) {
                 setActive(true);
                 // No setDefaultHandled() - IE dispatches a keypress in this case.
@@ -135,6 +134,11 @@ void HTMLSummaryElement::defaultEventHandler(Event& event)
 bool HTMLSummaryElement::willRespondToMouseClickEventsWithEditability(Editability editability) const
 {
     return isActiveSummary() || HTMLElement::willRespondToMouseClickEventsWithEditability(editability);
+}
+
+bool HTMLSummaryElement::hasActivationBehavior() const
+{
+    return true;
 }
 
 }

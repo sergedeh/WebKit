@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -63,14 +64,18 @@ public:
     Iterator createIterator(ScriptExecutionContext* context) { return Iterator(*this, context); }
 
     virtual ~StylePropertyMapReadOnly() = default;
-    using CSSStyleValueOrUndefined = Variant<std::monostate, RefPtr<CSSStyleValue>>;
+    using CSSStyleValueOrUndefined = Variant<std::monostate, Ref<CSSStyleValue>>;
     virtual ExceptionOr<CSSStyleValueOrUndefined> get(ScriptExecutionContext&, const AtomString& property) const = 0;
     virtual ExceptionOr<Vector<RefPtr<CSSStyleValue>>> getAll(ScriptExecutionContext&, const AtomString&) const = 0;
     virtual ExceptionOr<bool> has(ScriptExecutionContext&, const AtomString&) const = 0;
     virtual unsigned size() const = 0;
 
-    static RefPtr<CSSStyleValue> reifyValue(Document&, RefPtr<CSSValue>&&, std::optional<CSSPropertyID>);
-    static Vector<RefPtr<CSSStyleValue>> reifyValueToVector(Document&, RefPtr<CSSValue>&&, std::optional<CSSPropertyID>);
+    static RefPtr<CSSStyleValue> reifyValue(Document&, RefPtr<CSSValue>&&, AssociatedProperty&&);
+    static RefPtr<CSSStyleValue> reifyValue(Document&, RefPtr<CSSValue>&&, CSSPropertyID);
+    static RefPtr<CSSStyleValue> reifyValue(Document&, RefPtr<CSSValue>&&, AtomString&& customPropertyName);
+    static Vector<RefPtr<CSSStyleValue>> reifyValueToVector(Document&, RefPtr<CSSValue>&&, AssociatedProperty&&);
+    static Vector<RefPtr<CSSStyleValue>> reifyValueToVector(Document&, RefPtr<CSSValue>&&, CSSPropertyID);
+    static Vector<RefPtr<CSSStyleValue>> reifyValueToVector(Document&, RefPtr<CSSValue>&&, AtomString&& customPropertyName);
 
     virtual bool isStylePropertyMap() const { return false; }
 

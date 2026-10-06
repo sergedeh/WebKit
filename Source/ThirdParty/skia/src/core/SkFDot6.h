@@ -9,9 +9,11 @@
 #define SkFDot6_DEFINED
 
 #include "include/core/SkScalar.h"
-#include "include/private/base/SkFixed.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkFixed.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkTo.h"
+
+#include <limits>
 
 typedef int32_t SkFDot6;
 
@@ -42,7 +44,8 @@ inline SkFDot6 SkScalarRoundToFDot6(SkScalar x, int shift)
 
 #ifdef SK_DEBUG
     constexpr inline SkFDot6 SkIntToFDot6(int x) {
-        SkASSERT(SkToS16(x) == x);
+        SkASSERT(     (std::numeric_limits<SkFDot6>::min() >> 6) <= x &&
+                 x <= (std::numeric_limits<SkFDot6>::max() >> 6));
         return x << 6;
     }
 #else

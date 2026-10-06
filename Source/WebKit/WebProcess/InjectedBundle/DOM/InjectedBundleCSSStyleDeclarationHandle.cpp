@@ -27,6 +27,7 @@
 #include "InjectedBundleCSSStyleDeclarationHandle.h"
 
 #include <JavaScriptCore/APICast.h>
+#include <JavaScriptCore/JSCellInlines.h>
 #include <WebCore/CSSStyleDeclaration.h>
 #include <WebCore/JSCSSStyleDeclaration.h>
 #include <wtf/HashMap.h>
@@ -38,7 +39,7 @@ using namespace WebCore;
 
 using DOMStyleDeclarationHandleCache = HashMap<SingleThreadWeakRef<CSSStyleDeclaration>, WeakRef<InjectedBundleCSSStyleDeclarationHandle>>;
 
-static DOMStyleDeclarationHandleCache& domStyleDeclarationHandleCache()
+static DOMStyleDeclarationHandleCache& NODELETE domStyleDeclarationHandleCache()
 {
     static NeverDestroyed<DOMStyleDeclarationHandleCache> cache;
     return cache;

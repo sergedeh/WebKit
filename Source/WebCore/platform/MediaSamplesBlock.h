@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include <WebCore/HdrMetadataType.h>
 #include <WebCore/MediaSample.h>
+#include <WebCore/PlatformMediaCapabilitiesHdrMetadataType.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/TrackInfo.h>
 #include <wtf/MediaTime.h>
@@ -48,7 +48,7 @@ public:
         std::pair<MediaTime, MediaTime> trimInterval { MediaTime::zeroTime(), MediaTime::zeroTime() };
         MediaSampleDataType data;
         RefPtr<SharedBuffer> hdrMetadata { nullptr };
-        std::optional<HdrMetadataType> hdrMetadataType { std::nullopt };
+        std::optional<PlatformMediaCapabilitiesHdrMetadataType> hdrMetadataType { std::nullopt };
         uint32_t flags { };
         bool isSync() const { return flags & MediaSample::IsSync; }
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -70,7 +70,6 @@ public:
 
     void setInfo(RefPtr<const TrackInfo>&& info) { m_info = WTF::move(info); }
     const TrackInfo* info() const { return m_info.get(); }
-    RefPtr<const TrackInfo> protectedInfo() const { return m_info; }
     MediaTime presentationTime() const { return isEmpty() ? MediaTime::invalidTime() : first().presentationTime; }
     MediaTime duration() const
     {

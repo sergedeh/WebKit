@@ -51,18 +51,18 @@ public:
     void deref() const final { RefCounted::deref(); }
 
     virtual void show();
+    virtual void cancelTracking() { }
 
     WebPageProxy* page() const { return m_page.get(); }
-    RefPtr<WebPageProxy> protectedPage() const;
-    const FrameInfoData& frameInfo() const { return m_frameInfo; }
-    const WebCore::IntPoint& menuLocation() const { return m_context.menuLocation(); }
+    const FrameInfoData& frameInfo() const LIFETIME_BOUND { return m_frameInfo; }
+    const WebCore::IntPoint& menuLocation() const LIFETIME_BOUND { return m_context.menuLocation(); }
 
 #if PLATFORM(COCOA)
     virtual NSMenu *platformMenu() const = 0;
     virtual RetainPtr<NSArray> platformData() const = 0;
 #endif // PLATFORM(COCOA)
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     virtual RetainPtr<CGImageRef> imageForCopySubject() const { return { }; }
 #endif
 

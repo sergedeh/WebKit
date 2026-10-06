@@ -36,6 +36,7 @@ class QualifiedName;
 class VisibleSelection;
 
 std::optional<TextList> parseTextList(StringView);
+bool areCompatibleListMarkers(const TextList&, const TextList&);
 
 Vector<std::pair<const QualifiedName&, AtomString>> nodeAttributesForSmartList(const StyledElement&, const TextList&);
 

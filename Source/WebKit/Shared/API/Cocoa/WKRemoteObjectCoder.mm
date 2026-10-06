@@ -373,10 +373,16 @@ static RetainPtr<CFDataRef> transformTrustToData(SecTrustRef trust)
 {
     if (CFGetTypeID(trust) != SecTrustGetTypeID())
         [NSException raise:NSInvalidArgumentException format:@"Error encoding invalid SecTrustRef"];
-    CFErrorRef error = nullptr;
-    auto data = adoptCF(SecTrustSerialize(trust, &error));
+    RetainPtr<CFDataRef> data;
+    RetainPtr<CFErrorRef> error;
+    {
+        // FIXME: The Security framework API is missing the `CF_RETURNS_RETAINED` annotation (rdar://161546781).
+        CFErrorRef rawError = NULL;
+        data = adoptCF(SecTrustSerialize(trust, &rawError));
+        SUPPRESS_RETAINPTR_CTOR_ADOPT error = adoptCF(rawError);
+    }
     if (error)
-        [NSException raise:NSInvalidArgumentException format:@"Error serializing SecTrustRef: %@", error];
+        [NSException raise:NSInvalidArgumentException format:@"Error serializing SecTrustRef: %@", error.get()];
     return data;
 }
 
@@ -395,7 +401,7 @@ static void encodeError(WKRemoteObjectEncoder *encoder, NSError *error)
     if (RetainPtr<NSArray> certificateChain = error.userInfo[peerCertificateKey]) {
         if (!copy)
             copy = adoptNS([error.userInfo mutableCopy]);
-        copy.get()[peerCertificateKey] = transformCertificatesToData(certificateChain.get()).get();
+        copy.get()[peerCertificateKey] = transformCertificatesToData(certificateChain).get();
     }
     if (RetainPtr<id> trust = error.userInfo[peerTrustKey]) {
         if (!copy)
@@ -426,10 +432,16 @@ static RetainPtr<SecTrustRef> transformDataToTrust(NSData *data)
 {
     if (CFGetTypeID(data) != CFDataGetTypeID())
         [NSException raise:NSInvalidUnarchiveOperationException format:@"Invalid SecTrustRef data %@", NSStringFromClass([data class])];
-    CFErrorRef error = nullptr;
-    auto trust = adoptCF(SecTrustDeserialize((CFDataRef)data, &error));
+    RetainPtr<SecTrustRef> trust;
+    RetainPtr<CFErrorRef> error;
+    {
+        // FIXME: The Security framework API is missing the `CF_RETURNS_RETAINED` annotation (rdar://161546781).
+        CFErrorRef rawError = NULL;
+        trust = adoptCF(SecTrustDeserialize((CFDataRef)data, &rawError));
+        SUPPRESS_RETAINPTR_CTOR_ADOPT error = adoptCF(rawError);
+    }
     if (error || !trust)
-        [NSException raise:NSInvalidUnarchiveOperationException format:@"Invalid SecTrustRef %@", error];
+        [NSException raise:NSInvalidUnarchiveOperationException format:@"Invalid SecTrustRef %@", error.get()];
     return trust;
 }
 
@@ -439,12 +451,12 @@ static RetainPtr<NSError> decodeError(WKRemoteObjectDecoder *decoder)
     RetainPtr<NSMutableDictionary> copy;
     if (RetainPtr<NSArray> certificateChain = error.get().userInfo[peerCertificateKey]) {
         copy = adoptNS([error.get().userInfo mutableCopy]);
-        copy.get()[peerCertificateKey] = transformDataToCertificates(certificateChain.get()).get();
+        copy.get()[peerCertificateKey] = transformDataToCertificates(certificateChain).get();
     }
     if (RetainPtr<NSData> trust = error.get().userInfo[peerTrustKey]) {
         if (!copy)
             copy = adoptNS([error.get().userInfo mutableCopy]);
-        copy.get()[peerTrustKey] = bridge_id_cast(transformDataToTrust(trust.get()).get());
+        copy.get()[peerTrustKey] = bridge_id_cast(transformDataToTrust(trust).get());
     }
     if (!copy)
         return error;
@@ -475,10 +487,10 @@ static void encodeObject(WKRemoteObjectEncoder *encoder, id object)
 
     encoder->_objectsBeingEncoded.add(object);
     auto exitScope = makeScopeExit([encoder = retainPtr(encoder), object = retainPtr(object)] {
-        encoder->_objectsBeingEncoded.remove(object.get());
+        encoder->_objectsBeingEncoded.remove(object);
     });
 
-    Ref { *encoder->_currentDictionary }->set(classNameKey, API::String::create(String::fromLatin1(class_getName(objectClass.get()))));
+    Ref { *encoder->_currentDictionary }->set(classNameKey, API::String::create(String::fromLatin1(class_getName(objectClass))));
 
     if ([object isKindOfClass:[NSInvocation class]]) {
         // We have to special case NSInvocation since we don't want to encode the target.
@@ -486,12 +498,12 @@ static void encodeObject(WKRemoteObjectEncoder *encoder, id object)
         return;
     }
 
-    if (objectClass.get() == [NSString class] || objectClass.get() == [NSMutableString class]) {
+    if (objectClass == [NSString class] || objectClass == [NSMutableString class]) {
         encodeString(encoder, object);
         return;
     }
 
-    if (objectClass.get() == [NSError class])
+    if (objectClass == [NSError class])
         return encodeError(encoder, object);
     
     [object encodeWithCoder:encoder];
@@ -765,7 +777,7 @@ static NSString *escapeKey(NSString *key)
 
 - (BOOL)containsValueForKey:(NSString *)key
 {
-    return Ref { *_currentDictionary }->map().contains(escapeKey(key));
+    return _currentDictionary->map().contains(escapeKey(key));
 }
 
 - (id)decodeObjectForKey:(NSString *)key
@@ -1021,7 +1033,7 @@ static RetainPtr<NSInvocation> decodeInvocation(WKRemoteObjectDecoder *decoder)
         if (!selectorString)
             [NSException raise:NSInvalidUnarchiveOperationException format:@"Invocation had no selector"];
 
-        selector = NSSelectorFromString(selectorString.get());
+        selector = NSSelectorFromString(selectorString);
         ASSERT(selector);
 
         invocation = [decoder->_interface _invocationForSelector:selector];
@@ -1034,7 +1046,7 @@ static RetainPtr<NSInvocation> decodeInvocation(WKRemoteObjectDecoder *decoder)
         [NSException raise:NSInvalidUnarchiveOperationException format:@"Invocation had no type signature"];
 
     RetainPtr<NSString> localMethodSignature = [invocation methodSignature]._typeString;
-    if (!WebKit::methodSignaturesAreCompatible(typeSignature.get(), localMethodSignature.get()))
+    if (!WebKit::methodSignaturesAreCompatible(typeSignature, localMethodSignature))
         [NSException raise:NSInvalidUnarchiveOperationException format:@"Local and remote method signatures are not compatible for method \"%s\"", selector ? sel_getName(selector) : "(no selector)"];
 
     if (isReplyBlock) {
@@ -1065,27 +1077,27 @@ static RetainPtr<id> decodeObject(WKRemoteObjectDecoder *decoder)
     if (!classNameString)
         [NSException raise:NSInvalidUnarchiveOperationException format:@"Class name missing"];
 
-    CString className = classNameString->string().utf8();
+    auto className = classNameString->string().utf8();
 
-    RetainPtr<Class> objectClass = objc_lookUpClass(className.data());
+    RetainPtr<Class> objectClass = objc_lookUpClass(className.legacyCStringPointer());
     if (!objectClass)
         crashWithClassName(className.span());
 
-    validateClass(decoder, objectClass.get());
+    validateClass(decoder, objectClass);
 
-    if (objectClass.get() == [NSInvocation class] || objectClass.get() == [NSBlockInvocation class])
+    if (objectClass == [NSInvocation class] || objectClass == [NSBlockInvocation class])
         return decodeInvocation(decoder);
 
-    if (objectClass.get() == [NSString class])
+    if (objectClass == [NSString class])
         return decodeString(decoder);
-    
-    if (objectClass.get() == [NSError class])
+
+    if (objectClass == [NSError class])
         return decodeError(decoder);
 
-    if (objectClass.get() == [NSMutableString class])
+    if (objectClass == [NSMutableString class])
         return adoptNS([[NSMutableString alloc] initWithString:decodeString(decoder).get()]);
 
-    return decodeObjCObject(decoder, objectClass.get());
+    return decodeObjCObject(decoder, objectClass);
 }
 
 static RetainPtr<id> decodeObject(WKRemoteObjectDecoder *decoder, const API::Dictionary* dictionary, const HashSet<CFTypeRef>& allowedClasses)

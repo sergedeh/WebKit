@@ -28,6 +28,7 @@
 
 #include "FloatPoint.h"
 #include "Path.h"
+#include <wtf/Vector.h>
 
 namespace WebCore {
 
@@ -57,9 +58,9 @@ public:
     float normalAngle() const { return m_normalAngle; }
 
 private:
-    void closeSubpath();
-    void moveTo(const FloatPoint&);
-    void lineTo(const FloatPoint&);
+    void NODELETE closeSubpath();
+    void NODELETE moveTo(const FloatPoint&);
+    void NODELETE lineTo(const FloatPoint&);
     void quadraticBezierTo(const FloatPoint&, const FloatPoint&);
     void cubicBezierTo(const FloatPoint&, const FloatPoint&, const FloatPoint&);
 

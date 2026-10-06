@@ -65,7 +65,7 @@ public:
         std::optional<bool> useinbandfec { };
         std::optional<bool> usedtx { };
     };
-    static RefPtr<AudioSampleBufferConverter> create(CMBufferQueueTriggerCallback, void* callbackObject, const Options&);
+    static RefPtr<AudioSampleBufferConverter> create(Function<void()>&&, const Options&);
     ~AudioSampleBufferConverter();
 
     bool isEmpty() const;
@@ -76,13 +76,15 @@ public:
     CMSampleBufferRef getOutputSampleBuffer() const;
     RetainPtr<CMSampleBufferRef> takeOutputSampleBuffer();
 
-    unsigned bitRate() const;
+    unsigned NODELETE bitRate() const;
     unsigned preSkip() const { return m_preSkip; }
 
+    static void converterOutputBufferCallback(void*, CMBufferQueueTriggerToken);
+
 private:
-    AudioSampleBufferConverter(const Options&);
-    bool initialize(CMBufferQueueTriggerCallback, void* callbackObject);
-    UInt32 defaultOutputBitRate(const AudioStreamBasicDescription&) const;
+    AudioSampleBufferConverter(Function<void()>&&, const Options&);
+    bool initialize();
+    UInt32 NODELETE defaultOutputBitRate(const AudioStreamBasicDescription&) const;
 
     static OSStatus audioConverterComplexInputDataProc(AudioConverterRef, UInt32*, AudioBufferList*, AudioStreamPacketDescription**, void*);
 
@@ -90,12 +92,12 @@ private:
     OSStatus initAudioConverterForSourceFormatDescription(CMFormatDescriptionRef, AudioFormatID);
     void attachPrimingTrimsIfNeeded(CMSampleBufferRef);
     RetainPtr<NSNumber> gradualDecoderRefreshCount();
-    Expected<RetainPtr<CMSampleBufferRef>, OSStatus> sampleBuffer(const WebAudioBufferList&, uint32_t numSamples);
+    std::expected<RetainPtr<CMSampleBufferRef>, OSStatus> sampleBuffer(const WebAudioBufferList&, uint32_t numSamples);
     void processSampleBuffers();
     OSStatus provideSourceDataNumOutputPackets(UInt32*, AudioBufferList*, AudioStreamPacketDescription**);
     Ref<GenericPromise> flushInternal(bool isFinished);
 
-    bool isPCM() const;
+    bool NODELETE isPCM() const;
     void setTimeFromSample(CMSampleBufferRef);
 
     WorkQueue& queue() const { return m_serialDispatchQueue; }
@@ -105,6 +107,8 @@ private:
     const RetainPtr<CMBufferQueueRef> m_inputBufferQueue; // initialized on the caller's thread once, never modified after that.
     bool m_isEncoding WTF_GUARDED_BY_CAPABILITY(queue()) { true };
     bool m_isDraining WTF_GUARDED_BY_CAPABILITY(queue()) { false };
+
+    const Function<void()> m_outputCallback;
 
     AudioConverterRef m_converter WTF_GUARDED_BY_CAPABILITY(queue()) { nullptr };
     AudioStreamBasicDescription m_sourceFormat WTF_GUARDED_BY_CAPABILITY(queue());
@@ -128,6 +132,7 @@ private:
     const Options m_options;
     std::atomic<unsigned> m_defaultBitRate { 0 };
     std::atomic<unsigned> m_preSkip { 0 };
+    bool m_skipEmptyBlock { false };
 };
 
 }

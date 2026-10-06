@@ -65,7 +65,7 @@ private:
 
     IntersectionObserver* intersectionObserver(Document&);
 
-    RefPtr<IntersectionObserver> m_observer;
+    const RefPtr<IntersectionObserver> m_observer;
 
     WeakHashMap<Element, ViewportProximity, WeakPtrImplWithEventTargetData> m_elementViewportProximities;
 };

@@ -28,30 +28,24 @@
 
 #include "HTMLDivElement.h"
 
-#include <wtf/GregorianDateTime.h>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
+#include <wtf/PlainGregorianDateTime.h>
 #include <wtf/ValueOrReference.h>
 #include <wtf/WeakPtr.h>
-
-namespace WebCore {
-class DateTimeFieldElementFieldOwner;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::DateTimeFieldElementFieldOwner> : std::true_type { };
-}
 
 namespace WebCore {
 
 class DateComponents;
 class DateTimeFieldElement;
-class RenderStyle;
-
 struct DateTimeFieldsState;
+
+namespace Style {
+class ComputedStyle;
+}
 
 enum class DateTimePlaceholderIfNoValue : bool { No, Yes };
 
-class DateTimeFieldElementFieldOwner : public CanMakeWeakPtr<DateTimeFieldElementFieldOwner> {
+class DateTimeFieldElementFieldOwner : public AbstractRefCountedAndCanMakeWeakPtr<DateTimeFieldElementFieldOwner> {
 public:
     virtual ~DateTimeFieldElementFieldOwner();
     virtual void didBlurFromField(Event&) = 0;
@@ -64,7 +58,7 @@ public:
     virtual bool didFieldOwnerTransferFocusToPicker() = 0;
     virtual void didSuppressBlurDueToPickerFocusTransfer() = 0;
     virtual AtomString localeIdentifier() const = 0;
-    virtual const GregorianDateTime& placeholderDate() const = 0;
+    virtual PlainGregorianDateTime placeholderDate() const = 0;
 };
 
 class DateTimeFieldElement : public HTMLDivElement {
@@ -93,14 +87,14 @@ protected:
     Locale& localeForOwner() const;
     AtomString localeIdentifier() const;
     void updateVisibleValue(EventBehavior);
-    virtual void adjustMinInlineSize(RenderStyle&) const = 0;
+    virtual void adjustMinInlineSize(Style::ComputedStyle&) const = 0;
     virtual int valueAsInteger() const = 0;
     virtual int placeholderValueAsInteger() const = 0;
     virtual void handleKeyboardEvent(KeyboardEvent&) = 0;
     virtual void handleBlurEvent(Event&);
 
 private:
-    std::optional<Style::UnadjustedStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*) final;
+    std::optional<Style::UnadjustedStyle> resolveCustomStyle(const Style::ResolutionContext&, const Style::ComputedStyle*) final;
 
     bool supportsFocus() const override;
 
@@ -113,6 +107,8 @@ private:
     bool isFieldOwnerHorizontal() const;
 
     WeakPtr<DateTimeFieldElementFieldOwner> m_fieldOwner;
+
+    bool m_hadValueAtLastValueUpdate { false };
 };
 
 } // namespace WebCore

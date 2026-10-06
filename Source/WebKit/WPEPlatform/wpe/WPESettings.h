@@ -41,7 +41,7 @@ G_BEGIN_DECLS
  * @WPE_SETTINGS_ERROR_ALREADY_REGISTERED: Key has already been registered
  * @WPE_SETTINGS_ERROR_INVALID_VALUE: Failed to parse a value from a keyfile
  *
- * #WPESettings errors
+ * [class@Settings] errors.
  */
 typedef enum {
     WPE_SETTINGS_ERROR_INCORRECT_TYPE,
@@ -57,7 +57,7 @@ WPE_API GQuark wpe_settings_error_quark(void);
  * WPE_SETTING_FONT_NAME:
  *
  * String representing the font in the format of
- * "name size", e.g. "Deja Vu Sans, 16"
+ * "name size", e.g. "DejaVu Sans 16"
  *
  * VariantType: string
  *
@@ -77,15 +77,40 @@ WPE_API GQuark wpe_settings_error_quark(void);
 #define WPE_SETTING_DARK_MODE "/wpe-platform/dark-mode"
 
 /**
- * WPE_SETTING_DISABLE_ANIMATIONS:
+ * WPE_SETTING_REDUCED_MOTION:
  *
- * Disables animations on websites.
+ * Whether the user prefers reduced animations.
  *
  * VariantType: boolean
  *
  * Default: false
  */
-#define WPE_SETTING_DISABLE_ANIMATIONS "/wpe-platform/disable-animations"
+#define WPE_SETTING_REDUCED_MOTION "/wpe-platform/reduced-motion"
+
+/**
+ * WPESettingsInterfaceContrast:
+ * @WPE_SETTINGS_INTERFACE_CONTRAST_NO_PREFERENCE: the user prefers normal contrast
+ * @WPE_SETTINGS_INTERFACE_CONTRAST_MORE: the user prefers high contrast
+ * @WPE_SETTINGS_INTERFACE_CONTRAST_LESS: the user prefers less contrast
+ *
+ * The user's preference for high contrast, low contrast, or normal contrast.
+ */
+typedef enum {
+    WPE_SETTINGS_INTERFACE_CONTRAST_NO_PREFERENCE,
+    WPE_SETTINGS_INTERFACE_CONTRAST_MORE,
+    WPE_SETTINGS_INTERFACE_CONTRAST_LESS
+} WPESettingsInterfaceContrast;
+
+/**
+ * WPE_SETTING_INTERFACE_CONTRAST:
+ *
+ * Whether the user prefers high contrast, low contrast, or normal contrast.
+ *
+ * VariantType: byte (WPESettingsInterfaceContrast)
+ *
+ * Default: WPE_SETTINGS_INTERFACE_CONTRAST_NO_PREFERENCE
+ */
+#define WPE_SETTING_INTERFACE_CONTRAST "/wpe-platform/interface-contrast"
 
 /**
  * WPE_SETTING_FONT_ANTIALIAS:
@@ -100,10 +125,12 @@ WPE_API GQuark wpe_settings_error_quark(void);
 
 /**
  * WPESettingsHintingStyle:
- * @WPE_SETTINGS_HINTING_STYLE_NONE
- * @WPE_SETTINGS_HINTING_STYLE_SLIGHT
- * @WPE_SETTINGS_HINTING_STYLE_MEDIUM
- * @WPE_SETTINGS_HINTING_STYLE_FULL
+ * @WPE_SETTINGS_HINTING_STYLE_NONE: do not apply font hinting.
+ * @WPE_SETTINGS_HINTING_STYLE_SLIGHT: apply a small amount of font hinting.
+ * @WPE_SETTINGS_HINTING_STYLE_MEDIUM: apply a moderate amount of font hinting.
+ * @WPE_SETTINGS_HINTING_STYLE_FULL: apply the maximum amount of font hinting.
+ *
+ * The style of hinting to apply to fonts.
  */
 typedef enum {
     WPE_SETTINGS_HINTING_STYLE_NONE,
@@ -125,12 +152,17 @@ typedef enum {
 
 /**
  * WPESettingsSubpixelLayout:
- * @WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB
- * @WPE_SETTINGS_SUBPIXEL_LAYOUT_BGR
- * @WPE_SETTINGS_SUBPIXEL_LAYOUT_VRGB
- * @WPE_SETTINGS_SUBPIXEL_LAYOUT_VBGR
+ * @WPE_SETTINGS_SUBPIXEL_LAYOUT_NONE: no known subpixel geometry.
+ * @WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB: horizontal subpixels ordered red, green, blue.
+ * @WPE_SETTINGS_SUBPIXEL_LAYOUT_BGR: horizontal subpixels ordered blue, green, red.
+ * @WPE_SETTINGS_SUBPIXEL_LAYOUT_VRGB: vertical subpixels ordered red, green, blue.
+ * @WPE_SETTINGS_SUBPIXEL_LAYOUT_VBGR: vertical subpixels ordered blue, green, red.
+ *
+ * The order of the subpixels that compose a pixel, used for subpixel font
+ * rendering.
  */
 typedef enum {
+    WPE_SETTINGS_SUBPIXEL_LAYOUT_NONE,
     WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB,
     WPE_SETTINGS_SUBPIXEL_LAYOUT_BGR,
     WPE_SETTINGS_SUBPIXEL_LAYOUT_VRGB,
@@ -144,7 +176,7 @@ typedef enum {
  *
  * VariantType: byte (WPESettingsSubpixelLayout)
  *
- * Default: WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB
+ * Default: WPE_SETTINGS_SUBPIXEL_LAYOUT_NONE
  */
 #define WPE_SETTING_FONT_SUBPIXEL_LAYOUT "/wpe-platform/font-subpixel-layout"
 
@@ -187,7 +219,7 @@ typedef enum {
 /**
  * WPE_SETTING_DOUBLE_CLICK_DISTANCE:
  *
- * The allowed distance travelled in either the x or the y coordinate of a
+ * The allowed distance traveled in either the x or the y coordinate of a
  * button press event from the previous press to be considered a double click.
  *
  * VariantType: uint32
@@ -199,7 +231,7 @@ typedef enum {
 /**
  * WPE_SETTING_DOUBLE_CLICK_TIME:
  *
- * The allowed time elapse since the previous button press event until the current
+ * The allowed time elapsed since the previous button press event until the current
  * press to be considered a double click.
  *
  * VariantType: uint32
@@ -211,7 +243,7 @@ typedef enum {
 /**
  * WPE_SETTING_DRAG_THRESHOLD:
  *
- * The number of pixels the cursor travelled to activate a drag gesture.
+ * The number of pixels the cursor traveled to activate a drag gesture.
  *
  * VariantType: uint32
  *
@@ -247,8 +279,8 @@ typedef enum {
  * WPE_SETTING_CREATE_VIEWS_WITH_A_TOPLEVEL:
  *
  * By default, when a #WPEView is created, a #WPEToplevel is also created and set
- * as the toplevel of the newly created view. This setting allows to create
- * views wihtout a toplevel set, for applications that want to handle the toplevels
+ * as the toplevel of the newly created view. This setting allows creating
+ * views without a toplevel set, for applications that want to handle the toplevels
  * themselves, for example to create a multiview toplevel.
  *
  * VariantType: boolean
@@ -256,6 +288,18 @@ typedef enum {
  * Default: true
  */
 #define WPE_SETTING_CREATE_VIEWS_WITH_A_TOPLEVEL "/wpe-platform/create-views-with-a-toplevel"
+
+/**
+ * WPE_SETTING_OVERLAY_SCROLLBARS:
+ *
+ * Enables overlay scrollbars. When disabled, scrollbars are always
+ * visible (classic scrollbar mode).
+ *
+ * VariantType: boolean
+ *
+ * Default: true
+ */
+#define WPE_SETTING_OVERLAY_SCROLLBARS "/wpe-platform/overlay-scrollbars"
 
 /**
  * WPESettingsSource:

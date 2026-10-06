@@ -88,10 +88,10 @@ void SWContextManager::registerServiceWorkerThreadForInstall(Ref<ServiceWorkerTh
 void SWContextManager::startedServiceWorker(std::optional<ServiceWorkerJobDataIdentifier> jobDataIdentifier, ServiceWorkerIdentifier serviceWorkerIdentifier, const String& exceptionMessage, bool doesHandleFetch)
 {
     if (!exceptionMessage.isEmpty()) {
-        protectedConnection()->serviceWorkerFailedToStart(jobDataIdentifier, serviceWorkerIdentifier, exceptionMessage);
+        protect(connection())->serviceWorkerFailedToStart(jobDataIdentifier, serviceWorkerIdentifier, exceptionMessage);
         return;
     }
-    protectedConnection()->serviceWorkerStarted(jobDataIdentifier, serviceWorkerIdentifier, doesHandleFetch);
+    protect(connection())->serviceWorkerStarted(jobDataIdentifier, serviceWorkerIdentifier, doesHandleFetch);
 }
 
 ServiceWorkerThreadProxy* SWContextManager::serviceWorkerThreadProxy(ServiceWorkerIdentifier identifier) const
@@ -266,7 +266,7 @@ bool SWContextManager::stopRunningDebuggerTasksOnServiceWorker(ServiceWorkerIden
 void SWContextManager::serviceWorkerFailedToTerminate(ServiceWorkerIdentifier serviceWorkerIdentifier)
 {
     UNUSED_PARAM(serviceWorkerIdentifier);
-    RELEASE_LOG_ERROR(ServiceWorker, "Failed to terminate service worker with identifier %s, killing the service worker process", serviceWorkerIdentifier.loggingString().utf8().data());
+    RELEASE_LOG_ERROR(ServiceWorker, "Failed to terminate service worker with identifier %s, killing the service worker process", serviceWorkerIdentifier.loggingString().utf8());
     ASSERT_NOT_REACHED();
     terminateProcess(EXIT_FAILURE);
 }

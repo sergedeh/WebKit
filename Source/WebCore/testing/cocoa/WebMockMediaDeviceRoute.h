@@ -25,16 +25,42 @@
 
 #pragma once
 
-#if HAVE(AVROUTING_FRAMEWORK)
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
 
-#import <WebKitAdditions/MediaDeviceRouteAdditions.h>
-#import <pal/spi/ios/AVRoutingSPI.h>
+// FIXME: rdar://178753306
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+
+#import "WebMediaDevicePlatformRoute.h"
+#import <AVKit/AVKit.h>
+
+typedef NS_ENUM(NSInteger, WebMockMediaDeviceRouteErrorCode) {
+    WebMockMediaDeviceRouteErrorCodeInvalidState,
+    WebMockMediaDeviceRouteErrorCodeUnsupportedURL,
+    WebMockMediaDeviceRouteErrorCodePlaybackError,
+};
+
+namespace WebCore {
+class MockMediaDeviceRouteURLCallback;
+}
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface WebMockMediaDeviceRoute : NSObject <WebMediaDevicePlatformRoute>
+extern NSErrorDomain const WebMockMediaDeviceRouteErrorDomain;
+
+@interface WebMockMediaDeviceRoute : NSObject <AVPlaybackUserInterfaceControllable, WebMediaDevicePlatformRoute>
+@property (nonatomic, nullable, setter=setURLCallback:) WebCore::MockMediaDeviceRouteURLCallback* urlCallback;
+@property (copy) NSString *routeDisplayName;
+@property (copy) UTType *protocolType;
+@property (nonatomic, getter=isReady) BOOL ready;
+@property (nonatomic, strong, nullable) NSError *error;
+@property (nonatomic) CMTimeRange timeRange;
+@property (nonatomic, copy) NSArray<AVPlaybackUserInterfaceMediaSelectionOption *> *audioOptions;
+@property (nonatomic, readonly, getter=isConnected) BOOL connected;
+@property (nonatomic, readonly) CMTime lastSeekTolerance;
 @end
 
 NS_ASSUME_NONNULL_END
 
-#endif // HAVE(AVROUTING_FRAMEWORK)
+ALLOW_DEPRECATED_DECLARATIONS_END
+
+#endif // ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)

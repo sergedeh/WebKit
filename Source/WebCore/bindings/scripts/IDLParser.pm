@@ -287,7 +287,7 @@ sub assertExtendedAttributesValidForContext
     my @contexts = @_;
 
     for my $extendedAttribute (keys %{$extendedAttributeList}) {
-        # FIXME: Should this be done here, or when parsing the exteded attribute itself?
+        # FIXME: Should this be done here, or when parsing the extended attribute itself?
         # Either way, we should add validation of the values, if any, at the same place.
 
         if (!exists $self->{ExtendedAttributeMap}->{$extendedAttribute}) {
@@ -349,12 +349,13 @@ sub Parse
     my $self = shift;
     my $fileName = shift;
     my $defines = shift;
-    my $preprocessor = shift;
     my $idlAttributes = shift;
 
     my @definitions = ();
 
-    my @lines = applyPreprocessor($fileName, $defines, $preprocessor);
+    my $keepComments = 0;
+    my $stripLineComments = 1;
+    my @lines = applyPreprocessor($fileName, $defines, $keepComments, $stripLineComments);
     $self->{Line} = $lines[0];
     $self->{DocumentContent} = join(' ', @lines);
     $self->{ExtendedAttributeMap} = $idlAttributes;
@@ -556,11 +557,14 @@ sub typeDescription
 {
     my $type = shift;
 
+    my @extendedAttributes = map { $_ . "=" . $type->extendedAttributes->{$_} } sort keys %{$type->extendedAttributes};
+    my $annotation = scalar @extendedAttributes ? "[" . join(", ", @extendedAttributes) . "] " : "";
+
     if (scalar @{$type->subtypes}) {
-        return $type->name . '<' . join(', ', map { typeDescription($_) } @{$type->subtypes}) . '>' . ($type->isNullable ? "?" : "");
+        return $annotation . $type->name . '<' . join(', ', map { typeDescription($_) } @{$type->subtypes}) . '>' . ($type->isNullable ? "?" : "");
     }
 
-    return $type->name . ($type->isNullable ? "?" : "");
+    return $annotation . $type->name . ($type->isNullable ? "?" : "");
 }
 
 sub cloneType
@@ -600,6 +604,17 @@ sub addBuiltinTypedefs()
     push(@{$bufferSourceType->subtypes}, makeSimpleType("ArrayBufferView"));
     push(@{$bufferSourceType->subtypes}, makeSimpleType("ArrayBuffer"));
     $typedefs{"BufferSource"} = IDLTypedef->new(type => $bufferSourceType);
+
+    # typedef (ArrayBuffer or SharedArrayBuffer or [AllowShared] ArrayBufferView) AllowSharedBufferSource;
+    #
+    # FIXME: SharedArrayBuffer is not a type of its own yet, so [AllowShared] on the
+    # whole union stands in for it.
+
+    my $allowSharedBufferSourceType = IDLType->new(name => "UNION", isUnion => 1);
+    push(@{$allowSharedBufferSourceType->subtypes}, makeSimpleType("ArrayBuffer"));
+    push(@{$allowSharedBufferSourceType->subtypes}, makeSimpleType("ArrayBufferView"));
+    $allowSharedBufferSourceType->extendedAttributes->{AllowShared} = "VALUE_IS_MISSING";
+    $typedefs{"AllowSharedBufferSource"} = IDLTypedef->new(type => $allowSharedBufferSourceType);
 
     # typedef unsigned long long EpochTimeStamp;
 
@@ -1411,6 +1426,16 @@ sub parseDictionaryMember
 
             my $type = $self->parseTypeWithExtendedAttributes();
             $member->type($type);
+
+            my $nameToken = $self->getToken();
+            $self->assertTokenType($nameToken, IdentifierToken);
+            $member->name(identifierRemoveNullablePrefix($nameToken->value));
+
+            $self->assertExtendedAttributesValidForContext($extendedAttributeList, "dictionary-member");
+            $member->extendedAttributes($extendedAttributeList);
+
+            $self->assertTokenValue($self->getToken(), ";", __LINE__);
+            return $member;
         } else {
             $member->isRequired(0);
 
@@ -1418,17 +1443,29 @@ sub parseDictionaryMember
             $self->moveExtendedAttributesApplicableToTypes($type, $extendedAttributeList);
             
             $member->type($type);
+
+            my $nameToken = $self->getToken();
+            $self->assertTokenType($nameToken, IdentifierToken);
+            $member->name(identifierRemoveNullablePrefix($nameToken->value));
+            $member->default($self->parseDefault());
+
+            $self->assertExtendedAttributesValidForContext($extendedAttributeList, "dictionary-member");
+
+            # Override `isRequired` if the `ImplementationRequired` extended attribute is set.
+            if (defined($extendedAttributeList->{ImplementationRequired})) {
+                $member->isRequired(1);
+            }
+
+            # Override `default` if the `ImplementationDefaultValue` extended attribute is set.
+            if (!defined($member->default) && defined($extendedAttributeList->{ImplementationDefaultValue})) {
+                $member->default($extendedAttributeList->{ImplementationDefaultValue});
+            }
+
+            $member->extendedAttributes($extendedAttributeList);
+
+            $self->assertTokenValue($self->getToken(), ";", __LINE__);
+            return $member;
         }
-
-        $self->assertExtendedAttributesValidForContext($extendedAttributeList, "dictionary-member");
-        $member->extendedAttributes($extendedAttributeList);
-
-        my $nameToken = $self->getToken();
-        $self->assertTokenType($nameToken, IdentifierToken);
-        $member->name(identifierRemoveNullablePrefix($nameToken->value));
-        $member->default($self->parseDefault());
-        $self->assertTokenValue($self->getToken(), ";", __LINE__);
-        return $member;
     }
     $self->assertUnexpectedToken($next->value(), __LINE__);
 }
@@ -1597,7 +1634,7 @@ sub parseTypedef
         $self->assertTokenType($nameToken, IdentifierToken);
         $self->assertTokenValue($self->getToken(), ";", __LINE__);
         my $name = $nameToken->value();
-        die "typedef redefinition for " . $name . " at " . $self->{Line} if (exists $typedefs{$name} && $typedef->type->name ne $typedefs{$name}->type->name);
+        die "typedef redefinition for " . $name . " at " . $self->{Line} if exists $typedefs{$name} && typeDescription($typedef->type) ne typeDescription($typedefs{$name}->type);
         $typedefs{$name} = $typedef;
         return;
     }
@@ -2245,6 +2282,12 @@ sub parseArgumentsRest
         $argument->default($self->parseDefault());
 
         $self->assertExtendedAttributesValidForContext($extendedAttributeList, "argument");
+
+        # Substitute a value specified by the `ImplementationDefaultValue` extended attribute if necessary.
+        if (!defined($argument->default) && defined($extendedAttributeList->{ImplementationDefaultValue})) {
+            $argument->default($extendedAttributeList->{ImplementationDefaultValue});
+        }
+
         $argument->extendedAttributes($extendedAttributeList);
 
         return $argument;
@@ -2394,6 +2437,16 @@ sub parseExtendedAttributeRest2
         my @arguments = $self->parseIdentifierList();
         $self->assertTokenValue($self->getToken(), ")", __LINE__);
         return \@arguments;
+    }
+    if ($next->value() eq "[") {
+        $self->assertTokenValue($self->getToken(), "[", __LINE__);
+        $self->assertTokenValue($self->getToken(), "]", __LINE__);
+        return "[]";
+    }
+    if ($next->value() eq "{") {
+        $self->assertTokenValue($self->getToken(), "{", __LINE__);
+        $self->assertTokenValue($self->getToken(), "}", __LINE__);
+        return "{}";
     }
     if ($next->value() eq "*") {
         $self->assertTokenValue($self->getToken(), "*", __LINE__);

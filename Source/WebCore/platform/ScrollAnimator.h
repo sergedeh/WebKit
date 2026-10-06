@@ -36,6 +36,7 @@
 #include <WebCore/ScrollingEffectsController.h>
 #include <WebCore/Timer.h>
 #include <WebCore/WheelEventTestMonitor.h>
+#include <wtf/EnumSet.h>
 #include <wtf/Forward.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
@@ -63,25 +64,25 @@ public:
     virtual ~ScrollAnimator();
 
     ScrollableArea& scrollableArea() const { return m_scrollableArea; }
-    CheckedRef<ScrollableArea> checkedScrollableArea() const { return scrollableArea(); }
 
     KeyboardScrollingAnimator *keyboardScrollingAnimator() const final { return m_keyboardScrollingAnimator.ptr(); }
 
-    enum ScrollBehavior {
-        RespectScrollSnap   = 1 << 0,
-        NeverAnimate        = 1 << 1,
+    enum class ScrollBehavior : uint8_t {
+        RespectScrollSnap,
+        Paged,
+        NeverAnimate,
     };
 
     // Computes a scroll destination for the given parameters.  Returns false if
     // already at the destination. Otherwise, starts scrolling towards the
     // destination and returns true. Scrolling may be immediate or animated.
     // The base class implementation always scrolls immediately, never animates.
-    bool singleAxisScroll(ScrollEventAxis, float delta, OptionSet<ScrollBehavior>);
+    bool singleAxisScroll(ScrollEventAxis, float delta, EnumSet<ScrollBehavior>);
 
     WEBCORE_EXPORT bool scrollToPositionWithoutAnimation(const FloatPoint&, ScrollClamping = ScrollClamping::Clamped);
     WEBCORE_EXPORT bool scrollToPositionWithAnimation(const FloatPoint&, ScrollClamping = ScrollClamping::Clamped);
 
-    void retargetRunningAnimation(const FloatPoint& newPosition);
+    bool retargetRunningAnimation(const FloatPoint& newPosition);
 
     virtual bool handleWheelEvent(const PlatformWheelEvent&);
     virtual bool processWheelEventForScrollSnap(const PlatformWheelEvent&) { return false; }
@@ -108,7 +109,7 @@ public:
 
     enum NotifyScrollableArea : bool { No, Yes };
     void setCurrentPosition(const FloatPoint&, NotifyScrollableArea = NotifyScrollableArea::No);
-    const FloatPoint& currentPosition() const { return m_currentPosition; }
+    const FloatPoint& currentPosition() const LIFETIME_BOUND { return m_currentPosition; }
 
     void setWheelEventTestMonitor(RefPtr<WheelEventTestMonitor>&& testMonitor) { m_wheelEventTestMonitor = testMonitor; }
     WheelEventTestMonitor* wheelEventTestMonitor() const { return m_wheelEventTestMonitor.get(); }
@@ -116,17 +117,20 @@ public:
     FloatPoint scrollOffsetAdjustedForSnapping(const FloatPoint& offset, ScrollSnapPointSelectionMethod) const;
     float scrollOffsetAdjustedForSnapping(ScrollEventAxis, const FloatPoint& newOffset, ScrollSnapPointSelectionMethod) const;
 
-    bool activeScrollSnapIndexDidChange() const;
-    std::optional<unsigned> activeScrollSnapIndexForAxis(ScrollEventAxis) const;
+    bool NODELETE activeScrollSnapIndexDidChange() const;
+    std::optional<unsigned> NODELETE activeScrollSnapIndexForAxis(ScrollEventAxis) const;
     void setActiveScrollSnapIndexForAxis(ScrollEventAxis, std::optional<unsigned> index);
     void setSnapOffsetsInfo(const LayoutScrollSnapOffsetsInfo&);
-    const LayoutScrollSnapOffsetsInfo* snapOffsetsInfo() const;
+    const LayoutScrollSnapOffsetsInfo* NODELETE snapOffsetsInfo() const;
     void resnapAfterLayout();
 
     ScrollAnimationStatus serviceScrollAnimation(MonotonicTime);
 
 protected:
     bool handleSteppedScrolling(const PlatformWheelEvent&);
+#if HAVE(RUBBER_BANDING)
+    IntSize stretchAmount() const final;
+#endif
 
 private:
     void notifyPositionChanged(const FloatSize& delta);
@@ -153,11 +157,12 @@ private:
     void willStartAnimatedScroll() final;
     void didStopAnimatedScroll() final;
 
+    void didStopWheelEventScroll() final;
+
     void immediateScrollBy(const FloatSize&, ScrollClamping = ScrollClamping::Clamped) final;
     void adjustScrollPositionToBoundsIfNecessary() final;
 
 #if HAVE(RUBBER_BANDING)
-    IntSize stretchAmount() const final;
     RectEdges<bool> edgePinnedState() const final;
     bool isPinnedOnSide(BoxSide) const final;
 #endif

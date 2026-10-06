@@ -29,6 +29,7 @@
 
 #include "CanvasBase.h"
 #include "CanvasRenderingContext.h"
+#include "GPUDevice.h"
 #include "InspectorCanvasAgent.h"
 #include "InspectorInstrumentation.h"
 #include "InstrumentingAgents.h"
@@ -39,7 +40,20 @@ static InspectorCanvasAgent* enabledCanvasAgent(CanvasRenderingContext& canvasRe
 {
     ASSERT(InspectorInstrumentationPublic::hasFrontends());
 
-    RefPtr agents = InspectorInstrumentation::instrumentingAgents(canvasRenderingContext.canvasBase().protectedScriptExecutionContext().get());
+    RefPtr agents = InspectorInstrumentation::instrumentingAgents(protect(protect(canvasRenderingContext.canvasBase())->scriptExecutionContext()).get());
+    ASSERT(agents);
+    if (!agents)
+        return nullptr;
+
+    ASSERT(agents->enabledCanvasAgent());
+    return agents->enabledCanvasAgent();
+}
+
+static InspectorCanvasAgent* enabledCanvasAgent(GPUDevice& device)
+{
+    ASSERT(InspectorInstrumentationPublic::hasFrontends());
+
+    RefPtr agents = InspectorInstrumentation::instrumentingAgents(protect(device.scriptExecutionContext()));
     ASSERT(agents);
     if (!agents)
         return nullptr;
@@ -50,22 +64,68 @@ static InspectorCanvasAgent* enabledCanvasAgent(CanvasRenderingContext& canvasRe
 
 RefPtr<InspectorCanvas> InspectorCanvasCallTracer::enabledInspectorCanvas(CanvasRenderingContext& canvasRenderingContext)
 {
-    auto* canvasAgent = enabledCanvasAgent(canvasRenderingContext);
+    CheckedPtr canvasAgent = enabledCanvasAgent(canvasRenderingContext);
     if (!canvasAgent)
         return nullptr;
     return canvasAgent->findInspectorCanvas(canvasRenderingContext);
 }
 
+RefPtr<InspectorCanvas> InspectorCanvasCallTracer::enabledInspectorCanvas(GPUDevice& device)
+{
+    CheckedPtr canvasAgent = enabledCanvasAgent(device);
+    if (!canvasAgent)
+        return nullptr;
+    return canvasAgent->findInspectorCanvas(device);
+}
+
 void InspectorCanvasCallTracer::recordAction(CanvasRenderingContext& canvasRenderingContext, String&& name, InspectorCanvasProcessedArguments&& arguments)
 {
-    if (auto* canvasAgent = enabledCanvasAgent(canvasRenderingContext))
+    if (CheckedPtr canvasAgent = enabledCanvasAgent(canvasRenderingContext))
         canvasAgent->recordAction(canvasRenderingContext, WTF::move(name), WTF::move(arguments));
 }
 
 void InspectorCanvasCallTracer::recordAction(const CanvasBase& canvasBase, String&& name, InspectorCanvasProcessedArguments&& arguments)
 {
     ASSERT(canvasBase.renderingContext());
-    recordAction(*canvasBase.renderingContext(), WTF::move(name), WTF::move(arguments));
+    Ref context = *canvasBase.renderingContext();
+    recordAction(context, ProcessedArgument { JSON::Value::create(0), RecordingSwizzleType::Canvas }, WTF::move(name), WTF::move(arguments));
+}
+
+void InspectorCanvasCallTracer::recordAction(CanvasRenderingContext& canvasRenderingContext, ProcessedArgument&& receiver, String&& name, ProcessedArguments&& arguments)
+{
+    if (CheckedPtr canvasAgent = enabledCanvasAgent(canvasRenderingContext))
+        canvasAgent->recordAction(canvasRenderingContext, WTF::move(receiver), WTF::move(name), WTF::move(arguments));
+}
+
+void InspectorCanvasCallTracer::recordAction(GPUDevice& device, String&& name, InspectorCanvasProcessedArguments&& arguments)
+{
+    if (CheckedPtr canvasAgent = enabledCanvasAgent(device))
+        canvasAgent->recordAction(device, WTF::move(name), WTF::move(arguments));
+}
+
+void InspectorCanvasCallTracer::recordAction(GPUDevice& device, ProcessedArgument&& receiver, String&& name, InspectorCanvasProcessedArguments&& arguments)
+{
+    if (CheckedPtr canvasAgent = enabledCanvasAgent(device))
+        canvasAgent->recordAction(device, WTF::move(receiver), WTF::move(name), WTF::move(arguments));
+}
+
+void InspectorCanvasCallTracer::recordActionResult(CanvasRenderingContext& canvasRenderingContext, ProcessedArgument&& result)
+{
+    if (CheckedPtr canvasAgent = enabledCanvasAgent(canvasRenderingContext))
+        canvasAgent->recordActionResult(canvasRenderingContext, WTF::move(result));
+}
+
+void InspectorCanvasCallTracer::recordActionResult(const CanvasBase& canvasBase, ProcessedArgument&& result)
+{
+    ASSERT(canvasBase.renderingContext());
+    Ref context = *canvasBase.renderingContext();
+    recordActionResult(context, WTF::move(result));
+}
+
+void InspectorCanvasCallTracer::recordActionResult(GPUDevice& device, ProcessedArgument&& result)
+{
+    if (CheckedPtr canvasAgent = enabledCanvasAgent(device))
+        canvasAgent->recordActionResult(device, WTF::move(result));
 }
 
 } // namespace WebCore

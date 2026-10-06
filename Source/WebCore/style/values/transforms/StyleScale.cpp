@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleScale.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
@@ -35,10 +36,10 @@ namespace Style {
 
 using namespace CSS::Literals;
 
-void Scale::apply(TransformationMatrix& transform, const FloatSize& size) const
+void Scale::apply(TransformationMatrix& transform, const FloatSize& size, ZoomFactor zoom) const
 {
     if (RefPtr protectedValue = value)
-        protectedValue->apply(transform, size);
+        protectedValue->apply(transform, size, zoom);
 }
 
 // MARK: - Conversion
@@ -48,18 +49,23 @@ auto CSSValueConversion<Scale>::operator()(BuilderState& state, const CSSValue& 
     // https://drafts.csswg.org/css-transforms-2/#propdef-scale
     // none | [ <number> | <percentage> ]{1,3}
 
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        ASSERT_UNUSED(primitiveValue, primitiveValue->valueID() == CSSValueNone);
-        return CSS::Keyword::None { };
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueNone:
+            return CSS::Keyword::None { };
+        default:
+            state.setCurrentPropertyInvalidAtComputedValueTime();
+            return CSS::Keyword::None { };
+        }
     }
 
     auto list = requiredListDowncast<CSSValueList, CSSPrimitiveValue>(state, value);
     if (!list)
         return CSS::Keyword::None { };
 
-    auto sx = toStyleFromCSSValue<NumberOrPercentageResolvedToNumber<>>(state, list->item(0));
-    auto sy = list->size() > 1 ? toStyleFromCSSValue<NumberOrPercentageResolvedToNumber<>>(state, list->item(1)) : sx;
-    auto sz = list->size() > 2 ? toStyleFromCSSValue<NumberOrPercentageResolvedToNumber<>>(state, list->item(2)) : NumberOrPercentageResolvedToNumber<> { 1_css_number };
+    auto sx = toStyleFromCSSValue<NumberOrPercentageResolvedToNumber<>>(state, protect(list->item(0)));
+    auto sy = list->size() > 1 ? toStyleFromCSSValue<NumberOrPercentageResolvedToNumber<>>(state, protect(list->item(1))) : sx;
+    auto sz = list->size() > 2 ? toStyleFromCSSValue<NumberOrPercentageResolvedToNumber<>>(state, protect(list->item(2))) : NumberOrPercentageResolvedToNumber<> { 1_css_number };
 
     return ScaleTransformFunction::create(sx, sy, sz, TransformFunctionType::Scale);
 }
@@ -103,10 +109,10 @@ auto Blending<Scale>::blend(const Scale& from, const Scale& to, const BlendingCo
 
 // MARK: - Platform
 
-auto ToPlatform<Scale>::operator()(const Scale& value, const FloatSize& size) -> RefPtr<TransformOperation>
+auto ToPlatform<Scale>::operator()(const Scale& value, const FloatSize& size, ZoomFactor zoom) -> RefPtr<TransformOperation>
 {
     if (RefPtr function = value.value)
-        return function->toPlatform(size);
+        return function->toPlatform(size, zoom);
     return nullptr;
 }
 

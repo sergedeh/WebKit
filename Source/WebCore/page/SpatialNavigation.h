@@ -20,10 +20,10 @@
 
 #pragma once
 
-#include <WebCore/FocusDirection.h>
-#include <WebCore/HTMLFrameOwnerElement.h>
-#include <WebCore/LayoutRect.h>
-#include <WebCore/NodeDocument.h>
+#include "FocusDirection.h"
+#include "HTMLFrameOwnerElement.h"
+#include "LayoutRect.h"
+#include "NodeDocument.h"
 #include <limits>
 
 namespace WebCore {
@@ -121,13 +121,13 @@ bool canScrollInDirection(const ContainerNode&, FocusDirection);
 bool canScrollInDirection(const LocalFrame*, FocusDirection);
 bool canBeScrolledIntoView(FocusDirection, const FocusCandidate&);
 bool areElementsOnSameLine(const FocusCandidate& firstCandidate, const FocusCandidate& secondCandidate);
-bool isValidCandidate(FocusDirection, const FocusCandidate&, FocusCandidate&);
+bool NODELETE isValidCandidate(FocusDirection, const FocusCandidate&, FocusCandidate&);
 void distanceDataForNode(FocusDirection, const FocusCandidate& current, FocusCandidate& candidate);
 ContainerNode* scrollableEnclosingBoxOrParentFrameForNodeInDirection(FocusDirection, ContainerNode&);
 LayoutRect nodeRectInAbsoluteCoordinates(const ContainerNode&, bool ignoreBorder = false);
 LayoutRect frameRectInAbsoluteCoordinates(LocalFrame*);
-LayoutRect virtualRectForDirection(FocusDirection, const LayoutRect& startingRect, LayoutUnit width = 0_lu);
+LayoutRect NODELETE virtualRectForDirection(FocusDirection, const LayoutRect& startingRect, LayoutUnit width = 0_lu);
 LayoutRect virtualRectForAreaElementAndDirection(HTMLAreaElement*, FocusDirection);
-HTMLFrameOwnerElement* frameOwnerElement(FocusCandidate&);
+HTMLFrameOwnerElement* NODELETE frameOwnerElement(FocusCandidate&);
 
 } // namespace WebCore

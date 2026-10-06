@@ -24,9 +24,9 @@
 
 #pragma once
 
-#include <WebCore/ExceptionOr.h>
-#include <WebCore/MediaRecorderPrivateOptions.h>
-#include <WebCore/RealtimeMediaSource.h>
+#include "ExceptionOr.h"
+#include "MediaRecorderPrivateOptions.h"
+#include "RealtimeMediaSource.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
@@ -95,7 +95,7 @@ protected:
     void setAudioSource(RefPtr<RealtimeMediaSource>&&);
     void setVideoSource(RefPtr<RealtimeMediaSource>&&);
 
-    void checkTrackState(const MediaStreamTrackPrivate&);
+    void NODELETE checkTrackState(const MediaStreamTrackPrivate&);
 
     bool shouldMuteAudio() const { return m_shouldMuteAudio; }
     bool shouldMuteVideo() const { return m_shouldMuteVideo; }

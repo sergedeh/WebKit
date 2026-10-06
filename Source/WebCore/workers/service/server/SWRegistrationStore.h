@@ -25,17 +25,22 @@
 
 #pragma once
 
+#include <WebCore/ServiceWorkerIdentifier.h>
 #include <optional>
 #include <wtf/Forward.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/URLHash.h>
 
 namespace WebCore {
 
 class SWServerRegistration;
+class SecurityOriginData;
 class ServiceWorkerRegistrationKey;
 
+struct ClientOrigin;
 struct ServiceWorkerContextData;
+struct ServiceWorkerScripts;
 
 class SWRegistrationStore : public RefCountedAndCanMakeWeakPtr<SWRegistrationStore> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(SWRegistrationStore);
@@ -44,9 +49,11 @@ public:
     virtual void clearAll(CompletionHandler<void()>&&) = 0;
     virtual void flushChanges(CompletionHandler<void()>&&) = 0;
     virtual void closeFiles(CompletionHandler<void()>&&) = 0;
-    virtual void importRegistrations(CompletionHandler<void(std::optional<Vector<ServiceWorkerContextData>>&&)>&&) = 0;
+    virtual void importRegistrationsForOrigin(const SecurityOriginData&, CompletionHandler<void(std::optional<Vector<ServiceWorkerContextData>>&&)>&&) = 0;
+    virtual void importOriginList(CompletionHandler<void(std::optional<HashSet<ClientOrigin>>&&)>&&) = 0;
     virtual void updateRegistration(const ServiceWorkerContextData&) = 0;
     virtual void removeRegistration(const ServiceWorkerRegistrationKey&) = 0;
+    virtual void retrieveWorkerScripts(ServiceWorkerIdentifier, const ServiceWorkerRegistrationKey&, const URL& scriptURL, const Vector<URL>& importedScriptURLs, CompletionHandler<void(std::optional<ServiceWorkerScripts>&&)>&&) = 0;
 
 protected:
     SWRegistrationStore() = default;

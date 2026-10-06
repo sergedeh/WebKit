@@ -33,8 +33,10 @@
 #import "GestureTypes.h"
 #import "Logging.h"
 #import "MessageSenderInlines.h"
+#import "PDFAccessibilityDisplayModeState.h"
 #import "PDFIncrementalLoader.h"
 #import "PDFKitSPI.h"
+#import "PDFPluginAnnotation.h"
 #import "PDFScriptEvaluation.h"
 #import "PluginView.h"
 #import "WKAccessibilityPDFDocumentObject.h"
@@ -65,6 +67,7 @@
 #import <WebCore/Frame.h>
 #import <WebCore/FrameDestructionObserverInlines.h>
 #import <WebCore/FrameLoader.h>
+#import <WebCore/FrameView.h>
 #import <WebCore/GraphicsContext.h>
 #import <WebCore/GraphicsLayer.h>
 #import <WebCore/HTMLPlugInElement.h>
@@ -77,6 +80,7 @@
 #import <WebCore/PagePasteboardContext.h>
 #import <WebCore/Pasteboard.h>
 #import <WebCore/PasteboardStrategy.h>
+#import <WebCore/PlatformRenderTheme.h>
 #import <WebCore/PlatformStrategies.h>
 #import <WebCore/PluginDocument.h>
 #import <WebCore/RenderEmbeddedObject.h>
@@ -86,8 +90,10 @@
 #import <WebCore/ScrollAnimator.h>
 #import <WebCore/Settings.h>
 #import <WebCore/SharedBuffer.h>
+#import <WebCore/StyleColorOptions.h>
 #import <WebCore/VoidCallback.h>
 #import <wtf/CheckedArithmetic.h>
+#import <wtf/HexNumber.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/cf/VectorCF.h>
@@ -132,16 +138,13 @@ PluginInfo PDFPluginBase::pluginInfo()
 }
 
 PDFPluginBase::PDFPluginBase(HTMLPlugInElement& element)
-    : m_frame(*WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame()))
+    : m_frame(*WebFrame::fromCoreFrame(*element.document().frame()))
     , m_element(element)
 #if HAVE(INCREMENTAL_PDF_APIS)
     , m_incrementalPDFLoadingEnabled(element.document().settings().incrementalPDFLoadingEnabled())
 #endif
 {
-    if (isFullFramePlugin()) {
-        Ref document = element.document();
-        RefPtr { document->bodyOrFrameset() }->setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(pluginBackgroundColor()));
-    }
+    updateFullFramePluginBackgroundColor();
 }
 
 PDFPluginBase::~PDFPluginBase()
@@ -202,19 +205,14 @@ WebPage* PDFPluginBase::webPage() const
 
 Page* PDFPluginBase::page() const
 {
-    RefPtr frame = m_frame.get();
+    auto* frame = m_frame.get();
     if (!frame)
         return nullptr;
 
-    if (RefPtr coreFrame = frame->coreLocalFrame())
+    if (auto* coreFrame = frame->coreLocalFrame())
         return coreFrame->page();
 
     return nullptr;
-}
-
-RefPtr<WebCore::GraphicsLayer> PDFPluginBase::protectedGraphicsLayer() const
-{
-    return graphicsLayer();
 }
 
 void PDFPluginBase::setView(PluginView& view)
@@ -255,11 +253,11 @@ bool PDFPluginBase::isFullFramePlugin() const
         m_cachedIsFullFramePlugin = [&] {
             // <object> or <embed> plugins will appear to be in their parent frame,
             // so we have to check whether our frame's widget is exactly our PluginView.
-            RefPtr frame = m_frame.get();
+            auto* frame = m_frame.get();
             if (!frame || !frame->coreLocalFrame())
                 return false;
 
-            RefPtr document = dynamicDowncast<PluginDocument>(frame->coreLocalFrame()->document());
+            auto* document = dynamicDowncast<PluginDocument>(frame->coreLocalFrame()->document());
             return document && document->pluginWidget() == m_view;
         }();
     }
@@ -291,7 +289,7 @@ void PDFPluginBase::notifySelectionChanged()
     if (!page)
         return;
 
-    page->didChangeSelection(*frame->protectedCoreLocalFrame());
+    page->didChangeSelection(*protect(frame->coreLocalFrame()));
 }
 
 NSData *PDFPluginBase::originalData() const
@@ -313,8 +311,8 @@ RefPtr<FragmentedSharedBuffer> PDFPluginBase::liveResourceData() const
 NSData *PDFPluginBase::liveData() const
 {
 #if PLATFORM(MAC)
-    if (m_activeAnnotation)
-        m_activeAnnotation->commit();
+    if (RefPtr activeAnnotation = m_activeAnnotation)
+        activeAnnotation->commit();
 #endif
     // Save data straight from the resource instead of PDFKit if the document is
     // untouched by the user, so that PDFs which PDFKit can't display will still be downloadable.
@@ -625,7 +623,7 @@ void PDFPluginBase::startByteRangeRequest(NetscapePlugInStreamLoaderClient& stre
     resourceRequest.setHTTPHeaderField(HTTPHeaderName::Range, makeString("bytes="_s, position, '-', position + count - 1));
     resourceRequest.setCachePolicy(ResourceRequestCachePolicy::DoNotUseAnyCache);
 
-    WebProcess::singleton().protectedWebLoaderStrategy()->schedulePluginStreamLoad(*coreFrame, streamLoaderClient, WTF::move(resourceRequest), [incrementalLoader = Ref { *m_incrementalLoader }, requestIdentifier] (RefPtr<NetscapePlugInStreamLoader>&& streamLoader) {
+    protect(WebProcess::singleton().webLoaderStrategy())->schedulePluginStreamLoad(*coreFrame, streamLoaderClient, WTF::move(resourceRequest), protect(m_view)->fetchDestination(), [incrementalLoader = Ref { *m_incrementalLoader }, requestIdentifier] (RefPtr<NetscapePlugInStreamLoader>&& streamLoader) {
         incrementalLoader->streamLoaderDidStart(requestIdentifier, WTF::move(streamLoader));
     });
 }
@@ -690,7 +688,7 @@ void PDFPluginBase::addArchiveResource()
 
     RetainPtr data = originalData();
     auto resource = ArchiveResource::create(SharedBuffer::create(data.get()), view->mainResourceURL(), "application/pdf"_s, String(), String(), synthesizedResponse);
-    view->protectedFrame()->protectedDocument()->protectedLoader()->addArchiveResource(resource.releaseNonNull());
+    protect(protect(protect(view->frame())->document())->loader())->addArchiveResource(resource.releaseNonNull());
 }
 
 void PDFPluginBase::tryRunScriptsInPDFDocument()
@@ -722,6 +720,31 @@ bool PDFPluginBase::geometryDidChange(const IntSize& pluginSize, const AffineTra
 #endif
 
     return true;
+}
+
+RefPtr<FrameView> PDFPluginBase::rootView() const
+{
+    RefPtr view = m_view.get();
+    return view ? view->root() : nullptr;
+}
+
+FloatPoint PDFPluginBase::convertFromRootViewToMainFrameView(FloatPoint point) const
+{
+    // Without a root view, the plugin is not in a view hierarchy, so there is nothing to convert through.
+    RefPtr rootView = this->rootView();
+    if (!rootView)
+        return point;
+
+    return rootView->convertToRootViewAcrossIsolatedFrames(point);
+}
+
+FloatRect PDFPluginBase::convertFromRootViewToMainFrameView(FloatRect rect) const
+{
+    RefPtr rootView = this->rootView();
+    if (!rootView)
+        return rect;
+
+    return rootView->convertToRootViewAcrossIsolatedFrames(rect);
 }
 
 #if ENABLE(PDF_HUD)
@@ -840,7 +863,7 @@ ScrollableArea* PDFPluginBase::enclosingScrollableArea() const
 #if ENABLE(FORM_CONTROL_REFRESH)
 bool PDFPluginBase::formControlRefreshEnabled() const
 {
-    if (RefPtr page = this->page())
+    if (auto* page = this->page())
         return page->settings().formControlRefreshEnabled();
 
     return false;
@@ -849,7 +872,7 @@ bool PDFPluginBase::formControlRefreshEnabled() const
 
 IntRect PDFPluginBase::scrollableAreaBoundingBox(bool*) const
 {
-    return protectedView()->frameRect();
+    return protect(m_view.get())->frameRect();
 }
 
 void PDFPluginBase::setScrollOffset(const ScrollOffset& offset)
@@ -861,7 +884,7 @@ void PDFPluginBase::setScrollOffset(const ScrollOffset& offset)
 
 bool PDFPluginBase::isActive() const
 {
-    if (RefPtr page = this->page())
+    if (auto* page = this->page())
         return page->focusController().isActive();
 
     return false;
@@ -869,7 +892,7 @@ bool PDFPluginBase::isActive() const
 
 bool PDFPluginBase::forceUpdateScrollbarsOnMainThreadForPerformanceTesting() const
 {
-    if (RefPtr page = this->page())
+    if (auto* page = this->page())
         return page->settings().scrollingPerformanceTestingEnabled();
 
     return false;
@@ -917,7 +940,7 @@ IntSize PDFPluginBase::overhangAmount() const
 
 float PDFPluginBase::deviceScaleFactor() const
 {
-    if (RefPtr page = this->page())
+    if (auto* page = this->page())
         return page->deviceScaleFactor();
     return 1;
 }
@@ -945,13 +968,13 @@ IntRect PDFPluginBase::convertFromScrollbarToContainingView(const Scrollbar& scr
     IntRect rect = scrollbarRect;
     rect.move(scrollbar.location() - view->location());
 
-    return view->frame()->protectedView()->convertFromRendererToContainingView(view->pluginElement().checkedRenderer().get(), rect);
+    return protect(view->frame()->view())->convertFromRendererToContainingView(protect(view->pluginElement().renderer()).get(), rect);
 }
 
 IntRect PDFPluginBase::convertFromContainingViewToScrollbar(const Scrollbar& scrollbar, const IntRect& parentRect) const
 {
     Ref view = *m_view;
-    IntRect rect = view->frame()->protectedView()->convertFromContainingViewToRenderer(view->pluginElement().checkedRenderer().get(), parentRect);
+    IntRect rect = protect(view->frame()->view())->convertFromContainingViewToRenderer(protect(view->pluginElement().renderer()).get(), parentRect);
     rect.move(view->location() - scrollbar.location());
 
     return rect;
@@ -963,13 +986,13 @@ IntPoint PDFPluginBase::convertFromScrollbarToContainingView(const Scrollbar& sc
     IntPoint point = scrollbarPoint;
     point.move(scrollbar.location() - view->location());
 
-    return view->frame()->protectedView()->convertFromRendererToContainingView(view->pluginElement().checkedRenderer().get(), point);
+    return protect(view->frame()->view())->convertFromRendererToContainingView(protect(view->pluginElement().renderer()).get(), point);
 }
 
 IntPoint PDFPluginBase::convertFromContainingViewToScrollbar(const Scrollbar& scrollbar, const IntPoint& parentPoint) const
 {
     Ref view = *m_view;
-    IntPoint point = view->frame()->protectedView()->convertFromContainingViewToRenderer(view->pluginElement().checkedRenderer().get(), parentPoint);
+    IntPoint point = protect(view->frame()->view())->convertFromContainingViewToRenderer(protect(view->pluginElement().renderer()).get(), parentPoint);
     point.move(view->location() - scrollbar.location());
 
     return point;
@@ -1060,7 +1083,7 @@ void PDFPluginBase::updateScrollbars()
 
     if (horizontalScrollbar) {
         auto scrollbarRect = viewRelativeHorizontalScrollbarRect();
-        scrollbarRect.moveBy(protectedView()->location());
+        scrollbarRect.moveBy(protect(m_view.get())->location());
         horizontalScrollbar->setFrameRect(scrollbarRect);
 
         horizontalScrollbar->setSteps(Scrollbar::pixelsPerLineStep(), firstPageHeight());
@@ -1069,7 +1092,7 @@ void PDFPluginBase::updateScrollbars()
 
     if (verticalScrollbar) {
         auto scrollbarRect = viewRelativeVerticalScrollbarRect();
-        scrollbarRect.moveBy(protectedView()->location());
+        scrollbarRect.moveBy(protect(m_view.get())->location());
         verticalScrollbar->setFrameRect(scrollbarRect);
 
         verticalScrollbar->setSteps(Scrollbar::pixelsPerLineStep(), firstPageHeight());
@@ -1102,7 +1125,7 @@ Ref<Scrollbar> PDFPluginBase::createScrollbar(ScrollbarOrientation orientation)
             scrollAnimator().setWheelEventTestMonitor(page->wheelEventTestMonitor());
     }
 
-    if (RefPtr frame = protectedView()->frame()) {
+    if (RefPtr frame = m_view.get()->frame()) {
         if (RefPtr frameView = frame->view())
             frameView->addChild(widget);
     }
@@ -1144,16 +1167,16 @@ void PDFPluginBase::wantsWheelEventsChanged()
 void PDFPluginBase::print()
 {
     if (RefPtr page = this->page())
-        page->chrome().print(*protectedFrame()->protectedCoreLocalFrame());
+        page->chrome().print(*protect(protect(m_frame.get())->coreLocalFrame()));
 }
 
 std::optional<PageIdentifier> PDFPluginBase::pageIdentifier() const
 {
-    RefPtr frame = m_frame.get();
+    auto* frame = m_frame.get();
     return frame && frame->coreLocalFrame() ? frame->coreLocalFrame()->pageID() : std::nullopt;
 }
 
-NSString *PDFPluginBase::stringPasteboardType()
+SUPPRESS_NODELETE NSString *PDFPluginBase::stringPasteboardType()
 {
 #if PLATFORM(IOS_FAMILY)
     return UTTypeUTF8PlainText.identifier;
@@ -1162,7 +1185,7 @@ NSString *PDFPluginBase::stringPasteboardType()
 #endif
 }
 
-NSString *PDFPluginBase::urlPasteboardType()
+SUPPRESS_NODELETE NSString *PDFPluginBase::urlPasteboardType()
 {
 #if PLATFORM(IOS_FAMILY)
     return UTTypeURL.identifier;
@@ -1171,7 +1194,7 @@ NSString *PDFPluginBase::urlPasteboardType()
 #endif
 }
 
-NSString *PDFPluginBase::htmlPasteboardType()
+SUPPRESS_NODELETE NSString *PDFPluginBase::htmlPasteboardType()
 {
 #if PLATFORM(IOS_FAMILY)
     return UTTypeHTML.identifier;
@@ -1180,7 +1203,7 @@ NSString *PDFPluginBase::htmlPasteboardType()
 #endif
 }
 
-NSString *PDFPluginBase::rtfPasteboardType()
+SUPPRESS_NODELETE NSString *PDFPluginBase::rtfPasteboardType()
 {
 #if PLATFORM(IOS_FAMILY)
     return UTTypeRTF.identifier;
@@ -1262,13 +1285,18 @@ void PDFPluginBase::writeStringToFindPasteboard(const String& string) const
 }
 #endif
 
+PDFAccessibilityDisplayModeState PDFPluginBase::accessibilityDisplayModeState() const
+{
+    return PDFAccessibilityDisplayModeState::Ineligible;
+}
+
 #if ENABLE(PDF_HUD)
 
 void PDFPluginBase::updateHUDLocation()
 {
     if (!shouldShowHUD())
         return;
-    protectedFrame()->protectedPage()->updatePDFHUDLocation(*this, frameForHUDInRootViewCoordinates());
+    protect(protect(m_frame.get())->page())->updatePDFHUDLocation(*this, frameForHUDInRootViewCoordinates());
 }
 
 IntRect PDFPluginBase::frameForHUDInRootViewCoordinates() const
@@ -1278,7 +1306,7 @@ IntRect PDFPluginBase::frameForHUDInRootViewCoordinates() const
 
 bool PDFPluginBase::hudEnabled() const
 {
-    if (RefPtr page = this->page())
+    if (auto* page = this->page())
         return page->settings().pdfPluginHUDEnabled();
     return false;
 }
@@ -1343,7 +1371,15 @@ bool PDFPluginBase::showContextMenuAtPoint(const IntPoint& point)
     if (!frameView)
         return false;
     IntPoint contentsPoint = frameView->contentsToRootView(point);
-    WebMouseEvent event({ WebEventType::MouseDown, OptionSet<WebEventModifier> { }, MonotonicTime::now() }, WebMouseEventButton::Right, 0, contentsPoint, contentsPoint, 0, 0, 0, 1, WebCore::ForceAtClick);
+    Ref event = WebMouseEvent::create({ WebEventType::MouseDown, OptionSet<WebEventModifier> { }, MonotonicTime::now() }, {
+        .button = WebMouseEventButton::Right,
+        .buttons = 0,
+        .position = contentsPoint,
+        .globalPosition = contentsPoint,
+        .clickCount = 1,
+        .force = WebCore::ForceAtClick,
+        .inputSource = WebEventInputSource::UserDriven,
+    });
     return handleContextMenuEvent(event);
 }
 
@@ -1397,19 +1433,12 @@ void PDFPluginBase::navigateToURL(const URL& url, std::optional<PlatformMouseEve
 
     RefPtr<Event> coreEvent;
     if (event || m_lastMouseEvent) {
-        auto platformEvent = event ? WTF::move(*event) : platform(CheckedRef { *m_lastMouseEvent }.get());
+        auto platformEvent = event ? WTF::move(*event) : *m_lastMouseEvent;
         coreEvent = MouseEvent::create(eventNames().clickEvent, &coreFrame->windowProxy(), platformEvent, { }, { }, 0, 0);
     }
 
     coreFrame->loader().changeLocation(url, emptyAtom(), coreEvent.get(), ReferrerPolicy::NoReferrer, ShouldOpenExternalURLsPolicy::ShouldAllow);
 }
-
-#if PLATFORM(MAC)
-RefPtr<PDFPluginAnnotation> PDFPluginBase::protectedActiveAnnotation() const
-{
-    return m_activeAnnotation;
-}
-#endif
 
 id PDFPluginBase::accessibilityAssociatedPluginParentForElement(Element* element) const
 {
@@ -1439,23 +1468,24 @@ bool PDFPluginBase::populateEditorStateIfNeeded(EditorState& state) const
     if (selectionString().isNull())
         return false;
 
-    state.selectionIsNone = false;
-    state.selectionIsRange = true;
+    state.selectionType = WebCore::SelectionType::Range;
     state.isInPlugin = true;
     return true;
 }
 
-#if PLATFORM(IOS_FAMILY)
+#if ENABLE(TWO_PHASE_CLICKS)
 
 SelectionWasFlipped PDFPluginBase::moveSelectionEndpoint(FloatPoint, SelectionEndpoint)
 {
     return SelectionWasFlipped::No;
 }
 
-SelectionEndpoint PDFPluginBase::extendInitialSelection(FloatPoint pointInRootView, TextGranularity)
+SelectionEndpoint PDFPluginBase::extendInitialSelection(FloatPoint pointInRootView, TextGranularity, SelectionExtentAnchor)
 {
     return SelectionEndpoint::Start;
 }
+
+#if PLATFORM(IOS_FAMILY)
 
 DocumentEditingContext PDFPluginBase::documentEditingContext(DocumentEditingContextRequest&&) const
 {
@@ -1463,6 +1493,8 @@ DocumentEditingContext PDFPluginBase::documentEditingContext(DocumentEditingCont
 }
 
 #endif // PLATFORM(IOS_FAMILY)
+
+#endif // ENABLE(TWO_PHASE_CLICKS)
 
 #if !LOG_DISABLED
 
@@ -1488,7 +1520,7 @@ static void verboseLog(PDFIncrementalLoader* incrementalLoader, std::optional<ui
         stream << " not";
     stream << " complete";
 
-    LOG(IncrementalPDFVerbose, "%s", stream.release().utf8().data());
+    LOG(IncrementalPDFVerbose, "%s", stream.release().utf8());
 }
 #endif
 
@@ -1528,7 +1560,7 @@ void PDFPluginBase::registerPDFTest(RefPtr<WebCore::VoidCallback>&& callback)
 
 std::optional<FrameIdentifier> PDFPluginBase::rootFrameID() const
 {
-    return protectedView()->frame()->rootFrame().frameID();
+    return m_view.get()->frame()->rootFrame().frameID();
 }
 
 // FIXME: Share more of the style sheet between the embed/non-embed case.
@@ -1591,6 +1623,7 @@ String PDFPluginBase::annotationStyle() const
     ".annotation {"
     "    position: absolute;"
     "    pointer-events: auto;"
+    "    color-scheme: only light;"
     "}"
     ""
     "textarea.annotation { "
@@ -1631,16 +1664,32 @@ String PDFPluginBase::annotationStyle() const
     "}"_s;
 }
 
-Color PDFPluginBase::pluginBackgroundColor()
+Color PDFPluginBase::pluginBackgroundColor() const
 {
-    static NeverDestroyed color = roundAndClampToSRGBALossy(RetainPtr {
 #if HAVE(LIQUID_GLASS)
-        [CocoaColor whiteColor].CGColor
+    RefPtr element = m_element.get();
+    OptionSet<WebCore::StyleColorOptions> options;
+    if (RefPtr element = m_element.get())
+        options = protect(element->renderer())->styleColorOptions();
+    return WebCore::RenderTheme::singleton().systemColor(CSSValueAppleSystemBackground, WTF::move(options));
 #else
-        [CocoaColor grayColor].CGColor
-#endif
-    }.get());
+    static NeverDestroyed color = roundAndClampToSRGBALossy(RetainPtr { [CocoaColor grayColor].CGColor }.get());
     return color.get();
+#endif
+}
+
+void PDFPluginBase::updateFullFramePluginBackgroundColor()
+{
+    if (!isFullFramePlugin())
+        return;
+
+    RefPtr element = m_element.get();
+    if (!element)
+        return;
+
+    Ref document = element->document();
+    if (RefPtr body = document->bodyOrFrameset())
+        body->setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(pluginBackgroundColor()));
 }
 
 unsigned PDFPluginBase::countFindMatches(const String& target, WebCore::FindOptions options, unsigned maxMatchCount)
@@ -1650,16 +1699,6 @@ unsigned PDFPluginBase::countFindMatches(const String& target, WebCore::FindOpti
 
     NSStringCompareOptions nsOptions = options.contains(FindOption::CaseInsensitive) ? NSCaseInsensitiveSearch : 0;
     return [[m_pdfDocument findString:target.createNSString().get() withOptions:nsOptions] count];
-}
-
-RefPtr<PluginView> PDFPluginBase::protectedView() const
-{
-    return m_view.get();
-}
-
-RefPtr<WebFrame> PDFPluginBase::protectedFrame() const
-{
-    return m_frame.get();
 }
 
 } // namespace WebKit

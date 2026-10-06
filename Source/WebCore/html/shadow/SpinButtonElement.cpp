@@ -29,6 +29,7 @@
 
 #include "Chrome.h"
 #include "ContainerNodeInlines.h"
+#include "DocumentPage.h"
 #include "EventHandler.h"
 #include "EventNames.h"
 #include "FrameDestructionObserverInlines.h"
@@ -36,7 +37,6 @@
 #include "LocalFrame.h"
 #include "MouseEvent.h"
 #include "NodeDocument.h"
-#include "NodeInlines.h"
 #include "Page.h"
 #include "RenderBox.h"
 #include "RenderTheme.h"
@@ -53,7 +53,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SpinButtonElement);
 using namespace HTMLNames;
 
 inline SpinButtonElement::SpinButtonElement(Document& document, SpinButtonOwner& spinButtonOwner)
-    : HTMLDivElement(divTag, document, TypeFlag::HasCustomStyleResolveCallbacks)
+    : HTMLDivElement(document, TypeFlag::HasCustomStyleResolveCallbacks)
     , m_spinButtonOwner(spinButtonOwner)
     , m_capturing(false)
     , m_upDownState(Indeterminate)
@@ -103,15 +103,17 @@ void SpinButtonElement::defaultEventHandler(Event& event)
         return;
     }
 
-    IntPoint local = roundedIntPoint(box->absoluteToLocal(mouseEvent->absoluteLocation(), UseTransforms));
+    IntPoint local = roundedIntPoint(box->absoluteToLocal(mouseEvent->absoluteLocation(), MapCoordinatesMode::UseTransforms));
     if (mouseEvent->type() == eventNames().mousedownEvent && mouseEvent->button() == MouseButton::Left) {
         if (box->borderBoxRect().contains(local)) {
             // The following functions of HTMLInputElement may run JavaScript
             // code which detaches this shadow node. We need to take a reference
-            // and check renderer() after such function calls.
+            // and check renderer() after such function calls. Release the
+            // CheckedPtr first so it isn't left dangling if the renderer dies.
+            box = nullptr;
             Ref<SpinButtonElement> protectedThis(*this);
-            if (m_spinButtonOwner)
-                m_spinButtonOwner->focusAndSelectSpinButtonOwner();
+            if (RefPtr spinButtonOwner = m_spinButtonOwner)
+                spinButtonOwner->focusAndSelectSpinButtonOwner();
             if (renderer()) {
                 if (m_upDownState != Indeterminate) {
                     // A JavaScript event handler called in doStepAction() below
@@ -121,6 +123,8 @@ void SpinButtonElement::defaultEventHandler(Event& event)
                     // chance to cancel the timer.
                     startRepeatingTimer();
                     doStepAction(m_upDownState == Up ? 1 : -1);
+                    if (!renderer())
+                        stopRepeatingTimer();
                 }
             }
             mouseEvent->setDefaultHandled();
@@ -141,13 +145,13 @@ void SpinButtonElement::defaultEventHandler(Event& event)
             CheckedRef renderer = *this->renderer();
             switch (renderer->theme().innerSpinButtonLayout(renderer.get())) {
             case RenderTheme::InnerSpinButtonLayout::Vertical:
-                m_upDownState = local.y() < box->height() / 2 ? Up : Down;
+                m_upDownState = local.y() < box->borderBoxHeight() / 2 ? Up : Down;
                 break;
             case RenderTheme::InnerSpinButtonLayout::HorizontalUpLeft:
-                m_upDownState = local.x() < box->width() / 2 ? Up : Down;
+                m_upDownState = local.x() < box->borderBoxWidth() / 2 ? Up : Down;
                 break;
             case RenderTheme::InnerSpinButtonLayout::HorizontalUpRight:
-                m_upDownState = local.x() > box->width() / 2 ? Up : Down;
+                m_upDownState = local.x() > box->borderBoxWidth() / 2 ? Up : Down;
                 break;
             }
             if (m_upDownState != oldUpDownState)
@@ -186,13 +190,14 @@ bool SpinButtonElement::willRespondToMouseClickEventsWithEditability(Editability
 
 void SpinButtonElement::doStepAction(int amount)
 {
-    if (!m_spinButtonOwner)
+    RefPtr spinButtonOwner = m_spinButtonOwner;
+    if (!spinButtonOwner)
         return;
 
     if (amount > 0)
-        m_spinButtonOwner->spinButtonStepUp();
+        spinButtonOwner->spinButtonStepUp();
     else if (amount < 0)
-        m_spinButtonOwner->spinButtonStepDown();
+        spinButtonOwner->spinButtonStepDown();
 }
 
 void SpinButtonElement::releaseCapture()
@@ -210,7 +215,7 @@ void SpinButtonElement::releaseCapture()
 
 bool SpinButtonElement::matchesReadWritePseudoClass() const
 {
-    return protectedShadowHost()->matchesReadWritePseudoClass();
+    return protect(shadowHost())->matchesReadWritePseudoClass();
 }
 
 void SpinButtonElement::startRepeatingTimer()
@@ -254,7 +259,8 @@ void SpinButtonElement::setHovered(bool flag, Style::InvalidationScope invalidat
 
 bool SpinButtonElement::shouldRespondToMouseEvents() const
 {
-    return !m_spinButtonOwner || m_spinButtonOwner->shouldSpinButtonRespondToMouseEvents();
+    RefPtr spinButtonOwner = m_spinButtonOwner;
+    return !spinButtonOwner || spinButtonOwner->shouldSpinButtonRespondToMouseEvents();
 }
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003, 2004, 2005, 2006, 2007 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -53,20 +53,20 @@ public:
 #endif
 
     RenderBoxModelObject& renderer() const { return downcast<RenderBoxModelObject>(LegacyInlineBox::renderer()); }
-    const RenderStyle& lineStyle() const { return isFirstLine() ? renderer().firstLineStyle() : renderer().style(); }
+    const Style::ComputedStyle& lineStyle() const LIFETIME_BOUND { return isFirstLine() ? renderer().firstLineStyle() : renderer().style(); }
 
-    LegacyInlineFlowBox* prevLineBox() const { return m_prevLineBox; }
-    LegacyInlineFlowBox* nextLineBox() const { return m_nextLineBox; }
+    LegacyInlineFlowBox* prevLineBox() const LIFETIME_BOUND { return m_prevLineBox; }
+    LegacyInlineFlowBox* nextLineBox() const LIFETIME_BOUND { return m_nextLineBox; }
     void setNextLineBox(LegacyInlineFlowBox* n) { m_nextLineBox = n; }
     void setPreviousLineBox(LegacyInlineFlowBox* p) { m_prevLineBox = p; }
 
-    LegacyInlineBox* firstChild() const { checkConsistency(); return m_firstChild; }
-    LegacyInlineBox* lastChild() const { checkConsistency(); return m_lastChild; }
+    LegacyInlineBox* firstChild() const LIFETIME_BOUND { checkConsistency(); return m_firstChild; }
+    LegacyInlineBox* lastChild() const LIFETIME_BOUND { checkConsistency(); return m_lastChild; }
 
     bool isLeaf() const final { return false; }
     
-    LegacyInlineBox* firstLeafDescendant() const;
-    LegacyInlineBox* lastLeafDescendant() const;
+    LegacyInlineBox* firstLeafDescendant() const LIFETIME_BOUND;
+    LegacyInlineBox* lastLeafDescendant() const LIFETIME_BOUND;
 
     void setConstructed() final
     {
@@ -87,10 +87,10 @@ public:
 
     RenderObject::HighlightState selectionState() const override;
 
-    bool hasTextChildren() const { return m_hasTextChildren; }
-    bool hasTextDescendants() const { return m_hasTextDescendants; }
-    void setHasTextChildren() { m_hasTextChildren = true; setHasTextDescendants(); }
-    void setHasTextDescendants() { m_hasTextDescendants = true; }
+    bool hasTextChildren() const { return m_bitfields.hasTextChildren(); }
+    bool hasTextDescendants() const { return m_bitfields.hasTextDescendants(); }
+    void setHasTextChildren() { m_bitfields.setHasTextChildren(true); setHasTextDescendants(); }
+    void setHasTextDescendants() { m_bitfields.setHasTextDescendants(true); }
     
     void checkConsistency() const;
     void setHasBadChildList();
@@ -136,36 +136,13 @@ public:
         return FloatRect(logicalLeft(), lineTop, logicalWidth(), lineBottom - lineTop);
     }
 
-    bool hasSelfPaintInlineBox() const { return m_hasSelfPaintInlineBox; }
+    bool hasSelfPaintInlineBox() const { return m_bitfields.hasSelfPaintInlineBox(); }
 
 private:
     bool isInlineFlowBox() const final { return true; }
     void boxModelObject() const = delete;
 
     void addTextBoxVisualOverflow(LegacyInlineTextBox&, GlyphOverflowAndFallbackFontsMap&, LayoutRect& logicalVisualOverflow);
-
-private:
-    unsigned m_hasTextChildren : 1 { false };
-    unsigned m_hasTextDescendants : 1 { false };
-
-protected:
-    // The following members are only used by RootInlineBox but moved here to keep the bits packed.
-
-    // Whether or not this line uses alphabetic or ideographic baselines by default.
-    unsigned m_baselineType : 1 { enumToUnderlyingType(FontBaseline::Alphabetic) }; // FontBaseline
-
-    unsigned m_lineBreakBidiStatusEor : 5; // UCharDirection
-    unsigned m_lineBreakBidiStatusLastStrong : 5; // UCharDirection
-    unsigned m_lineBreakBidiStatusLast : 5; // UCharDirection
-
-    unsigned m_hasSelfPaintInlineBox : 1 { false };
-
-    // End of RootInlineBox-specific members.
-
-#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
-private:
-    unsigned m_hasBadChildList : 1 { false };
-#endif
 
 protected:
     std::unique_ptr<RenderOverflow> m_overflow;

@@ -40,7 +40,7 @@ public:
 
     void reset();
 
-    void scan(const HTMLToken::DataVector&, PreloadRequestStream&);
+    void scan(const HTMLToken::DataVector&, PreloadRequestStream&, const URL& predictedBaseElementURL = URL());
 
 private:
     enum State {
@@ -59,7 +59,7 @@ private:
 
     inline void tokenize(char16_t);
     void emitRule();
-    bool hasFinishedRuleValue() const;
+    bool NODELETE hasFinishedRuleValue() const;
 
     State m_state;
     Vector<char16_t> m_rule;
@@ -68,6 +68,7 @@ private:
 
     // Only non-zero during scan()
     PreloadRequestStream* m_requests;
+    URL m_predictedBaseElementURL;
 };
 
 } // namespace WebCore

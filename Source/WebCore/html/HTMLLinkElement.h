@@ -39,7 +39,7 @@ class DOMTokenList;
 class ExpectIdTargetObserver;
 class HTMLLinkElement;
 class Page;
-struct MediaQueryParserContext;
+struct CSSParserContext;
 
 enum class RequestPriority : uint8_t;
 
@@ -60,22 +60,17 @@ public:
     void deref() const final { HTMLElement::deref(); }
 
     URL href() const;
-    WEBCORE_EXPORT const AtomString& rel() const;
-
-#if ENABLE(WEB_PAGE_SPATIAL_BACKDROP)
-    URL environmentMap() const;
-    bool isSpatialBackdrop() const { return m_relAttribute.isSpatialBackdrop; }
-#endif
+    WEBCORE_EXPORT const AtomString& NODELETE rel() const;
 
     AtomString target() const final;
 
-    const AtomString& type() const;
+    const AtomString& NODELETE type() const;
 
-    std::optional<LinkIconType> iconType() const;
+    std::optional<LinkIconType> NODELETE iconType() const;
 
     CSSStyleSheet* sheet() const { return m_sheet.get(); }
 
-    bool styleSheetIsLoading() const;
+    bool NODELETE styleSheetIsLoading() const;
 
     bool isDisabled() const { return m_disabledState == Disabled; }
     bool isEnabledViaScript() const { return m_disabledState == EnabledViaScript; }
@@ -118,16 +113,16 @@ private:
 
     void potentiallyBlockRendering();
     void unblockRendering();
-    bool isImplicitlyPotentiallyRenderBlocking() const;
+    bool NODELETE isImplicitlyPotentiallyRenderBlocking() const;
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void didFinishInsertingNode() final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps() final;
+    void removingSteps(RemovalType, ContainerNode&) final;
 
-    void initializeStyleSheet(Ref<StyleSheetContents>&&, const CachedCSSStyleSheet&, MediaQueryParserContext);
+    void initializeStyleSheet(Ref<StyleSheetContents>&&, const CachedCSSStyleSheet&, const CSSParserContext&);
 
     // from CachedResourceClient
-    void setCSSStyleSheet(const String& href, const URL& baseURL, ASCIILiteral charset, const CachedCSSStyleSheet*) final;
+    void setCSSStyleSheet(const String& href, const URL& baseURL, ASCIILiteral charset, const CachedCSSStyleSheet&) final;
     bool sheetLoaded() final;
     void notifyLoadedSheetAndAllCriticalSubresources(bool errorOccurred) final;
     void startLoadingDynamicSheet() final;
@@ -139,11 +134,11 @@ private:
     
     void setDisabledState(bool);
 
-    bool isURLAttribute(const Attribute&) const final;
+    bool NODELETE isURLAttribute(const Attribute&) const final;
 
     HTMLLinkElement(const QualifiedName&, Document&, bool createdByParser);
 
-    void addSubresourceAttributeURLs(ListHashSet<URL>&) const final;
+    void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const final;
 
     void finishParsingChildren() final;
 
@@ -153,8 +148,6 @@ private:
     void addPendingSheet(PendingSheetType);
 
     void removePendingSheet();
-
-    CheckedPtr<Style::Scope> checkedStyleScope();
 
     const Ref<LinkLoader> m_linkLoader;
     CheckedPtr<Style::Scope> m_styleScope;
@@ -170,13 +163,10 @@ private:
     String m_media;
     String m_integrityMetadataForPendingSheetRequest;
     URL m_url;
-#if ENABLE(WEB_PAGE_SPATIAL_BACKDROP)
-    URL m_environmentMapURL;
-#endif
     const std::unique_ptr<DOMTokenList> m_sizes;
     const std::unique_ptr<DOMTokenList> m_relList;
     const std::unique_ptr<DOMTokenList> m_blockingList;
-    std::unique_ptr<ExpectIdTargetObserver> m_expectIdTargetObserver;
+    const std::unique_ptr<ExpectIdTargetObserver> m_expectIdTargetObserver;
     DisabledState m_disabledState;
     LinkRelAttribute m_relAttribute;
     bool m_loading : 1;

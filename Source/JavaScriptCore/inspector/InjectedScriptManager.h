@@ -32,7 +32,7 @@
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/InjectedScript.h>
 #include <JavaScriptCore/InspectorEnvironment.h>
-#include <wtf/Expected.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/NakedPtr.h>
@@ -47,9 +47,10 @@ namespace Inspector {
 
 class InjectedScriptHost;
 
-class InjectedScriptManager {
+class InjectedScriptManager : public CanMakeThreadSafeCheckedPtr<InjectedScriptManager> {
     WTF_MAKE_NONCOPYABLE(InjectedScriptManager);
     WTF_MAKE_TZONE_ALLOCATED(InjectedScriptManager);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InjectedScriptManager);
 public:
     JS_EXPORT_PRIVATE InjectedScriptManager(InspectorEnvironment&, Ref<InjectedScriptHost>&&);
     JS_EXPORT_PRIVATE virtual ~InjectedScriptManager();
@@ -58,9 +59,8 @@ public:
     JS_EXPORT_PRIVATE virtual void disconnect();
     JS_EXPORT_PRIVATE virtual void discardInjectedScripts();
 
-    InjectedScriptHost& injectedScriptHost();
+    InjectedScriptHost& NODELETE injectedScriptHost();
     InspectorEnvironment& inspectorEnvironment() const { return *m_environment; }
-    CheckedRef<InspectorEnvironment> checkedInspectorEnvironment() const { return inspectorEnvironment(); }
 
     JS_EXPORT_PRIVATE InjectedScript injectedScriptFor(JSC::JSGlobalObject*);
     JS_EXPORT_PRIVATE InjectedScript injectedScriptForId(int);
@@ -79,7 +79,7 @@ protected:
     UncheckedKeyHashMap<JSC::JSGlobalObject*, int> m_scriptStateToId;
 
 private:
-    Expected<JSC::JSObject*, NakedPtr<JSC::Exception>> createInjectedScript(JSC::JSGlobalObject*, int id);
+    std::expected<JSC::JSObject*, NakedPtr<JSC::Exception>> createInjectedScript(JSC::JSGlobalObject*, int id);
 
     WeakPtr<InspectorEnvironment> m_environment;
     const Ref<InjectedScriptHost> m_injectedScriptHost;

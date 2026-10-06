@@ -37,6 +37,7 @@
 #include <gio/gio.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
@@ -65,7 +66,7 @@ public:
 
     void initialize(Inspector::DebuggableType debuggableType)
     {
-        m_proxy = RemoteWebInspectorUIProxy::create();
+        lazyInitialize(m_proxy, RemoteWebInspectorUIProxy::create());
         m_proxy->setClient(this);
         // FIXME <https://webkit.org/b/205536>: this should infer more useful data about the debug target.
         Ref<API::DebuggableInfo> debuggableInfo = API::DebuggableInfo::create(DebuggableInfoData::empty());
@@ -79,7 +80,7 @@ public:
             m_proxy->show();
     }
 
-    void setTargetName(const CString& name)
+    void setTargetName(const UTF8CString& name)
     {
 #if PLATFORM(GTK)
         if (m_proxy)
@@ -113,7 +114,7 @@ public:
     }
 
 private:
-    RefPtr<RemoteWebInspectorUIProxy> m_proxy;
+    const RefPtr<RemoteWebInspectorUIProxy> m_proxy;
     RemoteInspectorClient& m_inspectorClient;
     uint64_t m_connectionID;
     uint64_t m_targetID;
@@ -124,13 +125,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteInspectorClient);
 const SocketConnection::MessageHandlers& RemoteInspectorClient::messageHandlers()
 {
     static NeverDestroyed<const SocketConnection::MessageHandlers> messageHandlers = SocketConnection::MessageHandlers({
-    { "DidClose", std::pair<CString, SocketConnection::MessageCallback> { { },
+    { "DidClose"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { { },
         [](SocketConnection&, GVariant*, gpointer userData) {
             auto& client = *static_cast<RemoteInspectorClient*>(userData);
             client.connectionDidClose();
         }}
     },
-    { "DidSetupInspectorClient", std::pair<CString, SocketConnection::MessageCallback> { "(ay)",
+    { "DidSetupInspectorClient"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { "(ay)"_s,
         [](SocketConnection&, GVariant* parameters, gpointer userData) {
             auto& client = *static_cast<RemoteInspectorClient*>(userData);
             GRefPtr<GVariant> backendCommandsVariant;
@@ -138,7 +139,7 @@ const SocketConnection::MessageHandlers& RemoteInspectorClient::messageHandlers(
             client.setBackendCommands(g_variant_get_bytestring(backendCommandsVariant.get()));
         }}
     },
-    { "SetTargetList", std::pair<CString, SocketConnection::MessageCallback> { "(ta(tsssb))",
+    { "SetTargetList"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { "(ta(tsssb))"_s,
         [](SocketConnection&, GVariant* parameters, gpointer userData) {
             auto& client = *static_cast<RemoteInspectorClient*>(userData);
             guint64 connectionID;
@@ -154,12 +155,12 @@ const SocketConnection::MessageHandlers& RemoteInspectorClient::messageHandlers(
             gboolean hasLocalDebugger;
             while (g_variant_iter_loop(iter.get(), "(t&s&s&sb)", &targetID, &type, &name, &url, &hasLocalDebugger)) {
                 if (!g_strcmp0(type, "JavaScript") || !g_strcmp0(type, "ServiceWorker") || !g_strcmp0(type, "WebPage"))
-                    targetList.append({ targetID, type, name, url });
+                    targetList.append({ targetID, UTF8CString::unsafeFromUTF8(type), UTF8CString::unsafeFromUTF8(name), UTF8CString::unsafeFromUTF8(url) });
             }
             client.setTargetList(connectionID, WTF::move(targetList));
         }}
     },
-    { "SendMessageToFrontend", std::pair<CString, SocketConnection::MessageCallback> { "(tts)",
+    { "SendMessageToFrontend"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { "(tts)"_s,
         [](SocketConnection&, GVariant* parameters, gpointer userData) {
             auto& client = *static_cast<RemoteInspectorClient*>(userData);
             guint64 connectionID, targetID;
@@ -178,7 +179,7 @@ RemoteInspectorClient::RemoteInspectorClient(String&& hostAndPort, RemoteInspect
     , m_cancellable(adoptGRef(g_cancellable_new()))
 {
     GRefPtr<GSocketClient> socketClient = adoptGRef(g_socket_client_new());
-    g_socket_client_connect_to_host_async(socketClient.get(), m_hostAndPort.utf8().data(), 0, m_cancellable.get(),
+    g_socket_client_connect_to_host_async(socketClient.get(), m_hostAndPort.utf8().legacyCStringPointer(), 0, m_cancellable.get(),
         [](GObject* object, GAsyncResult* result, gpointer userData) {
             GUniqueOutPtr<GError> error;
             GRefPtr<GSocketConnection> connection = adoptGRef(g_socket_client_connect_to_host_finish(G_SOCKET_CLIENT(object), result, &error.outPtr()));
@@ -204,7 +205,7 @@ RemoteInspectorClient::~RemoteInspectorClient()
 void RemoteInspectorClient::setupConnection(Ref<SocketConnection>&& connection)
 {
     m_socketConnection = WTF::move(connection);
-    m_socketConnection->sendMessage("SetupInspectorClient", g_variant_new("(@ay)", g_variant_new_bytestring(Inspector::backendCommandsHash().data())));
+    m_socketConnection->sendMessage("SetupInspectorClient"_s, g_variant_new("(@ay)", g_variant_new_bytestring(Inspector::backendCommandsHash().data())));
 }
 
 void RemoteInspectorClient::setBackendCommands(const char* backendCommands)
@@ -246,20 +247,20 @@ void RemoteInspectorClient::inspect(uint64_t connectionID, uint64_t targetID, co
         return;
     }
 
-    m_socketConnection->sendMessage("Setup", g_variant_new("(tt)", connectionID, targetID));
+    m_socketConnection->sendMessage("Setup"_s, g_variant_new("(tt)", connectionID, targetID));
     if (inspectorType == InspectorType::UI)
         addResult.iterator->value->initialize(debuggableType(targetType));
 }
 
 void RemoteInspectorClient::sendMessageToBackend(uint64_t connectionID, uint64_t targetID, const String& message)
 {
-    m_socketConnection->sendMessage("SendMessageToBackend", g_variant_new("(tts)", connectionID, targetID, message.utf8().data()));
+    m_socketConnection->sendMessage("SendMessageToBackend"_s, gVariantNew("(tts)", connectionID, targetID, message.utf8()));
 }
 
 void RemoteInspectorClient::closeFromFrontend(uint64_t connectionID, uint64_t targetID)
 {
     ASSERT(m_inspectorProxyMap.contains(std::make_pair(connectionID, targetID)));
-    m_socketConnection->sendMessage("FrontendDidClose", g_variant_new("(tt)", connectionID, targetID));
+    m_socketConnection->sendMessage("FrontendDidClose"_s, g_variant_new("(tt)", connectionID, targetID));
     m_inspectorProxyMap.remove(std::make_pair(connectionID, targetID));
 }
 
@@ -297,53 +298,49 @@ void RemoteInspectorClient::sendMessageToFrontend(uint64_t connectionID, uint64_
     proxy->sendMessageToFrontend(String::fromUTF8(message));
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
-
-void RemoteInspectorClient::appendTargertList(GString* html, InspectorType inspectorType, ShouldEscapeSingleQuote escapeSingleQuote) const
+void RemoteInspectorClient::appendTargetList(StringBuilder& html, InspectorType inspectorType, ShouldEscapeSingleQuote escapeSingleQuote) const
 {
     if (m_targets.isEmpty())
-        g_string_append(html, "<p>No targets found</p>");
+        html.append("<p>No targets found</p>"_s);
     else {
-        g_string_append(html, "<table>");
+        html.append("<table>"_s);
         for (auto connectionID : m_targets.keys()) {
             for (auto& target : m_targets.get(connectionID)) {
-                g_string_append_printf(html,
-                    "<tbody><tr>"
-                    "<td class=\"data\"><div class=\"targetname\">%s</div><div class=\"targeturl\">%s</div></td>"
-                    "<td class=\"input\"><input type=\"button\" value=\"Inspect\" onclick=",
-                    target.name.data(), target.url.data());
+                html.append("<tbody><tr>"_s,
+                    "<td class=\"data\"><div class=\"targetname\">"_s, target.name, "</div><div class=\"targeturl\">"_s,
+                    target.url, "</div></td>"_s,
+                    "<td class=\"input\"><input type=\"button\" value=\"Inspect\" onclick="_s);
 
                 switch (inspectorType) {
                 case InspectorType::UI:
-                    g_string_append(html, "\"window.webkit.messageHandlers.inspector.postMessage(");
+                    html.append("\"window.webkit.messageHandlers.inspector.postMessage("_s);
                     if (escapeSingleQuote == ShouldEscapeSingleQuote::Yes)
-                        g_string_append(html, "\\'");
+                        html.append("\\'"_s);
                     else
-                        g_string_append_c(html, '\'');
-                    g_string_append_printf(html, "%" G_GUINT64_FORMAT ":%" G_GUINT64_FORMAT ":%s", connectionID, target.id, target.type.data());
+                        html.append('\'');
+                    html.append(connectionID, ':', target.id, ':', target.type);
                     if (escapeSingleQuote == ShouldEscapeSingleQuote::Yes)
-                        g_string_append(html, "\\')\"");
+                        html.append("\\')\""_s);
                     else
-                        g_string_append(html, "')\"");
+                        html.append("')\""_s);
                     break;
                 case InspectorType::HTTP:
-                    g_string_append_printf(html,
-                        "\"window.open('Main.html?ws=' + window.location.host + '/socket/%" G_GUINT64_FORMAT "/%" G_GUINT64_FORMAT "/%s', "
-                        "'_blank', 'location=no,menubar=no,status=no,toolbar=no');\"",
-                        connectionID, target.id, target.type.data());
+                    html.append("\"window.open('Main.html?ws=' + window.location.host + '/socket/"_s, connectionID, '/', target.id, '/',
+                        target.type, "', '_blank', 'location=no,menubar=no,status=no,toolbar=no');\""_s);
                     break;
                 }
 
-                g_string_append(html, "></td></tr></tbody>");
+                html.append("></td></tr></tbody>"_s);
             }
         }
-        g_string_append(html, "</table>");
+        html.append("</table>"_s);
     }
 }
 
-GString* RemoteInspectorClient::buildTargetListPage(InspectorType inspectorType) const
+StringBuilder RemoteInspectorClient::buildTargetListPage(InspectorType inspectorType) const
 {
-    GString* html = g_string_new(
+    StringBuilder html;
+    html.append(
         "<html><head><title>Remote inspector</title>"
         "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\" />"
         "<style>"
@@ -362,14 +359,12 @@ GString* RemoteInspectorClient::buildTargetListPage(InspectorType inspectorType)
         "  input { width: 100%; padding: 8px; }"
         "</style>"
         "</head><body><h1>Inspectable targets</h1>"
-        "<div id='targetlist'>");
-    appendTargertList(html, inspectorType, ShouldEscapeSingleQuote::No);
-    g_string_append(html, "</div></body></html>");
+        "<div id='targetlist'>"_s);
+    appendTargetList(html, inspectorType, ShouldEscapeSingleQuote::No);
+    html.append("</div></body></html>"_s);
 
     return html;
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } // namespace WebKit
 

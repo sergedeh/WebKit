@@ -50,16 +50,16 @@ public:
     static Ref<RTCTrackEvent> create(const AtomString& type, CanBubble, IsCancelable, Ref<RTCRtpReceiver>&&, Ref<MediaStreamTrack>&&, MediaStreamArray&&, Ref<RTCRtpTransceiver>&&);
 
     struct Init : EventInit {
-        RefPtr<RTCRtpReceiver> receiver;
-        RefPtr<MediaStreamTrack> track;
+        Ref<RTCRtpReceiver> receiver;
+        Ref<MediaStreamTrack> track;
         MediaStreamArray streams;
-        RefPtr<RTCRtpTransceiver> transceiver;
+        Ref<RTCRtpTransceiver> transceiver;
     };
     static Ref<RTCTrackEvent> create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
 
     RTCRtpReceiver& receiver() const { return m_receiver; }
     MediaStreamTrack& track() const  { return m_track; }
-    const MediaStreamArray& streams() const  { return m_streams; }
+    const MediaStreamArray& streams() const LIFETIME_BOUND { return m_streams; }
     RTCRtpTransceiver& transceiver() const  { return m_transceiver; }
 
 private:

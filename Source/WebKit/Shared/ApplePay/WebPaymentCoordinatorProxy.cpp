@@ -48,15 +48,10 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebPaymentCoordinatorProxy);
 
-static WeakPtr<WebPaymentCoordinatorProxy>& activePaymentCoordinatorProxy()
+static WeakPtr<WebPaymentCoordinatorProxy>& NODELETE activePaymentCoordinatorProxy()
 {
     static NeverDestroyed<WeakPtr<WebPaymentCoordinatorProxy>> activePaymentCoordinatorProxy;
     return activePaymentCoordinatorProxy.get();
-}
-
-Ref<WorkQueue> WebPaymentCoordinatorProxy::protectedCanMakePaymentsQueue() const
-{
-    return m_canMakePaymentsQueue;
 }
 
 IPC::Connection* WebPaymentCoordinatorProxy::messageSenderConnection() const
@@ -91,7 +86,7 @@ void WebPaymentCoordinatorProxy::openPaymentSetup(const String& merchantIdentifi
 
 void WebPaymentCoordinatorProxy::showPaymentUI(WebCore::PageIdentifier destinationID, WebPageProxyIdentifier webPageProxyID, const URL& originatingURL, const Vector<URL>& linkIconURLs, const WebCore::ApplePaySessionPaymentRequest& paymentRequest, CompletionHandler<void(bool)>&& completionHandler)
 {
-    if (auto& coordinator = activePaymentCoordinatorProxy())
+    if (RefPtr coordinator = activePaymentCoordinatorProxy())
         coordinator->didReachFinalState();
     activePaymentCoordinatorProxy() = *this;
 

@@ -40,6 +40,13 @@ JSGenerator* JSGenerator::create(VM& vm, Structure* structure)
     return generator;
 }
 
+JSGenerator* JSGenerator::createWithInitialValues(VM& vm, Structure* structure)
+{
+    JSGenerator* generator = new (NotNull, allocateCell<JSGenerator>(vm)) JSGenerator(vm, structure);
+    generator->finishCreation(vm);
+    return generator;
+}
+
 Structure* JSGenerator::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
     return Structure::create(vm, globalObject, prototype, TypeInfo(JSGeneratorType, StructureFlags), info());
@@ -62,7 +69,7 @@ void JSGenerator::finishCreation(VM& vm)
 template<typename Visitor>
 void JSGenerator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSGenerator*>(cell);
+    auto* thisObject = uncheckedDowncast<JSGenerator>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }

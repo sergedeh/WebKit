@@ -39,10 +39,11 @@ enum class CompilationMode : uint8_t {
     JSToWasmMode,
     JSToWasmICMode,
     WasmToJSMode,
-    WasmBuiltinMode
+    WasmBuiltinMode,
+    RestoreFrameMode
 };
 
-constexpr inline bool isAnyInterpreter(CompilationMode compilationMode)
+inline constexpr bool isAnyInterpreter(CompilationMode compilationMode)
 {
     switch (compilationMode) {
     case CompilationMode::IPIntMode:
@@ -54,12 +55,13 @@ constexpr inline bool isAnyInterpreter(CompilationMode compilationMode)
     case CompilationMode::JSToWasmICMode:
     case CompilationMode::WasmToJSMode:
     case CompilationMode::WasmBuiltinMode:
+    case CompilationMode::RestoreFrameMode:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-constexpr inline bool isAnyBBQ(CompilationMode compilationMode)
+inline constexpr bool isAnyBBQ(CompilationMode compilationMode)
 {
     switch (compilationMode) {
     case CompilationMode::BBQMode:
@@ -71,12 +73,13 @@ constexpr inline bool isAnyBBQ(CompilationMode compilationMode)
     case CompilationMode::JSToWasmICMode:
     case CompilationMode::WasmToJSMode:
     case CompilationMode::WasmBuiltinMode:
+    case CompilationMode::RestoreFrameMode:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-constexpr inline bool isAnyOMG(CompilationMode compilationMode)
+inline constexpr bool isAnyOMG(CompilationMode compilationMode)
 {
     switch (compilationMode) {
     case CompilationMode::OMGMode:
@@ -88,12 +91,13 @@ constexpr inline bool isAnyOMG(CompilationMode compilationMode)
     case CompilationMode::JSToWasmICMode:
     case CompilationMode::WasmToJSMode:
     case CompilationMode::WasmBuiltinMode:
+    case CompilationMode::RestoreFrameMode:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-constexpr inline bool isAnyWasmToJS(CompilationMode compilationMode)
+inline constexpr bool isAnyWasmToJS(CompilationMode compilationMode)
 {
     switch (compilationMode) {
     case CompilationMode::WasmToJSMode:
@@ -105,6 +109,7 @@ constexpr inline bool isAnyWasmToJS(CompilationMode compilationMode)
     case CompilationMode::JSToWasmMode:
     case CompilationMode::JSToWasmICMode:
     case CompilationMode::WasmBuiltinMode:
+    case CompilationMode::RestoreFrameMode:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();

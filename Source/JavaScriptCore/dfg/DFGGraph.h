@@ -36,10 +36,12 @@
 #include "DFGFrozenValue.h"
 #include "DFGNode.h"
 #include "DFGPlan.h"
-#include "DFGPropertyTypeKey.h"
 #include "FullBytecodeLiveness.h"
+#include "FunctionAllowlist.h"
 #include "JITScannable.h"
+#include "JumpTable.h"
 #include "MethodOfGettingAValueProfile.h"
+#include <wtf/BitSet.h>
 #include <wtf/BitVector.h>
 #include <wtf/GenericHashKey.h>
 #include <wtf/HashMap.h>
@@ -47,6 +49,7 @@
 #include <wtf/StackCheck.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WTF {
 template <typename T> class SingleRootGraph;
@@ -56,6 +59,10 @@ namespace JSC {
 
 class CodeBlock;
 class CallFrame;
+class IRDumpDebugInfo;
+class RegExp;
+
+enum class FirstCharacterFilterPosition : uint8_t;
 
 namespace DFG {
 
@@ -122,7 +129,7 @@ using SSANaturalLoops = NaturalLoops<SSACFG>;
         if (!!(assertion))                                              \
             break;                                                      \
         (graph).logAssertionFailure(                                    \
-            (node), __FILE__, __LINE__, WTF_PRETTY_FUNCTION, #assertion); \
+            (node), __FILE__, __LINE__, WTF_PRETTY_FUNCTION, #assertion ""_s); \
         CRASH_WITH_SECURITY_IMPLICATION_AND_INFO(__VA_ARGS__);          \
     } while (false)
 
@@ -183,7 +190,7 @@ private:
 //
 // The order may be significant for nodes with side-effects (property accesses, value conversions).
 // Nodes that are 'dead' remain in the vector with refCount 0.
-class Graph final : public virtual Scannable {
+class Graph final : public Scannable {
 public:
     Graph(VM&, Plan&);
     ~Graph() final;
@@ -250,14 +257,14 @@ public:
     template<typename... Params>
     Node* addNode(Params... params)
     {
-        Node* node = m_nodes.addNew(params...);
+        Node* node = m_nodes.addNew(WTF::move(params)...);
         return node;
     }
 
     template<typename... Params>
     Node* addNode(SpeculatedType type, Params... params)
     {
-        Node* node = addNode(params...);
+        Node* node = addNode(WTF::move(params)...);
         node->predict(type);
         return node;
     }
@@ -268,7 +275,7 @@ public:
     void packNodeIndices();
     void clearAbstractValues();
 
-    void dethread();
+    void NODELETE dethread();
     
     FrozenValue* freeze(JSValue); // We use weak freezing by default.
     FrozenValue* freezeStrong(JSValue); // Shorthand for freeze(value)->strengthenTo(StrongValue).
@@ -288,13 +295,11 @@ public:
     // https://bugs.webkit.org/show_bug.cgi?id=210627
     FrozenValue* bottomValueMatchingSpeculation(SpeculatedType);
     
-    RegisteredStructure registerStructure(Structure* structure)
-    {
-        StructureRegistrationResult ignored;
-        return registerStructure(structure, ignored);
-    }
-    RegisteredStructure registerStructure(Structure*, StructureRegistrationResult&);
-    void registerAndWatchStructureTransition(Structure*);
+    RegisteredStructure registerStructure(Structure*);
+    bool tryWatch(Structure*);
+    void watch(Structure*);
+    bool isWatched(Structure*);
+
     void assertIsRegistered(Structure* structure);
     
     // CodeBlock is optional, but may allow additional information to be dumped (e.g. Identifier names).
@@ -310,7 +315,7 @@ public:
 
     void dump(PrintStream&, DumpContext*);
 
-    bool terminalsAreValid();
+    bool NODELETE terminalsAreValid();
     
     enum PhiNodeDumpMode { DumpLivePhisOnly, DumpAllPhis };
     void dumpBlockHeader(PrintStream&, const char* prefix, BasicBlock*, PhiNodeDumpMode, DumpContext*);
@@ -376,9 +381,6 @@ public:
     
     bool addShouldSpeculateInt52(Node* add)
     {
-        if (!enableInt52())
-            return false;
-        
         Node* left = add->child1().node();
         Node* right = add->child2().node();
 
@@ -417,7 +419,34 @@ public:
 
         return shouldSpeculateInt52ForAdd(left) && shouldSpeculateInt52ForAdd(right);
     }
-    
+
+    bool modShouldSpeculateInt52(Node* node)
+    {
+        // This is much more relaxed compared to addShouldSpeculateInt52.
+        // The reason is double mod is so costly, so it is worth trying with much more aggressively compared to addShouldSpeculateInt52.
+        Node* left = node->child1().node();
+        Node* right = node->child2().node();
+
+        if (hasExitSite(node, Int52Overflow))
+            return false;
+
+        if (hasExitSite(node, NegativeZero))
+            return false;
+
+        if (Node::shouldSpeculateInt52(left, right))
+            return true;
+
+        auto shouldSpeculateInt52ForMod = [](Node* node) {
+            // When DoubleConstant node appears, it means that users explicitly write a constant in their code with double form instead of integer form (1.0 instead of 1).
+            // In that case, we should honor this decision: using it as integer is not appropriate.
+            if (node->op() == DoubleConstant)
+                return false;
+            return isIntAnyFormat(node->prediction());
+        };
+
+        return shouldSpeculateInt52ForMod(left) && shouldSpeculateInt52ForMod(right);
+    }
+
     bool binaryArithShouldSpeculateInt32(Node* node, PredictionPass pass)
     {
         Node* left = node->child1().node();
@@ -429,9 +458,6 @@ public:
     
     bool binaryArithShouldSpeculateInt52(Node* node, PredictionPass pass)
     {
-        if (!enableInt52())
-            return false;
-        
         Node* left = node->child1().node();
         Node* right = node->child2().node();
 
@@ -448,8 +474,6 @@ public:
     
     bool unaryArithShouldSpeculateInt52(Node* node, PredictionPass pass)
     {
-        if (!enableInt52())
-            return false;
         return node->child1()->shouldSpeculateInt52()
             && node->canSpeculateInt52(pass)
             && !hasExitSite(node, Int52Overflow);
@@ -474,6 +498,35 @@ public:
         return node->child1()->shouldSpeculateBigInt32();
     }
 #endif
+
+    bool binaryArithShouldSpeculateHeapBigInt(Node* node)
+    {
+        if (Node::shouldSpeculateHeapBigInt(node->child1().node(), node->child2().node()))
+            return true;
+
+        if (hasExitSite(node, BadType))
+            return false;
+
+        auto isHeapBigIntOrOther = [](Node* n) {
+            SpeculatedType prediction = n->prediction();
+            return prediction && !(prediction & ~(SpecHeapBigInt | SpecOther));
+        };
+
+        return (node->child1()->shouldSpeculateHeapBigInt() && isHeapBigIntOrOther(node->child2().node()))
+            || (node->child2()->shouldSpeculateHeapBigInt() && isHeapBigIntOrOther(node->child1().node()));
+    }
+
+    bool unaryArithShouldSpeculateHeapBigInt(Node* node)
+    {
+        if (node->child1()->shouldSpeculateHeapBigInt())
+            return true;
+
+        if (hasExitSite(node, BadType))
+            return false;
+
+        SpeculatedType prediction = node->child1()->prediction();
+        return prediction && !(prediction & ~(SpecHeapBigInt | SpecOther));
+    }
 
     bool variadicArithShouldSpeculateInt32(Node* node, PredictionPass pass)
     {
@@ -502,7 +555,7 @@ public:
         return arithRound->canSpeculateInt32(pass) && !hasExitSite(arithRound->origin.semantic, Overflow) && !hasExitSite(arithRound->origin.semantic, NegativeZero);
     }
     
-    static ASCIILiteral opName(NodeType);
+    static ASCIILiteral NODELETE opName(NodeType);
     
     RegisteredStructureSet* addStructureSet(const StructureSet& structureSet)
     {
@@ -570,7 +623,7 @@ public:
 
     void appendBlock(std::unique_ptr<BasicBlock>&& basicBlock)
     {
-        basicBlock->index = m_blocks.size();
+        basicBlock->setIndex(m_blocks.size());
         m_blocks.append(WTF::move(basicBlock));
     }
     
@@ -581,7 +634,7 @@ public:
     
     void killBlock(BasicBlock* basicBlock)
     {
-        killBlock(basicBlock->index);
+        killBlock(basicBlock->index());
     }
     
     void killBlockAndItsContents(BasicBlock*);
@@ -707,16 +760,16 @@ public:
     // any GetLocals in the basic block.
     // FIXME: it may be appropriate, in the future, to generalize this to handle GetLocals
     // introduced anywhere in the basic block.
-    void substituteGetLocal(BasicBlock& block, unsigned startIndexInBlock, VariableAccessData* variableAccessData, Node* newGetLocal);
+    void NODELETE substituteGetLocal(BasicBlock& block, unsigned startIndexInBlock, VariableAccessData* variableAccessData, Node* newGetLocal);
     
     void invalidateCFG();
     void invalidateNodeLiveness();
     
-    void clearFlagsOnAllNodes(NodeFlags);
+    void NODELETE clearFlagsOnAllNodes(NodeFlags);
     
-    void clearReplacements();
-    void clearEpochs();
-    void initializeNodeOwners();
+    void NODELETE clearReplacements();
+    void NODELETE clearEpochs();
+    void NODELETE initializeNodeOwners();
     
     BlockList blocksInPreOrder();
     BlockList blocksInPostOrder(bool isSafeToValidate = true);
@@ -813,19 +866,19 @@ public:
     };
 
     template<typename ChildFunctor>
-    ALWAYS_INLINE void doToChildren(Node* node, const ChildFunctor& functor)
+    ALWAYS_INLINE void doToChildren(Node* node, NOESCAPE const ChildFunctor& functor)
     {
         DFG_NODE_DO_TO_CHILDREN(*this, node, (ForwardingFunc<ChildFunctor>(functor)));
     }
     
     template<typename ChildFunctor>
-    ALWAYS_INLINE void doToAllChildren(Node* node, const ChildFunctor& functor)
+    ALWAYS_INLINE void doToAllChildren(Node* node, NOESCAPE const ChildFunctor& functor)
     {
         DFG_NODE_DO_TO_ALL_CHILDREN_COMMON(*this, node, (ForwardingFunc<ChildFunctor>(functor)), APPLY_THING_TO_DO);
     }
 
     template<typename ChildFunctor>
-    ALWAYS_INLINE void doToChildrenBreakOnDone(Node* node, const ChildFunctor& functor)
+    ALWAYS_INLINE void doToChildrenBreakOnDone(Node* node, NOESCAPE const ChildFunctor& functor)
     {
         DFG_NODE_DO_TO_CHILDREN_BREAK_ON_DONE(*this, node, (ForwardingFunc<ChildFunctor>(functor)));
     }
@@ -937,11 +990,32 @@ public:
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::StringValueOfWatchpointSet);
     }
 
+    bool isWatchingStringSymbolMatchWatchpoint(const CodeOrigin& semanticOrigin)
+    {
+        JSGlobalObject* globalObject = globalObjectFor(semanticOrigin);
+        InlineWatchpointSet& set = globalObject->stringSymbolMatchWatchpointSet();
+        return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::StringSymbolMatchWatchpointSet);
+    }
+
+    bool isWatchingStringSymbolSearchWatchpoint(const CodeOrigin& semanticOrigin)
+    {
+        JSGlobalObject* globalObject = globalObjectFor(semanticOrigin);
+        InlineWatchpointSet& set = globalObject->stringSymbolSearchWatchpointSet();
+        return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::StringSymbolSearchWatchpointSet);
+    }
+
     bool isWatchingStringSymbolReplaceWatchpoint(const CodeOrigin& semanticOrigin)
     {
         JSGlobalObject* globalObject = globalObjectFor(semanticOrigin);
         InlineWatchpointSet& set = globalObject->stringSymbolReplaceWatchpointSet();
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::StringSymbolReplaceWatchpointSet);
+    }
+
+    bool isWatchingStringSymbolSplitWatchpoint(const CodeOrigin& semanticOrigin)
+    {
+        JSGlobalObject* globalObject = globalObjectFor(semanticOrigin);
+        InlineWatchpointSet& set = globalObject->stringSymbolSplitWatchpointSet();
+        return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::StringSymbolSplitWatchpointSet);
     }
 
     bool isWatchingStringSymbolToPrimitiveWatchpoint(const CodeOrigin& semanticOrigin)
@@ -958,9 +1032,16 @@ public:
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::RegExpPrimordialPropertiesWatchpointSet);
     }
 
-    bool isWatchingPromiseThenWatchpoint(Node* node)
+    bool isWatchingRegExpSpeciesWatchpoint(Node* node)
     {
         JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);
+        InlineWatchpointSet& set = globalObject->regExpSpeciesWatchpointSet();
+        return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::RegExpSpeciesWatchpointSet);
+    }
+
+    bool isWatchingPromiseThenWatchpoint(const CodeOrigin& semanticOrigin)
+    {
+        JSGlobalObject* globalObject = globalObjectFor(semanticOrigin);
         InlineWatchpointSet& set = globalObject->promiseThenWatchpointSet();
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::PromiseThenWatchpointSet);
     }
@@ -1002,8 +1083,12 @@ public:
 
     Profiler::Compilation* compilation() { return m_plan.compilation(); }
 
-    DesiredIdentifiers& identifiers() { return m_plan.identifiers(); }
-    DesiredWatchpoints& watchpoints() { return m_plan.watchpoints(); }
+    DesiredIdentifiers& identifiers() LIFETIME_BOUND { return m_plan.identifiers(); }
+    DesiredWatchpoints& watchpoints() LIFETIME_BOUND { return m_plan.watchpoints(); }
+
+    const WTF::BitSet<256>* tryGetConstantRegExpFirstCharacterBitmap(Node*, FirstCharacterFilterPosition);
+    const WTF::BitSet<256>* regExpFirstCharacterBitmap(RegExp*, FirstCharacterFilterPosition);
+    std::optional<unsigned> tryGetConstantRegExpTestMinimumSize(Node*);
 
     // Returns false if the key is already invalid or unwatchable. If this is a Presence condition,
     // this also makes it cheap to query if the condition holds. Also makes sure that the GC knows
@@ -1036,7 +1121,7 @@ public:
     // any arguments because those are all presumed live. You can call forAllLiveInBytecode() to
     // also get the arguments. This is much faster than calling isLiveInBytecode() for each local.
     template<typename Functor>
-    void forAllLocalsAndTmpsLiveInBytecode(CodeOrigin codeOrigin, const Functor& functor)
+    void forAllLocalsAndTmpsLiveInBytecode(CodeOrigin codeOrigin, NOESCAPE const Functor& functor)
     {
         // Support for not redundantly reporting arguments. Necessary because in case of a varargs
         // call, only the callee knows that arguments are live while in the case of a non-varargs
@@ -1140,7 +1225,7 @@ public:
     // Tells you all of the operands live at the given CodeOrigin. This is a small
     // extension to forAllLocalsOrTmpsLiveInBytecode(), since all arguments are always presumed live.
     template<typename Functor>
-    void forAllLiveInBytecode(CodeOrigin codeOrigin, const Functor& functor)
+    void forAllLiveInBytecode(CodeOrigin codeOrigin, NOESCAPE const Functor& functor)
     {
         forAllLocalsAndTmpsLiveInBytecode(codeOrigin, functor);
         
@@ -1149,7 +1234,7 @@ public:
             functor(virtualRegisterForArgumentIncludingThis(argument));
     }
 
-    static unsigned parameterSlotsForArgCount(unsigned);
+    static unsigned NODELETE parameterSlotsForArgCount(unsigned);
     
     unsigned frameRegisterCount();
     unsigned stackPointerOffset();
@@ -1174,6 +1259,12 @@ public:
     ObjectPropertyConditionSet tryEnsureAbsence(JSGlobalObject*, const StructureSet&, CacheableIdentifier);
 
     bool canDoFastSpread(Node*, const AbstractValue&);
+    bool canDoFastSpreadWithStructureCheck(Node*);
+    static constexpr IndexingType originalArrayShapesForSpread[] = {
+        CopyOnWriteArrayWithContiguous, ArrayWithContiguous,
+        ArrayWithInt32, CopyOnWriteArrayWithInt32,
+        ArrayWithDouble, CopyOnWriteArrayWithDouble,
+    };
     
     void registerFrozenValues();
 
@@ -1182,13 +1273,13 @@ public:
 
     void logAssertionFailure(
         std::nullptr_t, const char* file, int line, const char* function,
-        const char* assertion);
+        UTF8CStringView assertion);
     void logAssertionFailure(
         Node*, const char* file, int line, const char* function,
-        const char* assertion);
+        UTF8CStringView assertion);
     void logAssertionFailure(
         BasicBlock*, const char* file, int line, const char* function,
-        const char* assertion);
+        UTF8CStringView assertion);
 
     bool hasDebuggerEnabled() const { return m_hasDebuggerEnabled; }
 
@@ -1236,7 +1327,7 @@ public:
         return result;
     }
 
-    Prefix& prefix() { return m_prefix; }
+    Prefix& prefix() LIFETIME_BOUND { return m_prefix; }
     void nextPhase() { m_prefix.phaseNumber++; }
 
     const UnlinkedSimpleJumpTable& unlinkedSwitchJumpTable(unsigned index) const { return *m_unlinkedSwitchJumpTables[index]; }
@@ -1260,6 +1351,8 @@ public:
     bool afterFixup() { return m_planStage >= PlanStage::AfterFixup; }
 
     RefPtr<JSON::Array> ionGraphPasses() const { return m_ionGraphPasses; }
+
+    UncheckedKeyHashMap<Node*, uint32_t> collectIRDumpDebugInfo(IRDumpDebugInfo&);
 
     StackCheck m_stackChecker;
     VM& m_vm;
@@ -1377,11 +1470,6 @@ public:
     UncheckedKeyHashSet<String> m_localStrings;
     UncheckedKeyHashSet<String> m_copiedStrings;
 
-#if USE(JSVALUE32_64)
-    UncheckedKeyHashMap<GenericHashKey<int64_t>, double*> m_doubleConstantsMap;
-    Bag<double> m_doubleConstants;
-#endif
-
     Vector<LinkerIR::Value> m_constantPool;
     UncheckedKeyHashMap<LinkerIR::Value, LinkerIR::Constant, LinkerIR::ValueHash, LinkerIR::ValueTraits> m_constantPoolMap;
     
@@ -1460,6 +1548,26 @@ private:
     RefPtr<JSON::Object> m_ionGraphFunction;
     RefPtr<JSON::Array> m_ionGraphPasses;
 };
+
+inline FunctionAllowlist& ensureGlobalDumpAllowlist()
+{
+    static LazyNeverDestroyed<FunctionAllowlist> dumpGraphAllowlist;
+    static std::once_flag initializeAllowlistFlag;
+    std::call_once(initializeAllowlistFlag, [] {
+        const char8_t* allowlistFile = Options::dumpGraphAllowlist();
+        dumpGraphAllowlist.construct(allowlistFile);
+    });
+    return dumpGraphAllowlist;
+}
+
+inline bool shouldDumpGraphAtEachPhase(Graph& graph)
+{
+    JITCompilationMode mode = graph.m_plan.mode();
+    if (!(isFTL(mode) ? (Options::dumpGraphAtEachPhase() || Options::dumpDFGFTLGraphAtEachPhase()) : (Options::dumpGraphAtEachPhase() || Options::dumpDFGGraphAtEachPhase())))
+        return false;
+
+    return ensureGlobalDumpAllowlist().contains(graph.m_codeBlock);
+}
 
 } } // namespace JSC::DFG
 

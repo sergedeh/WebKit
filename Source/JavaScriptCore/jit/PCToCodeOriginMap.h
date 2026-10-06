@@ -43,6 +43,7 @@ namespace B3 {
 class PCToOriginMap;
 }
 
+#if ENABLE(WEBASSEMBLY)
 namespace Wasm {
 class WasmOrigin {
     MAKE_VALIDATED_REINTERPRET_CAST
@@ -61,6 +62,7 @@ public:
 MAKE_VALIDATED_REINTERPRET_CAST_IMPL("WasmOrigin", WasmOrigin)
 
 } // namespace Wasm
+#endif
 
 class LinkBuffer;
 class PCToCodeOriginMapBuilder;
@@ -118,9 +120,9 @@ public:
     PCToCodeOriginMap(PCToCodeOriginMapBuilder&&, LinkBuffer&);
     ~PCToCodeOriginMap();
 
-    std::optional<CodeOrigin> findPC(void* pc) const;
+    std::optional<CodeOrigin> NODELETE findPC(void* pc) const;
 
-    double memorySize();
+    double NODELETE memorySize();
 
 private:
     size_t m_compressedPCBufferSize;

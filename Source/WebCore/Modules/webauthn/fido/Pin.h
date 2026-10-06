@@ -86,7 +86,7 @@ constexpr int64_t kProtocolVersion = 1;
 WEBCORE_EXPORT cbor::CBORValue::MapValue encodeCOSEPublicKey(const Vector<uint8_t>& key);
 
 // validateAndConvertToUTF8 convert the input to a UTF8 CString if it is a syntactically valid PIN.
-WEBCORE_EXPORT std::optional<CString> validateAndConvertToUTF8(const String& pin);
+WEBCORE_EXPORT std::optional<UTF8CString> validateAndConvertToUTF8(const String& pin);
 
 // kMinBytes is the minimum number of *bytes* of PIN data that a CTAP2 device
 // will accept. Since the PIN is UTF-8 encoded, this could be a single code
@@ -140,7 +140,7 @@ struct SetPinRequest {
 public:
     const WebCore::CryptoKeyAES& sharedKey() const { return m_sharedKey.get(); }
     WEBCORE_EXPORT static std::optional<SetPinRequest> tryCreate(PINUVAuthProtocol, const String& newPin, const WebCore::CryptoKeyEC&);
-    WEBCORE_EXPORT const Vector<uint8_t>& pinAuth() const;
+    WEBCORE_EXPORT const Vector<uint8_t>& NODELETE pinAuth() const;
 
     friend Vector<uint8_t> encodeAsCBOR(const SetPinRequest&);
 
@@ -160,7 +160,7 @@ private:
 class TokenRequest {
     WTF_MAKE_NONCOPYABLE(TokenRequest);
 public:
-    WEBCORE_EXPORT static std::optional<TokenRequest> tryCreate(PINUVAuthProtocol, const CString& pin, const WebCore::CryptoKeyEC&);
+    WEBCORE_EXPORT static std::optional<TokenRequest> tryCreate(PINUVAuthProtocol, const UTF8CString& pin, const WebCore::CryptoKeyEC&);
     TokenRequest(TokenRequest&&) = default;
 
     // sharedKey returns the shared ECDH key that was used to encrypt the PIN.
@@ -190,7 +190,7 @@ public:
     // client-data hash.
     WEBCORE_EXPORT Vector<uint8_t> pinAuth(PINUVAuthProtocol, const Vector<uint8_t>& clientDataHash) const;
 
-    WEBCORE_EXPORT const Vector<uint8_t>& token() const;
+    WEBCORE_EXPORT const Vector<uint8_t>& NODELETE token() const;
 
 private:
     explicit TokenResponse(Ref<WebCore::CryptoKeyHMAC>&&);
@@ -209,11 +209,11 @@ public:
 
     const WebCore::CryptoKeyAES& sharedKey() const { return m_sharedKey.get(); }
 
-    const cbor::CBORValue::MapValue& coseKey() const { return m_coseKey; }
+    const cbor::CBORValue::MapValue& coseKey() const LIFETIME_BOUND { return m_coseKey; }
 
-    const Vector<uint8_t>& saltEnc() const { return m_saltEnc; }
+    const Vector<uint8_t>& saltEnc() const LIFETIME_BOUND { return m_saltEnc; }
 
-    const Vector<uint8_t>& saltAuth() const { return m_saltAuth; }
+    const Vector<uint8_t>& saltAuth() const LIFETIME_BOUND { return m_saltAuth; }
 
     PINUVAuthProtocol protocol() const { return m_protocol; }
 
@@ -231,7 +231,7 @@ class HmacSecretResponse {
 public:
     WEBCORE_EXPORT static std::optional<HmacSecretResponse> parse(PINUVAuthProtocol, const WebCore::CryptoKeyAES& sharedKey, const Vector<uint8_t>& encryptedOutput);
 
-    WEBCORE_EXPORT const Vector<uint8_t>& output() const;
+    WEBCORE_EXPORT const Vector<uint8_t>& NODELETE output() const;
 
 private:
     explicit HmacSecretResponse(Vector<uint8_t>&& decryptedOutput);

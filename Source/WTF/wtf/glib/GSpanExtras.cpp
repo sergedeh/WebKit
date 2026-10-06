@@ -21,11 +21,11 @@
 #include <wtf/glib/GSpanExtras.h>
 
 #include <wtf/StdLibExtras.h>
-#include <wtf/text/CStringView.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WTF {
 
-Expected<GMallocSpan<char>, GUniquePtr<GError>> gFileGetContents(CStringView path)
+std::expected<GMallocSpan<char>, GUniquePtr<GError>> gFileGetContents(UTF8CStringView path)
 {
     char* contents;
     gsize length;
@@ -36,7 +36,7 @@ Expected<GMallocSpan<char>, GUniquePtr<GError>> gFileGetContents(CStringView pat
     return adoptGMallocSpan(unsafeMakeSpan(contents, length));
 }
 
-Expected<GMallocSpan<char*, GMallocStrv>, GUniquePtr<GError>> gKeyFileGetKeys(GKeyFile* keyFile, CStringView groupName)
+std::expected<GMallocSpan<char*, GMallocStrv>, GUniquePtr<GError>> gKeyFileGetKeys(GKeyFile* keyFile, UTF8CStringView groupName)
 {
     ASSERT(keyFile);
     ASSERT(groupName);

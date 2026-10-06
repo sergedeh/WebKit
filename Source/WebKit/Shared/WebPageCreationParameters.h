@@ -35,16 +35,18 @@
 #include "UserContentControllerParameters.h"
 #include "ViewWindowCoordinates.h"
 #include "VisitedLinkTableIdentifier.h"
+#include <WebCore/ColorSpace.h>
 #include "WebPageGroupData.h"
 #include "WebPageProxyIdentifier.h"
 #include "WebPreferencesStore.h"
+#include <WebCore/BrowsingContextGroupIdentifier.h>
 #include "WebURLSchemeHandlerIdentifier.h"
 #include "WebsitePoliciesData.h"
 #include <WebCore/ActivityState.h>
 #include <WebCore/Color.h>
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/CornerRadii.h>
-#include <WebCore/DestinationColorSpace.h>
+#include <WebCore/DocumentSyncData.h>
 #include <WebCore/FloatSize.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/HighlightVisibility.h>
@@ -98,6 +100,7 @@
 namespace WebCore {
 enum class SandboxFlag : uint16_t;
 using SandboxFlags = OptionSet<SandboxFlag>;
+enum class AccessibilityMode : uint8_t;
 }
 
 namespace WebKit {
@@ -106,6 +109,7 @@ struct RemotePageParameters {
     URL initialMainDocumentURL;
     FrameTreeCreationParameters frameTreeParameters;
     std::optional<WebsitePoliciesData> websitePoliciesData;
+    Ref<WebCore::DocumentSyncData> topDocumentSyncData;
 };
 
 struct WebPageCreationParameters {
@@ -120,6 +124,7 @@ struct WebPageCreationParameters {
     DrawingAreaIdentifier drawingAreaIdentifier;
     WebPageProxyIdentifier webPageProxyIdentifier;
     WebPageGroupData pageGroupData;
+    std::optional<WebCore::BrowsingContextGroupIdentifier> browsingContextGroupIdentifier;
 
     bool isEditable { false };
 
@@ -163,12 +168,16 @@ struct WebPageCreationParameters {
     double pageZoomFactor { 1 };
 
     WebCore::FloatBoxExtent obscuredContentInsets { };
-    
+
+#if HAVE(NSREFRESHCONTROLLER)
+    bool hasRefreshController { false };
+#endif
     float mediaVolume { 0 };
     WebCore::MediaProducerMutedStateFlags muted { };
     bool openedByDOM { false };
     bool mayStartMediaWhenInWindow { false };
     bool mediaPlaybackIsSuspended { false };
+    bool areActiveDOMObjectsAndAnimationsSuspended { false };
 
     WebCore::IntSize minimumSizeForAutoLayout { };
     WebCore::IntSize sizeToContentAutoSizeMaximumSize { };
@@ -191,9 +200,10 @@ struct WebPageCreationParameters {
     bool useDarkAppearance { false };
     bool useElevatedUserInterfaceLevel { false };
     bool allowPostingLegacySynchronousMessages { false };
+    bool backgroundTextExtractionEnabled { false };
 
 #if PLATFORM(MAC)
-    std::optional<WebCore::DestinationColorSpace> colorSpace { };
+    std::optional<WebCore::ColorSpace> colorSpace { };
     bool useFormSemanticContext { false };
     int headerBannerHeight { 0 };
     int footerBannerHeight { 0 };
@@ -228,7 +238,7 @@ struct WebPageCreationParameters {
 #if ENABLE(TILED_CA_DRAWING_AREA)
     SandboxExtension::Handle renderServerMachExtensionHandle { };
 #endif
-#if HAVE(STATIC_FONT_REGISTRY)
+#if HAVE(STATIC_FONT_REGISTRY) && !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
     Vector<SandboxExtension::Handle> fontMachExtensionHandles { };
 #endif
 #if HAVE(APP_ACCENT_COLORS)
@@ -325,6 +335,9 @@ struct WebPageCreationParameters {
 
 #if PLATFORM(MAC)
     double overflowHeightForTopScrollEdgeEffect { 0 };
+#if ENABLE(SCROLL_POCKET_IN_FULLSCREEN)
+    bool fullScreenTitlebarOverlayIsDisplayed { false };
+#endif
 #if HAVE(NSVIEW_CORNER_CONFIGURATION)
     WebCore::CornerRadii scrollbarAvoidanceCornerRadii;
 #endif
@@ -337,12 +350,10 @@ struct WebPageCreationParameters {
     WebCore::FrameIdentifier mainFrameIdentifier;
     String openedMainFrameName;
     std::optional<WebCore::FrameIdentifier> mainFrameOpenerIdentifier { };
+    URL mainFrameOpenerURL;
     WebCore::SandboxFlags initialSandboxFlags;
     WebCore::ReferrerPolicy initialReferrerPolicy { WebCore::ReferrerPolicy::EmptyString };
     std::optional<WebCore::WindowFeatures> windowFeatures { };
-    bool statusBarIsVisible;
-    bool menuBarIsVisible;
-    bool toolbarsAreVisible;
 
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
     Vector<WebCore::LinkDecorationFilteringData> linkDecorationFilteringData { };
@@ -363,6 +374,10 @@ struct WebPageCreationParameters {
     WebCore::ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent { WebCore::ShouldRequireExplicitConsentForGamepadAccess::No };
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    bool allowsImmersiveEnvironments { false };
+#endif
+
 #if HAVE(AUDIT_TOKEN)
     std::optional<CoreIPCAuditToken> presentingApplicationAuditToken;
 #endif
@@ -376,7 +391,16 @@ struct WebPageCreationParameters {
     std::optional<WebCore::ImageTranslationLanguageIdentifiers> imageTranslationLanguageIdentifiers { std::nullopt };
 #endif
 
+    String displayedTranslationLocaleIdentifier { };
+
     std::optional<TextManipulationParameters> textManipulationParameters { std::nullopt };
+
+    bool isPopup { false };
+
+    WebCore::AccessibilityMode accessibilityMode { };
+    bool shouldForceSiteIsolationAlwaysOnForTesting { false };
+    bool shouldEnableNetworkInstrumentation { false };
+    bool shouldEnablePageInstrumentation { false };
 };
 
 } // namespace WebKit

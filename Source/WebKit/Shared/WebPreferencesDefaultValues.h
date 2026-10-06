@@ -52,7 +52,11 @@
 #define Supporthdrdisplay_feature_status Testable
 #endif
 
+#if defined(ENABLE_WEBXR_LAYERS) && ENABLE_WEBXR_LAYERS && USE(OPENXR)
+#define Webxr_layers_feature_status Testable
+#else
 #define Webxr_layers_feature_status Unstable
+#endif
 
 #if defined(ENABLE_WEBXR_WEBGPU) && ENABLE_WEBXR_WEBGPU && PLATFORM(VISION)
 #define Webgpu_webxr_feature_status Stable
@@ -72,12 +76,6 @@
 #define Modelelement_feature_status Testable
 #endif
 
-#if HAVE(COMPLETE_WEB_TRANSPORT)
-#define Web_transport_status Stable
-#else
-#define Web_transport_status Testable
-#endif
-
 namespace WebKit {
 
 #if HAVE(LIQUID_GLASS)
@@ -90,13 +88,11 @@ bool defaultPassiveTouchListenersAsDefaultOnDocument();
 bool defaultShouldPrintBackgrounds();
 bool defaultUseAsyncUIKitInteractions();
 bool defaultWriteRichTextDataWhenCopyingOrDragging();
-#if ENABLE(TEXT_AUTOSIZING)
 bool defaultTextAutosizingUsesIdempotentMode();
-#endif
 #endif
 
 #if ENABLE(FULLSCREEN_API)
-bool defaultVideoFullscreenRequiresElementFullscreen();
+bool NODELETE defaultVideoFullscreenRequiresElementFullscreen();
 #endif
 
 #if PLATFORM(MAC)
@@ -105,12 +101,13 @@ bool defaultPassiveWheelListenersAsDefaultOnDocument();
 bool defaultWheelEventGesturesBecomeNonBlocking();
 bool defaultAppleMailPaginationQuirkEnabled();
 bool defaultUseAppKitGestures();
+bool defaultTextInputClientSelectionUpdatesEnabled();
 #endif
 
 #if ENABLE(MEDIA_STREAM)
-bool defaultCaptureAudioInGPUProcessEnabled();
-bool defaultManageCaptureStatusBarInGPUProcessEnabled();
-double defaultInactiveMediaCaptureStreamRepromptWithoutUserGestureIntervalInMinutes();
+bool NODELETE defaultCaptureAudioInGPUProcessEnabled();
+bool NODELETE defaultManageCaptureStatusBarInGPUProcessEnabled();
+double NODELETE defaultInactiveMediaCaptureStreamRepromptWithoutUserGestureIntervalInMinutes();
 #endif
 
 #if ENABLE(MEDIA_SOURCE) && PLATFORM(IOS_FAMILY)
@@ -118,10 +115,10 @@ bool defaultMediaSourceEnabled();
 #endif
 
 #if ENABLE(MEDIA_SOURCE)
-bool defaultManagedMediaSourceEnabled();
-bool defaultMediaSourcePrefersDecompressionSession();
+bool NODELETE defaultManagedMediaSourceEnabled();
+bool NODELETE defaultMediaSourcePrefersDecompressionSession();
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
-bool defaultManagedMediaSourceNeedsAirPlay();
+bool NODELETE defaultManagedMediaSourceNeedsAirPlay();
 #endif
 #endif
 
@@ -136,11 +133,11 @@ bool defaultRemoveBackgroundEnabled();
 #endif
 
 #if ENABLE(GAMEPAD)
-bool defaultGamepadVibrationActuatorEnabled();
+bool NODELETE defaultGamepadVibrationActuatorEnabled();
 #endif
 
 #if ENABLE(WEB_AUTHN)
-bool defaultDigitalCredentialsEnabled();
+bool NODELETE defaultDigitalCredentialsEnabled();
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -157,33 +154,40 @@ bool defaultRunningBoardThrottlingEnabled();
 bool defaultShouldDropNearSuspendedAssertionAfterDelay();
 bool defaultShouldTakeNearSuspendedAssertion();
 bool defaultShowModalDialogEnabled();
-bool defaultLinearMediaPlayerEnabled();
+bool NODELETE defaultLinearMediaPlayerEnabled();
 
-bool defaultShouldEnableScreenOrientationAPI();
+bool NODELETE defaultShouldEnableScreenOrientationAPI();
 bool defaultPopoverAttributeEnabled();
 bool defaultUseGPUProcessForDOMRenderingEnabled();
+unsigned NODELETE defaultMaximumNestedInlineFormattingContextCount();
 
 #if USE(LIBWEBRTC)
 bool defaultPeerConnectionEnabledAvailable();
 #endif
-bool defaultWebRTCSocketsServiceClassEnabled();
+bool NODELETE defaultWebRTCSocketsServiceClassEnabled();
 
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
-bool defaultBuiltInNotificationsEnabled();
+bool NODELETE defaultBuiltInNotificationsEnabled();
+#endif
+
+#if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
+bool defaultHorizontalBannerViewOverlaysEnabled();
 #endif
 
 #if ENABLE(DEVICE_ORIENTATION)
-bool defaultDeviceOrientationPermissionAPIEnabled();
+bool NODELETE defaultDeviceOrientationPermissionAPIEnabled();
 #endif
 
 #if ENABLE(REQUIRES_PAGE_VISIBILITY_FOR_NOW_PLAYING)
 bool defaultRequiresPageVisibilityForVideoToBeNowPlaying();
 #endif
 
-bool defaultCookieStoreAPIEnabled();
+bool NODELETE defaultRequiresUserGestureToStartAudiblePlaybackWhenHidden();
+
+bool NODELETE defaultCookieStoreAPIEnabled();
 
 bool defaultContentInsetBackgroundFillEnabled();
-bool defaultTopContentInsetBackgroundCanChangeAfterScrolling();
+bool NODELETE defaultTopContentInsetBackgroundCanChangeAfterScrolling();
 
 #if ENABLE(SCREEN_TIME)
 bool defaultScreenTimeEnabled();
@@ -193,18 +197,20 @@ bool defaultScreenTimeEnabled();
 bool defaultIFrameResourceMonitoringEnabled();
 #endif
 
+bool defaultSearchInputResultsAttributeEnabled();
+
 #if HAVE(SPATIAL_AUDIO_EXPERIENCE)
 bool defaultPreferSpatialAudioExperience();
 #endif
 
-bool defaultRTCEncodedStreamsQuirkEnabled();
+bool NODELETE defaultRTCEncodedStreamsQuirkEnabled();
 
 bool defaultMutationEventsEnabled();
 
 bool defaultTrustedTypesEnabled();
 
-bool defaultGetBoundingClientRectZoomedEnabled();
-bool defaultFacebookLiveRecordingQuirkEnabled();
+bool NODELETE defaultGetBoundingClientRectZoomedEnabled();
+bool NODELETE defaultFacebookLiveRecordingQuirkEnabled();
 bool defaultFontFaceSetConstructorEnabled();
 
 #if HAVE(MATERIAL_HOSTING)
@@ -217,12 +223,26 @@ bool defaultIOSurfaceLosslessCompressionEnabled();
 bool defaultUnifiedPDFEnabled();
 #endif
 
-bool defaultScrollbarColorEnabled();
+bool NODELETE defaultScrollbarColorEnabled();
 
-bool defaultAllowMultipleCommitLayerTreePending();
+bool NODELETE defaultAllowMultipleCommitLayerTreePending();
 
 #if ENABLE(VIDEO)
 bool defaultCaptionDisplaySettingsEnabled();
 #endif
+
+#if ENABLE(MEDIA_STREAM)
+bool NODELETE defaultShouldEnableScreenCapture();
+#endif
+
+#if ENABLE(CONTENT_CHANGE_OBSERVER)
+bool defaultContentChangeObserverEnabled();
+#endif
+
+#if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
+bool NODELETE defaultWebContentRestrictionsAskToEnabled();
+#endif
+
+bool defaultWebTransportEnabled();
 
 } // namespace WebKit

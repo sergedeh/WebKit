@@ -53,7 +53,7 @@ This will define the following variables in your project:
 #]=======================================================================]
 
 find_package(PkgConfig QUIET)
-pkg_check_modules(PC_LIBUDEV QUIET libusev)
+pkg_check_modules(PC_LIBUDEV QUIET libudev)
 set(Udev_COMPILE_OPTIONS ${PC_LIBUDEV_CFLAGS_OTHER})
 set(Udev_VERSION ${PC_LIBUDEV_VERSION})
 
@@ -74,6 +74,8 @@ find_package_handle_standard_args(Udev
     REQUIRED_VARS Udev_LIBRARY Udev_INCLUDE_DIR
     VERSION_VAR Udev_VERSION
 )
+
+WEBKIT_SCOPE_OPTIONS_TO_NON_SWIFT(Udev_COMPILE_OPTIONS ${Udev_COMPILE_OPTIONS})
 
 if (Udev_LIBRARY AND NOT TARGET Udev::Udev)
     add_library(Udev::Udev UNKNOWN IMPORTED GLOBAL)

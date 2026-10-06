@@ -53,14 +53,14 @@ public:
     ExceptionOr<void> setBufferForBindings(RefPtr<AudioBuffer>&&);
 
     AudioBuffer* buffer() WTF_REQUIRES_LOCK(m_processLock) { return m_buffer.get(); }
-    Lock& processLock() WTF_RETURNS_LOCK(m_processLock) { return m_processLock; }
+    Lock& processLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_processLock) { return m_processLock; }
 
     // This function does not lock before accessing the buffer and should therefore only be called on the main thread.
     AudioBuffer* bufferForBindings() WTF_IGNORES_THREAD_SAFETY_ANALYSIS { ASSERT(isMainThread()); return m_buffer.get(); }
 
     // numberOfChannels() returns the number of output channels.  This value equals the number of channels from the buffer.
     // If a new buffer is set with a different number of channels, then this value will dynamically change.
-    unsigned numberOfChannels();
+    unsigned NODELETE numberOfChannels();
 
     // Play-state
     ExceptionOr<void> startLater(double when, double grainOffset, std::optional<double> grainDuration);
@@ -85,6 +85,7 @@ private:
     AudioBufferSourceNode(BaseAudioContext&);
 
     void acquireBufferContent() WTF_REQUIRES_LOCK(m_processLock);
+    void updateOutputChannelCount() WTF_REQUIRES_LOCK(m_processLock);
 
     double tailTime() const final { return 0; }
     double latencyTime() const final { return 0; }
@@ -114,7 +115,7 @@ private:
     // If true, it will wrap around to the start of the buffer each time it reaches the end.
     bool m_isLooping WTF_GUARDED_BY_LOCK(m_processLock) { false }; // Only modified on the main thread but queried on the audio thread.
 
-    bool m_wasBufferSet { false };
+    bool m_wasBufferSet { false }; // Only used on the main thread, in setBufferForBindings().
 
     double m_loopStart WTF_GUARDED_BY_LOCK(m_processLock) { 0 }; // Only modified on the main thread but queried on the audio thread.
     double m_loopEnd WTF_GUARDED_BY_LOCK(m_processLock) { 0 }; // Only modified on the main thread but queried on the audio thread.

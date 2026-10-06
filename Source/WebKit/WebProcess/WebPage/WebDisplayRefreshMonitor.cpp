@@ -81,16 +81,16 @@ bool WebDisplayRefreshMonitor::startNotificationMechanism()
         return true;
 
     LOG_WITH_STREAM(DisplayLink, stream << "[Web] WebDisplayRefreshMonitor::requestRefreshCallback for display " << displayID() << " - starting");
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebProcessProxy::StartDisplayLink(m_observerID, displayID(), maxClientPreferredFramesPerSecond().value_or(FullSpeedFramesPerSecond)), 0);
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebProcessProxy::StartDisplayLink(m_observerID, displayID(), maxClientPreferredFramesPerSecond().value_or(FullSpeedFramesPerSecond)), 0);
 
 #if PLATFORM(MAC)
     if (!m_runLoopObserver) {
         // The RunLoopObserver repeats.
         // FIXME: Double check whether the value of `DisplayRefreshMonitor` (1) is the appropriate runloop order here,
         // and also whether we should be specifying `RunLoopObserver::Activity::Entry` when scheduling the observer below.
-        m_runLoopObserver = makeUnique<RunLoopObserver>(RunLoopObserver::WellKnownOrder::DisplayRefreshMonitor, [this] {
+        lazyInitialize(m_runLoopObserver, makeUnique<RunLoopObserver>(RunLoopObserver::WellKnownOrder::DisplayRefreshMonitor, [this] {
             m_firstCallbackInCurrentRunloop = true;
-        });
+        }));
     }
 
     m_runLoopObserver->schedule(retainPtr(CFRunLoopGetCurrent()).get());
@@ -106,7 +106,7 @@ void WebDisplayRefreshMonitor::stopNotificationMechanism()
         return;
 
     LOG_WITH_STREAM(DisplayLink, stream << "[Web] WebDisplayRefreshMonitor::requestRefreshCallback - stopping");
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebProcessProxy::StopDisplayLink(m_observerID, displayID()), 0);
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebProcessProxy::StopDisplayLink(m_observerID, displayID()), 0);
 #if PLATFORM(MAC)
     m_runLoopObserver->invalidate();
 #endif
@@ -116,7 +116,7 @@ void WebDisplayRefreshMonitor::stopNotificationMechanism()
 void WebDisplayRefreshMonitor::adjustPreferredFramesPerSecond(FramesPerSecond preferredFramesPerSecond)
 {
     LOG_WITH_STREAM(DisplayLink, stream << "[Web] WebDisplayRefreshMonitor::adjustPreferredFramesPerSecond for display link on display " << displayID() << " to " << preferredFramesPerSecond);
-    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebProcessProxy::SetDisplayLinkPreferredFramesPerSecond(m_observerID, displayID(), preferredFramesPerSecond), 0);
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebProcessProxy::SetDisplayLinkPreferredFramesPerSecond(m_observerID, displayID(), preferredFramesPerSecond), 0);
 }
 
 } // namespace WebKit

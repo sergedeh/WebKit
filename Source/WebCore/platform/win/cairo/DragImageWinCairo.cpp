@@ -159,7 +159,7 @@ DragImageRef createDragImageFromImage(Image* img, ImageOrientation, GraphicsClie
     if (!workingDC)
         return 0;
 
-    GraphicsContextCairo* drawContext = 0;
+    GraphicsContextCairo* drawContext = nullptr;
     auto hbmp = allocImage(workingDC.get(), IntSize(img->size()), &drawContext);
     if (!hbmp || !drawContext)
         return 0;
@@ -168,8 +168,8 @@ DragImageRef createDragImageFromImage(Image* img, ImageOrientation, GraphicsClie
     cairo_set_source_rgb(cr, 1.0, 0.0, 1.0);
     cairo_fill_preserve(cr);
 
-    if (auto nativeImage = img->currentNativeImage()) {
-        auto& surface = nativeImage->platformImage();
+    if (auto nativeImage = img->currentNativeImage(ConcreteObjectSize::fixed(img->size()))) {
+        auto surface = nativeImage->platformImage();
         // Draw the image.
         cairo_set_source_surface(cr, surface.get(), 0.0, 0.0);
         cairo_paint(cr);
@@ -242,8 +242,8 @@ static FontCascade dragLabelFont(int size, bool bold)
     FontCascadeDescription description;
     description.setWeight(bold ? boldWeightValue() : normalWeightValue());
     description.setOneFamily(metrics.lfSmCaptionFont.lfFaceName);
-    description.setSpecifiedSize((float)size);
     description.setComputedSize((float)size);
+    description.setUsedSize((float)size);
     result = FontCascade(WTF::move(description));
     result.update();
     return result;

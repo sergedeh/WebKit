@@ -22,9 +22,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
 
-internal import WebKit_Internal
-
-#if compiler(>=6.2)
+import WebKit_Internal
 
 final class TestWithSwiftWeakRef {
     private weak var target: TestWithSwift?
@@ -32,8 +30,120 @@ final class TestWithSwiftWeakRef {
         self.target = target
     }
 
+    @used
     func getMessageTarget() -> TestWithSwift? {
         target
+    }
+
+    @used
+    func dispatchTestAsyncMessage(
+        connection: IPC.Connection,
+        param: UInt32,
+        completionHandler: CompletionHandlers.TestWithSwift.TestAsyncMessageCompletionHandler
+    ) {
+        guard let target else {
+            return
+        }
+        do {
+            try mayThrowInvalidMessage(
+                target.testAsyncMessage(
+                    connection: connection,
+                    param: param,
+                    completionHandler: completionHandler
+                )
+            )
+        } catch {
+            markMessageInvalid(error, on: connection)
+            CompletionHandlers.TestWithSwift.completeWithDefaultReply(completionHandler)
+        }
+    }
+
+    @used
+    func dispatchTestSyncMessage(
+        connection: IPC.Connection,
+        param: UInt32,
+        completionHandler: CompletionHandlers.TestWithSwift.TestSyncMessageCompletionHandler
+    ) {
+        guard let target else {
+            return
+        }
+        do {
+            try mayThrowInvalidMessage(
+                target.testSyncMessage(
+                    connection: connection,
+                    param: param,
+                    completionHandler: completionHandler
+                )
+            )
+        } catch {
+            markMessageInvalid(error, on: connection)
+            CompletionHandlers.TestWithSwift.completeWithDefaultReply(completionHandler)
+        }
+    }
+
+    @used
+    func dispatchTestMessageWithAliasedParameter(
+        connection: IPC.Connection,
+        frameState: WebKit.RefFrameState
+    ) {
+        guard let target else {
+            return
+        }
+        do {
+            try mayThrowInvalidMessage(
+                target.testMessageWithAliasedParameter(
+                    connection: connection,
+                    frameState: frameState
+                )
+            )
+        } catch {
+            markMessageInvalid(error, on: connection)
+        }
+    }
+
+    @used
+    func dispatchTestThrowingMessageWithReply(
+        connection: IPC.Connection,
+        param: UInt32,
+        completionHandler: CompletionHandlers.TestWithSwift.TestThrowingMessageWithReplyCompletionHandler
+    ) {
+        guard let target else {
+            return
+        }
+        do {
+            try mayThrowInvalidMessage(
+                target.testThrowingMessageWithReply(
+                    connection: connection,
+                    param: param,
+                    completionHandler: completionHandler
+                )
+            )
+        } catch {
+            markMessageInvalid(error, on: connection)
+            CompletionHandlers.TestWithSwift.completeWithDefaultReply(completionHandler)
+        }
+    }
+
+    @used
+    func dispatchTestThrowingMessageWithoutReply(
+        connection: IPC.Connection,
+        frameState: WebKit.RefFrameState,
+        frameID: WebCore.FrameIdentifier
+    ) {
+        guard let target else {
+            return
+        }
+        do {
+            try mayThrowInvalidMessage(
+                target.testThrowingMessageWithoutReply(
+                    connection: connection,
+                    frameState: frameState,
+                    frameID: frameID
+                )
+            )
+        } catch {
+            markMessageInvalid(error, on: connection)
+        }
     }
 }
 
@@ -50,32 +160,3 @@ extension WebKit.TestWithSwiftMessageForwarder {
         )
     }
 }
-
-#else
-
-final class TestWithSwiftWeakRef {
-    private weak var target: TestWithSwift?
-    init(target: TestWithSwift) {
-        self.target = target
-    }
-
-    func getMessageTarget() -> TestWithSwift? {
-        target
-    }
-}
-
-extension WebKit.TestWithSwiftMessageForwarder {
-    static func create(target: TestWithSwift) -> RefTestWithSwiftMessageForwarder {
-        let weakRefContainer = TestWithSwiftWeakRef(target: target)
-        // Safety: we're creating a pointer which will immediately be stored in a
-        // proper ref-counted reference on the C++ side before this call returns.
-        // Workaround for rdar://163107752.
-        return WebKit.TestWithSwiftMessageForwarder.createFromWeak(
-            OpaquePointer(
-                Unmanaged.passRetained(weakRefContainer).toOpaque()
-            )
-        )
-    }
-}
-
-#endif

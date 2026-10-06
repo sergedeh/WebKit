@@ -38,11 +38,11 @@
 namespace WebKit {
 using namespace WebCore;
 
-using WorldMap = HashMap<SingleThreadWeakRef<const DOMWrapperWorld>, WeakRef<InjectedBundleScriptWorld>>;
+using DOMWrapperWorldMap = HashMap<SingleThreadWeakRef<const DOMWrapperWorld>, WeakRef<InjectedBundleScriptWorld>>;
 
-static WorldMap& allWorlds()
+static DOMWrapperWorldMap& NODELETE allWorlds()
 {
-    static NeverDestroyed<WorldMap> map;
+    static NeverDestroyed<DOMWrapperWorldMap> map;
     return map;
 }
 
@@ -135,9 +135,9 @@ void InjectedBundleScriptWorld::setAllowJSHandleCreation()
     m_world->setAllowsJSHandleCreation();
 }
 
-void InjectedBundleScriptWorld::setAllowNodeSerialization()
+void InjectedBundleScriptWorld::setAllowNodeSnapshotCreation()
 {
-    m_world->setAllowNodeSerialization();
+    m_world->setAllowNodeSnapshotCreation();
 }
 
 void InjectedBundleScriptWorld::setAllowPostingLegacySynchronousMessages()
@@ -163,16 +163,6 @@ void InjectedBundleScriptWorld::exposeClosedShadowRootsForExtensions()
 void InjectedBundleScriptWorld::disableOverrideBuiltinsBehavior()
 {
     m_world->disableLegacyOverrideBuiltInsBehavior();
-}
-
-Ref<const WebCore::DOMWrapperWorld> InjectedBundleScriptWorld::protectedCoreWorld() const
-{
-    return m_world;
-}
-
-Ref<WebCore::DOMWrapperWorld> InjectedBundleScriptWorld::protectedCoreWorld()
-{
-    return m_world;
 }
 
 } // namespace WebKit

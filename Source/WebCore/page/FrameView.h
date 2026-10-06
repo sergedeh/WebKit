@@ -26,11 +26,14 @@
 #pragma once
 
 #include <WebCore/ScrollView.h>
-#include <wtf/TZoneMallocInlines.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
+class FloatQuad;
 class Frame;
+class RenderElement;
+enum class FrameOwnerElementAppearance : uint8_t;
 enum class RenderAsTextFlag : uint16_t;
 
 class FrameView : public ScrollView {
@@ -41,7 +44,6 @@ public:
     virtual Type viewType() const = 0;
     virtual void writeRenderTreeAsText(TextStream&, OptionSet<RenderAsTextFlag>) = 0;
     virtual Frame& frame() const = 0;
-    Ref<Frame> protectedFrame() const;
 
     WEBCORE_EXPORT int headerHeight() const final;
     WEBCORE_EXPORT int footerHeight() const final;
@@ -117,6 +119,32 @@ public:
     IntRect convertFromContainingView(const IntRect&) const final;
     FloatRect convertFromContainingView(const FloatRect&) const final;
 
+    // Site-isolation-aware coordinate conversions. Unlike Widget::convertFromRootView and
+    // ScrollView::rootViewToContents, these follow the frame tree even across process boundaries
+    // (Widget::m_parent is not populated for a RemoteFrameView when Site Isolation is enabled) and
+    // apply any CSS transforms on the intervening frame-owner elements. "RootView" here is the
+    // coordinate space of the top-level (main) frame's view; for a same-process frame tree these are
+    // equivalent to the plain convertFromRootView / rootViewToContents.
+    WEBCORE_EXPORT FloatPoint convertFromRootViewAcrossIsolatedFrames(FloatPoint) const;
+    WEBCORE_EXPORT FloatRect convertFromRootViewAcrossIsolatedFrames(FloatRect) const;
+
+    WEBCORE_EXPORT FloatPoint convertToRootViewAcrossIsolatedFrames(FloatPoint) const;
+    WEBCORE_EXPORT FloatRect convertToRootViewAcrossIsolatedFrames(FloatRect) const;
+    WEBCORE_EXPORT FloatQuad convertToRootViewAcrossIsolatedFrames(const FloatQuad&) const;
+    WEBCORE_EXPORT IntRect convertToRootViewAcrossIsolatedFrames(IntRect) const;
+    WEBCORE_EXPORT IntPoint convertToRootViewAcrossIsolatedFrames(IntPoint) const;
+
+    WEBCORE_EXPORT FloatPoint rootViewToContentsAcrossIsolatedFrames(FloatPoint) const;
+    WEBCORE_EXPORT FloatRect rootViewToContentsAcrossIsolatedFrames(FloatRect) const;
+
+    // Similar to contentsToRootView, but also works in Site Isolation mode and will
+    // convert all the way to the main frame.
+    WEBCORE_EXPORT IntRect contentsToMainFrameView(const IntRect&) const;
+    WEBCORE_EXPORT FloatRect contentsToMainFrameView(FloatRect) const;
+    WEBCORE_EXPORT IntPoint contentsToMainFrameView(const IntPoint&) const;
+    WEBCORE_EXPORT FloatPoint contentsToMainFrameView(FloatPoint) const;
+    WEBCORE_EXPORT FloatQuad contentsToMainFrameView(const FloatQuad&) const;
+
     WEBCORE_EXPORT virtual LayoutRect layoutViewportRect() const = 0;
 
     // Computes the visible area of a child frame in this frame as a rectangle.
@@ -124,6 +152,26 @@ public:
     // the visible area is not computable. The given child frame must be a
     // direct child of this frame.
     virtual std::optional<LayoutRect> visibleRectOfChild(const Frame&) const = 0;
+
+    // Returns the appearance info of the child frame's owner element (which is
+    // in this frame). Note that this is _different_ from the child frame's
+    // document's appearance, and they can be different (e.g the owner element
+    // uses dark appearance, but the child frame's document is light).
+    virtual OptionSet<FrameOwnerElementAppearance> appearanceOfOwnerElementOfChildFrame(const Frame&) const = 0;
+
+    // Returns the offset of the content box of the child's frame owner content box
+    // from its border box. This can be non-zero due to padding or border.
+    virtual LayoutPoint childFrameOwnerContentBoxLocation(const Frame&) const = 0;
+
+    // Return the transformation matrix to convert a point/rect from the coordinate
+    // system of the child's frame owner to this FrameView's RenderView. Note this
+    // does not correspond to the absolute coordinate of this FrameView, as it doesn't
+    // include the page scale transform on the RenderView (if page is scaled).
+    virtual TransformationMatrix childFrameOwnerToRootContentTransform(const Frame&) const = 0;
+
+    // Returns the transformation matrix to project from this frame view's absolute coordinate
+    // to a child frame's owner renderer's local coordinate.
+    virtual TransformationMatrix absoluteToChildFrameOwnerLocalTransform(const Frame&) const = 0;
 
 private:
     ScrollableArea* enclosingScrollableArea() const final;

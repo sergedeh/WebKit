@@ -33,10 +33,12 @@
 #include "EventNames.h"
 #include "HTMLFormElement.h"
 #include "HTMLNames.h"
+#include "HTMLSelectElement.h"
 #include "KeyboardEvent.h"
 #include "RenderButton.h"
-#include "RenderStyle+GettersInlines.h"
 #include "Settings.h"
+#include "StyleAppearance.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -55,28 +57,46 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLButtonElement);
 
 using namespace HTMLNames;
 
-inline HTMLButtonElement::HTMLButtonElement(const QualifiedName& tagName, Document& document, HTMLFormElement* form)
-    : HTMLFormControlElement(tagName, document, form)
+inline HTMLButtonElement::HTMLButtonElement(const QualifiedName& tagName, Document& document)
+    : HTMLFormControlElement(tagName, document)
     , m_type(Type::Submit)
     , m_isActivatedSubmit(false)
 {
     ASSERT(hasTagName(buttonTag));
 }
 
-Ref<HTMLButtonElement> HTMLButtonElement::create(const QualifiedName& tagName, Document& document, HTMLFormElement* form)
+Ref<HTMLButtonElement> HTMLButtonElement::create(const QualifiedName& tagName, Document& document)
 {
-    return adoptRef(*new HTMLButtonElement(tagName, document, form));
+    return adoptRef(*new HTMLButtonElement(tagName, document));
 }
 
 Ref<HTMLButtonElement> HTMLButtonElement::create(Document& document)
 {
-    return adoptRef(*new HTMLButtonElement(buttonTag, document, nullptr));
+    return adoptRef(*new HTMLButtonElement(buttonTag, document));
 }
 
-RenderPtr<RenderElement> HTMLButtonElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition& position)
+Node::NeedsPostConnectionSteps HTMLButtonElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+{
+    auto result = HTMLFormControlElement::insertionSteps(insertionType, parentOfInsertedTree);
+    computeType(attributeWithoutSynchronization(HTMLNames::typeAttr));
+    return result;
+}
+
+void HTMLButtonElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+{
+    HTMLFormControlElement::removingSteps(removalType, oldParentOfRemovedTree);
+    computeType(attributeWithoutSynchronization(HTMLNames::typeAttr));
+}
+
+bool HTMLButtonElement::supportsBaseAppearance(StyleAppearance appearance) const
+{
+    return appearance == StyleAppearance::Base;
+}
+
+RenderPtr<RenderElement> HTMLButtonElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& position)
 {
     // https://html.spec.whatwg.org/multipage/rendering.html#button-layout
-    if (style.isDisplayFlexibleOrGridFormattingContextBox())
+    if (style.display().isFlexibleOrGridFormattingContextBox())
         return HTMLFormControlElement::createElementRenderer(WTF::move(style), position);
     return createRenderer<RenderButton>(*this, WTF::move(style));
 }
@@ -116,21 +136,23 @@ void HTMLButtonElement::attributeChanged(const QualifiedName& name, const AtomSt
 {
     if (name == typeAttr)
         computeType(newValue);
-    else if ((name == commandAttr || name == commandforAttr) && document().settings().commandAttributesEnabled())
+    else if (name == commandAttr || name == commandforAttr)
         computeType(attributeWithoutSynchronization(HTMLNames::typeAttr));
     else
         HTMLFormControlElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
+void HTMLButtonElement::childrenChanged(const ChildChange& change)
+{
+    HTMLFormControlElement::childrenChanged(change);
+
+    if (RefPtr select = dynamicDowncast<HTMLSelectElement>(parentNode()); select && select->buttonElement() == this)
+        select->buttonElementChildrenChanged();
+}
+
 RefPtr<Element> HTMLButtonElement::commandForElement() const
 {
-    auto canInvoke = [](const HTMLFormControlElement& element) -> bool {
-        if (!element.document().settings().commandAttributesEnabled())
-            return false;
-        return is<HTMLButtonElement>(element);
-    };
-
-    if (!canInvoke(*this))
+    if (isDisabledFormControl())
         return nullptr;
 
     return elementForAttributeInternal(commandforAttr);
@@ -217,13 +239,12 @@ void HTMLButtonElement::handleCommand()
     if (command != CommandType::Custom && !invokee->isValidCommandType(command))
         return;
 
-    CommandEvent::Init init;
-    init.bubbles = false;
-    init.cancelable = true;
-    init.source = this;
-    init.command = commandRaw.isNull() ? emptyAtom() : commandRaw;
-
-    Ref event = CommandEvent::create(eventNames().commandEvent, init,
+    CommandEvent::Init init {
+        { false, true, false },
+        this,
+        commandRaw.isNull() ? emptyAtom() : commandRaw,
+    };
+    Ref event = CommandEvent::create(eventNames().commandEvent, WTF::move(init),
         CommandEvent::IsTrusted::Yes);
     invokee->dispatchEvent(event);
 
@@ -271,17 +292,17 @@ void HTMLButtonElement::defaultEventHandler(Event& event)
         if (form()) {
             // Update layout before processing form actions in case the style changes
             // the Form or button relationships.
-            protectedDocument()->updateLayoutIgnorePendingStylesheets();
+            protect(document())->updateLayoutIgnorePendingStylesheets();
 
             if (RefPtr currentForm = form()) {
-                if (m_type == Type::Submit)
+                if (isSubmitButton())
                     currentForm->submitIfPossible(&event, this);
 
                 if (m_type == Type::Reset)
                     currentForm->reset();
             }
 
-            if (m_type == Type::Submit || m_type == Type::Reset) {
+            if (isSubmitButton() || m_type == Type::Reset) {
                 event.setDefaultHandled();
                 return;
             }
@@ -295,10 +316,10 @@ void HTMLButtonElement::defaultEventHandler(Event& event)
             return;
         }
 
-        handlePopoverTargetAction(event.protectedTarget().get());
+        handlePopoverTargetAction(protect(event.target()).get());
     }
 
-    if (RefPtr keyboardEvent = dynamicDowncast<KeyboardEvent>(event)) {
+    if (RefPtr keyboardEvent = dynamicDowncast<KeyboardEvent>(event); keyboardEvent && document().focusedElement() == this) {
         if (keyboardEvent->type() == eventNames.keydownEvent && keyboardEvent->keyIdentifier() == "U+0020"_s) {
             setActive(true);
             // No setDefaultHandled() - IE dispatches a keypress in this case.
@@ -332,11 +353,16 @@ bool HTMLButtonElement::willRespondToMouseClickEventsWithEditability(Editability
     return !isDisabledFormControl();
 }
 
+bool HTMLButtonElement::hasActivationBehavior() const
+{
+    return true;
+}
+
 bool HTMLButtonElement::isSuccessfulSubmitButton() const
 {
     // HTML spec says that buttons must have names to be considered successful.
     // However, other browsers do not impose this constraint.
-    return m_type == Type::Submit;
+    return isSubmitButton();
 }
 
 bool HTMLButtonElement::matchesDefaultPseudoClass() const
@@ -357,7 +383,7 @@ void HTMLButtonElement::setActivatedSubmit(bool flag)
 
 bool HTMLButtonElement::appendFormData(DOMFormData& formData)
 {
-    if (m_type != Type::Submit || name().isEmpty() || !m_isActivatedSubmit)
+    if (!isSubmitButton() || name().isEmpty() || !m_isActivatedSubmit)
         return false;
     formData.append(name(), value());
     return true;
@@ -375,7 +401,7 @@ const AtomString& HTMLButtonElement::value() const
 
 bool HTMLButtonElement::computeWillValidate() const
 {
-    return m_type == Type::Submit && HTMLFormControlElement::computeWillValidate();
+    return isSubmitButton() && HTMLFormControlElement::computeWillValidate();
 }
 
 bool HTMLButtonElement::isSubmitButton() const
@@ -397,12 +423,11 @@ void HTMLButtonElement::computeType(const AtomString& typeAttrValue)
         m_type = Type::Button;
     else if (equalLettersIgnoringASCIICase(typeAttrValue, "submit"_s))
         m_type = Type::Submit;
-    else if (document().settings().commandAttributesEnabled()) {
-        if (hasAttributeWithoutSynchronization(HTMLNames::commandAttr) || hasAttributeWithoutSynchronization(HTMLNames::commandforAttr))
-            m_type = Type::Button;
-        else
-            m_type = Type::Submit;
-    } else
+    else if (hasAttributeWithoutSynchronization(HTMLNames::commandAttr) || hasAttributeWithoutSynchronization(HTMLNames::commandforAttr))
+        m_type = Type::Button;
+    else if (document().settings().htmlEnhancedSelectEnabled() && is<HTMLSelectElement>(parentNode()))
+        m_type = Type::Button;
+    else
         m_type = Type::Submit;
     if (oldType != m_type) {
         updateWillValidateAndValidity();

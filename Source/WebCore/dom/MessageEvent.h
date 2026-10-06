@@ -39,13 +39,13 @@ namespace WebCore {
 class Blob;
 class SecurityOrigin;
 
-using MessageEventSource = Variant<RefPtr<WindowProxy>, RefPtr<MessagePort>, RefPtr<ServiceWorker>>;
+using MessageEventSource = Variant<Ref<WindowProxy>, Ref<MessagePort>, Ref<ServiceWorker>>;
 
 class MessageEvent final : public Event {
     WTF_MAKE_TZONE_ALLOCATED(MessageEvent);
 public:
     struct JSValueTag { };
-    using DataType = Variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<Blob>, Ref<ArrayBuffer>>;
+    using DataType = Variant<JSValueTag, String, Ref<Blob>, Ref<ArrayBuffer>>;
     static Ref<MessageEvent> create(const AtomString& type, DataType&&, RefPtr<SecurityOrigin>&& origin = nullptr, const String& lastEventId = { }, std::optional<MessageEventSource>&& = std::nullopt, Vector<Ref<MessagePort>>&& = { });
     static Ref<MessageEvent> create(DataType&&, RefPtr<SecurityOrigin>&& origin = nullptr, const String& lastEventId = { }, std::optional<MessageEventSource>&& = std::nullopt, Vector<Ref<MessagePort>>&& = { });
     static Ref<MessageEvent> createForBindings();
@@ -64,17 +64,17 @@ public:
         std::optional<MessageEventSource> source;
         Vector<Ref<MessagePort>> ports;
     };
-    static Ref<MessageEvent> create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
+    static Ref<MessageEvent> create(JSC::JSGlobalObject&, const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
 
     virtual ~MessageEvent();
 
-    void initMessageEvent(const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue data, const String& origin, const String& lastEventId, std::optional<MessageEventSource>&&, Vector<Ref<MessagePort>>&&);
+    void initMessageEvent(JSC::JSGlobalObject&, const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue data, const String& origin, const String& lastEventId, std::optional<MessageEventSource>&&, Vector<Ref<MessagePort>>&&);
 
     String origin() const;
     const RefPtr<SecurityOrigin> securityOrigin() const;
-    const String& lastEventId() const { return m_lastEventId; }
-    const std::optional<MessageEventSource>& source() const { return m_source; }
-    const Vector<Ref<MessagePort>>& ports() const { return m_ports; }
+    const String& lastEventId() const LIFETIME_BOUND { return m_lastEventId; }
+    const std::optional<MessageEventSource>& source() const LIFETIME_BOUND { return m_source; }
+    const Vector<Ref<MessagePort>>& ports() const LIFETIME_BOUND { return m_ports; }
 
     const DataType& data() const
     {
@@ -83,19 +83,19 @@ public:
         IGNORE_CLANG_WARNINGS_END
     }
 
-    JSValueInWrappedObject& jsData() { return m_jsData; }
-    JSValueInWrappedObject& cachedData() { return m_cachedData; }
-    JSValueInWrappedObject& cachedPorts() { return m_cachedPorts; }
+    JSValueInWrappedObject& jsData() LIFETIME_BOUND { return m_jsData; }
+    JSValueInWrappedObject& cachedData() LIFETIME_BOUND { return m_cachedData; }
+    JSValueInWrappedObject& cachedPorts() LIFETIME_BOUND { return m_cachedPorts; }
 
     size_t memoryCost() const;
 
 private:
     MessageEvent();
-    MessageEvent(const AtomString& type, Init&&, IsTrusted);
+    MessageEvent(JSC::JSGlobalObject&, const AtomString& type, Init&&, IsTrusted);
     MessageEvent(const AtomString& type, DataType&&, RefPtr<SecurityOrigin>&& origin, const String& lastEventId = { }, std::optional<MessageEventSource>&& = std::nullopt, Vector<Ref<MessagePort>>&& = { });
 
     DataType m_data WTF_GUARDED_BY_LOCK(m_concurrentDataAccessLock);
-    Variant<String, RefPtr<SecurityOrigin>> m_origin;
+    Variant<String, Ref<SecurityOrigin>> m_origin;
     String m_lastEventId;
     std::optional<MessageEventSource> m_source;
     Vector<Ref<MessagePort>> m_ports;
@@ -108,3 +108,5 @@ private:
 };
 
 } // namespace WebCore
+
+extern template class mpark::variant<WTF::Ref<WebCore::WindowProxy>, WTF::Ref<WebCore::MessagePort>, WTF::Ref<WebCore::ServiceWorker>>;

@@ -29,29 +29,20 @@
 #include "config.h"
 #include "ImageDataArray.h"
 
-#include <JavaScriptCore/Float16Array.h>
 #include <JavaScriptCore/GenericTypedArrayViewInlines.h>
-#include <JavaScriptCore/Uint8ClampedArray.h>
+#include <WebCore/ArrayPixelBuffer.h>
 #include <wtf/StdLibExtras.h>
-
-// Needed for `downcast` below.
-SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Uint8ClampedArray)
-    static bool isType(const JSC::ArrayBufferView& arrayBufferView) { return arrayBufferView.getType() == JSC::TypeUint8Clamped; }
-SPECIALIZE_TYPE_TRAITS_END()
-SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Float16Array)
-    static bool isType(const JSC::ArrayBufferView& arrayBufferView) { return arrayBufferView.getType() == JSC::TypeFloat16; }
-SPECIALIZE_TYPE_TRAITS_END()
 
 namespace WebCore {
 
-template <typename F>
-static auto visitArrayBufferView(JSC::ArrayBufferView& bufferView, F&& f)
+template<typename F>
+static auto visitArrayBufferView(JSC::ArrayBufferView& bufferView, NOESCAPE const F& f)
 {
     // Always try Uint8ClampedArray first, as it should be the most frequent.
     if (auto* array = dynamicDowncast<JSC::Uint8ClampedArray>(bufferView))
-        return std::forward<F>(f)(*array);
+        return f(*array);
     if (auto* array = dynamicDowncast<JSC::Float16Array>(bufferView))
-        return std::forward<F>(f)(*array);
+        return f(*array);
     RELEASE_ASSERT_NOT_REACHED("Unexpected ArrayBufferView type");
 }
 
@@ -60,14 +51,6 @@ ImageDataArray::ImageDataArray(Ref<JSC::ArrayBufferView>&& arrayBufferView)
 {
     ASSERT(isSupported(m_arrayBufferView.get()));
 }
-
-ImageDataArray::ImageDataArray(Ref<JSC::Uint8ClampedArray>&& data)
-    : ImageDataArray(Ref<JSC::ArrayBufferView>(WTF::move(data)))
-{ }
-
-ImageDataArray::ImageDataArray(Ref<JSC::Float16Array>&& data)
-    : ImageDataArray(Ref<JSC::ArrayBufferView>(WTF::move(data)))
-{ }
 
 ImageDataArray::ImageDataArray(ImageDataArray&& original, std::optional<ImageDataPixelFormat> overridingPixelFormat)
     : m_arrayBufferView(WTF::move(original).extractBufferViewWithPixelFormat(overridingPixelFormat))
@@ -93,11 +76,14 @@ std::optional<ImageDataArray> ImageDataArray::tryCreate(size_t length, ImageData
             array.emplace(typedArray.releaseNonNull());
         }
         break;
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
     case ImageDataPixelFormat::RgbaFloat16:
         if (RefPtr typedArray = JSC::Float16Array::tryCreateUninitialized(length)) {
             fillTypedArray(*typedArray, optionalBytes);
             array.emplace(typedArray.releaseNonNull());
         }
+        break;
+#endif
     }
     return array;
 }
@@ -119,7 +105,7 @@ struct TypedArrayItemConverter;
 
 template <>
 struct TypedArrayItemConverter<JSC::Uint8ClampedArray, JSC::Float16Array> {
-    static constexpr JSC::Float16Adaptor::Type convert(JSC::Uint8ClampedAdaptor::Type value)
+    static constexpr JSC::Float16Adaptor::Type NODELETE convert(JSC::Uint8ClampedAdaptor::Type value)
     {
         return double(value) / 255.0;
     }
@@ -127,7 +113,7 @@ struct TypedArrayItemConverter<JSC::Uint8ClampedArray, JSC::Float16Array> {
 
 template <>
 struct TypedArrayItemConverter<JSC::Float16Array, JSC::Uint8ClampedArray> {
-    static constexpr JSC::Uint8ClampedAdaptor::Type convert(JSC::Float16Adaptor::Type value)
+    static constexpr JSC::Uint8ClampedAdaptor::Type NODELETE convert(JSC::Float16Adaptor::Type value)
     {
         auto d = double(value);
         if (d <= 0)
@@ -168,23 +154,25 @@ Ref<JSC::Float16Array> ImageDataArray::asFloat16Array() const
 
 size_t ImageDataArray::length() const
 {
-    return visitArrayBufferView(
-        m_arrayBufferView.get(),
+    return visitArrayBufferView(m_arrayBufferView.get(),
         [](const auto& array) {
             return array.length();
-        });
+        }
+    );
 }
 
 Ref<JSON::Value> ImageDataArray::copyToJSONArray() const
 {
-    return visitArrayBufferView(m_arrayBufferView.get(), []<typename T>(const T& array) -> Ref<JSON::Value> {
-        static_assert(std::is_same_v<T, JSC::Uint8ClampedArray> || std::is_same_v<T, JSC::Float16Array>);
-        using CType = std::conditional_t<std::is_same_v<T, JSC::Uint8ClampedArray>, int, double>;
-        Ref jsArray = JSON::ArrayOf<CType>::create();
-        for (const auto& item : array.typedSpan())
-            jsArray->addItem(CType(item));
-        return jsArray;
-    });
+    return visitArrayBufferView(m_arrayBufferView.get(),
+        []<typename T>(const T& array) -> Ref<JSON::Value> {
+            static_assert(std::is_same_v<T, JSC::Uint8ClampedArray> || std::is_same_v<T, JSC::Float16Array>);
+            using CType = std::conditional_t<std::is_same_v<T, JSC::Uint8ClampedArray>, int, double>;
+            Ref jsArray = JSON::ArrayOf<CType>::create();
+            for (const auto& item : array.typedSpan())
+                jsArray->addItem(CType(item));
+            return jsArray;
+        }
+    );
 }
 
 Ref<ArrayBufferView> ImageDataArray::extractBufferViewWithPixelFormat(std::optional<ImageDataPixelFormat> overridingPixelFormat) &&
@@ -194,15 +182,17 @@ Ref<ArrayBufferView> ImageDataArray::extractBufferViewWithPixelFormat(std::optio
 
     switch (*overridingPixelFormat) {
     case ImageDataPixelFormat::RgbaUnorm8: return asUint8ClampedArray();
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
     case ImageDataPixelFormat::RgbaFloat16: return asFloat16Array();
-    }
+#endif
+}
     RELEASE_ASSERT_NOT_REACHED("Unexpected ImageDataPixelFormat value");
 }
 
 ImageDataArray::operator DataVariant() const
 {
-    return visitArrayBufferView(m_arrayBufferView.get(), [](auto& a) {
-        return DataVariant(RefPtr(&a));
+    return visitArrayBufferView(m_arrayBufferView.get(), [](auto& array) {
+        return DataVariant(Ref { array });
     });
 }
 

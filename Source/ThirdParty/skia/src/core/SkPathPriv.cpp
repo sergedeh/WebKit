@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Google Inc.
+ * Copyright 2025 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -7,7 +7,7 @@
 
 #include "include/core/SkPathTypes.h"
 #include "include/private/SkPathRef.h"
-#include "include/private/base/SkTDArray.h"
+#include "include/private/SkTDArray.h"
 #include "src/core/SkCubicClipper.h"
 #include "src/core/SkGeometry.h"
 #include "src/core/SkPathPriv.h"
@@ -17,6 +17,20 @@
 #include <cstdint>
 #include <iterator>
 #include <optional>
+
+int SkPathPriv::GenIDChangeListenersCount(const SkPath& path) {
+    return path.fPathData->genIDChangeListenerCount();
+}
+
+void SkPathPriv::AddGenIDChangeListener(const SkPath& path, sk_sp<SkIDChangeListener> listener) {
+    auto pdata = path.fPathData.get();
+    // SkPath's error-singleton is never deleted, so we don't want to add any listeners to it.
+    if (pdata != SkPath::PeekErrorSingleton()) {
+        pdata->addGenIDChangeListener(std::move(listener));
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 /*
  Determines if path is a rect by keeping track of changes in direction
@@ -1534,6 +1548,9 @@ int SkPathPriv::FindLastMoveToIndex(SkSpan<const SkPathVerb> verbs, const size_t
 std::pair<SkPathDirection, unsigned>
 SkPathPriv::TransformDirAndStart(const SkMatrix& matrix, bool isRRect, SkPathDirection dir,
                                  unsigned start) {
+    if (matrix.isIdentity()) {
+        return {dir, start};
+    }
     unsigned inStart = start;
     bool isCCW = (dir == SkPathDirection::kCCW);
 

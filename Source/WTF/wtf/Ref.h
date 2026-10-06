@@ -43,9 +43,9 @@ extern "C" int __asan_address_is_poisoned(void const volatile *addr);
 
 namespace WTF {
 
-inline void adopted(const void*) { }
-
 template<typename T> struct DefaultRefDerefTraits {
+    static constexpr bool isDefaultImplementation = true;
+
     static ALWAYS_INLINE T* refIfNotNull(T* ptr)
     {
         if (ptr) [[likely]]
@@ -66,9 +66,17 @@ template<typename T> struct DefaultRefDerefTraits {
     }
 };
 
+template<typename T>
+concept CanUseDefaultRefDerefTraits = !std::is_void_v<T> && (HasRefPtrMemberFunctions<T> || !DefaultRefDerefTraits<T>::isDefaultImplementation);
+
 template<typename T, typename PtrTraits, typename RefDerefTraits> class Ref;
 template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTraits = DefaultRefDerefTraits<T>> Ref<T, PtrTraits, RefDerefTraits> adoptRef(T&);
 
+/**
+ * @brief Ref is the non-nullable variant of RefPtr.
+ *
+ * See RefPtr for full documentation on intrusive reference counting.
+ */
 template<typename T, typename _PtrTraits, typename RefDerefTraits>
 class Ref {
     WTF_FORBID_HEAP_ALLOCATION_ALLOWING_PLACEMENT_NEW;
@@ -101,14 +109,14 @@ public:
     {
     }
 
-    Ref(Ref&& other)
+    Ref(Ref&& other) noexcept
         : m_ptr(&other.leakRef())
     {
         ASSERT(m_ptr);
     }
 
     template<typename X, typename Y>
-    Ref(Ref<X, Y>&& other)
+    Ref(Ref<X, Y>&& other) noexcept
         : m_ptr(&other.leakRef())
     {
         ASSERT(m_ptr);
@@ -126,8 +134,14 @@ public:
     {
     }
 
-    template<typename X, typename Y>
-    Ref(const ThreadSafeWeakRef<X, Y>& other) requires std::is_convertible_v<X*, T*>
+    template<typename X>
+    Ref(const ThreadSafeWeakRef<X>& other) requires std::is_convertible_v<X*, T*>
+        : m_ptr(&RefDerefTraits::ref(other.get()))
+    {
+    }
+
+    template<typename X>
+    Ref(const UniqueRef<X>& other) requires std::is_convertible_v<X*, T*>
         : m_ptr(&RefDerefTraits::ref(other.get()))
     {
     }
@@ -162,8 +176,9 @@ public:
 
     template<typename X, typename Y, typename Z> [[nodiscard]] Ref<T, PtrTraits, RefDerefTraits> replace(Ref<X, Y, Z>&&);
 
-    // The following function is deprecated.
+    // copyRef() on a r-value reference is never needed.
     Ref copyRef() && = delete;
+
     [[nodiscard]] Ref copyRef() const & { return Ref(*m_ptr); }
 
     [[nodiscard]] T& leakRef()
@@ -191,15 +206,17 @@ private:
     }
 
     typename PtrTraits::StorageType m_ptr;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 // Template deduction guide.
 template<typename X, typename Y> Ref(const WeakRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 template<typename X, typename Y> Ref(WeakRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 template<typename X, typename Y> Ref(const CheckedRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 template<typename X, typename Y> Ref(CheckedRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
-template<typename X, typename Y> Ref(const ThreadSafeWeakRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
-template<typename X, typename Y> Ref(ThreadSafeWeakRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> Ref(const ThreadSafeWeakRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> Ref(ThreadSafeWeakRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> Ref(const UniqueRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> Ref(UniqueRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 
 template<typename T, typename _PtrTraits, typename RefDerefTraits> Ref<T, _PtrTraits, RefDerefTraits> adoptRef(T&);
 
@@ -342,12 +359,11 @@ struct IsSmartPtr<Ref<T, _PtrTraits, RefDerefTraits>> {
 template<typename T, typename _PtrTraits, typename RefDerefTraits>
 inline Ref<T, _PtrTraits, RefDerefTraits> adoptRef(T& reference)
 {
-    adopted(&reference);
     return Ref<T, _PtrTraits, RefDerefTraits>(reference, Ref<T, _PtrTraits, RefDerefTraits>::Adopt);
 }
 
 template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTraits = DefaultRefDerefTraits<T>>
-    requires HasRefPtrMemberFunctions<T>::value
+    requires CanUseDefaultRefDerefTraits<T>
 ALWAYS_INLINE CLANG_POINTER_CONVERSION Ref<T, PtrTraits, RefDerefTraits> protect(T& reference)
 {
     return Ref<T, PtrTraits, RefDerefTraits>(reference);
@@ -359,10 +375,22 @@ ALWAYS_INLINE CLANG_POINTER_CONVERSION Ref<T, PtrTraits, RefDerefTraits> protect
     return reference.copyRef();
 }
 
+template<typename T, typename PtrTraits, typename RefDerefTraits>
+Ref<T, PtrTraits, RefDerefTraits> protect(Ref<T, PtrTraits, RefDerefTraits>&&)
+{
+    static_assert(WTF::unreachableForType<T>, "Calling protect() on an rvalue is unnecessary; the caller already owns the value.");
+}
+
 template<typename ExpectedType, typename ArgType, typename PtrTraits, typename RefDerefTraits>
 inline bool is(const Ref<ArgType, PtrTraits, RefDerefTraits>& source)
 {
     return is<ExpectedType>(source.get());
+}
+
+template<typename... ExpectedTypes, typename ArgType, typename PtrTraits, typename RefDerefTraits>
+inline bool isAnyOf(const Ref<ArgType, PtrTraits, RefDerefTraits>& source)
+{
+    return isAnyOf<ExpectedTypes...>(source.get());
 }
 
 template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
@@ -379,7 +407,7 @@ inline Ref<match_constness_t<Source, Target>> downcast(Ref<Source, PtrTraits, Re
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
-    RELEASE_ASSERT(is<Target>(source));
+    RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(is<Target>(source));
     return unsafeRefDowncast<match_constness_t<Source, Target>>(WTF::move(source));
 }
 

@@ -56,7 +56,7 @@ static WorkQueue& remoteVideoFrameObjectHeapQueueSingleton()
 Ref<RemoteVideoFrameObjectHeap> RemoteVideoFrameObjectHeap::create(Ref<IPC::Connection>&& connection)
 {
     Ref heap = adoptRef(*new RemoteVideoFrameObjectHeap(WTF::move(connection)));
-    heap->protectedConnection()->addWorkQueueMessageReceiver(Messages::RemoteVideoFrameObjectHeap::messageReceiverName(), remoteVideoFrameObjectHeapQueueSingleton(), heap);
+    protect(heap->m_connection)->addWorkQueueMessageReceiver(Messages::RemoteVideoFrameObjectHeap::messageReceiverName(), remoteVideoFrameObjectHeapQueueSingleton(), heap);
     return heap;
 }
 
@@ -78,7 +78,7 @@ void RemoteVideoFrameObjectHeap::close()
         return;
 
     m_isClosed = true;
-    protectedConnection()->removeWorkQueueMessageReceiver(Messages::RemoteVideoFrameObjectHeap::messageReceiverName());
+    protect(m_connection)->removeWorkQueueMessageReceiver(Messages::RemoteVideoFrameObjectHeap::messageReceiverName());
 
 #if PLATFORM(COCOA)
     m_sharedVideoFrameWriter.disable();
@@ -118,7 +118,7 @@ void RemoteVideoFrameObjectHeap::getVideoFrameBuffer(RemoteVideoFrameReadReferen
     Ref connection = m_connection;
 
     if (videoFrame) {
-        buffer = m_sharedVideoFrameWriter.writeBuffer(videoFrame->protectedPixelBuffer().get(),
+        buffer = m_sharedVideoFrameWriter.writeBuffer(protect(videoFrame->pixelBuffer()).get(),
             [&](auto& semaphore) { connection->send(Messages::RemoteVideoFrameObjectHeapProxyProcessor::SetSharedVideoFrameSemaphore { semaphore }, 0); },
             [&](SharedMemory::Handle&& handle) { connection->send(Messages::RemoteVideoFrameObjectHeapProxyProcessor::SetSharedVideoFrameMemory { WTF::move(handle) }, 0); },
             canSendIOSurface);
@@ -143,9 +143,9 @@ void RemoteVideoFrameObjectHeap::pixelBuffer(RemoteVideoFrameReadReference&& rea
     completionHandler(WTF::move(pixelBuffer));
 }
 
-void RemoteVideoFrameObjectHeap::convertFrameBuffer(SharedVideoFrame&& sharedVideoFrame, CompletionHandler<void(WebCore::DestinationColorSpace)>&& callback)
+void RemoteVideoFrameObjectHeap::convertFrameBuffer(SharedVideoFrame&& sharedVideoFrame, CompletionHandler<void(WebCore::ColorSpace)>&& callback)
 {
-    DestinationColorSpace destinationColorSpace { DestinationColorSpace::SRGB().platformColorSpace() };
+    ColorSpace destinationColorSpace { ColorSpace::SRGB().platformColorSpace() };
     auto scope = makeScopeExit([&callback, &destinationColorSpace] { callback(destinationColorSpace); });
 
     RefPtr<VideoFrame> frame;
@@ -162,7 +162,7 @@ void RemoteVideoFrameObjectHeap::convertFrameBuffer(SharedVideoFrame&& sharedVid
     }
 
     RetainPtr<CVPixelBufferRef> buffer = frame->pixelBuffer();
-    destinationColorSpace = DestinationColorSpace(createCGColorSpaceForCVPixelBuffer(buffer.get()));
+    destinationColorSpace = ColorSpace(createCGColorSpaceForCVPixelBuffer(buffer.get()));
 
     if (CVPixelBufferGetPixelFormatType(buffer.get()) != kCVPixelFormatType_32BGRA) {
         Locker locker { m_pixelBufferConformerLock };

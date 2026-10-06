@@ -33,7 +33,7 @@ namespace JSC {
 
 #if ENABLE(JIT)
 template<typename BitfieldType>
-void ArithProfile<BitfieldType>::emitObserveResult(CCallHelpers& jit, JSValueRegs regs, GPRReg tempGPR, TagRegistersMode mode)
+void ArithProfile<BitfieldType>::emitObserveResult(CCallHelpers& jit, GPRReg valueGPR, GPRReg tempGPR, TagRegistersMode mode)
 {
     if (!shouldEmitSetDouble() && !shouldEmitSetNonNumeric() && !shouldEmitSetHeapBigInt() && !shouldEmitSetBigInt32())
         return;
@@ -41,15 +41,27 @@ void ArithProfile<BitfieldType>::emitObserveResult(CCallHelpers& jit, JSValueReg
     CCallHelpers::JumpList done;
     CCallHelpers::JumpList nonNumeric;
 
-    done.append(jit.branchIfInt32(regs, mode));
-    CCallHelpers::Jump notDouble = jit.branchIfNotDoubleKnownNotInt32(regs, mode);
-    emitSetDouble(jit, tempGPR);
+    done.append(jit.branchIfInt32(valueGPR, mode));
+    CCallHelpers::Jump notDouble = jit.branchIfNotDoubleKnownNotInt32(valueGPR, mode);
+    if (shouldEmitSetDouble()) {
+        constexpr BitfieldType doubleBits = ObservedResults::Int32Overflow | ObservedResults::NegZeroDouble | ObservedResults::NonNegZeroDouble;
+        if ((m_bits & doubleBits) != doubleBits)
+            emitUnconditionalSet(jit, doubleBits);
+        if (!didObserveInt52Overflow()) {
+            if (mode == DoNotHaveTagRegisters) {
+                jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), tempGPR);
+                jit.add64(valueGPR, tempGPR);
+            } else
+                jit.add64(GPRInfo::numberTagRegister, valueGPR, tempGPR);
+            emitSetInt52OverflowIfNeeded(jit, tempGPR);
+        }
+    }
     done.append(jit.jump());
 
     notDouble.link(&jit);
 
 #if USE(BIGINT32)
-    CCallHelpers::Jump notBigInt32 = jit.branchIfNotBigInt32(regs, tempGPR, mode);
+    CCallHelpers::Jump notBigInt32 = jit.branchIfNotBigInt32(valueGPR, tempGPR, mode);
     emitSetBigInt32(jit);
     done.append(jit.jump());
     notBigInt32.link(&jit);
@@ -57,8 +69,8 @@ void ArithProfile<BitfieldType>::emitObserveResult(CCallHelpers& jit, JSValueReg
     UNUSED_PARAM(tempGPR);
 #endif
 
-    nonNumeric.append(jit.branchIfNotCell(regs, mode));
-    nonNumeric.append(jit.branchIfNotHeapBigInt(regs.payloadGPR()));
+    nonNumeric.append(jit.branchIfNotCell(valueGPR, mode));
+    nonNumeric.append(jit.branchIfNotHeapBigInt(valueGPR));
     emitSetHeapBigInt(jit);
     done.append(jit.jump());
 
@@ -87,6 +99,19 @@ void ArithProfile<BitfieldType>::emitSetDouble(CCallHelpers& jit, GPRReg scratch
         emitUnconditionalSet(jit, ObservedResults::Int32Overflow | ObservedResults::Int52Overflow | ObservedResults::NegZeroDouble | ObservedResults::NonNegZeroDouble);
 #endif
     }
+}
+
+template<typename BitfieldType>
+void ArithProfile<BitfieldType>::emitSetInt52OverflowIfNeeded(CCallHelpers& jit, GPRReg doubleBitsGPR) const
+{
+    constexpr double overflowPoint = static_cast<double>(ObservedResults::int52OverflowPoint);
+    CCallHelpers::JumpList inRange;
+    inRange.append(jit.branch64(CCallHelpers::Equal, doubleBitsGPR, CCallHelpers::TrustedImm64(std::bit_cast<uint64_t>(-overflowPoint))));
+    // Shifting out the sign bit orders the remaining bits by magnitude; NaN and Infinity sort above every finite value.
+    jit.lshift64(CCallHelpers::TrustedImm32(1), doubleBitsGPR);
+    inRange.append(jit.branch64(CCallHelpers::Below, doubleBitsGPR, CCallHelpers::TrustedImm64(std::bit_cast<uint64_t>(overflowPoint) << 1)));
+    emitUnconditionalSet(jit, ObservedResults::Int52Overflow);
+    inRange.link(&jit);
 }
 
 template<typename BitfieldType>

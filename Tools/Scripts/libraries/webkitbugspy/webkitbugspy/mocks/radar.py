@@ -145,6 +145,17 @@ class RadarModel(object):
         def __init__(self, name):
             self.name = name
 
+    class Attachment(object):
+        def __init__(self, file_name, data=b'', locked=False):
+            self.fileName = file_name
+            self._data = data if isinstance(data, bytes) else string_utils.encode(data)
+            self.locked = locked
+
+        def content(self, client=None):
+            if self.locked:
+                raise Radar.exceptions.AttachmentLockedException("'{}' is locked".format(self.fileName))
+            return self._data
+
     def __init__(self, client, issue, additional_fields=None):
         from datetime import datetime, timedelta, timezone
 
@@ -165,6 +176,7 @@ class RadarModel(object):
             self.state = 'Analyze' if issue['opened'] else 'Verify'
         self.duplicateOfProblemID = issue['original']['id'] if issue.get('original', None) else None
         self.related = list()
+        self.unrelated = list()
         if issue.get('substate'):
             self.substate = issue['substate']
         else:
@@ -181,6 +193,13 @@ class RadarModel(object):
         ])
         self.cc_memberships = self.CollectionProperty(self, *[
             self.CCMembership(Radar.transform_user(watcher)) for watcher in issue.get('watchers', [])
+        ])
+        self.attachments = self.CollectionProperty(self, *[
+            RadarModel.Attachment(
+                attachment['fileName'],
+                data=attachment.get('data', b''),
+                locked=attachment.get('locked', False),
+            ) for attachment in issue.get('attachments', [])
         ])
 
         self.milestone = Radar.Milestone(issue.get('milestone', '?'))
@@ -270,6 +289,17 @@ class RadarModel(object):
                 self.client.parent.issues[r.related_radar_id]['related'] = list()
             self.client.parent.issues[r.related_radar_id]['related'].append(inverse_r_dict)
 
+        for r in list(self.unrelated):
+            r_dict = {'relationship': r.type, 'related_radar': r.related_radar_id}
+            entries = self.client.parent.issues[self.id].get('related') or []
+            if r_dict in entries:
+                entries.remove(r_dict)
+
+            inverse_r_dict = {'relationship': Radar.Relationship.inverse_map[r.type], 'related_radar': self.id}
+            entries = self.client.parent.issues[r.related_radar_id].get('related') or []
+            if inverse_r_dict in entries:
+                entries.remove(inverse_r_dict)
+
         if getattr(self, 'sourceChanges', None):
             self.client.parent.issues[self.id]['sourceChanges'] = self.sourceChanges
 
@@ -295,6 +325,9 @@ class RadarModel(object):
 
     def add_relationship(self, relationship):
         self.related.append(relationship)
+
+    def delete_relationship(self, relationship):
+        self.unrelated.append(relationship)
 
     def remove_keyword(self, keyword):
         if keyword.name in self._issue.get('keywords') or []:
@@ -551,6 +584,9 @@ class Radar(Base, ContextStack):
             pass
 
         class RadarAccessDeniedResponseException(Exception):
+            pass
+
+        class AttachmentLockedException(Exception):
             pass
 
     class RetryPolicy(object):

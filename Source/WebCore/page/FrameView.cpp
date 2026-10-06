@@ -30,9 +30,11 @@
 #include "ChromeClient.h"
 #include "ContainerNodeInlines.h"
 #include "DocumentPage.h"
+#include "FloatQuad.h"
 #include "FocusController.h"
 #include "FrameInlines.h"
 #include "HTMLFrameOwnerElement.h"
+#include "LocalFrameView.h"
 #include "Page.h"
 #include "RenderElement.h"
 #include "RenderLayer.h"
@@ -73,7 +75,7 @@ FloatBoxExtent FrameView::obscuredContentInsets(InsetType type) const
     if (!frame->isMainFrame())
         return { };
 
-    if (RefPtr page = frame->page())
+    if (auto* page = frame->page())
         return page->obscuredContentInsets();
 
     return { };
@@ -122,7 +124,7 @@ ScrollableArea* FrameView::enclosingScrollableArea() const
     if (!ownerElement)
         return nullptr;
 
-    auto* ownerRenderer = ownerElement->renderer();
+    CheckedPtr ownerRenderer = ownerElement->renderer();
     if (!ownerRenderer)
         return nullptr;
 
@@ -163,7 +165,7 @@ bool FrameView::forceUpdateScrollbarsOnMainThreadForPerformanceTesting() const
 
 IntRect FrameView::scrollableAreaBoundingBox(bool*) const
 {
-    RefPtr ownerRenderer = protectedFrame()->ownerRenderer();
+    RefPtr ownerRenderer = protect(frame())->ownerRenderer();
     if (!ownerRenderer)
         return frameRect();
 
@@ -172,8 +174,9 @@ IntRect FrameView::scrollableAreaBoundingBox(bool*) const
 
 HostWindow* FrameView::hostWindow() const
 {
-    RefPtr page = frame().page();
-    return page ? &page->chrome() : nullptr;
+    if (auto* page = frame().page())
+        return &page->chrome();
+    return nullptr;
 }
 
 void FrameView::scrollbarStyleChanged(ScrollbarStyle newStyle, bool forceUpdate)
@@ -210,13 +213,13 @@ bool FrameView::formControlRefreshEnabled() const
 
 IntPoint FrameView::convertFromRendererToContainingView(const RenderElement* renderer, IntPoint rendererPoint) const
 {
-    auto point = roundedIntPoint(renderer->localToAbsolute(rendererPoint, UseTransforms));
+    auto point = roundedIntPoint(renderer->localToAbsolute(rendererPoint, MapCoordinatesMode::UseTransforms));
     return contentsToView(point);
 }
 
 FloatPoint FrameView::convertFromRendererToContainingView(const RenderElement* renderer, FloatPoint rendererPoint) const
 {
-    auto point = renderer->localToAbsolute(rendererPoint, UseTransforms);
+    auto point = renderer->localToAbsolute(rendererPoint, MapCoordinatesMode::UseTransforms);
     return contentsToView(point);
 }
 
@@ -242,7 +245,7 @@ IntPoint FrameView::convertFromContainingViewToRenderer(const RenderElement* ren
     if (!delegatesScrollingToNativeView())
         point = viewToContents(point);
 
-    return roundedIntPoint(renderer->absoluteToLocal(point, UseTransforms));
+    return roundedIntPoint(renderer->absoluteToLocal(point, MapCoordinatesMode::UseTransforms));
 }
 
 FloatPoint FrameView::convertFromContainingViewToRenderer(const RenderElement* renderer, FloatPoint viewPoint) const
@@ -253,7 +256,7 @@ FloatPoint FrameView::convertFromContainingViewToRenderer(const RenderElement* r
     if (!delegatesScrollingToNativeView())
         point = viewToContents(point);
 
-    return renderer->absoluteToLocal(point, UseTransforms);
+    return renderer->absoluteToLocal(point, MapCoordinatesMode::UseTransforms);
 }
 
 DoublePoint FrameView::convertFromContainingViewToRenderer(const RenderElement* renderer, DoublePoint viewPoint) const
@@ -262,7 +265,7 @@ DoublePoint FrameView::convertFromContainingViewToRenderer(const RenderElement* 
     if (!delegatesScrollingToNativeView())
         viewPoint = viewToContents(viewPoint);
 
-    return renderer->absoluteToLocal(viewPoint, UseTransforms);
+    return renderer->absoluteToLocal(viewPoint, MapCoordinatesMode::UseTransforms);
 }
 
 IntRect FrameView::convertFromContainingViewToRenderer(const RenderElement* renderer, const IntRect& viewRect) const
@@ -271,7 +274,7 @@ IntRect FrameView::convertFromContainingViewToRenderer(const RenderElement* rend
 
     // FIXME: we don't have a way to map an absolute rect down to a local quad, so just
     // move the rect for now.
-    rect.setLocation(roundedIntPoint(renderer->absoluteToLocal(rect.location(), UseTransforms)));
+    rect.setLocation(roundedIntPoint(renderer->absoluteToLocal(rect.location(), MapCoordinatesMode::UseTransforms)));
     return rect;
 }
 
@@ -330,7 +333,7 @@ IntPoint FrameView::convertToContainingView(IntPoint localPoint) const
     if (RefPtr parentScrollView = parent()) {
         if (RefPtr parentView = dynamicDowncast<FrameView>(*parentScrollView)) {
             // Get our renderer in the parent view
-            RefPtr renderer = protectedFrame()->ownerRenderer();
+            RefPtr renderer = protect(frame())->ownerRenderer();
             if (!renderer)
                 return localPoint;
 
@@ -348,7 +351,7 @@ FloatPoint FrameView::convertToContainingView(FloatPoint localPoint) const
     if (RefPtr parentScrollView = parent()) {
         if (RefPtr parentView = dynamicDowncast<FrameView>(*parentScrollView)) {
             // Get our renderer in the parent view
-            RefPtr renderer = protectedFrame()->ownerRenderer();
+            RefPtr renderer = protect(frame())->ownerRenderer();
             if (!renderer)
                 return localPoint;
 
@@ -361,17 +364,12 @@ FloatPoint FrameView::convertToContainingView(FloatPoint localPoint) const
     return localPoint;
 }
 
-Ref<Frame> FrameView::protectedFrame() const
-{
-    return frame();
-}
-
 IntRect FrameView::convertToContainingView(const IntRect& localRect) const
 {
     if (RefPtr parentScrollView = parent()) {
         if (RefPtr parentView = dynamicDowncast<FrameView>(*parentScrollView)) {
             // Get our renderer in the parent view
-            RefPtr renderer = protectedFrame()->ownerRenderer();
+            RefPtr renderer = protect(frame())->ownerRenderer();
             if (!renderer)
                 return localRect;
 
@@ -389,7 +387,7 @@ FloatRect FrameView::convertToContainingView(const FloatRect& localRect) const
     if (RefPtr parentScrollView = parent()) {
         if (RefPtr parentView = dynamicDowncast<FrameView>(*parentScrollView)) {
             // Get our renderer in the parent view
-            RefPtr renderer = protectedFrame()->ownerRenderer();
+            RefPtr renderer = protect(frame())->ownerRenderer();
             if (!renderer)
                 return localRect;
 
@@ -409,7 +407,7 @@ IntPoint FrameView::convertFromContainingView(IntPoint parentPoint) const
     if (RefPtr parentScrollView = parent()) {
         if (RefPtr parentView = dynamicDowncast<FrameView>(*parentScrollView)) {
             // Get our renderer in the parent view
-            RefPtr renderer = protectedFrame()->ownerRenderer();
+            RefPtr renderer = protect(frame())->ownerRenderer();
             if (!renderer)
                 return parentPoint;
 
@@ -427,7 +425,7 @@ FloatPoint FrameView::convertFromContainingView(FloatPoint parentPoint) const
     if (RefPtr parentScrollView = parent()) {
         if (RefPtr parentView = dynamicDowncast<FrameView>(*parentScrollView)) {
             // Get our renderer in the parent view
-            RefPtr renderer = protectedFrame()->ownerRenderer();
+            RefPtr renderer = protect(frame())->ownerRenderer();
             if (!renderer)
                 return parentPoint;
 
@@ -445,7 +443,7 @@ DoublePoint FrameView::convertFromContainingView(DoublePoint parentPoint) const
     if (RefPtr parentScrollView = parent()) {
         if (RefPtr parentView = dynamicDowncast<FrameView>(*parentScrollView)) {
             // Get our renderer in the parent view
-            RefPtr renderer = protectedFrame()->ownerRenderer();
+            RefPtr renderer = protect(frame())->ownerRenderer();
             if (!renderer)
                 return parentPoint;
 
@@ -464,7 +462,7 @@ IntRect FrameView::convertFromContainingView(const IntRect& parentRect) const
     if (RefPtr parentScrollView = parent()) {
         if (RefPtr parentView = dynamicDowncast<FrameView>(*parentScrollView)) {
             // Get our renderer in the parent view
-            RefPtr renderer = protectedFrame()->ownerRenderer();
+            RefPtr renderer = protect(frame())->ownerRenderer();
             if (!renderer)
                 return parentRect;
 
@@ -482,7 +480,7 @@ FloatRect FrameView::convertFromContainingView(const FloatRect& parentRect) cons
     if (RefPtr parentScrollView = parent()) {
         if (RefPtr parentView = dynamicDowncast<FrameView>(*parentScrollView)) {
             // Get our renderer in the parent view
-            RefPtr renderer = protectedFrame()->ownerRenderer();
+            RefPtr renderer = protect(frame())->ownerRenderer();
             if (!renderer)
                 return parentRect;
 
@@ -493,6 +491,186 @@ FloatRect FrameView::convertFromContainingView(const FloatRect& parentRect) cons
         return Widget::convertFromContainingView(parentRect);
     }
     return parentRect;
+}
+
+// MARK: - Site-isolation-aware coordinate conversions.
+
+// The parent view in the frame tree, which -- unlike Widget::parent() -- is populated even when the
+// parent lives in another process (Widget::m_parent is null for a RemoteFrameView under Site
+// Isolation).
+static RefPtr<const FrameView> siteIsolationAwareParentView(const FrameView& frameView)
+{
+    if (RefPtr parent = dynamicDowncast<FrameView>(frameView.parent()))
+        return parent;
+
+    if (RefPtr parent = frameView.frame().tree().parent())
+        return parent->virtualView();
+
+    return nullptr;
+}
+
+FloatPoint FrameView::convertFromRootViewAcrossIsolatedFrames(FloatPoint point) const
+{
+    RefPtr parentView = siteIsolationAwareParentView(*this);
+    if (!parentView)
+        return point;
+
+    auto parentPoint = parentView->convertFromRootViewAcrossIsolatedFrames(point);
+
+    // If the frame-owner renderer is in this process, use the renderer-based conversion, which
+    // handles page zoom/scale in addition to CSS transforms.
+    if (is<LocalFrameView>(*parentView))
+        return convertFromContainingView(parentPoint);
+
+    // Cross-process boundary: apply the synced owner-element transform explicitly.
+    parentPoint = parentView->viewToContents(parentPoint);
+    Ref frame = this->frame();
+    auto transformed = parentView->absoluteToChildFrameOwnerLocalTransform(frame).projectPoint(parentPoint);
+    FloatPoint contentBoxLocation = parentView->childFrameOwnerContentBoxLocation(frame);
+    transformed.moveBy(-contentBoxLocation);
+    return transformed;
+}
+
+FloatRect FrameView::convertFromRootViewAcrossIsolatedFrames(FloatRect rect) const
+{
+    RefPtr parentView = siteIsolationAwareParentView(*this);
+    if (!parentView)
+        return rect;
+
+    auto parentRect = parentView->convertFromRootViewAcrossIsolatedFrames(rect);
+
+    if (is<LocalFrameView>(*parentView))
+        return convertFromContainingView(parentRect);
+
+    parentRect = parentView->viewToContents(parentRect);
+    Ref frame = this->frame();
+    auto transformed = parentView->absoluteToChildFrameOwnerLocalTransform(frame).projectQuad(parentRect).boundingBox();
+    transformed.moveBy(-parentView->childFrameOwnerContentBoxLocation(frame));
+    return transformed;
+}
+
+FloatPoint FrameView::convertToRootViewAcrossIsolatedFrames(FloatPoint point) const
+{
+    RefPtr parentView = siteIsolationAwareParentView(*this);
+    if (!parentView)
+        return point;
+
+    FloatPoint parentPoint;
+    if (is<LocalFrameView>(*parentView))
+        parentPoint = convertToContainingView(point);
+    else {
+        Ref frame = this->frame();
+        point.moveBy(parentView->childFrameOwnerContentBoxLocation(frame));
+        parentPoint = parentView->contentsToView(parentView->childFrameOwnerToRootContentTransform(frame).projectPoint(point));
+    }
+
+    return parentView->convertToRootViewAcrossIsolatedFrames(parentPoint);
+}
+
+FloatRect FrameView::convertToRootViewAcrossIsolatedFrames(FloatRect rect) const
+{
+    RefPtr parentView = siteIsolationAwareParentView(*this);
+    if (!parentView)
+        return rect;
+
+    FloatRect parentRect;
+    if (is<LocalFrameView>(*parentView))
+        parentRect = convertToContainingView(rect);
+    else {
+        Ref frame = this->frame();
+        rect.moveBy(parentView->childFrameOwnerContentBoxLocation(frame));
+        parentRect = parentView->contentsToView(parentView->childFrameOwnerToRootContentTransform(frame).projectQuad(rect).boundingBox());
+    }
+
+    return parentView->convertToRootViewAcrossIsolatedFrames(parentRect);
+}
+
+IntPoint FrameView::convertToRootViewAcrossIsolatedFrames(IntPoint point) const
+{
+    RefPtr parentView = siteIsolationAwareParentView(*this);
+    if (!parentView)
+        return point;
+
+    IntPoint parentPoint;
+    if (is<LocalFrameView>(*parentView))
+        parentPoint = convertToContainingView(point);
+    else {
+        Ref frame = this->frame();
+        point.moveBy(roundedIntPoint(parentView->childFrameOwnerContentBoxLocation(frame)));
+        parentPoint = roundedIntPoint(parentView->contentsToView(parentView->childFrameOwnerToRootContentTransform(frame).projectPoint(point)));
+    }
+
+    return parentView->convertToRootViewAcrossIsolatedFrames(parentPoint);
+}
+
+IntRect FrameView::convertToRootViewAcrossIsolatedFrames(IntRect rect) const
+{
+    RefPtr parentView = siteIsolationAwareParentView(*this);
+    if (!parentView)
+        return rect;
+
+    IntRect parentRect;
+    if (is<LocalFrameView>(*parentView))
+        parentRect = convertToContainingView(rect);
+    else {
+        Ref frame = this->frame();
+        rect.moveBy(roundedIntPoint(parentView->childFrameOwnerContentBoxLocation(frame)));
+        parentRect = roundedIntRect(parentView->contentsToView(parentView->childFrameOwnerToRootContentTransform(frame).projectQuad(FloatQuad { rect }).boundingBox()));
+    }
+
+    return parentView->convertToRootViewAcrossIsolatedFrames(parentRect);
+}
+
+FloatQuad FrameView::convertToRootViewAcrossIsolatedFrames(const FloatQuad& quad) const
+{
+    // Map each corner independently so a CSS transform (which need not preserve axis alignment) is
+    // reflected in the resulting quad rather than collapsed to its bounding box.
+    return {
+        convertToRootViewAcrossIsolatedFrames(quad.p1()),
+        convertToRootViewAcrossIsolatedFrames(quad.p2()),
+        convertToRootViewAcrossIsolatedFrames(quad.p3()),
+        convertToRootViewAcrossIsolatedFrames(quad.p4()),
+    };
+}
+
+FloatPoint FrameView::contentsToMainFrameView(FloatPoint point) const
+{
+    return convertToRootViewAcrossIsolatedFrames(contentsToView(point));
+}
+
+FloatQuad FrameView::contentsToMainFrameView(const FloatQuad& quad) const
+{
+    return {
+        contentsToMainFrameView(quad.p1()),
+        contentsToMainFrameView(quad.p2()),
+        contentsToMainFrameView(quad.p3()),
+        contentsToMainFrameView(quad.p4()),
+    };
+}
+
+FloatPoint FrameView::rootViewToContentsAcrossIsolatedFrames(FloatPoint point) const
+{
+    return viewToContents(convertFromRootViewAcrossIsolatedFrames(point));
+}
+
+FloatRect FrameView::rootViewToContentsAcrossIsolatedFrames(FloatRect rect) const
+{
+    return viewToContents(convertFromRootViewAcrossIsolatedFrames(rect));
+}
+
+IntRect FrameView::contentsToMainFrameView(const IntRect& rect) const
+{
+    return convertToRootViewAcrossIsolatedFrames(contentsToView(rect));
+}
+
+FloatRect FrameView::contentsToMainFrameView(FloatRect rect) const
+{
+    return convertToRootViewAcrossIsolatedFrames(contentsToView(rect));
+}
+
+IntPoint FrameView::contentsToMainFrameView(const IntPoint& point) const
+{
+    return roundedIntPoint(convertToRootViewAcrossIsolatedFrames(FloatPoint { contentsToView(point) }));
 }
 
 }

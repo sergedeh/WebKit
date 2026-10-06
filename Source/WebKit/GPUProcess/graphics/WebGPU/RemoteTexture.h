@@ -78,7 +78,6 @@ private:
     RemoteTexture& operator=(RemoteTexture&&) = delete;
 
     WebCore::WebGPU::Texture& backing() { return m_backing; }
-    Ref<WebCore::WebGPU::Texture> protectedBacking();
 
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
@@ -90,7 +89,7 @@ private:
 
     void setLabel(String&&);
 
-    Ref<WebCore::WebGPU::Texture> m_backing;
+    const Ref<WebCore::WebGPU::Texture> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
     const Ref<IPC::StreamServerConnection> m_streamConnection;
     WebGPUIdentifier m_identifier;

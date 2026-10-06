@@ -23,7 +23,11 @@
 #include "api/stats/attribute.h"
 #include "api/units/timestamp.h"
 #include "rtc_base/checks.h"
+#if defined(WEBRTC_WEBKIT_BUILD)
+#include "json/json.h"
+#else
 #include "rtc_base/strings/json.h"
+#endif
 #include "stats/test/rtc_test_stats.h"
 #include "test/gtest.h"
 
@@ -495,7 +499,7 @@ TEST(RTCStatsTest, SetTimestamp) {
 TEST(RTCStatsDeathTest, ValueOfUndefinedMember) {
   RTCTestStats stats("testId", Timestamp::Micros(0));
   EXPECT_FALSE(stats.m_int32.has_value());
-  EXPECT_DEATH(*stats.m_int32, "");
+  EXPECT_DEATH((void)*stats.m_int32, "");
 }
 
 TEST(RTCStatsDeathTest, InvalidCasting) {

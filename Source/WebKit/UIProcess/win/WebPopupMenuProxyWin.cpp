@@ -51,9 +51,9 @@
 
 #if USE(SKIA)
 #include <WebCore/GraphicsContextSkia.h>
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkSurface.h>
-IGNORE_CLANG_WARNINGS_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
 namespace WebKit {
@@ -207,7 +207,7 @@ void WebPopupMenuProxyWin::showPopupMenu(const IntRect& rect, TextDirection, dou
     HWND hostWindow = m_webView->window();
 
     if (!m_scrollbar && visibleItems() < m_items.size()) {
-        m_scrollbar = Scrollbar::createNativeScrollbar(*this, ScrollbarOrientation::Vertical, ScrollbarWidth::Thin);
+        lazyInitialize(m_scrollbar, Scrollbar::createNativeScrollbar(*this, ScrollbarOrientation::Vertical, ScrollbarWidth::Thin));
         m_scrollbar->styleChanged();
     }
 

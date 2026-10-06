@@ -26,6 +26,7 @@
 #pragma once
 
 #include <span>
+#include <wtf/EnumSet.h>
 #include <wtf/Forward.h>
 #include <wtf/InlineWeakPtr.h>
 #include <wtf/Markable.h>
@@ -40,7 +41,6 @@ namespace WTF {
 
 class Seconds;
 class MediaTime;
-class UUID;
 class URL;
 
 struct HexNumberBuffer;
@@ -86,7 +86,12 @@ public:
     WTF_EXPORT_PRIVATE TextStream& operator<<(const char*);
     WTF_EXPORT_PRIVATE TextStream& operator<<(const void*);
     WTF_EXPORT_PRIVATE TextStream& operator<<(const AtomString&);
-    WTF_EXPORT_PRIVATE TextStream& operator<<(const CString&);
+    // A CStringBase does not know its encoding and therefore cannot be streamed: use one of the
+    // encoding-aware overloads below, which decode according to the character type.
+    TextStream& operator<<(const CStringBase&) = delete;
+    WTF_EXPORT_PRIVATE TextStream& operator<<(const UTF8CString&);
+    WTF_EXPORT_PRIVATE TextStream& operator<<(const Latin1CString&);
+    WTF_EXPORT_PRIVATE TextStream& operator<<(const ASCIICString&);
     WTF_EXPORT_PRIVATE TextStream& operator<<(const String&);
     WTF_EXPORT_PRIVATE TextStream& operator<<(ASCIILiteral);
     WTF_EXPORT_PRIVATE TextStream& operator<<(StringView);
@@ -383,6 +388,20 @@ TextStream& operator<<(TextStream& ts, const OptionSet<Option>& options)
     return ts << ']';
 }
 
+template<typename Option>
+TextStream& operator<<(TextStream& ts, const EnumSet<Option>& options)
+{
+    ts << '[';
+    bool needComma = false;
+    for (auto option : options) {
+        if (needComma)
+            ts << ", "_s;
+        needComma = true;
+        ts << option;
+    }
+    return ts << ']';
+}
+
 template<typename T, typename U>
 TextStream& operator<<(TextStream& ts, const std::pair<T, U>& pair)
 {
@@ -390,9 +409,9 @@ TextStream& operator<<(TextStream& ts, const std::pair<T, U>& pair)
 }
 
 WTF_EXPORT_PRIVATE TextStream& operator<<(TextStream&, Seconds);
+WTF_EXPORT_PRIVATE TextStream& operator<<(TextStream&, ReducedResolutionSeconds);
 WTF_EXPORT_PRIVATE TextStream& operator<<(TextStream&, const MediaTime&);
-WTF_EXPORT_PRIVATE TextStream& operator<<(TextStream&, const ObjectIdentifierGenericBase<uint64_t>&);
-WTF_EXPORT_PRIVATE TextStream& operator<<(TextStream&, const ObjectIdentifierGenericBase<UUID>&);
+WTF_EXPORT_PRIVATE TextStream& operator<<(TextStream&, const ObjectIdentifierGenericBase&);
 WTF_EXPORT_PRIVATE TextStream& operator<<(TextStream&, const URL&);
 
 #if PLATFORM(COCOA)

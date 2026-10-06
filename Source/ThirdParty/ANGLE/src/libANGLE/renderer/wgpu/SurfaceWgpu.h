@@ -65,11 +65,6 @@ class OffscreenSurfaceWgpu : public SurfaceWgpu
                                      GLenum binding,
                                      const gl::ImageIndex &imageIndex) override;
 
-    egl::Error attachToFramebuffer(const gl::Context *context,
-                                   gl::Framebuffer *framebuffer) override;
-    egl::Error detachFromFramebuffer(const gl::Context *context,
-                                     gl::Framebuffer *framebuffer) override;
-
     angle::Result getAttachmentRenderTarget(const gl::Context *context,
                                             GLenum binding,
                                             const gl::ImageIndex &imageIndex,
@@ -113,10 +108,8 @@ class WindowSurfaceWgpu : public SurfaceWgpu
                                      GLenum binding,
                                      const gl::ImageIndex &imageIndex) override;
 
-    egl::Error attachToFramebuffer(const gl::Context *context,
-                                   gl::Framebuffer *framebuffer) override;
-    egl::Error detachFromFramebuffer(const gl::Context *context,
-                                     gl::Framebuffer *framebuffer) override;
+    void attachToFramebuffer(const gl::Context *context, gl::Framebuffer *framebuffer) override;
+    void detachFromFramebuffer(gl::Framebuffer *framebuffer) override;
 
     angle::Result getAttachmentRenderTarget(const gl::Context *context,
                                             GLenum binding,
@@ -155,8 +148,20 @@ class WindowSurfaceWgpu : public SurfaceWgpu
     AttachmentImage mDepthStencilAttachment;
 };
 
+// Linux provides per-platform variants so both X11 and Wayland can be compiled simultaneously
+// and dispatched at runtime via DisplayWgpu::mWindowSystem.
+#if defined(ANGLE_USE_X11)
+WindowSurfaceWgpu *CreateWgpuX11WindowSurface(const egl::SurfaceState &surfaceState,
+                                              EGLNativeWindowType window);
+#endif
+#if defined(ANGLE_USE_WAYLAND)
+WindowSurfaceWgpu *CreateWgpuWaylandWindowSurface(const egl::SurfaceState &surfaceState,
+                                                  EGLNativeWindowType window);
+#endif
+#if !defined(ANGLE_USE_X11) && !defined(ANGLE_USE_WAYLAND)
 WindowSurfaceWgpu *CreateWgpuWindowSurface(const egl::SurfaceState &surfaceState,
                                            EGLNativeWindowType window);
+#endif
 
 }  // namespace rx
 

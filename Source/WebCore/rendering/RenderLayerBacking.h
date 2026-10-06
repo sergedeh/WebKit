@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/BoxSides.h>
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FloatPoint3D.h>
 #include <WebCore/GraphicsLayerClient.h>
@@ -33,6 +34,7 @@
 #include <WebCore/RenderLayerCompositor.h>
 #include <WebCore/ScrollingCoordinator.h>
 #include <wtf/Platform.h>
+#include <wtf/Range.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakListHashSet.h>
 
@@ -48,6 +50,7 @@ class TiledBacking;
 class TransformationMatrix;
 
 #if ENABLE(THREADED_ANIMATIONS)
+class AcceleratedEffectStack;
 class AcceleratedTimeline;
 #endif
 
@@ -81,7 +84,7 @@ public:
     RenderLayer& owningLayer() const { return m_owningLayer; }
 
     // Included layers are non-z-order descendant layers that are painted into this backing.
-    const InlineWeakKeyListHashSet<RenderLayer>& backingSharingLayers() const { return m_backingSharingLayers; }
+    const InlineWeakKeyListHashSet<RenderLayer>& backingSharingLayers() const LIFETIME_BOUND { return m_backingSharingLayers; }
     void setBackingSharingLayers(InlineWeakKeyListHashSet<RenderLayer>&&);
 
     bool hasBackingSharingLayers() const { return !m_backingSharingLayers.isEmptyIgnoringNullReferences(); }
@@ -96,6 +99,7 @@ public:
 
     // Update graphics layer position and bounds.
     void updateGeometry(const RenderLayer* compositingAncestor);
+    void updateAnimationExtent();
 
     // Update state the requires that descendant layers have been updated.
     void updateAfterDescendants();
@@ -112,11 +116,11 @@ public:
     GraphicsLayer* clippingLayer() const { return !m_isFrameLayerWithTiledBacking ? m_childContainmentLayer.get() : nullptr; }
 
     bool hasAncestorClippingLayers() const { return !!m_ancestorClippingStack; }
-    LayerAncestorClippingStack* ancestorClippingStack() const { return m_ancestorClippingStack.get(); }
+    LayerAncestorClippingStack* ancestorClippingStack() const LIFETIME_BOUND { return m_ancestorClippingStack.get(); }
     bool updateAncestorClippingStack(Vector<CompositedClipData>&&);
 
     void ensureOverflowControlsHostLayerAncestorClippingStack(const RenderLayer* compositedAncestor);
-    LayerAncestorClippingStack* overflowControlsHostLayerAncestorClippingStack() const { return m_overflowControlsHostLayerAncestorClippingStack.get(); }
+    LayerAncestorClippingStack* overflowControlsHostLayerAncestorClippingStack() const LIFETIME_BOUND { return m_overflowControlsHostLayerAncestorClippingStack.get(); }
 
     GraphicsLayer* contentsContainmentLayer() const { return m_contentsContainmentLayer.get(); }
     GraphicsLayer* viewportAnchorLayer() const { return m_viewportAnchorLayer.get(); }
@@ -126,10 +130,18 @@ public:
     GraphicsLayer* backgroundLayer() const { return m_backgroundLayer.get(); }
     bool backgroundLayerPaintsFixedRootBackground() const { return m_backgroundLayerPaintsFixedRootBackground; }
 
+    bool hasSVGPaintOrderSegments() const { return !m_svgPaintOrderSegments.isEmpty(); }
+    GraphicsLayer* svgSegmentLayerAfterCompositedChild(const RenderLayer&) const;
+    std::optional<WTF::Range<unsigned>> svgSegmentRangeForGraphicsLayer(const GraphicsLayer&) const;
+
+#if USE(SYSTEM_PREVIEW) && ENABLE(MODEL_PROCESS)
+    GraphicsLayer* systemPreviewBadgeLayer() const { return m_systemPreviewBadgeLayer.get(); }
+#endif
+
     bool needsRepaintOnCompositedScroll() const;
 
     bool requiresBackgroundLayer() const { return m_requiresBackgroundLayer; }
-    void setRequiresBackgroundLayer(bool);
+    void NODELETE setRequiresBackgroundLayer(bool);
 
     bool hasScrollingLayer() const { return m_scrollContainerLayer != nullptr; }
     GraphicsLayer* scrollContainerLayer() const { return m_scrollContainerLayer.get(); }
@@ -158,11 +170,17 @@ public:
         return std::nullopt;
     }
 
+    bool hasAnyScrollingNodeID() const
+    {
+        return m_scrollingNodeID || m_frameHostingNodeID || m_pluginHostingNodeID
+            || m_viewportConstrainedNodeID || m_positioningNodeID || m_ancestorClippingStack;
+    }
+
     void setScrollingNodeIDForRole(ScrollingNodeID, ScrollCoordinationRole);
 
     bool hasMaskLayer() const { return m_maskLayer; }
 
-    WEBCORE_EXPORT GraphicsLayer* parentForSublayers() const;
+    WEBCORE_EXPORT GraphicsLayer* NODELETE parentForSublayers() const;
     GraphicsLayer* childForSuperlayers() const;
     GraphicsLayer* childForSuperlayersExcludingViewTransitions() const;
 
@@ -187,21 +205,20 @@ public:
     // Notification from the renderer that its content changed.
     void contentChanged(ContentChangeType, const std::optional<FloatRect>&);
 
-    // Interface to start, finish, suspend and resume animations
+    // Interface to start and finish animations.
     bool startAnimation(double timeOffset, const GraphicsLayerAnimation&, const BlendingKeyframes&);
     void animationPaused(double timeOffset, const String& name);
     void animationFinished(const String& name);
     void transformRelatedPropertyDidChange();
-    void suspendAnimations(MonotonicTime = MonotonicTime());
-    void resumeAnimations();
 
 #if ENABLE(THREADED_ANIMATIONS)
+    const AcceleratedEffectStack* NODELETE acceleratedEffectStack() const;
     void updateAcceleratedEffectsAndBaseValues(HashSet<Ref<AcceleratedTimeline>>&);
 #endif
 
-    WEBCORE_EXPORT LayoutRect compositedBounds() const;
+    WEBCORE_EXPORT LayoutRect NODELETE compositedBounds() const;
     // Returns true if changed.
-    bool setCompositedBounds(const LayoutRect&);
+    bool NODELETE setCompositedBounds(const LayoutRect&);
     // Returns true if changed.
     bool updateCompositedBounds();
     
@@ -212,7 +229,7 @@ public:
     void updateEventRegion();
     
     bool needsEventRegionUpdate() const { return m_needsEventRegionUpdate; }
-    void setNeedsEventRegionUpdate(bool needsUpdate = true);
+    void NODELETE setNeedsEventRegionUpdate(bool needsUpdate = true);
 #endif
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
@@ -230,7 +247,7 @@ public:
 
     WEBCORE_EXPORT TiledBacking* tiledBacking() const;
     void adjustTiledBackingCoverage();
-    void setTiledBackingHasMargins(bool hasExtendedBackgroundOnLeftAndRight, bool hasExtendedBackgroundOnTopAndBottom);
+    void setTiledBackingHasMargins(BoxSideSet);
     
     void updateDebugIndicators(bool showBorder, bool showRepaintCounter);
 
@@ -253,6 +270,7 @@ public:
 
     float pageScaleFactor() const override;
     float zoomedOutPageScaleFactor() const override;
+    bool delegatesScaling() const override;
 
     FloatSize enclosingFrameViewVisibleSize() const override;
 
@@ -288,7 +306,12 @@ public:
 #endif
 
     WEBCORE_EXPORT LayoutRect contentsBox() const;
-    
+
+    // Like contentsBox(), but for video, never applies the object-view-box crop-bypass or the
+    // object-fit: cover overflow — used as the fullscreen/PiP transition-anchor rect, which must
+    // reflect the video's true on-screen inline box, not compositing-only crop geometry.
+    WEBCORE_EXPORT LayoutRect inlineVideoContentsBox() const;
+
     // For informative purposes only.
     WEBCORE_EXPORT CompositingLayerType compositingLayerType() const;
     
@@ -326,6 +349,8 @@ private:
 
     void createPrimaryGraphicsLayer();
     void destroyGraphicsLayers();
+
+    void updateAppliesPageScale();
     
     void willDestroyLayer(const GraphicsLayer*);
 
@@ -342,10 +367,41 @@ private:
     bool updateAncestorClipping(bool needsAncestorClip, const RenderLayer* compositingAncestor);
     bool updateDescendantClippingLayer(bool needsDescendantClip);
     bool updateOverflowControlsLayers(bool needsHorizontalScrollbarLayer, bool needsVerticalScrollbarLayer, bool needsScrollCornerLayer);
+    void clearAncestorClippingStack();
+    void clearOverflowControlsLayers();
     bool updateForegroundLayer(bool needsForegroundLayer);
     bool updateBackgroundLayer(bool needsBackgroundLayer);
-    bool updateMaskingLayer(bool hasMask, bool hasClipPath);
+
+    // SVG paint-order segmentation. Out-of-line methods are defined in RenderLayerBackingSVGAdditions.cpp.
+    struct SVGPaintOrderSegment;
+    bool updateSVGSegmentLayers();
+    void clearSVGSegmentLayers();
+    template<typename Function> void forEachSVGSegmentLayer(NOESCAPE const Function& function) const
+    {
+        for (auto& segment : m_svgPaintOrderSegments) {
+            if (segment.graphicsLayer)
+                function(*segment.graphicsLayer);
+        }
+    }
+    FloatRect computeSVGSegmentBounds(const SVGPaintOrderSegment&);
+    void updateSVGSegmentLayerGeometry(FloatSize foregroundLikeSize, FloatSize foregroundLikeOffset, GraphicsLayer::ShouldSetNeedsDisplay);
+    bool svgSegmentHasInlineContent(const SVGPaintOrderSegment&);
+    void updateSVGSegmentLayersDrawsContent(bool hasPaintedContent);
+    void setSVGSegmentLayersNeedDisplayInRect(const FloatRect& pixelSnappedRectForPainting, GraphicsLayer::ShouldClipToLayer);
+
+#if ENABLE(MODEL_PROCESS)
+    bool updateContentsContainmentLayer();
+#endif
+    bool updateMaskingLayer(bool hasMask, bool hasClipPath, bool hasCornerShapeMask);
+    bool needsCornerShapeMask() const;
+    void updateReflectionLayer();
     bool updateTransformFlatteningLayer(const RenderLayer* compositingAncestor);
+#if USE(SYSTEM_PREVIEW) && ENABLE(MODEL_PROCESS)
+    bool updateSystemPreviewBadgeLayer(bool needsLayer);
+    bool needsSystemPreviewBadgeLayer() const;
+    void updateSystemPreviewBadgeLayerGeometry();
+    void paintSystemPreviewBadgeLayer(GraphicsContext&, const FloatRect& clip);
+#endif
 
     bool requiresLayerForScrollbar(Scrollbar*) const;
     bool requiresHorizontalScrollbarLayer() const;
@@ -362,7 +418,7 @@ private:
 
     void setBackgroundLayerPaintsFixedRootBackground(bool);
 
-    LayoutSize contentOffsetInCompositingLayer() const;
+    LayoutSize NODELETE contentOffsetInCompositingLayer() const;
     LayoutSize offsetRelativeToRendererOriginForDescendantLayers() const;
     
     void ensureClippingStackLayers(LayerAncestorClippingStack&);
@@ -372,24 +428,24 @@ private:
 
     void connectClippingStackLayers(LayerAncestorClippingStack&);
 
-    void updateOpacity(const RenderStyle&);
-    void updateTransform(const RenderStyle&);
+    void updateOpacity(const Style::ComputedStyle&);
+    void updateTransform(const Style::ComputedStyle&);
     void updateChildrenTransformAndAnchorPoint(const LayoutRect& primaryGraphicsLayerRect, LayoutSize offsetFromParentGraphicsLayer);
-    void updateFilters(const RenderStyle&);
-    void updateBackdropFilters(const RenderStyle&);
+    void updateFilters(const Style::ComputedStyle&);
+    void updateBackdropFilters(const Style::ComputedStyle&);
     void updateBackdropFiltersGeometry();
     bool updateBackdropRoot();
-    void updateBlendMode(const RenderStyle&);
+    void updateBlendMode(const Style::ComputedStyle&);
 #if ENABLE(VIDEO)
-    void updateVideoGravity(const RenderStyle&);
+    void updateVideoGravity(const Style::ComputedStyle&);
 #endif
-    void updateContentsScalingFilters(const RenderStyle&);
+    void updateContentsScalingFilters(const Style::ComputedStyle&);
 #if HAVE(CORE_MATERIAL)
-    void updateAppleVisualEffect(const RenderStyle&);
+    void updateAppleVisualEffect(const Style::ComputedStyle&);
 #endif
 
     // Return the opacity value that this layer should use for compositing.
-    float compositingOpacity(float rendererOpacity) const;
+    float NODELETE compositingOpacity(float rendererOpacity) const;
     Color rendererBackgroundColor() const;
 
     bool isMainFrameRenderViewLayer() const;
@@ -432,10 +488,11 @@ private:
     
     void paintDebugOverlays(const GraphicsLayer*, GraphicsContext&);
 
-    static CSSPropertyID graphicsLayerToCSSProperty(AnimatedProperty);
-    static AnimatedProperty cssToGraphicsLayerProperty(CSSPropertyID);
+    static CSSPropertyID NODELETE graphicsLayerToCSSProperty(AnimatedProperty);
+    static AnimatedProperty NODELETE cssToGraphicsLayerProperty(CSSPropertyID);
 
     bool canIssueSetNeedsDisplay() const { return !paintsIntoWindow() && !paintsIntoCompositedAncestor(); }
+    float pixelSnappingScaleFactor() const;
     LayoutRect computeParentGraphicsLayerRect(const RenderLayer* compositedAncestor) const;
     LayoutRect computePrimaryGraphicsLayerRect(const RenderLayer* compositedAncestor, const LayoutRect& parentGraphicsLayerRect) const;
 
@@ -454,12 +511,32 @@ private:
     RefPtr<GraphicsLayer> m_contentsContainmentLayer; // Only used if we have a background layer; takes the transform.
     RefPtr<GraphicsLayer> m_graphicsLayer;
     RefPtr<GraphicsLayer> m_foregroundLayer; // Only used in cases where we need to draw the foreground separately.
+
+    // A composited SVG child splits its container's DOM-order paint list (childrenInDOMOrderForSVG) at its
+    // index. Non-composited content painting after a composited child goes into a single overlay
+    // "(svg segment N)" GraphicsLayer above the composited child's layer, rather than giving each such
+    // sibling its own RenderLayer. Segments cover the flat list in order: the primary segment =
+    // [0, firstCompositedChild] paints into the primary graphics layer (null graphicsLayer). Each later
+    // segment = (prevCompositedChild, thisCompositedChild] paints into its own overlay.
+    struct SVGPaintOrderSegment {
+        WTF::Range<unsigned> childIndexRange { 0, 0 }; // Half-open [begin, end) into childrenInDOMOrderForSVG().
+        InlineWeakPtr<RenderLayer> precedingCompositedChild; // null for the primary segment.
+        RefPtr<GraphicsLayer> graphicsLayer; // null for the primary segment (paints into the primary graphics layer).
+        // Visual bounds of this segment's inline-painted content in the overlay's own (foreground-local)
+        // coordinate space. Set in updateGeometry, empty if not cropped. Scopes the overlay's invalidation.
+        FloatRect segmentBoundsInLayerSpace;
+    };
+    Vector<SVGPaintOrderSegment> m_svgPaintOrderSegments; // Only used for SVG container layers; empty unless a composited child splits the paint list.
     RefPtr<GraphicsLayer> m_backgroundLayer; // Only used in cases where we need to draw the background separately.
     RefPtr<GraphicsLayer> m_childContainmentLayer; // Only used if we have clipping on a stacking context with compositing children, or if the layer has a tile cache.
     RefPtr<GraphicsLayer> m_viewportClippingLayer; // Only used on fixed/sticky elements. Contains the viewport anchor layer.
     RefPtr<GraphicsLayer> m_viewportAnchorLayer; // Only used on fixed/sticky elements.
     RefPtr<GraphicsLayer> m_maskLayer; // Only used if we have a mask and/or clip-path.
     RefPtr<GraphicsLayer> m_transformFlatteningLayer;
+#if USE(SYSTEM_PREVIEW) && ENABLE(MODEL_PROCESS)
+    RefPtr<GraphicsLayer> m_systemPreviewWrapperLayer; // Outer wrapper above m_contentsContainmentLayer, parents the model subtree and the badge layer as siblings.
+    RefPtr<GraphicsLayer> m_systemPreviewBadgeLayer; // Sibling of m_contentsContainmentLayer; lifts the AR badge in front of the model's separated portal on visionOS.
+#endif
 
     RefPtr<GraphicsLayer> m_layerForHorizontalScrollbar;
     RefPtr<GraphicsLayer> m_layerForVerticalScrollbar;

@@ -6,14 +6,11 @@
 
 // ProgramD3D.cpp: Defines the rx::ProgramD3D class which implements rx::ProgramImpl.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/d3d/ProgramD3D.h"
 
 #include "common/MemoryBuffer.h"
 #include "common/bitset_utils.h"
+#include "common/span_util.h"
 #include "common/string_utils.h"
 #include "common/utilities.h"
 #include "libANGLE/Context.h"
@@ -91,10 +88,7 @@ bool FindFlatInterpolationVarying(const gl::ShaderMap<gl::SharedCompiledShaderSt
 class HLSLBlockLayoutEncoderFactory : public gl::CustomBlockLayoutEncoderFactory
 {
   public:
-    sh::BlockLayoutEncoder *makeEncoder() override
-    {
-        return new sh::HLSLBlockEncoder(sh::HLSLBlockEncoder::ENCODE_PACKED, false);
-    }
+    sh::BlockLayoutEncoder *makeEncoder() override { return new sh::HLSLBlockEncoder(false); }
 };
 
 // GetExecutableTask class
@@ -184,9 +178,7 @@ ProgramD3DMetadata::ProgramD3DMetadata(
     const gl::SharedCompiledShaderState &fragmentShader,
     const gl::ShaderMap<SharedCompiledShaderStateD3D> &attachedShaders,
     int shaderVersion)
-    : mRendererMajorShaderModel(renderer->getMajorShaderModel()),
-      mShaderModelSuffix(renderer->getShaderModelSuffix()),
-      mUsesViewScale(renderer->presentPathFastEnabled()),
+    : mUsesViewScale(renderer->presentPathFastEnabled()),
       mCanSelectViewInVertexShader(renderer->canSelectViewInVertexShader()),
       mFragmentShader(fragmentShader),
       mAttachedShaders(attachedShaders),
@@ -194,11 +186,6 @@ ProgramD3DMetadata::ProgramD3DMetadata(
 {}
 
 ProgramD3DMetadata::~ProgramD3DMetadata() = default;
-
-int ProgramD3DMetadata::getRendererMajorShaderModel() const
-{
-    return mRendererMajorShaderModel;
-}
 
 bool ProgramD3DMetadata::usesBroadcast(const gl::Version &clientVersion) const
 {
@@ -239,7 +226,7 @@ bool ProgramD3DMetadata::usesPointSize() const
 
 bool ProgramD3DMetadata::usesInsertedPointCoordValue() const
 {
-    return usesPointCoord() && mRendererMajorShaderModel >= 4;
+    return usesPointCoord();
 }
 
 bool ProgramD3DMetadata::usesViewScale() const
@@ -281,10 +268,7 @@ bool ProgramD3DMetadata::addsPointCoordToVertexShader() const
 
 bool ProgramD3DMetadata::usesTransformFeedbackGLPosition() const
 {
-    // gl_Position only needs to be outputted from the vertex shader if transform feedback is
-    // active. This isn't supported on D3D11 Feature Level 9_3, so we don't output gl_Position from
-    // the vertex shader in this case. This saves us 1 output vector.
-    return !(mRendererMajorShaderModel >= 4 && mShaderModelSuffix != "");
+    return true;
 }
 
 bool ProgramD3DMetadata::usesSystemValuePointSize() const
@@ -395,26 +379,8 @@ class ProgramD3D::GetGeometryExecutableTask : public GetExecutableTask
     }
 
   private:
-    const gl::Caps &mCaps;
+    const gl::Caps mCaps;
     gl::ProvokingVertexConvention mProvokingVertex;
-};
-
-class ProgramD3D::GetComputeExecutableTask : public GetExecutableTask
-{
-  public:
-    GetComputeExecutableTask(ProgramD3D *program, const SharedCompiledShaderStateD3D &shader)
-        : GetExecutableTask(program, shader)
-    {}
-    ~GetComputeExecutableTask() override = default;
-
-    void operator()() override
-    {
-        ANGLE_TRACE_EVENT0("gpu.angle", "GetComputeExecutableTask::run");
-
-        mExecutable->updateCachedImage2DBindLayoutFromShader(gl::ShaderType::Compute);
-        mResult = mExecutable->getComputeExecutableForImage2DBindLayout(
-            this, mProgram->mRenderer, &mShaderExecutable, &mInfoLog);
-    }
 };
 
 class ProgramD3D::LinkLoadTaskD3D : public d3d::Context, public LinkTask
@@ -509,25 +475,15 @@ void ProgramD3D::LinkTaskD3D::link(const gl::ProgramLinkedResources &resources,
         return;
     }
 
-    // Create the subtasks
-    if (mExecutable->hasShaderStage(gl::ShaderType::Compute))
-    {
-        linkSubTasksOut->push_back(std::make_shared<GetComputeExecutableTask>(
-            mProgram, mProgram->getAttachedShader(gl::ShaderType::Compute)));
-    }
-    else
-    {
-        // Geometry shaders are currently only used internally, so there is no corresponding shader
-        // object at the interface level. For now the geometry shader debug info is prepended to the
-        // vertex shader.
-        linkSubTasksOut->push_back(std::make_shared<GetVertexExecutableTask>(
-            mProgram, mProgram->getAttachedShader(gl::ShaderType::Vertex)));
-        linkSubTasksOut->push_back(std::make_shared<GetPixelExecutableTask>(
-            mProgram, mProgram->getAttachedShader(gl::ShaderType::Fragment)));
-        linkSubTasksOut->push_back(std::make_shared<GetGeometryExecutableTask>(
-            mProgram, mProgram->getAttachedShader(gl::ShaderType::Vertex), mCaps,
-            mProvokingVertex));
-    }
+    // Geometry shaders are currently only used internally, so there is no corresponding shader
+    // object at the interface level. For now the geometry shader debug info is prepended to the
+    // vertex shader.
+    linkSubTasksOut->push_back(std::make_shared<GetVertexExecutableTask>(
+        mProgram, mProgram->getAttachedShader(gl::ShaderType::Vertex)));
+    linkSubTasksOut->push_back(std::make_shared<GetPixelExecutableTask>(
+        mProgram, mProgram->getAttachedShader(gl::ShaderType::Fragment)));
+    linkSubTasksOut->push_back(std::make_shared<GetGeometryExecutableTask>(
+        mProgram, mProgram->getAttachedShader(gl::ShaderType::Vertex), mCaps, mProvokingVertex));
 }
 
 class ProgramD3D::LoadTaskD3D final : public LinkLoadTaskD3D
@@ -546,7 +502,7 @@ class ProgramD3D::LoadTaskD3D final : public LinkLoadTaskD3D
         ASSERT(linkSubTasksOut && linkSubTasksOut->empty());
         ASSERT(postLinkSubTasksOut && postLinkSubTasksOut->empty());
 
-        gl::BinaryInputStream stream(mStreamData.data(), mStreamData.size());
+        gl::BinaryInputStream stream(mStreamData);
         mResult = mExecutable->loadBinaryShaderExecutables(this, mProgram->mRenderer, &stream);
 
         return;
@@ -589,14 +545,14 @@ angle::Result ProgramD3D::load(const gl::Context *context,
     // Copy the remaining data from the stream locally so that the client can't modify it when
     // loading off thread.
     angle::MemoryBuffer streamData;
-    const size_t dataSize = stream->remainingSize();
-    if (!streamData.resize(dataSize))
+    angle::Span<const uint8_t> remaining = stream->remainingSpan();
+    if (!streamData.resize(remaining.size()))
     {
         mState.getExecutable().getInfoLog()
             << "Failed to copy program binary data to local buffer.";
         return angle::Result::Stop;
     }
-    memcpy(streamData.data(), stream->data() + stream->offset(), dataSize);
+    angle::SpanMemcpy(angle::Span(streamData), remaining);
 
     // Note: pretty much all the above can also be moved to the task
     *loadTaskOut = std::shared_ptr<LinkTask>(new LoadTaskD3D(this, std::move(streamData)));
@@ -653,36 +609,6 @@ angle::Result ProgramD3D::linkJobImpl(d3d::Context *context,
 {
     ProgramExecutableD3D *executableD3D = getExecutable();
 
-    const gl::SharedCompiledShaderState &computeShader =
-        mState.getAttachedShader(gl::ShaderType::Compute);
-    if (computeShader)
-    {
-        const gl::SharedCompiledShaderState &shader =
-            mState.getAttachedShader(gl::ShaderType::Compute);
-        executableD3D->mShaderHLSL[gl::ShaderType::Compute] = *shader->translatedSource;
-
-        executableD3D->mShaderSamplers[gl::ShaderType::Compute].resize(
-            caps.maxShaderTextureImageUnits[gl::ShaderType::Compute]);
-        executableD3D->mImages[gl::ShaderType::Compute].resize(caps.maxImageUnits);
-        executableD3D->mReadonlyImages[gl::ShaderType::Compute].resize(caps.maxImageUnits);
-
-        executableD3D->mShaderUniformsDirty.set(gl::ShaderType::Compute);
-
-        linkResources(resources);
-
-        for (const sh::ShaderVariable &uniform : computeShader->uniforms)
-        {
-            if (gl::IsImageType(uniform.type) && gl::IsImage2DType(uniform.type))
-            {
-                executableD3D->mImage2DUniforms[gl::ShaderType::Compute].push_back(uniform);
-            }
-        }
-
-        executableD3D->defineUniformsAndAssignRegisters(mRenderer, mState.getAttachedShaders());
-
-        return angle::Result::Continue;
-    }
-
     for (gl::ShaderType shaderType : gl::kAllGraphicsShaderTypes)
     {
         const gl::SharedCompiledShaderState &shader = mState.getAttachedShader(shaderType);
@@ -715,19 +641,6 @@ angle::Result ProgramD3D::linkJobImpl(d3d::Context *context,
         }
     }
 
-    if (mRenderer->getNativeLimitations().noFrontFacingSupport)
-    {
-        const SharedCompiledShaderStateD3D &fragmentShader =
-            executableD3D->mAttachedShaders[gl::ShaderType::Fragment];
-        if (fragmentShader && fragmentShader->usesFrontFacing)
-        {
-            mState.getExecutable().getInfoLog()
-                << "The current renderer doesn't support gl_FrontFacing";
-            // Fail compilation
-            ANGLE_CHECK_HR(context, false, "gl_FrontFacing not supported", E_NOTIMPL);
-        }
-    }
-
     const gl::VaryingPacking &varyingPacking =
         resources.varyingPacking.getOutputPacking(gl::ShaderType::Vertex);
 
@@ -736,7 +649,7 @@ angle::Result ProgramD3D::linkJobImpl(d3d::Context *context,
                                 mState.getAttachedShader(gl::ShaderType::Vertex)->shaderVersion);
     BuiltinVaryingsD3D builtins(metadata, varyingPacking);
 
-    DynamicHLSL::GenerateShaderLinkHLSL(mRenderer, caps, mState.getAttachedShaders(),
+    DynamicHLSL::GenerateShaderLinkHLSL(caps, mState.getAttachedShaders(),
                                         executableD3D->mAttachedShaders, metadata, varyingPacking,
                                         builtins, &executableD3D->mShaderHLSL);
 
@@ -755,19 +668,16 @@ angle::Result ProgramD3D::linkJobImpl(d3d::Context *context,
     executableD3D->mUsesFlatInterpolation =
         FindFlatInterpolationVarying(mState.getAttachedShaders());
 
-    if (mRenderer->getMajorShaderModel() >= 4)
-    {
-        executableD3D->mGeometryShaderPreamble = DynamicHLSL::GenerateGeometryShaderPreamble(
-            mRenderer, varyingPacking, builtins, executableD3D->mHasMultiviewEnabled,
-            metadata.canSelectViewInVertexShader());
-    }
+    executableD3D->mGeometryShaderPreamble = DynamicHLSL::GenerateGeometryShaderPreamble(
+        varyingPacking, builtins, executableD3D->mHasMultiviewEnabled,
+        metadata.canSelectViewInVertexShader());
 
     executableD3D->initAttribLocationsToD3DSemantic(
         mState.getAttachedShader(gl::ShaderType::Vertex));
 
     executableD3D->defineUniformsAndAssignRegisters(mRenderer, mState.getAttachedShaders());
 
-    executableD3D->gatherTransformFeedbackVaryings(mRenderer, varyingPacking,
+    executableD3D->gatherTransformFeedbackVaryings(varyingPacking,
                                                    mState.getTransformFeedbackVaryingNames(),
                                                    builtins[gl::ShaderType::Vertex]);
 
@@ -798,7 +708,6 @@ void ProgramD3D::linkResources(const gl::ProgramLinkedResources &resources)
     ProgramExecutableD3D *executableD3D = getExecutable();
 
     executableD3D->initializeUniformBlocks();
-    executableD3D->initializeShaderStorageBlocks(mState.getAttachedShaders());
 }
 
 }  // namespace rx

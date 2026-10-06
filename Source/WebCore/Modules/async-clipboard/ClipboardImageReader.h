@@ -49,8 +49,9 @@ private:
 
     bool shouldReadBuffer(const String&) const final;
     void readBuffer(const String& filename, const String& type, Ref<SharedBuffer>&&) final;
+    void readSVG(const SharedBuffer&);
 
-    RefPtr<Document> m_document;
+    const RefPtr<Document> m_document;
     String m_mimeType;
     RefPtr<Blob> m_result;
 };

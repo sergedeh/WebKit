@@ -126,6 +126,7 @@ std::unique_ptr<Entry> Entry::decodeStorageRecord(const Storage::Record& storage
         return nullptr;
     entry->m_response = WTF::move(*response);
     entry->m_response.setSource(WebCore::ResourceResponse::Source::DiskCache);
+    ASSERT(entry->m_response.isNull() || decodeStorageRecordResponseURL(storageEntry) == entry->m_response.url());
 
     std::optional<bool> hasVaryingRequestHeaders;
     decoder >> hasVaryingRequestHeaders;
@@ -171,6 +172,20 @@ std::unique_ptr<Entry> Entry::decodeStorageRecord(const Storage::Record& storage
     return entry;
 }
 
+std::optional<URL> Entry::decodeStorageRecordResponseURL(const Storage::Record& storageEntry)
+{
+    WTF::Persistence::Decoder decoder(storageEntry.header.span());
+
+    std::optional<bool> responseIsNull;
+    decoder >> responseIsNull;
+    if (!responseIsNull || *responseIsNull)
+        return std::nullopt;
+
+    std::optional<URL> url;
+    decoder >> url;
+    return url;
+}
+
 bool Entry::hasReachedPrevalentResourceAgeCap() const
 {
     return m_maxAgeCap && WebCore::computeCurrentAge(response(), timeStamp()) > m_maxAgeCap;
@@ -199,11 +214,6 @@ WebCore::FragmentedSharedBuffer* Entry::buffer() const
         initializeBufferFromStorageRecord();
 
     return m_buffer.get();
-}
-
-RefPtr<WebCore::FragmentedSharedBuffer> Entry::protectedBuffer() const
-{
-    return buffer();
 }
 
 #if ENABLE(SHAREABLE_RESOURCE)

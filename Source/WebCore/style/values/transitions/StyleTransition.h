@@ -62,10 +62,10 @@ struct Transition {
     Transition();
     Transition(SingleTransitionProperty&&);
 
-    const SingleTransitionProperty& property() const { return m_data->m_property; }
+    const SingleTransitionProperty& property() const LIFETIME_BOUND { return m_data->m_property; }
     SingleTransitionDelay delay() const { return m_data->m_delay; }
     SingleTransitionDuration duration() const { return m_data->m_duration; }
-    const EasingFunction& timingFunction() const { return m_data->m_timingFunction; }
+    const EasingFunction& timingFunction() const LIFETIME_BOUND { return m_data->m_timingFunction; }
     TransitionBehavior behavior() const { return static_cast<TransitionBehavior>(m_data->m_behavior); }
 
     static SingleTransitionProperty initialProperty() { return CSS::Keyword::All { }; }
@@ -85,9 +85,8 @@ struct Transition {
 
     // CoordinatedValueList interface.
 
-    static constexpr auto computedValueUsesUsedValues = false;
     static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyTransitionProperty> { };
-    static constexpr auto properties =  std::tuple { FOR_EACH_TRANSITION_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
+    static constexpr auto properties = std::tuple { FOR_EACH_TRANSITION_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
     static Transition clone(const Transition& other) { return Transition { Data::create(other.m_data) }; }
     bool isInitial() const { return m_data->m_property.isAll(); }
 
@@ -111,8 +110,8 @@ private:
     };
 
     // Needed by macros to access members.
-    Data& data() { return m_data.get(); }
-    const Data& data() const { return m_data.get(); }
+    Data& data() LIFETIME_BOUND { return m_data.get(); }
+    const Data& data() const LIFETIME_BOUND { return m_data.get(); }
 
     Transition(Ref<Data>&& data)
         : m_data { WTF::move(data) }

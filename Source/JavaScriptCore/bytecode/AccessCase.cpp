@@ -43,9 +43,9 @@
 #include "LLIntThunks.h"
 #include "LinkBuffer.h"
 #include "ModuleNamespaceAccessCase.h"
+#include "PropertyInlineCache.h"
 #include "ScopedArguments.h"
 #include "ScratchRegisterAllocator.h"
-#include "StructureStubInfo.h"
 #include "SuperSampler.h"
 #include "ThunkGenerators.h"
 
@@ -68,6 +68,7 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
 {
     switch (type) {
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case InHit:
@@ -79,6 +80,9 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case Replace:
     case ProxyObjectIn:
@@ -116,6 +120,22 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
     case IndexedResizableTypedArrayFloat64Load:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32Store:
     case IndexedDoubleStore:
     case IndexedContiguousStore:
@@ -197,38 +217,25 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
 
 RefPtr<AccessCase> AccessCase::createTransition(
     VM& vm, JSCell* owner, CacheableIdentifier identifier, PropertyOffset offset, Structure* oldStructure, Structure* newStructure,
-    const ObjectPropertyConditionSet& conditionSet, RefPtr<PolyProtoAccessChain>&& prototypeAccessChain, const StructureStubInfo& stubInfo)
+    const ObjectPropertyConditionSet& conditionSet, RefPtr<PolyProtoAccessChain>&& prototypeAccessChain, const PropertyInlineCache& propertyCache)
 {
     RELEASE_ASSERT(oldStructure == newStructure->previousID());
 
     // Skip optimizing the case where we need a realloc, if we don't have
     // enough registers to make it happen.
     if (oldStructure->outOfLineCapacity() != newStructure->outOfLineCapacity()) {
-        // In 64 bits jsc uses 1 register for value, and it uses 2 registers in 32 bits
-        size_t requiredRegisters = 1; // stubInfo.valueRegs()
-#if USE(JSVALUE32_64)
-        ++requiredRegisters;
-#endif
+        // 1 register for value.
+        size_t requiredRegisters = 1; // propertyCache.valueGPR()
 
-        // 1 register for the property in 64 bits
+        // 1 register for the property.
         ++requiredRegisters;
-#if USE(JSVALUE32_64)
-        // In 32 bits, jsc uses may use one extra register, if it is not a Cell
-        if (stubInfo.propertyRegs().tagGPR() != InvalidGPRReg)
-            ++requiredRegisters;
-#endif
 
-        // 1 register for the base in 64 bits
+        // 1 register for the base.
         ++requiredRegisters;
-#if USE(JSVALUE32_64)
-        // In 32 bits, jsc uses may use one extra register, if it is not a Cell
-        if (stubInfo.baseRegs().tagGPR() != InvalidGPRReg)
-            ++requiredRegisters;
-#endif
 
-        if (stubInfo.m_stubInfoGPR != InvalidGPRReg)
+        if (propertyCache.propertyCacheGPR() != InvalidGPRReg)
             ++requiredRegisters;
-        if (stubInfo.m_arrayProfileGPR != InvalidGPRReg)
+        if (propertyCache.arrayProfileGPR() != InvalidGPRReg)
             ++requiredRegisters;
 
         // One extra register for scratchGPR
@@ -244,6 +251,27 @@ RefPtr<AccessCase> AccessCase::createTransition(
     }
 
     return adoptRef(*new AccessCase(vm, owner, Transition, identifier, offset, newStructure, conditionSet, WTF::move(prototypeAccessChain)));
+}
+
+void AccessCase::convertToNonStringPrimitiveKeyAccessType(AccessType newType)
+{
+    switch (m_type) {
+    case Load:
+        ASSERT(newType == IndexedUndefinedKeyLoad || newType == IndexedNullKeyLoad || newType == IndexedTrueKeyLoad || newType == IndexedFalseKeyLoad);
+        break;
+    case Miss:
+        ASSERT(newType == IndexedUndefinedKeyMiss || newType == IndexedNullKeyMiss || newType == IndexedTrueKeyMiss || newType == IndexedFalseKeyMiss);
+        break;
+    case Replace:
+        ASSERT(newType == IndexedUndefinedKeyReplace || newType == IndexedNullKeyReplace || newType == IndexedTrueKeyReplace || newType == IndexedFalseKeyReplace);
+        break;
+    case Transition:
+        ASSERT(newType == IndexedUndefinedKeyTransition || newType == IndexedNullKeyTransition || newType == IndexedTrueKeyTransition || newType == IndexedFalseKeyTransition);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    m_type = newType;
 }
 
 Ref<AccessCase> AccessCase::createDelete(
@@ -273,28 +301,28 @@ Ref<AccessCase> AccessCase::createReplace(VM& vm, JSCell* owner, CacheableIdenti
     return result;
 }
 
-RefPtr<AccessCase> AccessCase::fromStructureStubInfo(
-    VM& vm, JSCell* owner, CacheableIdentifier identifier, StructureStubInfo& stubInfo)
+RefPtr<AccessCase> AccessCase::fromPropertyInlineCache(
+    VM& vm, JSCell* owner, CacheableIdentifier identifier, PropertyInlineCache& propertyCache)
 {
-    switch (stubInfo.cacheType()) {
+    switch (propertyCache.cacheType()) {
     case CacheType::GetByIdSelf:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
-        return ProxyableAccessCase::create(vm, owner, Load, identifier, stubInfo.byIdSelfOffset, stubInfo.inlineAccessBaseStructure());
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
+        return ProxyableAccessCase::create(vm, owner, Load, identifier, propertyCache.byIdSelfOffset, propertyCache.inlineAccessBaseStructure());
 
     case CacheType::PutByIdReplace:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
-        return AccessCase::createReplace(vm, owner, identifier, stubInfo.byIdSelfOffset, stubInfo.inlineAccessBaseStructure(), false);
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
+        return AccessCase::createReplace(vm, owner, identifier, propertyCache.byIdSelfOffset, propertyCache.inlineAccessBaseStructure(), false);
 
     case CacheType::InByIdSelf:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
-        return AccessCase::create(vm, owner, InHit, identifier, stubInfo.byIdSelfOffset, stubInfo.inlineAccessBaseStructure());
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
+        return AccessCase::create(vm, owner, InHit, identifier, propertyCache.byIdSelfOffset, propertyCache.inlineAccessBaseStructure());
 
     case CacheType::ArrayLength:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
         return AccessCase::create(vm, owner, AccessCase::ArrayLength, CacheableIdentifier::createFromImmortalIdentifier(vm.propertyNames->length.impl()));
 
     case CacheType::StringLength:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
         return AccessCase::create(vm, owner, AccessCase::StringLength, CacheableIdentifier::createFromImmortalIdentifier(vm.propertyNames->length.impl()));
 
     default:
@@ -314,6 +342,10 @@ JSObject* AccessCase::tryGetAlternateBaseImpl() const
     case AccessCase::IntrinsicGetter:
     case AccessCase::Load:
     case AccessCase::GetGetter:
+    case AccessCase::IndexedUndefinedKeyLoad:
+    case AccessCase::IndexedNullKeyLoad:
+    case AccessCase::IndexedTrueKeyLoad:
+    case AccessCase::IndexedFalseKeyLoad:
         if (!conditionSet().isEmpty())
             return conditionSet().slotBaseCondition().object();
         return nullptr;
@@ -332,12 +364,16 @@ bool AccessCase::guardedByStructureCheckSkippingConstantIdentifierCheck() const
 
     switch (m_type) {
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case ArrayLength:
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case ProxyObjectIn:
     case ProxyObjectLoad:
@@ -438,6 +474,22 @@ bool AccessCase::guardedByStructureCheckSkippingConstantIdentifierCheck() const
     case Replace:
     case IndexedNoIndexingMiss:
     case IndexedNoIndexingInMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case Transition:
     case GetGetter:
     case Getter:
@@ -461,6 +513,7 @@ bool AccessCase::requiresIdentifierNameMatch() const
     switch (m_type) {
     case Load:
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     // We don't currently have a by_val for these puts, but we do care about the identifier.
@@ -484,6 +537,9 @@ bool AccessCase::requiresIdentifierNameMatch() const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case ProxyObjectIn:
     case ProxyObjectLoad:
@@ -528,6 +584,22 @@ bool AccessCase::requiresIdentifierNameMatch() const
     case IndexedResizableTypedArrayFloat64Load:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32Store:
     case IndexedDoubleStore:
     case IndexedContiguousStore:
@@ -590,6 +662,7 @@ bool AccessCase::requiresInt32PropertyCheck() const
     switch (m_type) {
     case Load:
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case Transition:
@@ -612,6 +685,9 @@ bool AccessCase::requiresInt32PropertyCheck() const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case ProxyObjectIn:
     case ProxyObjectLoad:
@@ -627,6 +703,22 @@ bool AccessCase::requiresInt32PropertyCheck() const
     case IndexedMegamorphicIn:
     case IndexedMegamorphicLoad:
     case IndexedMegamorphicStore:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
         return false;
     case IndexedInt32Load:
     case IndexedDoubleLoad:
@@ -714,7 +806,7 @@ bool AccessCase::requiresInt32PropertyCheck() const
 }
 
 template<typename Functor>
-void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
+void AccessCase::forEachDependentCell(VM&, NOESCAPE const Functor& functor) const
 {
     m_conditionSet.forEachDependentCell(functor);
     if (m_structureID)
@@ -730,7 +822,9 @@ void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
         break;
     }
     case CustomValueGetter:
-    case CustomValueSetter: {
+    case CustomValueSetter:
+    case CustomAccessorGetter:
+    case CustomAccessorSetter: {
         auto& accessor = this->as<GetterSetterAccessCase>();
         if (accessor.customSlotBase())
             functor(accessor.customSlotBase());
@@ -755,10 +849,9 @@ void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
         if (as<InstanceOfAccessCase>().prototype())
             functor(as<InstanceOfAccessCase>().prototype());
         break;
-    case CustomAccessorGetter:
-    case CustomAccessorSetter:
     case Load:
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case Transition:
@@ -776,6 +869,9 @@ void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ProxyObjectIn:
     case ProxyObjectLoad:
     case ProxyObjectStore:
@@ -811,6 +907,22 @@ void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
     case IndexedResizableTypedArrayFloat64Load:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32Store:
     case IndexedDoubleStore:
     case IndexedContiguousStore:
@@ -875,6 +987,10 @@ bool AccessCase::doesCalls(VM&) const
     bool doesCalls = false;
     switch (type()) {
     case Transition:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyTransition:
         doesCalls = newStructure()->outOfLineCapacity() != structure()->outOfLineCapacity() && structure()->couldHaveIndexingHeader();
         break;
     case Getter:
@@ -891,6 +1007,7 @@ bool AccessCase::doesCalls(VM&) const
     case IndexedProxyObjectStore:
     case StoreMegamorphic:
     case IndexedMegamorphicStore:
+    case LoadMegamorphicGetter:
         doesCalls = true;
         break;
     case IntrinsicGetter: {
@@ -913,6 +1030,9 @@ bool AccessCase::doesCalls(VM&) const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case InstanceOfHit:
     case InstanceOfMiss:
@@ -947,6 +1067,14 @@ bool AccessCase::doesCalls(VM&) const
     case IndexedResizableTypedArrayFloat64Load:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
     case IndexedInt32Store:
     case IndexedDoubleStore:
     case IndexedContiguousStore:
@@ -1002,6 +1130,10 @@ bool AccessCase::doesCalls(VM&) const
         doesCalls = false;
         break;
     case Replace:
+    case IndexedUndefinedKeyReplace:
+    case IndexedNullKeyReplace:
+    case IndexedTrueKeyReplace:
+    case IndexedFalseKeyReplace:
         doesCalls = viaGlobalProxy();
         break;
     }
@@ -1055,6 +1187,7 @@ bool AccessCase::canReplace(const AccessCase& other) const
     
     switch (type()) {
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case IndexedMegamorphicLoad:
@@ -1068,6 +1201,9 @@ bool AccessCase::canReplace(const AccessCase& other) const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case IndexedScopedArgumentsLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
@@ -1198,6 +1334,22 @@ bool AccessCase::canReplace(const AccessCase& other) const
     case SetPrivateBrand:
     case IndexedNoIndexingMiss:
     case IndexedNoIndexingInMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
         if (other.type() != type())
             return false;
 
@@ -1247,7 +1399,7 @@ void AccessCase::dump(PrintStream& out) const
     out.print("}"_s);
 }
 
-bool AccessCase::visitWeak(VM& vm) const
+bool AccessCase::isStillLive(VM& vm) const
 {
     bool isValid = true;
     forEachDependentCell(vm, [&](JSCell* cell) {
@@ -1277,6 +1429,10 @@ void AccessCase::propagateTransitions(Visitor& visitor) const
     switch (m_type) {
     case Transition:
     case Delete:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyTransition:
         if (visitor.isMarked(m_structureID->previousID()))
             visitor.appendUnbarriered(m_structureID.get());
         break;
@@ -1298,10 +1454,11 @@ void AccessCase::visitAggregateImpl(Visitor& visitor) const
 DEFINE_VISIT_AGGREGATE_WITH_MODIFIER(AccessCase, const);
 
 template<typename Func>
-inline void AccessCase::runWithDowncast(const Func& func)
+inline void AccessCase::runWithDowncast(NOESCAPE const Func& func)
 {
     switch (m_type) {
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case Transition:
@@ -1315,6 +1472,9 @@ inline void AccessCase::runWithDowncast(const Func& func)
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case CheckPrivateBrand:
     case SetPrivateBrand:
     case IndexedMegamorphicLoad:
@@ -1372,6 +1532,22 @@ inline void AccessCase::runWithDowncast(const Func& func)
     case IndexedResizableTypedArrayFloat64Store:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32InHit:
     case IndexedDoubleInHit:
     case IndexedContiguousInHit:
@@ -1441,11 +1617,11 @@ inline void AccessCase::runWithDowncast(const Func& func)
 }
 
 #if ASSERT_ENABLED
-void AccessCase::checkConsistency(StructureStubInfo& stubInfo)
+void AccessCase::checkConsistency(PropertyInlineCache& propertyCache)
 {
     RELEASE_ASSERT(!(requiresInt32PropertyCheck() && requiresIdentifierNameMatch()));
 
-    if (hasConstantIdentifier(stubInfo.accessType)) {
+    if (hasConstantIdentifier(propertyCache.accessType)) {
         RELEASE_ASSERT(!requiresInt32PropertyCheck());
         RELEASE_ASSERT(requiresIdentifierNameMatch());
     }
@@ -1481,6 +1657,7 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
     switch (lhs.m_type) {
     case Load:
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case Transition:
@@ -1499,6 +1676,9 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case CheckPrivateBrand:
     case SetPrivateBrand:
     case IndexedMegamorphicLoad:
@@ -1556,6 +1736,22 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
     case IndexedResizableTypedArrayFloat64Store:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32InHit:
     case IndexedDoubleInHit:
     case IndexedContiguousInHit:

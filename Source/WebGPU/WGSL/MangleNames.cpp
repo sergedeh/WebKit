@@ -54,7 +54,7 @@ struct MangledName {
 
     String toString() const
     {
-        static const auto prefixes = std::to_array<ASCIILiteral>({
+        static const auto prefixes = WTF::toArray<ASCIILiteral>({
             "type"_s,
             "local"_s,
             "global"_s,
@@ -62,7 +62,7 @@ struct MangledName {
             "function"_s,
             "field"_s,
         });
-        return makeString(prefixes[WTF::enumToUnderlyingType(kind)], String::number(index));
+        return makeString(prefixes[std::to_underlying(kind)], String::number(index));
     }
 };
 
@@ -92,7 +92,7 @@ private:
     void introduceVariable(AST::Identifier&, MangledName::Kind);
     void readVariable(AST::Identifier&) const;
 
-    MangledName makeMangledName(const String&, MangledName::Kind);
+    MangledName NODELETE makeMangledName(const String&, MangledName::Kind);
 
     void visitVariableDeclaration(AST::Variable&, MangledName::Kind);
 
@@ -187,7 +187,7 @@ MangledName NameManglerVisitor::makeMangledName(const String& name, MangledName:
 {
     return MangledName {
         kind,
-        m_indexPerType[WTF::enumToUnderlyingType(kind)]++,
+        m_indexPerType[std::to_underlying(kind)]++,
         name
     };
 }

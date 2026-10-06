@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Alexey Proskuryakov
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,11 +41,13 @@
 #include "SharedBuffer.h"
 #include <CoreText/CoreText.h>
 #include <float.h>
+#include <pal/cf/CoreTextSoftLink.h>
 #include <pal/spi/cf/CoreTextSPI.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <unicode/uchar.h>
 #include <wtf/Assertions.h>
 #include <wtf/HexNumber.h>
+#include <wtf/MathExtras.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/cf/VectorCF.h>
@@ -54,13 +56,16 @@
 #include "MultiRepresentationHEICMetrics.h"
 #endif
 
-#include <pal/cf/CoreTextSoftLink.h>
-
 namespace WebCore {
 
 static inline bool caseInsensitiveCompare(CFStringRef a, CFStringRef b)
 {
     return a && CFStringCompare(a, b, kCFCompareCaseInsensitive) == kCFCompareEqualTo;
+}
+
+static bool fontHasEitherTable(CTFontRef ctFont, unsigned tableTag1, unsigned tableTag2)
+{
+    return CTFontHasTable(ctFont, tableTag1) || CTFontHasTable(ctFont, tableTag2);
 }
 
 static bool fontHasVerticalGlyphs(CTFontRef font)
@@ -79,22 +84,7 @@ bool fontFamilyShouldNotBeUsedForArabic(CFStringRef fontFamilyName)
     return (CFStringCompare(CFSTR("Times New Roman"), fontFamilyName, 0) == kCFCompareEqualTo)
         || (CFStringCompare(CFSTR("Arial"), fontFamilyName, 0) == kCFCompareEqualTo);
 }
-
-static const float kLineHeightAdjustment = 0.15f;
-
-static bool shouldUseAdjustment(CTFontRef font)
-{
-    RetainPtr<CFStringRef> familyName = adoptCF(CTFontCopyFamilyName(font));
-
-    if (!familyName || !CFStringGetLength(familyName.get()))
-        return false;
-
-    return caseInsensitiveCompare(familyName.get(), CFSTR("Times"))
-        || caseInsensitiveCompare(familyName.get(), CFSTR("Helvetica"))
-        || caseInsensitiveCompare(familyName.get(), CFSTR(".Helvetica NeueUI"));
-}
-
-#else
+#endif
 
 static bool needsAscentAdjustment(CFStringRef familyName)
 {
@@ -103,19 +93,12 @@ static bool needsAscentAdjustment(CFStringRef familyName)
         || caseInsensitiveCompare(familyName, CFSTR("Courier")));
 }
 
-#endif
-
 static bool isAhemFont(CFStringRef familyName)
 {
     return familyName && caseInsensitiveCompare(familyName, CFSTR("Ahem"));
 }
 
-bool fontHasEitherTable(CTFontRef ctFont, unsigned tableTag1, unsigned tableTag2)
-{
-    return CTFontHasTable(ctFont, tableTag1) || CTFontHasTable(ctFont, tableTag2);
-}
-
-void Font::platformInit()
+void FontBase::platformInit()
 {
     auto constexpr syntheticBoldScaleFactor = 36.0f;
     m_syntheticBoldOffset = m_platformData.syntheticBold() ? (m_platformData.size() / syntheticBoldScaleFactor) : 0.f;
@@ -146,7 +129,6 @@ void Font::platformInit()
     if (isAhemFont(familyName.get()))
         m_allowsAntialiasing = false;
 
-#if PLATFORM(MAC)
     // We need to adjust Times, Helvetica, and Courier to closely match the
     // vertical metrics of their Microsoft counterparts that are the de facto
     // web standard. The AppKit adjustment of 20% is too big and is
@@ -154,49 +136,35 @@ void Font::platformInit()
     // and add it to the ascent.
     if (origin() == Origin::Local && needsAscentAdjustment(familyName.get()))
         ascent += std::round((ascent + descent) * 0.15f);
-#endif
+
+    if (isAhemFont(familyName.get())) {
+        auto tolerance = [&] (auto a, auto b) {
+            auto toleranceInPixel = 0.01f;
+            return toleranceInPixel / std::max(std::abs(a), std::abs(b)) * 100.f;
+        };
+        auto roundedAscent = std::round(ascent);
+        if (WTF::areEssentiallyEqual(ascent, roundedAscent, tolerance(ascent, roundedAscent))) {
+            ascent = roundedAscent;
+            descent = std::round(descent);
+        }
+    }
 
     // Compute line spacing before the line metrics hacks are applied.
-#if !PLATFORM(IOS_FAMILY)
     float lineSpacing = std::lround(ascent) + std::lround(descent) + std::lround(lineGap);
-#endif
 
-#if PLATFORM(MAC)
     // Hack Hiragino line metrics to allow room for marked text underlines.
     // <rdar://problem/5386183>
     if (descent < 3 && lineGap >= 3 && familyName && CFStringHasPrefix(familyName.get(), CFSTR("Hiragino"))) {
         lineGap -= 3 - descent;
         descent = 3;
     }
-#endif
-    
+
     if (platformData().orientation() == FontOrientation::Vertical && !isTextOrientationFallback())
         m_hasVerticalGlyphs = fontHasVerticalGlyphs(ctFont.get());
 
 #if PLATFORM(IOS_FAMILY)
-    CGFloat adjustment = shouldUseAdjustment(ctFont.get()) ? ceil((ascent + descent) * kLineHeightAdjustment) : 0;
-
-    lineGap = ceilf(lineGap);
-    float lineSpacing = std::ceil(ascent) + adjustment + std::ceil(descent) + lineGap;
-    ascent = ceilf(ascent + adjustment);
-    descent = ceilf(descent);
-
     m_shouldNotBeUsedForArabic = fontFamilyShouldNotBeUsedForArabic(familyName.get());
 #endif
-
-    CGFloat xHeight = 0;
-    if (m_platformData.size()) {
-        if (platformData().orientation() == FontOrientation::Horizontal) {
-            // Measure the actual character "x", since it's possible for it to extend below the baseline, and we need the
-            // reported x-height to only include the portion of the glyph that is above the baseline.
-            Glyph xGlyph = glyphForCharacter('x');
-            if (xGlyph)
-                xHeight = -CGRectGetMinY(platformBoundsForGlyph(xGlyph));
-            else
-                xHeight = CTFontGetXHeight(ctFont.get());
-        } else
-            xHeight = verticalRightOrientationFont().fontMetrics().xHeight().value_or(0);
-    }
 
     if (CTFontGetSymbolicTraits(ctFont.get()) & kCTFontTraitColorGlyphs) {
         if (RetainPtr cfBitVector = adoptCF(CTFontCopyColorGlyphCoverage(ctFont.get())))
@@ -211,7 +179,6 @@ void Font::platformInit()
     m_fontMetrics.setDescent(descent);
     m_fontMetrics.setCapHeight(capHeight);
     m_fontMetrics.setLineGap(lineGap);
-    m_fontMetrics.setXHeight(xHeight);
     m_fontMetrics.setLineSpacing(lineSpacing);
     m_fontMetrics.setUnderlinePosition(-CTFontGetUnderlinePosition(ctFont.get()));
     m_fontMetrics.setUnderlineThickness(CTFontGetUnderlineThickness(ctFont.get()));
@@ -243,6 +210,27 @@ void Font::platformCharWidthInit()
 
     // Fallback to a cross-platform estimate, which will populate these values if they are non-positive.
     initCharWidths();
+}
+
+void Font::platformCharHeightInit()
+{
+    CGFloat xHeight = 0;
+    if (m_platformData.size()) {
+        if (platformData().orientation() == FontOrientation::Horizontal) {
+            // Measure the actual character "x", since it's possible for it to extend below the baseline, and we need the
+            // reported x-height to only include the portion of the glyph that is above the baseline.
+            Glyph xGlyph = glyphForCharacter('x');
+            if (xGlyph)
+                xHeight = -CGRectGetMinY(platformBoundsForGlyph(xGlyph));
+            else {
+                RetainPtr ctFont = this->ctFont();
+                xHeight = CTFontGetXHeight(ctFont);
+            }
+        } else
+            xHeight = verticalRightOrientationFont().fontMetrics().xHeight().value_or(0);
+    }
+
+    m_fontMetrics.setXHeight(xHeight);
 }
 
 bool Font::variantCapsSupportedForSynthesis(FontVariantCaps fontVariantCaps) const
@@ -305,14 +293,45 @@ static void injectTrueTypeCoverage(int type, int selector, CTFontRef font, BitVe
     unionBitVectors(result, source.get());
 }
 
-bool Font::supportsOpenTypeAlternateHalfWidths() const
+static bool supportsOpenTypeFeature(CTFontRef font, CFStringRef featureTag)
+{
+    RetainPtr<CFArrayRef> features = adoptCF(CTFontCopyFeatures(font));
+    CFIndex featureCount = CFArrayGetCount(features.get());
+    for (CFIndex featureIndex = 0; featureIndex < featureCount; ++featureIndex) {
+        RetainPtr feature = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(features.get(), featureIndex));
+        RetainPtr featureTypeIdentifier = static_cast<CFNumberRef>(CFDictionaryGetValue(feature.get(), kCTFontFeatureTypeIdentifierKey));
+        if (!featureTypeIdentifier)
+            continue;
+
+        int rawFeatureTypeIdentifier;
+        CFNumberGetValue(featureTypeIdentifier.get(), kCFNumberIntType, &rawFeatureTypeIdentifier);
+        if (rawFeatureTypeIdentifier != kTextSpacingType)
+            continue;
+
+        RetainPtr featureSelectors = static_cast<CFArrayRef>(CFDictionaryGetValue(feature.get(), kCTFontFeatureTypeSelectorsKey));
+        if (!featureSelectors)
+            continue;
+        auto selectorsCount = CFArrayGetCount(featureSelectors.get());
+        for (CFIndex selectorIndex = 0; selectorIndex < selectorsCount; ++selectorIndex) {
+            RetainPtr featureSelector = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(featureSelectors.get(), selectorIndex));
+            RetainPtr openTypeTag = static_cast<CFStringRef>(CFDictionaryGetValue(featureSelector.get(), kCTFontOpenTypeFeatureTag));
+            if (!openTypeTag)
+                continue;
+            if (CFStringCompare(openTypeTag.get(), featureTag, 0) == kCFCompareEqualTo)
+                return true;
+        }
+    }
+    return false;
+}
+
+bool FontBase::supportsOpenTypeAlternateHalfWidths() const
 {
     if (m_supportsOpenTypeAlternateHalfWidths == SupportsFeature::Unknown)
-        m_supportsOpenTypeAlternateHalfWidths = supportsOpenTypeFeature(protectedCTFont().get(), CFSTR("halt")) ? SupportsFeature::Yes : SupportsFeature::No;
+        m_supportsOpenTypeAlternateHalfWidths = supportsOpenTypeFeature(protect(ctFont()).get(), CFSTR("halt")) ? SupportsFeature::Yes : SupportsFeature::No;
     return m_supportsOpenTypeAlternateHalfWidths == SupportsFeature::Yes;
 }
 
-bool Font::supportsSmallCaps() const
+bool FontBase::supportsSmallCaps() const
 {
     if (m_supportsSmallCaps == SupportsFeature::Unknown) {
         BitVector glyphsSupportedBySmallCaps;
@@ -324,7 +343,7 @@ bool Font::supportsSmallCaps() const
     return m_supportsSmallCaps == SupportsFeature::Yes;
 }
 
-bool Font::supportsAllSmallCaps() const
+bool FontBase::supportsAllSmallCaps() const
 {
     if (m_supportsAllSmallCaps == SupportsFeature::Unknown) {
         BitVector glyphsSupportedByAllSmallCaps;
@@ -338,7 +357,7 @@ bool Font::supportsAllSmallCaps() const
     return m_supportsAllSmallCaps == SupportsFeature::Yes;
 }
 
-bool Font::supportsPetiteCaps() const
+bool FontBase::supportsPetiteCaps() const
 {
     if (m_supportsPetiteCaps == SupportsFeature::Unknown) {
         BitVector glyphsSupportedByPetiteCaps;
@@ -350,7 +369,7 @@ bool Font::supportsPetiteCaps() const
     return m_supportsPetiteCaps == SupportsFeature::Yes;
 }
 
-bool Font::supportsAllPetiteCaps() const
+bool FontBase::supportsAllPetiteCaps() const
 {
     if (m_supportsAllPetiteCaps == SupportsFeature::Unknown) {
         BitVector glyphsSupportedByAllPetiteCaps;
@@ -364,7 +383,7 @@ bool Font::supportsAllPetiteCaps() const
     return m_supportsAllPetiteCaps == SupportsFeature::Yes;
 }
 
-static RefPtr<Font> createDerivativeFont(CTFontRef font, float size, FontOrientation orientation, CTFontSymbolicTraits fontTraits, bool syntheticBold, bool syntheticItalic, FontWidthVariant fontWidthVariant, TextRenderingMode textRenderingMode, const FontCustomPlatformData* customPlatformData)
+static RefPtr<Font> createDerivativeFont(CTFontRef font, float size, FontOrientation orientation, CTFontSymbolicTraits fontTraits, bool syntheticBold, bool syntheticItalic, FontWidthVariant fontWidthVariant, TextRenderingMode textRenderingMode, const FontCustomPlatformData* customPlatformData, const FontMetricsOverrides& metricsOverrides)
 {
     if (!font)
         return nullptr;
@@ -378,7 +397,7 @@ static RefPtr<Font> createDerivativeFont(CTFontRef font, float size, FontOrienta
 
     bool usedSyntheticBold = (fontTraits & kCTFontBoldTrait) && !(scaledFontTraits & kCTFontTraitBold);
     bool usedSyntheticOblique = (fontTraits & kCTFontItalicTrait) && !(scaledFontTraits & kCTFontTraitItalic);
-    FontPlatformData scaledFontData(font, size, usedSyntheticBold, usedSyntheticOblique, orientation, fontWidthVariant, textRenderingMode, customPlatformData);
+    FontPlatformData scaledFontData(font, size, usedSyntheticBold, usedSyntheticOblique, orientation, fontWidthVariant, textRenderingMode, metricsOverrides, customPlatformData);
 
     return Font::create(scaledFontData);
 }
@@ -519,7 +538,7 @@ RefPtr<Font> Font::createFontWithoutSynthesizableFeatures() const
     RetainPtr ctFont = this->ctFont();
     CTFontSymbolicTraits fontTraits = CTFontGetSymbolicTraits(ctFont.get());
     RetainPtr newCTFont = createCTFontWithoutSynthesizableFeatures(ctFont.get());
-    return createDerivativeFont(newCTFont.get(), size, m_platformData.orientation(), fontTraits, m_platformData.syntheticBold(), m_platformData.syntheticOblique(), m_platformData.widthVariant(), m_platformData.textRenderingMode(), m_platformData.protectedCustomPlatformData().get());
+    return createDerivativeFont(newCTFont.get(), size, m_platformData.orientation(), fontTraits, m_platformData.syntheticBold(), m_platformData.syntheticOblique(), m_platformData.widthVariant(), m_platformData.textRenderingMode(), protect(m_platformData.customPlatformData()).get(), m_platformData.metricsOverrides());
 }
 
 RefPtr<Font> Font::platformCreateScaledFont(const FontDescription&, float scaleFactor) const
@@ -530,38 +549,7 @@ RefPtr<Font> Font::platformCreateScaledFont(const FontDescription&, float scaleF
     RetainPtr<CTFontDescriptorRef> fontDescriptor = adoptCF(CTFontCopyFontDescriptor(ctFont.get()));
     RetainPtr<CTFontRef> scaledFont = adoptCF(CTFontCreateWithFontDescriptor(fontDescriptor.get(), size, nullptr));
 
-    return createDerivativeFont(scaledFont.get(), size, m_platformData.orientation(), fontTraits, m_platformData.syntheticBold(), m_platformData.syntheticOblique(), m_platformData.widthVariant(), m_platformData.textRenderingMode(), m_platformData.protectedCustomPlatformData().get());
-}
-
-bool supportsOpenTypeFeature(CTFontRef font, CFStringRef featureTag)
-{
-    RetainPtr<CFArrayRef> features = adoptCF(CTFontCopyFeatures(font));
-    CFIndex featureCount = CFArrayGetCount(features.get());
-    for (CFIndex featureIndex = 0; featureIndex < featureCount; ++featureIndex) {
-        RetainPtr feature = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(features.get(), featureIndex));
-        RetainPtr featureTypeIdentifier = static_cast<CFNumberRef>(CFDictionaryGetValue(feature.get(), kCTFontFeatureTypeIdentifierKey));
-        if (!featureTypeIdentifier)
-            continue;
-
-        int rawFeatureTypeIdentifier;
-        CFNumberGetValue(featureTypeIdentifier.get(), kCFNumberIntType, &rawFeatureTypeIdentifier);
-        if (rawFeatureTypeIdentifier != kTextSpacingType)
-            continue;
-
-        RetainPtr featureSelectors = static_cast<CFArrayRef>(CFDictionaryGetValue(feature.get(), kCTFontFeatureTypeSelectorsKey));
-        if (!featureSelectors)
-            continue;
-        auto selectorsCount = CFArrayGetCount(featureSelectors.get());
-        for (CFIndex selectorIndex = 0; selectorIndex < selectorsCount; ++selectorIndex) {
-            RetainPtr featureSelector = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(featureSelectors.get(), selectorIndex));
-            RetainPtr openTypeTag = static_cast<CFStringRef>(CFDictionaryGetValue(featureSelector.get(), kCTFontOpenTypeFeatureTag));
-            if (!openTypeTag)
-                continue;
-            if (CFStringCompare(openTypeTag.get(), featureTag, 0) == kCFCompareEqualTo)
-                return true;
-        }
-    }
-    return false;
+    return createDerivativeFont(scaledFont.get(), size, m_platformData.orientation(), fontTraits, m_platformData.syntheticBold(), m_platformData.syntheticOblique(), m_platformData.widthVariant(), m_platformData.textRenderingMode(), protect(m_platformData.customPlatformData()).get(), m_platformData.metricsOverrides());
 }
 
 RefPtr<Font> Font::platformCreateHalfWidthFont() const
@@ -587,7 +575,7 @@ RefPtr<Font> Font::platformCreateHalfWidthFont() const
     auto attributesDescriptor = adoptCF(CTFontDescriptorCreateWithAttributes(attributes.get()));
     auto halfWidthFont = adoptCF(CTFontCreateCopyWithAttributes(ctFont.get(), size, nullptr, attributesDescriptor.get()));
 
-    return createDerivativeFont(halfWidthFont.get(), size, m_platformData.orientation(), fontTraits, m_platformData.syntheticBold(), m_platformData.syntheticOblique(), m_platformData.widthVariant(), m_platformData.textRenderingMode(), m_platformData.protectedCustomPlatformData().get());
+    return createDerivativeFont(halfWidthFont.get(), size, m_platformData.orientation(), fontTraits, m_platformData.syntheticBold(), m_platformData.syntheticOblique(), m_platformData.widthVariant(), m_platformData.textRenderingMode(), protect(m_platformData.customPlatformData()).get(), m_platformData.metricsOverrides());
 }
 
 float Font::platformWidthForGlyph(Glyph glyph) const
@@ -597,7 +585,7 @@ float Font::platformWidthForGlyph(Glyph glyph) const
     if (platformData().size()) {
         bool horizontal = platformData().orientation() == FontOrientation::Horizontal;
         CTFontOrientation orientation = horizontal || m_isBrokenIdeographFallback ? kCTFontOrientationHorizontal : kCTFontOrientationVertical;
-        CTFontGetAdvancesForGlyphs(protectedCTFont().get(), orientation, &glyph, &advance, 1);
+        CTFontGetAdvancesForGlyphs(protect(ctFont()).get(), orientation, &glyph, &advance, 1);
     }
     return advance.width;
 }
@@ -605,6 +593,9 @@ float Font::platformWidthForGlyph(Glyph glyph) const
 GlyphBufferAdvance Font::applyTransforms(GlyphBuffer& glyphBuffer, unsigned beginningGlyphIndex, unsigned beginningStringIndex, bool enableKerning, bool requiresShaping, const AtomString& locale, StringView text, TextDirection textDirection) const
 {
     UNUSED_PARAM(requiresShaping);
+
+    if (!platformData().size())
+        return makeGlyphBufferAdvance();
 
     auto handler = ^(CFRange range, CGGlyph** newGlyphsPointer, CGSize** newAdvancesPointer, CGPoint** newOffsetsPointer, CFIndex** newIndicesPointer)
     {
@@ -672,7 +663,7 @@ GlyphBufferAdvance Font::applyTransforms(GlyphBuffer& glyphBuffer, unsigned begi
     );
 
     auto initialAdvance = CTFontShapeGlyphs(
-        protectedCTFont().get(),
+        ctFont.get(),
         glyphBuffer.glyphs(beginningGlyphIndex).data(),
         glyphBuffer.advances(beginningGlyphIndex).data(),
         glyphBuffer.origins(beginningGlyphIndex).data(),
@@ -773,7 +764,7 @@ FloatRect Font::platformBoundsForGlyph(Glyph glyph) const
 {
     FloatRect boundingBox;
     CGRect ignoredRect = { };
-    boundingBox = CTFontGetBoundingRectsForGlyphs(protectedCTFont().get(), platformData().orientation() == FontOrientation::Vertical ? kCTFontOrientationVertical : kCTFontOrientationHorizontal, &glyph, &ignoredRect, 1);
+    boundingBox = CTFontGetBoundingRectsForGlyphs(protect(ctFont()).get(), platformData().orientation() == FontOrientation::Vertical ? kCTFontOrientationVertical : kCTFontOrientationHorizontal, &glyph, &ignoredRect, 1);
     boundingBox.setY(-boundingBox.maxY());
     boundingBox.setWidth(boundingBox.width() + m_syntheticBoldOffset);
 
@@ -783,7 +774,7 @@ FloatRect Font::platformBoundsForGlyph(Glyph glyph) const
 Vector<FloatRect, Font::inlineGlyphRunCapacity> Font::platformBoundsForGlyphs(const Vector<Glyph, inlineGlyphRunCapacity>& glyphs) const
 {
     Vector<CGRect, inlineGlyphRunCapacity> rectsForGlyphs(glyphs.size());
-    CTFontGetBoundingRectsForGlyphs(protectedCTFont().get(), platformData().orientation() == FontOrientation::Vertical ? kCTFontOrientationVertical : kCTFontOrientationHorizontal, glyphs.span().data(), rectsForGlyphs.mutableSpan().data(), rectsForGlyphs.size());
+    CTFontGetBoundingRectsForGlyphs(protect(ctFont()).get(), platformData().orientation() == FontOrientation::Vertical ? kCTFontOrientationVertical : kCTFontOrientationHorizontal, glyphs.span().data(), rectsForGlyphs.mutableSpan().data(), rectsForGlyphs.size());
 
     return rectsForGlyphs.map<Vector<FloatRect, inlineGlyphRunCapacity>>([&](const auto& rect) -> auto {
         FloatRect boundingBox(rect);
@@ -795,7 +786,7 @@ Vector<FloatRect, Font::inlineGlyphRunCapacity> Font::platformBoundsForGlyphs(co
 
 Path Font::platformPathForGlyph(Glyph glyph) const
 {
-    auto result = adoptCF(CTFontCreatePathForGlyph(protectedCTFont().get(), glyph, nullptr));
+    auto result = adoptCF(CTFontCreatePathForGlyph(protect(ctFont()).get(), glyph, nullptr));
     if (!result)
         return { };
 
@@ -820,20 +811,20 @@ bool Font::platformSupportsCodePoint(char32_t character, std::optional<char32_t>
     std::array<CGGlyph, 2> glyphs;
     CFIndex count = 0;
     U16_APPEND_UNSAFE(codeUnits, count, character);
-    return CTFontGetGlyphsForCharacters(protectedCTFont().get(), codeUnits.data(), glyphs.data(), count);
+    return CTFontGetGlyphsForCharacters(protect(ctFont()).get(), codeUnits.data(), glyphs.data(), count);
 }
 
 static bool hasGlyphsForCharacterRange(CTFontRef font, UniChar firstCharacter, UniChar lastCharacter, bool expectValidGlyphsForAllCharacters)
 {
     const unsigned numberOfCharacters = lastCharacter - firstCharacter + 1;
-    Vector<CGGlyph> glyphs(numberOfCharacters, 0);
+    Vector<CGGlyph> glyphs(FillWith { }, numberOfCharacters, 0);
     CTFontGetGlyphsForCharacterRange(font, glyphs.begin(), CFRangeMake(firstCharacter, numberOfCharacters));
     glyphs.removeAll(0);
 
     if (glyphs.isEmpty())
         return false;
 
-    Vector<CGRect> boundingRects(glyphs.size(), CGRectZero);
+    Vector<CGRect> boundingRects(FillWith { }, glyphs.size(), CGRectZero);
     CTFontGetBoundingRectsForGlyphs(font, kCTFontOrientationDefault, glyphs.begin(), boundingRects.begin(), glyphs.size());
 
     unsigned validGlyphsCount = 0;
@@ -870,10 +861,10 @@ bool Font::isProbablyOnlyUsedToRenderIcons() const
     return !hasGlyphsForCharacterRange(platformFont.get(), ' ', '~', false) && !hasGlyphsForCharacterRange(platformFont.get(), 0x0600, 0x06FF, true);
 }
 
-const PAL::OTSVGTable& Font::otSVGTable() const
+const PAL::OTSVGTable& FontBase::otSVGTable() const
 {
     if (!m_otSVGTable) {
-        if (auto tableData = adoptCF(CTFontCopyTable(protectedCTFont().get(), kCTFontTableSVG, kCTFontTableOptionNoOptions)))
+        if (auto tableData = adoptCF(CTFontCopyTable(protect(ctFont()).get(), kCTFontTableSVG, kCTFontTableOptionNoOptions)))
             m_otSVGTable = PAL::OTSVGTable(tableData.get(), fontMetrics().unitsPerEm(), platformData().size());
         else
             m_otSVGTable = {{ }};
@@ -891,12 +882,12 @@ Font::ComplexColorFormatGlyphs Font::ComplexColorFormatGlyphs::createWithRelevan
     return { true, glyphCount };
 }
 
-bool Font::ComplexColorFormatGlyphs::hasValueFor(Glyph glyph) const
+bool NODELETE Font::ComplexColorFormatGlyphs::hasValueFor(Glyph glyph) const
 {
     return m_bits.contains(bitForInitialized(glyph));
 }
 
-bool Font::ComplexColorFormatGlyphs::get(Glyph glyph) const
+bool NODELETE Font::ComplexColorFormatGlyphs::get(Glyph glyph) const
 {
     ASSERT(hasValueFor(glyph));
     return m_bits.contains(bitForValue(glyph));
@@ -911,36 +902,41 @@ void Font::ComplexColorFormatGlyphs::set(Glyph glyph, bool value)
         m_bits.set(bitForValue(glyph));
 }
 
-bool Font::hasComplexColorFormatTables() const
+bool FontBase::hasComplexColorFormatTables() const
 {
     if (otSVGTable().table)
         return true;
 
 #if HAVE(CORE_TEXT_SBIX_IMAGE_SIZE_FUNCTIONS)
-    if (auto sbixTableData = adoptCF(CTFontCopyTable(protectedCTFont().get(), kCTFontTableSbix, kCTFontTableOptionNoOptions)))
+    if (auto sbixTableData = adoptCF(CTFontCopyTable(protect(ctFont()).get(), kCTFontTableSbix, kCTFontTableOptionNoOptions)))
         return true;
 #endif
 
     return false;
 }
 
-Font::ComplexColorFormatGlyphs& Font::glyphsWithComplexColorFormat() const
+Font::ComplexColorFormatGlyphs& FontBase::glyphsWithComplexColorFormat() const
 {
     if (!m_glyphsWithComplexColorFormat) {
         if (hasComplexColorFormatTables()) {
-            CFIndex glyphCount = CTFontGetGlyphCount(protectedCTFont().get());
+            CFIndex glyphCount = CTFontGetGlyphCount(protect(ctFont()).get());
             if (glyphCount >= 0) {
                 m_glyphsWithComplexColorFormat = ComplexColorFormatGlyphs::createWithRelevantTablesAndGlyphCount(glyphCount);
                 return m_glyphsWithComplexColorFormat.value();
             }
         }
+        m_glyphsWithComplexColorFormat = ComplexColorFormatGlyphs::createWithNoRelevantTables();
     }
-    m_glyphsWithComplexColorFormat = ComplexColorFormatGlyphs::createWithNoRelevantTables();
     return m_glyphsWithComplexColorFormat.value();
 }
 
-bool Font::glyphHasComplexColorFormat(Glyph glyphID) const
+bool FontBase::glyphHasComplexColorFormat(Glyph glyphID) const
 {
+#if HAVE(CORE_TEXT_GLYPHHASCOMPLEXCOLOR_FUNCTION)
+    if (PAL::canLoad_CoreText_CTFontHasComplexColorFormatForGlyph())
+        return PAL::softLink_CoreText_CTFontHasComplexColorFormatForGlyph(protect(ctFont()).get(), glyphID);
+#endif
+
     if (auto svgTable = otSVGTable().table) {
         if (PAL::softLinkOTSVGOTSVGTableGetDocumentIndexForGlyph(svgTable, glyphID) != kCFNotFound)
             return true;
@@ -948,14 +944,14 @@ bool Font::glyphHasComplexColorFormat(Glyph glyphID) const
 
 #if HAVE(CORE_TEXT_SBIX_IMAGE_SIZE_FUNCTIONS)
     // There's no function to directly look up the sbix table, so use the fact that this one returns a non-zero value iff there's an sbix entry.
-    if (CTFontGetSbixImageSizeForGlyphAndContentsScale(protectedCTFont().get(), glyphID, 0))
+    if (CTFontGetSbixImageSizeForGlyphAndContentsScale(protect(ctFont()).get(), glyphID, 0))
         return true;
 #endif
 
     return false;
 }
 
-std::optional<BitVector> Font::findOTSVGGlyphs(std::span<const GlyphBufferGlyph> glyphs) const
+std::optional<BitVector> FontBase::findOTSVGGlyphs(std::span<const GlyphBufferGlyph> glyphs) const
 {
     auto table = otSVGTable().table;
     if (!table)
@@ -972,7 +968,7 @@ std::optional<BitVector> Font::findOTSVGGlyphs(std::span<const GlyphBufferGlyph>
     return result;
 }
 
-bool Font::hasAnyComplexColorFormatGlyphs(std::span<const GlyphBufferGlyph> glyphs) const
+bool FontBase::hasAnyComplexColorFormatGlyphs(std::span<const GlyphBufferGlyph> glyphs) const
 {
     auto& complexGlyphs = glyphsWithComplexColorFormat();
     if (!complexGlyphs.hasRelevantTables())
@@ -1009,7 +1005,7 @@ std::optional<Ref<Font>> Font::fromIPCData(IPCFontData&& data)
 
             RetainPtr font = adoptCF(CTFontCreateWithFontDescriptor(fontDescriptor.get(), creationData.metadata.pointSize, nullptr));
 
-            return Font::create(FontPlatformData(creationData.metadata.pointSize, FontOrientation(creationData.metadata.orientation), FontWidthVariant(creationData.metadata.widthVariant), TextRenderingMode(creationData.metadata.textRenderingMode), creationData.metadata.syntheticBold, creationData.metadata.syntheticOblique, WTF::move(font), WTF::move(customPlatformData)));
+            return Font::create(FontPlatformData(creationData.metadata, WTF::move(font), WTF::move(customPlatformData)));
         }
     );
 }
@@ -1020,15 +1016,6 @@ std::optional<InstalledFont> Font::toSerializableInstalledFont() const
     if (!ctFont || m_platformData.creationData())
         return std::nullopt;
 
-    FontMetadata fontData = {
-        CTFontGetSize(ctFont.get()),
-        platformData().orientation(),
-        platformData().widthVariant(),
-        platformData().textRenderingMode(),
-        platformData().syntheticBold(),
-        platformData().syntheticOblique()
-    };
-
     SystemUIFontType fontType = CTFontGetUIFontType(ctFont.get());
     if (fontType != SystemUIFontTypeNone) {
         return InstalledFont {
@@ -1036,7 +1023,7 @@ std::optional<InstalledFont> Font::toSerializableInstalledFont() const
                 fontType,
                 adoptCF(checked_cf_cast<CFStringRef>(CTFontCopyAttribute(ctFont.get(), kCTFontDescriptorLanguageAttribute))).get()
             },
-            fontData
+            platformData().metadata()
         };
     }
 
@@ -1048,7 +1035,7 @@ std::optional<InstalledFont> Font::toSerializableInstalledFont() const
             CTFontDescriptorGetOptions(fontDescriptor.get()),
             FontPlatformSerializedAttributes::fromCF(attributes.get())
         },
-        fontData
+        platformData().metadata()
     };
 }
 
@@ -1063,21 +1050,12 @@ IPCFontData Font::toSerializableFont() const
     RetainPtr attributes = adoptCF(CTFontDescriptorCopyAttributes(fontDescriptor.get()));
 
     const auto& data = m_platformData.creationData();
-    FontMetadata fontData = {
-        CTFontGetSize(font.get()),
-        m_platformData.orientation(),
-        m_platformData.widthVariant(),
-        m_platformData.textRenderingMode(),
-        m_platformData.syntheticBold(),
-        m_platformData.syntheticOblique()
-    };
-
-    return { CustomFontCreationData { fontData, { data->fontFaceData->span() }, FontPlatformSerializedAttributes::fromCF(attributes.get()), data->itemInCollection } };
+    return { CustomFontCreationData { platformData().metadata(), { data->fontFaceData->span() }, FontPlatformSerializedAttributes::fromCF(attributes.get()), data->itemInCollection } };
 }
 
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
 
-MultiRepresentationHEICMetrics Font::metricsForMultiRepresentationHEIC() const
+MultiRepresentationHEICMetrics FontBase::metricsForMultiRepresentationHEIC() const
 {
     CGRect bounds = CTFontGetTypographicBoundsForAdaptiveImageProvider(ctFont(), nullptr);
 

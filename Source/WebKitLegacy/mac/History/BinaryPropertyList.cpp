@@ -59,11 +59,11 @@ public:
     IntegerArray() : m_integers(0), m_size(0) { }
     IntegerArray(const int* integers, size_t size) : m_integers(integers), m_size(size) { ASSERT(integers); ASSERT(size); }
 
-    bool isDeletedValue() const { return HashTraits<size_t>::isDeletedValue(m_size); }
+    bool NODELETE isDeletedValue() const { return HashTraits<size_t>::isDeletedValue(m_size); }
 
     using value_type = const int; // For std::span.
-    const int* data() const { ASSERT(!isDeletedValue()); return m_integers; }
-    size_t size() const { ASSERT(!isDeletedValue()); return m_size; }
+    const int* NODELETE data() const { ASSERT(!isDeletedValue()); return m_integers; }
+    size_t NODELETE size() const { ASSERT(!isDeletedValue()); return m_size; }
 
 private:
     friend struct IntegerArrayHashTraits;
@@ -73,24 +73,24 @@ private:
     size_t m_size;
 };
 
-inline bool operator==(const IntegerArray& a, const IntegerArray& b)
+inline bool NODELETE operator==(const IntegerArray& a, const IntegerArray& b)
 {
     return a.m_integers == b.m_integers &&  a.m_size == b.m_size;
 }
 
-inline void add(Hasher& hasher, const IntegerArray& array)
+inline void NODELETE add(Hasher& hasher, const IntegerArray& array)
 {
     add(hasher, std::span(array.data(), array.size()));
 }
 
 struct IntegerArrayHashTraits : HashTraits<IntegerArray> {
-    static void constructDeletedValue(IntegerArray& slot) { HashTraits<size_t>::constructDeletedValue(slot.m_size); }
-    static bool isDeletedValue(const IntegerArray& slot) { return HashTraits<size_t>::isDeletedValue(slot.m_size); }
+    static void NODELETE constructDeletedValue(IntegerArray& slot) { HashTraits<size_t>::constructDeletedValue(slot.m_size); }
+    static bool NODELETE isDeletedValue(const IntegerArray& slot) { return HashTraits<size_t>::isDeletedValue(slot.m_size); }
 };
 
 struct IntegerArrayHash {
-    static unsigned hash(const IntegerArray& array) { return computeHash(array); }
-    static bool equal(const IntegerArray&, const IntegerArray&);
+    static unsigned NODELETE hash(const IntegerArray& array) { return computeHash(array); }
+    static bool NODELETE equal(const IntegerArray&, const IntegerArray&);
     static const bool safeToCompareToEmptyOrDeleted = true;
 };
 
@@ -113,15 +113,15 @@ class BinaryPropertyListPlan : private BinaryPropertyListObjectStream {
 public:
     BinaryPropertyListPlan(BinaryPropertyListWriter&);
 
-    ObjectReference booleanTrueObjectReference() const;
+    ObjectReference NODELETE booleanTrueObjectReference() const;
     ObjectReference integerObjectReference(int) const;
     ObjectReference stringObjectReference(const String&) const;
     ObjectReference integerArrayObjectReference(const int*, size_t) const;
 
-    ObjectReference objectCount() const { return m_currentObjectReference; }
+    ObjectReference NODELETE objectCount() const { return m_currentObjectReference; }
 
-    ObjectReference byteCount() const { return m_byteCount; }
-    ObjectReference objectReferenceCount() const { return m_objectReferenceCount; }
+    ObjectReference NODELETE byteCount() const { return m_byteCount; }
+    ObjectReference NODELETE objectReferenceCount() const { return m_objectReferenceCount; }
 
 private:
     virtual void writeBooleanTrue();
@@ -135,12 +135,12 @@ private:
     virtual size_t writeDictionaryStart();
     virtual void writeDictionaryEnd(size_t);
 
-    void writeArrayObject(size_t);
-    void writeDictionaryObject(size_t);
-    void writeStringObject(const String&);
+    void NODELETE writeArrayObject(size_t);
+    void NODELETE writeDictionaryObject(size_t);
+    void NODELETE writeStringObject(const String&);
     void writeStringObject(const char*);
 
-    static ObjectReference invalidObjectReference() { return std::numeric_limits<ObjectReference>::max(); }
+    static ObjectReference NODELETE invalidObjectReference() { return std::numeric_limits<ObjectReference>::max(); }
 
     typedef HashMap<IntegerArray, ObjectReference, IntegerArrayHash, IntegerArrayHashTraits> IntegerArrayMap;
 
@@ -179,7 +179,7 @@ void BinaryPropertyListPlan::writeBooleanTrue()
     ++m_byteCount;
 }
 
-static inline int integerByteCount(size_t integer)
+static inline int NODELETE integerByteCount(size_t integer)
 {
     if (integer <= 0xFF)
         return 2;
@@ -275,7 +275,7 @@ void BinaryPropertyListPlan::writeDictionaryEnd(size_t savedAggregateSize)
     m_currentAggregateSize = savedAggregateSize + 1;
 }
 
-static size_t markerPlusLengthByteCount(size_t length)
+static size_t NODELETE markerPlusLengthByteCount(size_t length)
 {
     if (length <= maxLengthInMarkerByte)
         return 1;
@@ -363,12 +363,12 @@ private:
     void appendStringObject(const char*);
     void appendIntegerArrayObject(const int*, size_t);
 
-    void appendByte(unsigned char);
-    void appendByte(unsigned);
-    void appendByte(unsigned long);
-    void appendByte(int);
+    void NODELETE appendByte(unsigned char);
+    void NODELETE appendByte(unsigned);
+    void NODELETE appendByte(unsigned long);
+    void NODELETE appendByte(int);
 
-    void appendInteger(size_t);
+    void NODELETE appendInteger(size_t);
 
     void appendObjectReference(ObjectReference);
 
@@ -411,7 +411,7 @@ inline void BinaryPropertyListSerializer::appendByte(int byte)
     ASSERT(m_currentByteIndex <= m_currentAggregateBufferByteIndex);
 }
 
-static int bytesNeeded(size_t count)
+static int NODELETE bytesNeeded(size_t count)
 {
     ASSERT(count);
     int bytesNeeded = 1;
@@ -420,7 +420,7 @@ static int bytesNeeded(size_t count)
     return bytesNeeded;
 }
 
-static inline void storeLength(std::span<UInt8> destination, size_t length)
+static inline void NODELETE storeLength(std::span<UInt8> destination, size_t length)
 {
 #ifdef __LP64__
     destination[0] = length >> 56;

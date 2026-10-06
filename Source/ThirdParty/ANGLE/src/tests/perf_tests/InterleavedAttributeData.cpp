@@ -7,11 +7,9 @@
 //   Performance test for draws using interleaved attribute data in vertex buffers.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include <array>
 #include <sstream>
+#include "common/unsafe_buffers.h"
 
 #include "ANGLEPerfTest.h"
 #include "util/shader_utils.h"
@@ -64,7 +62,7 @@ class InterleavedAttributeDataBenchmark
 
   private:
     GLuint mPointSpriteProgram;
-    GLuint mPositionColorBuffer[2];
+    std::array<GLuint, 2> mPositionColorBuffer;
 
     // The buffers contain two floats and 3 unsigned bytes per point sprite
     // Has to be aligned for float access on arm
@@ -111,7 +109,7 @@ void InterleavedAttributeDataBenchmark::initializeBenchmark()
 
     glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
 
-    for (size_t i = 0; i < ArraySize(mPositionColorBuffer); i++)
+    for (GLuint &buffer : mPositionColorBuffer)
     {
         // Set up initial data for pointsprite positions and colors
         std::vector<uint8_t> positionColorData(mBytesPerSprite * params.numSprites);
@@ -144,8 +142,8 @@ void InterleavedAttributeDataBenchmark::initializeBenchmark()
         }
 
         // Generate the GL buffer with the position/color data
-        glGenBuffers(1, &mPositionColorBuffer[i]);
-        glBindBuffer(GL_ARRAY_BUFFER, mPositionColorBuffer[i]);
+        glGenBuffers(1, &buffer);
+        glBindBuffer(GL_ARRAY_BUFFER, buffer);
         glBufferData(GL_ARRAY_BUFFER, params.numSprites * mBytesPerSprite, &(positionColorData[0]),
                      GL_STATIC_DRAW);
     }
@@ -156,11 +154,7 @@ void InterleavedAttributeDataBenchmark::initializeBenchmark()
 void InterleavedAttributeDataBenchmark::destroyBenchmark()
 {
     glDeleteProgram(mPointSpriteProgram);
-
-    for (size_t i = 0; i < ArraySize(mPositionColorBuffer); i++)
-    {
-        glDeleteBuffers(1, &mPositionColorBuffer[i]);
-    }
+    glDeleteBuffers(static_cast<GLsizei>(mPositionColorBuffer.size()), mPositionColorBuffer.data());
 }
 
 void InterleavedAttributeDataBenchmark::drawBenchmark()
@@ -169,7 +163,7 @@ void InterleavedAttributeDataBenchmark::drawBenchmark()
 
     for (size_t k = 0; k < 20; k++)
     {
-        for (size_t i = 0; i < ArraySize(mPositionColorBuffer); i++)
+        for (size_t i = 0; i < mPositionColorBuffer.size(); i++)
         {
             // Firstly get the attribute locations for the program
             glUseProgram(mPointSpriteProgram);
@@ -186,7 +180,7 @@ void InterleavedAttributeDataBenchmark::drawBenchmark()
 
             // But bind the color data from the other buffer.
             glBindBuffer(GL_ARRAY_BUFFER,
-                         mPositionColorBuffer[(i + 1) % ArraySize(mPositionColorBuffer)]);
+                         mPositionColorBuffer[(i + 1) % mPositionColorBuffer.size()]);
             glEnableVertexAttribArray(colorLocation);
             glVertexAttribPointer(colorLocation, 3, GL_UNSIGNED_BYTE, GL_TRUE,
                                   static_cast<GLsizei>(mBytesPerSprite),

@@ -196,7 +196,7 @@ void A64DOpcode::maybeAnnotateBuiltConstant()
         return;
 
     if (Integrity::isSanePointer(ptr)) {
-        bufferPrintf(" -> %p", ptr);
+        bufferPrintf(" -> %p", std::bit_cast<void*>(constant));
         if (const char* label = labelFor(ptr)) {
             bufferPrintf(" %s", label);
             return;
@@ -221,7 +221,7 @@ void A64DOpcode::maybeAnnotateBuiltConstant()
     if (constant < 0x10000)
         bufferPrintf(" -> %u", static_cast<unsigned>(constant));
     else
-        bufferPrintf(" -> %p", reinterpret_cast<void*>(constant));
+        bufferPrintf(" -> %p", std::bit_cast<void*>(constant));
 }
 
 bool A64DOpcode::handlePotentialDataPointer(void* ptr)
@@ -262,6 +262,8 @@ bool A64DOpcode::handlePotentialDataPointer(void* ptr)
                 description = "vm.softStackLimit()";
             else if (ptr == &vm.osrExitIndex)
                 description = "vm.osrExitIndex";
+            else if (ptr == &vm.osrExitReturnPC)
+                description = "vm.osrExitReturnPC";
             else if (ptr == &vm.osrExitJumpDestination)
                 description = "vm.osrExitJumpDestination";
             else if (ptr == vm.smallStrings.singleCharacterStrings())

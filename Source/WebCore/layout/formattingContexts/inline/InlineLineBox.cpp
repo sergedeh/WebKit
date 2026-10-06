@@ -30,7 +30,7 @@
 #include "InlineLevelBoxInlines.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutElementBox.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -38,9 +38,10 @@ namespace Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LineBox);
 
-LineBox::LineBox(const Box& rootLayoutBox, InlineLayoutUnit contentLogicalLeft, InlineLayoutUnit contentLogicalWidth, size_t lineIndex, bool isFirstFormattedLine, size_t nonSpanningInlineLevelBoxCount)
+LineBox::LineBox(const Box& rootLayoutBox, InlineLayoutUnit contentLogicalLeft, InlineLayoutUnit contentLogicalWidth, size_t lineIndex, bool isFirstFormattedLine, bool hasBlockEllipsisContentOnly, size_t nonSpanningInlineLevelBoxCount)
     : m_lineIndex(lineIndex)
     , m_isFirstFormattedLine(isFirstFormattedLine)
+    , m_hasBlockEllipsisContentOnly(hasBlockEllipsisContentOnly)
     , m_rootInlineBox(InlineLevelBox::createRootInlineBox(rootLayoutBox, isFirstFormattedLine ? rootLayoutBox.firstLineStyle() : rootLayoutBox.style(), contentLogicalLeft, contentLogicalWidth))
 {
     m_nonRootInlineLevelBoxList.reserveInitialCapacity(nonSpanningInlineLevelBoxCount);
@@ -62,7 +63,7 @@ InlineRect LineBox::logicalRectForTextRun(const Line::Run& run) const
     ASSERT(ancestorInlineBox->isInlineBox());
     auto runlogicalTop = ancestorInlineBox->logicalTop() - ancestorInlineBox->inlineBoxContentOffsetForTextBoxTrim();
     auto& metricsOfPrimaryFont = ancestorInlineBox->primarymetricsOfPrimaryFont();
-    auto logicalHeight = InlineFormattingUtils::snapToInt(metricsOfPrimaryFont.ascent(), *ancestorInlineBox) + InlineFormattingUtils::snapToInt(metricsOfPrimaryFont.descent(), *ancestorInlineBox);
+    auto logicalHeight = metricsOfPrimaryFont.ascent() + metricsOfPrimaryFont.descent();
 
     while (ancestorInlineBox != &m_rootInlineBox && !ancestorInlineBox->hasLineBoxRelativeAlignment()) {
         ancestorInlineBox = &parentInlineBox(*ancestorInlineBox);

@@ -29,29 +29,31 @@
 #pragma once
 
 #include "ConnectionHandle.h"
+#include "Decoder.h"
+#include "MessageNames.h"
 #include "MessageReceiveQueueMap.h"
 #include "MessageReceiver.h"
 #include "ReceiverMatcher.h"
 #include "SyncRequestID.h"
 #include "Timeout.h"
 #include <atomic>
-#include <bmalloc/TZoneHeap.h>
-#include <bmalloc/bmalloc.h>
 #include <new>
 #include <tuple>
 #include <wtf/Assertions.h>
+#include <wtf/Box.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Condition.h>
 #include <wtf/Deque.h>
-#include <wtf/Expected.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Forward.h>
 #include <wtf/FunctionDispatcher.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/MainThread.h>
+#include <wtf/Markable.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/NativePromise.h>
 #include <wtf/Noncopyable.h>
@@ -59,13 +61,12 @@
 #include <wtf/OptionSet.h>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
-#include <wtf/RetainReleaseSwift.h>
 #include <wtf/RunLoop.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/ThreadAssertions.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/ThreadSafetyAnalysis.h>
-#include <wtf/Threading.h>
-#include <wtf/Unexpected.h>
+#include <wtf/ThreadingEnums.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/WorkQueue.h>
 #include <wtf/text/ASCIILiteral.h>
@@ -96,6 +97,10 @@
 #if ENABLE(IPC_TESTING_API)
 #include "MessageObserver.h"
 #endif
+
+namespace WTF {
+class Thread;
+}
 
 namespace IPC {
 
@@ -156,7 +161,7 @@ extern ASCIILiteral errorAsString(Error);
 
 #define MESSAGE_CHECK_WITH_MESSAGE_BASE(assertion, connection, message) do { \
     if (!(assertion)) [[unlikely]] { \
-        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, makeString(__FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched "_s, unsafeSpan(WTF_PRETTY_FUNCTION), ": " message ## _s).utf8().data()); \
+        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, __FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched %s" ": %s", ASCIILiteral::fromLiteralUnsafe(WTF_PRETTY_FUNCTION), message ## _s); \
         IPC::markCurrentlyDispatchedMessageAsInvalid(connection, "Message check failed: " #assertion " - " #message ## _s); \
         CRASH_IF_TESTING \
         return; \
@@ -165,10 +170,11 @@ extern ASCIILiteral errorAsString(Error);
 
 #define MESSAGE_CHECK_BASE(assertion, connection) MESSAGE_CHECK_COMPLETION_BASE(assertion, connection, (void)0)
 #define MESSAGE_CHECK_BASE_COROUTINE(assertion, connection) MESSAGE_CHECK_COMPLETION_BASE_COROUTINE(assertion, connection, (void)0)
+#define MESSAGE_CHECK_BASE_COROUTINE_VOID(assertion, connection) MESSAGE_CHECK_COMPLETION_BASE_COROUTINE_VOID(assertion, connection, (void)0)
 
 #define MESSAGE_CHECK_OPTIONAL_CONNECTION_BASE(assertion, connection) do { \
     if (!(assertion)) [[unlikely]] { \
-        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, makeString(__FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched "_s, unsafeSpan(WTF_PRETTY_FUNCTION)).utf8().data()); \
+        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, __FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched %s", ASCIILiteral::fromLiteralUnsafe(WTF_PRETTY_FUNCTION)); \
         IPC::markCurrentlyDispatchedMessageAsInvalid(connection, "Message check failed: " #assertion ## _s); \
         CRASH_IF_TESTING \
         return; \
@@ -177,7 +183,7 @@ extern ASCIILiteral errorAsString(Error);
 
 #define MESSAGE_CHECK_COMPLETION_BASE(assertion, connection, completion) do { \
     if (!(assertion)) [[unlikely]] { \
-        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, makeString(__FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched "_s, unsafeSpan(WTF_PRETTY_FUNCTION)).utf8().data()); \
+        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, __FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched %s", ASCIILiteral::fromLiteralUnsafe(WTF_PRETTY_FUNCTION)); \
         IPC::markCurrentlyDispatchedMessageAsInvalid(connection, "Message check failed: " #assertion ## _s); \
         CRASH_IF_TESTING \
         { completion; } \
@@ -187,7 +193,7 @@ extern ASCIILiteral errorAsString(Error);
 
 #define MESSAGE_CHECK_COMPLETION_BASE_COROUTINE(assertion, connection, completion) do { \
     if (!(assertion)) [[unlikely]] { \
-        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, makeString(__FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched "_s, unsafeSpan(WTF_PRETTY_FUNCTION)).utf8().data()); \
+        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, __FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched %s", ASCIILiteral::fromLiteralUnsafe(WTF_PRETTY_FUNCTION)); \
         IPC::markCurrentlyDispatchedMessageAsInvalid(connection, "Message check failed: " #assertion ## _s); \
         CRASH_IF_TESTING \
         { completion; } \
@@ -195,9 +201,19 @@ extern ASCIILiteral errorAsString(Error);
     } \
 } while (0)
 
+#define MESSAGE_CHECK_COMPLETION_BASE_COROUTINE_VOID(assertion, connection, completion) do { \
+    if (!(assertion)) [[unlikely]] { \
+        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, __FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched %s", ASCIILiteral::fromLiteralUnsafe(WTF_PRETTY_FUNCTION)); \
+        IPC::markCurrentlyDispatchedMessageAsInvalid(connection, "Message check failed: " #assertion ## _s); \
+        CRASH_IF_TESTING \
+        { completion; } \
+        co_return; \
+    } \
+} while (0)
+
 #define MESSAGE_CHECK_WITH_RETURN_VALUE_BASE(assertion, connection, returnValue) do { \
     if (!(assertion)) [[unlikely]] { \
-        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, makeString(__FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched "_s, unsafeSpan(WTF_PRETTY_FUNCTION)).utf8().data()); \
+        RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, __FILE__ " " CONNECTION_STRINGIFY_MACRO(__LINE__) ": Invalid message dispatched %s", ASCIILiteral::fromLiteralUnsafe(WTF_PRETTY_FUNCTION)); \
         IPC::markCurrentlyDispatchedMessageAsInvalid(connection, "Message check failed: " #assertion ## _s); \
         CRASH_IF_TESTING \
         return (returnValue); \
@@ -208,8 +224,8 @@ template<typename AsyncReplyResult> struct AsyncReplyError {
     static AsyncReplyResult create() { return AsyncReplyResult { }; };
 };
 
-template<typename T, typename E> struct AsyncReplyError<Expected<T, E>> {
-    static Expected<T, E> create() { return makeUnexpected<E>(AsyncReplyError<E>::create()); };
+template<typename T, typename E> struct AsyncReplyError<std::expected<T, E>> {
+    static std::expected<T, E> create() { return makeUnexpected<E>(AsyncReplyError<E>::create()); };
 };
 
 class Decoder;
@@ -262,7 +278,7 @@ private:
         typename T::ReplyArguments reply;
     };
 
-    Expected<ReplyData, Error> value;
+    std::expected<ReplyData, Error> value;
 };
 
 struct ConnectionAsyncReplyHandler {
@@ -285,6 +301,54 @@ public:
 
     protected:
         virtual ~Client() { }
+    };
+
+    // Tracks the message a thread is currently dispatching. A failing message check (see
+    // MESSAGE_CHECK_BASE) marks the innermost scope for its connection as invalid, and whoever
+    // created the scope reports it once the message handler has returned.
+    //
+    // The state lives on the dispatching thread's stack rather than on the connection because a
+    // single connection can dispatch on its client run loop and on any number of receive queues
+    // at the same time, and because message dispatch nests when a handler sends sync IPC.
+    class MessageDispatchScope {
+        WTF_MAKE_NONCOPYABLE(MessageDispatchScope);
+        WTF_FORBID_HEAP_ALLOCATION;
+    public:
+        explicit MessageDispatchScope(const Connection& connection)
+            : m_connection(connection)
+            , m_previous(std::exchange(s_current, this))
+        {
+        }
+
+        ~MessageDispatchScope()
+        {
+            ASSERT(s_current == this);
+            s_current = m_previous;
+        }
+
+        bool didReceiveInvalidMessage() const { return m_didReceiveInvalidMessage; }
+
+        // The innermost scope for `connection` on the current thread, or null if this thread is
+        // not dispatching a message for it.
+        static MessageDispatchScope* currentFor(const Connection& connection)
+        {
+            for (auto* scope = s_current; scope; scope = scope->m_previous) {
+                if (&scope->m_connection == &connection)
+                    return scope;
+            }
+            return nullptr;
+        }
+
+    private:
+        friend class Connection;
+
+        // Never dereferenced; the scope only needs the connection's identity, and it never
+        // outlives the dispatch it wraps.
+        SUPPRESS_UNCOUNTED_MEMBER const Connection& m_connection;
+        MessageDispatchScope* const m_previous;
+        bool m_didReceiveInvalidMessage { false };
+
+        static thread_local MessageDispatchScope* s_current;
     };
 
     using Handle = ConnectionHandle;
@@ -327,20 +391,19 @@ public:
             : port(port)
         {
         }
-        Identifier(mach_port_t port, XPCObjectPtr<xpc_connection_t> xpcConnection)
+        Identifier(mach_port_t port, OSObjectPtr<xpc_connection_t> xpcConnection)
             : port(port)
             , xpcConnection(WTF::move(xpcConnection))
         {
         }
         operator bool() const { return MACH_PORT_VALID(port); }
         mach_port_t port { MACH_PORT_NULL };
-        XPCObjectPtr<xpc_connection_t> xpcConnection;
+        OSObjectPtr<xpc_connection_t> xpcConnection;
 #endif
     };
 
 #if OS(DARWIN)
     xpc_connection_t xpcConnection() const { return m_xpcConnection.get(); }
-    XPCObjectPtr<xpc_connection_t> protectedXPCConnection() const { return xpcConnection(); }
     std::optional<audit_token_t> getAuditToken();
     pid_t remoteProcessID() const;
 #endif
@@ -350,8 +413,8 @@ public:
     static pid_t remoteProcessID(GSocket*);
 #endif
 
-    static Ref<Connection> createServerConnection(Identifier&&, Thread::QOS = Thread::QOS::Default);
-    static Ref<Connection> createClientConnection(Identifier&&);
+    static Ref<Connection> createServerConnection(Identifier&&, ThreadQOS = ThreadQOS::Default);
+    static Ref<Connection> createClientConnection(Identifier&&, ThreadQOS = ThreadQOS::Default);
 
     struct ConnectionIdentifierPair {
         IPC::Connection::Identifier server;
@@ -362,19 +425,16 @@ public:
     ~Connection();
 
     Client* client() const { return m_client.get(); }
-    RefPtr<Client> protectedClient() const { return m_client.get(); }
 
     enum UniqueIDType { };
     using UniqueID = AtomicObjectIdentifier<UniqueIDType>;
-#ifndef __swift__ // rdar://152496447
-    using DecoderOrError = Expected<UniqueRef<Decoder>, Error>;
-#endif
+    using DecoderOrError = std::expected<UniqueRef<Decoder>, Error>;
 
     static RefPtr<Connection> connection(UniqueID);
     UniqueID uniqueID() const { return m_uniqueID; }
 
-    void setOnlySendMessagesAsDispatchWhenWaitingForSyncReplyWhenProcessingSuchAMessage(bool);
-    void setShouldExitOnSyncMessageSendFailure(bool);
+    void NODELETE setOnlySendMessagesAsDispatchWhenWaitingForSyncReplyWhenProcessingSuchAMessage(bool);
+    void NODELETE setShouldExitOnSyncMessageSendFailure(bool);
 
     // The set callback will be called on the connection work queue when the connection is closed,
     // before didCall is called on the client thread. Must be called before the connection is opened.
@@ -382,7 +442,7 @@ public:
     // on the work queue, for example if we want to handle them on some other thread we could avoid
     // handling the message on the client thread first.
     typedef void (*DidCloseOnConnectionWorkQueueCallback)(Connection*);
-    void setDidCloseOnConnectionWorkQueueCallback(DidCloseOnConnectionWorkQueueCallback);
+    void NODELETE setDidCloseOnConnectionWorkQueueCallback(DidCloseOnConnectionWorkQueueCallback);
 
     using OutgoingMessageQueueIsGrowingLargeCallback = Function<void()>;
     void setOutgoingMessageQueueIsGrowingLargeCallback(OutgoingMessageQueueIsGrowingLargeCallback&&);
@@ -416,18 +476,21 @@ public:
     template<typename PC, typename BasePromise>
     struct ConvertedPromise {
         template <typename T, typename E>
-        struct Promise
-        {
+        struct Promise {
             using Type = NativePromise<T, E>;
         };
 
         template <typename T, typename E>
-        struct Promise<Expected<T, E>, E>
-        {
+        struct Promise<std::expected<T, E>, E> {
             using Type = NativePromise<T, E>;
         };
 
-        using RejectValueType = std::remove_reference_t<decltype(PC::convertError(std::declval<IPC::Error>()).value())>;
+        template <typename T>
+        struct Promise<std::expected<T, GenericPromise::RejectValueType>, GenericPromise::RejectValueType> {
+            using Type = NativePromise<T, void>;
+        };
+
+        using RejectValueType = std::remove_reference_t<decltype(PC::convertError(std::declval<IPC::Error>()).error())>;
         using Type = typename Promise<typename BasePromise::ResolveValueType, RejectValueType>::Type;
     };
     struct NoOpPromiseConverter {
@@ -437,8 +500,8 @@ public:
     template<typename T, typename C> std::optional<AsyncReplyID> sendWithAsyncReply(T&& message, C&& completionHandler, uint64_t destinationID = 0, OptionSet<SendOption> = { }); // Thread-safe, but the reply will be called on the Connection's dispatcher
     template<typename PC = NoOpPromiseConverter, typename T, typename Promise = typename ConvertedPromise<PC, typename T::Promise>::Type> Ref<Promise> sendWithPromisedReply(T&& message, uint64_t destinationID = 0, OptionSet<SendOption> = { }); // Thread-safe.
     template<typename T, typename C> std::optional<AsyncReplyID> sendWithAsyncReplyOnDispatcher(T&& message, GuaranteedSerialFunctionDispatcher&, C&& completionHandler, uint64_t destinationID = 0, OptionSet<SendOption> = { }); // Thread-safe.
-    template<typename T> Error send(T&& message, uint64_t destinationID, OptionSet<SendOption> sendOptions = { }, std::optional<Thread::QOS> qos = std::nullopt); // Thread-safe.
-    template<typename T> static Error send(UniqueID, T&& message, uint64_t destinationID, OptionSet<SendOption> sendOptions = { }, std::optional<Thread::QOS> qos = std::nullopt); // Thread-safe.
+    template<typename T> Error send(T&& message, uint64_t destinationID, OptionSet<SendOption> sendOptions = { }, std::optional<ThreadQOS> qos = std::nullopt); // Thread-safe.
+    template<typename T> static Error send(UniqueID, T&& message, uint64_t destinationID, OptionSet<SendOption> sendOptions = { }, std::optional<ThreadQOS> qos = std::nullopt); // Thread-safe.
 
     // Sync senders should check the SendSyncResult for true/false in case they need to know if the result was really received.
     // Sync senders should hold on to the SendSyncResult in case they reference the contents of the reply via DataRefererence / ArrayReference.
@@ -447,51 +510,56 @@ public:
     template<typename T> SendSyncResult<T> sendSync(T&& message, uint64_t destinationID, Timeout = Timeout::infinity(), OptionSet<SendSyncOption> sendSyncOptions = { }); // Main thread only.
 
     template<typename> Error waitForAndDispatchImmediately(uint64_t destinationID, Timeout, OptionSet<WaitForOption> waitForOptions = { }); // Main thread only.
-    template<typename> Error waitForAsyncReplyAndDispatchImmediately(AsyncReplyID, Timeout); // Main thread only.
+    template<typename> Error waitForAsyncReplyAndDispatchImmediately(AsyncReplyID, Timeout, OptionSet<WaitForOption> waitForOptions = { }); // Main thread only.
 
     // // Thread-safe, but the reply will be called on the Connection's dispatcher
-    template<typename T, typename C, typename RawValue>
-    std::optional<AsyncReplyID> sendWithAsyncReply(T&& message, C&& completionHandler, const ObjectIdentifierGenericBase<RawValue>& destinationID, OptionSet<SendOption> sendOptions = { })
+    template<typename T, typename C>
+    std::optional<AsyncReplyID> sendWithAsyncReply(T&& message, C&& completionHandler, const ObjectIdentifierGenericBase& destinationID, OptionSet<SendOption> sendOptions = { })
     {
         return sendWithAsyncReply<T, C>(std::forward<T>(message), std::forward<C>(completionHandler), destinationID.toUInt64(), sendOptions);
     }
 
     // Thread-safe.
-    template<typename PC = NoOpPromiseConverter, typename T, typename Promise = typename ConvertedPromise<PC, typename T::Promise>::Type, typename RawValue>
-    Ref<Promise> sendWithPromisedReply(T&& message, const ObjectIdentifierGenericBase<RawValue>& destinationID, OptionSet<SendOption> sendOptions = { })
+    template<typename PC = NoOpPromiseConverter, typename T, typename Promise = typename ConvertedPromise<PC, typename T::Promise>::Type>
+    Ref<Promise> sendWithPromisedReply(T&& message, const ObjectIdentifierGenericBase& destinationID, OptionSet<SendOption> sendOptions = { })
     {
-        return sendWithPromisedReply<PC, T, Promise>(WTF::move(message), destinationID.toUInt64(), sendOptions);
+        return sendWithPromisedReply<PC, T, Promise>(std::forward<T>(message), destinationID.toUInt64(), sendOptions);
     }
 
     // Thread-safe.
-    template<typename T, typename RawValue>
-    Error send(T&& message, const ObjectIdentifierGenericBase<RawValue>& destinationID, OptionSet<SendOption> sendOptions = { }, std::optional<Thread::QOS> qos = std::nullopt)
+    template<typename T>
+    Error send(T&& message, const ObjectIdentifierGenericBase& destinationID, OptionSet<SendOption> sendOptions = { }, std::optional<ThreadQOS> qos = std::nullopt)
     {
         return send<T>(std::forward<T>(message), destinationID.toUInt64(), sendOptions, qos);
     }
 
     // Main thread only.
-    template<typename T, typename RawValue>
-    SendSyncResult<T> sendSync(T&& message, const ObjectIdentifierGenericBase<RawValue>& destinationID, Timeout timeout = Timeout::infinity(), OptionSet<SendSyncOption> sendSyncOptions = { })
+    template<typename T>
+    SendSyncResult<T> sendSync(T&& message, const ObjectIdentifierGenericBase& destinationID, Timeout timeout = Timeout::infinity(), OptionSet<SendSyncOption> sendSyncOptions = { })
     {
         return sendSync<T>(std::forward<T>(message), destinationID.toUInt64(), timeout, sendSyncOptions);
     }
 
     // Main thread only.
-    template<typename T, typename RawValue>
-    Error waitForAndDispatchImmediately(const ObjectIdentifierGenericBase<RawValue>& destinationID, Timeout timeout, OptionSet<WaitForOption> waitForOptions = { })
+    template<typename T>
+    Error waitForAndDispatchImmediately(const ObjectIdentifierGenericBase& destinationID, Timeout timeout, OptionSet<WaitForOption> waitForOptions = { })
     {
         return waitForAndDispatchImmediately<T>(destinationID.toUInt64(), timeout, waitForOptions);
     }
 
-    Error sendMessage(UniqueRef<Encoder>&&, OptionSet<SendOption> sendOptions, std::optional<Thread::QOS> = std::nullopt);
+    Error sendMessage(UniqueRef<Encoder>&&, OptionSet<SendOption> sendOptions, std::optional<ThreadQOS> = std::nullopt);
 
     using AsyncReplyHandler = ConnectionAsyncReplyHandler;
-    Error sendMessageWithAsyncReply(UniqueRef<Encoder>&&, AsyncReplyHandler, OptionSet<SendOption> sendOptions, std::optional<Thread::QOS> = std::nullopt);
+    Error sendMessageWithAsyncReply(UniqueRef<Encoder>&&, AsyncReplyHandler, OptionSet<SendOption> sendOptions, std::optional<ThreadQOS> = std::nullopt);
+
+    struct AsyncReplyHandlerWithDispatcher {
+        CompletionHandler<void(Connection*, std::unique_ptr<Decoder>&&)> completionHandler;
+        Markable<AsyncReplyID> replyID;
+    };
+    Error sendMessageWithAsyncReplyWithDispatcher(UniqueRef<Encoder>&&, AsyncReplyHandlerWithDispatcher&&, OptionSet<SendOption> sendOptions, std::optional<ThreadQOS> = std::nullopt);
+
     std::pair<UniqueRef<Encoder>, SyncRequestID> createSyncMessageEncoder(MessageName, uint64_t destinationID);
-#ifndef __swift__ // rdar://152496447
     DecoderOrError sendSyncMessage(SyncRequestID, UniqueRef<Encoder>&&, Timeout, OptionSet<SendSyncOption> sendSyncOptions);
-#endif
     Error sendSyncReply(UniqueRef<Encoder>&&);
     template<typename T, typename... Arguments>
     void sendAsyncReply(AsyncReplyID, Arguments&&...);
@@ -506,7 +574,7 @@ public:
 #endif
 
 #if PLATFORM(COCOA) && !USE(EXTENSIONKIT_PROCESS_TERMINATION)
-    bool kill();
+    bool kill(std::optional<MessageName> invalidMessageName = std::nullopt);
 #endif
 
     bool isValid() const { return m_isValid; }
@@ -519,7 +587,7 @@ public:
 
     void ignoreTimeoutsForTesting() { m_ignoreTimeoutsForTesting = true; }
 
-    void enableIncomingMessagesThrottling();
+    void NODELETE enableIncomingMessagesThrottling();
 
 #if ENABLE(IPC_TESTING_API)
     void addMessageObserver(const MessageObserver&);
@@ -527,9 +595,7 @@ public:
     void setIgnoreInvalidMessageForTesting() { m_ignoreInvalidMessageForTesting = true; }
     bool ignoreInvalidMessageForTesting() const { return m_ignoreInvalidMessageForTesting; }
     void dispatchIncomingMessageForTesting(UniqueRef<Decoder>&&);
-#ifndef __swift__ // rdar://152496447
     DecoderOrError waitForMessageForTesting(MessageName, uint64_t destinationID, Timeout, OptionSet<WaitForOption>);
-#endif
 #endif
 
     template<typename MessageReceiverType> void dispatchMessageReceiverMessage(MessageReceiverType&, UniqueRef<Decoder>&&);
@@ -542,66 +608,73 @@ public:
 
     template<typename T, typename C> static AsyncReplyHandler makeAsyncReplyHandler(C&& completionHandler, ThreadLikeAssertion callThread = CompletionHandlerCallThread::AnyThread);
 
+    template<typename T, typename C> static AsyncReplyHandlerWithDispatcher makeAsyncReplyHandlerWithDispatcher(C&& completionHandler, GuaranteedSerialFunctionDispatcher&);
+    template<typename T, typename PC, typename Promise> static AsyncReplyHandlerWithDispatcher makeAsyncReplyHandlerWithDispatcher(typename Promise::Producer&&);
+
     CompletionHandler<void(Connection*, Decoder*)> takeAsyncReplyHandler(AsyncReplyID);
 
     template<typename T, typename C> static void callReply(Connection*, Decoder&, C&&);
     template<typename T, typename C> static void cancelReply(C&&);
 
     void markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error);
+    void markCurrentlyDispatchedMessageAsInvalid(const String& error);
+
+    static void logFailedMessageCheck(const String& reason, const String& function, const String& file, unsigned line);
 
 #if ENABLE(CORE_IPC_SIGNPOSTS)
     static bool signpostsEnabled();
-    static void forceEnableSignposts();
+    static void NODELETE forceEnableSignposts();
 #endif
 
-    static bool shouldCrashOnMessageCheckFailure();
-    static void setShouldCrashOnMessageCheckFailure(bool);
+    static bool NODELETE shouldCrashOnMessageCheckFailure();
+    static void NODELETE setShouldCrashOnMessageCheckFailure(bool);
+
+#if PLATFORM(COCOA)
+    static void NODELETE setForceUseSharedMemoryForSendingForTesting(bool);
+#endif
 
 #if ENABLE(IPC_TESTING_API)
-    bool hasErrorString() const { return !m_errorString.isNull(); }
-    void setErrorString(ASCIILiteral error)
+    bool hasErrorString() const
     {
-        if (!hasErrorString())
+        Locker locker { m_errorStringLock };
+        return !m_errorString.isNull();
+    }
+    void setErrorString(const String& error)
+    {
+        Locker locker { m_errorStringLock };
+        if (m_errorString.isNull())
             m_errorString = error;
     }
-    ASCIILiteral takeErrorString() { return std::exchange(m_errorString, { }); }
+    String takeErrorString()
+    {
+        Locker locker { m_errorStringLock };
+        return std::exchange(m_errorString, { });
+    }
 #endif
 
 private:
-    Connection(Identifier&&, bool isServer, Thread::QOS = Thread::QOS::Default);
+    Connection(Identifier&&, bool isServer, ThreadQOS = ThreadQOS::Default);
     Connection();
     void platformInitialize(Identifier&&);
-    bool platformPrepareForOpen();
+    bool NODELETE platformPrepareForOpen();
     void platformOpen();
     void platformInvalidate();
 
-    struct AsyncReplyHandlerWithDispatcher {
-        CompletionHandler<void(Connection*, std::unique_ptr<Decoder>&&)> completionHandler;
-        Markable<AsyncReplyID> replyID;
-    };
-
     bool isAsyncReplyHandlerWithDispatcher(AsyncReplyID);
     CompletionHandler<void(Connection*, std::unique_ptr<Decoder>&&)> takeAsyncReplyHandlerWithDispatcher(AsyncReplyID);
-    template<typename T, typename C> static AsyncReplyHandlerWithDispatcher makeAsyncReplyHandlerWithDispatcher(C&& completionHandler, GuaranteedSerialFunctionDispatcher&);
-    template<typename T, typename PC, typename Promise> static AsyncReplyHandlerWithDispatcher makeAsyncReplyHandlerWithDispatcher(typename Promise::Producer&&);
 
-    Error sendMessageWithAsyncReplyWithDispatcher(UniqueRef<Encoder>&&, AsyncReplyHandlerWithDispatcher&&, OptionSet<SendOption> sendOptions, std::optional<Thread::QOS> = std::nullopt);
     // Utility methods to avoid code duplication.
     template<typename T, typename C> static CompletionHandler<void(Connection*, Decoder*)> makeAsyncReplyCompletionHandler(C&& completionHandler, ThreadLikeAssertion);
     template<typename T> static CompletionHandler<void(Decoder*)> makeAsyncReplyCompletionHandler(typename T::Promise::Producer&&, ThreadLikeAssertion);
 
     bool isIncomingMessagesThrottlingEnabled() const { return m_incomingMessagesThrottlingLevel.has_value(); }
 
-#ifndef __swift__ // rdar://152496447
     DecoderOrError waitForMessage(MessageName, uint64_t destinationID, Timeout, OptionSet<WaitForOption>);
-#endif
 
     SyncRequestID makeSyncRequestID() { return SyncRequestID::generate(); }
     bool pushPendingSyncRequestID(SyncRequestID);
     void popPendingSyncRequestID(SyncRequestID);
-#ifndef __swift__ // rdar://152496447
     DecoderOrError waitForSyncReply(SyncRequestID, MessageName, Timeout, OptionSet<SendSyncOption>);
-#endif
 
     void enqueueMatchingMessagesToMessageReceiveQueue(MessageReceiveQueue&, const ReceiverMatcher&) WTF_REQUIRES_LOCK(m_incomingMessagesLock);
 
@@ -610,7 +683,7 @@ private:
     void processIncomingSyncReply(UniqueRef<Decoder>);
 
     bool canSendOutgoingMessages() const;
-    bool platformCanSendOutgoingMessages() const;
+    bool NODELETE platformCanSendOutgoingMessages() const;
     void sendOutgoingMessages();
     bool sendOutgoingMessage(UniqueRef<Encoder>&&);
     void connectionDidClose();
@@ -624,17 +697,24 @@ private:
     void dispatchSyncMessage(Decoder&);
     void didFailToSendSyncMessage(Error);
 
+    // Marks the message this thread is currently dispatching for this connection as invalid.
+    // Returns false if this thread is not dispatching a message for this connection.
+    bool markCurrentMessageDispatchScopeAsInvalid();
+
     // Can be called on any thread.
     void enqueueIncomingMessage(UniqueRef<Decoder>) WTF_REQUIRES_LOCK(m_incomingMessagesLock);
     size_t incomingMessagesDispatchingBatchSize() const;
     CompletionHandler<void(Connection*, std::unique_ptr<Decoder>&&)> takeAsyncReplyHandlerWithDispatcherWithLockHeld(AsyncReplyID);
 
-    Timeout timeoutRespectingIgnoreTimeoutsForTesting(Timeout) const;
+    Timeout NODELETE timeoutRespectingIgnoreTimeoutsForTesting(Timeout) const;
 
-    Error sendMessageImpl(UniqueRef<Encoder>&&, OptionSet<SendOption> sendOptions, std::optional<Thread::QOS> = std::nullopt);
+    Error sendMessageImpl(UniqueRef<Encoder>&&, OptionSet<SendOption> sendOptions, std::optional<ThreadQOS> = std::nullopt);
 
 #if PLATFORM(COCOA)
-    bool sendMessage(std::unique_ptr<MachMessage>);
+    enum class SendMessageResult : uint8_t { Success, Failure, MessageTooLarge };
+    enum class IsRetryDueToLargeSize : bool { No, Yes };
+    SendMessageResult sendMessage(std::unique_ptr<MachMessage>&, IsRetryDueToLargeSize = IsRetryDueToLargeSize::No);
+    bool retrySendMessageWithSharedMemory(std::unique_ptr<MachMessage> failedMessage, UniqueRef<Encoder>&);
 #endif
     template<typename F>
     void dispatchToClient(F&& clientRunLoopTask) WTF_EXCLUDES_LOCK(m_incomingMessagesLock);
@@ -649,7 +729,6 @@ private:
     Ref<SerialFunctionDispatcher> dispatcher();
 
     class SyncMessageState;
-    RefPtr<SyncMessageState> protectedSyncState() const;
 
     void addAsyncReplyHandler(AsyncReplyHandler&&);
     void addAsyncReplyHandlerWithDispatcher(AsyncReplyHandlerWithDispatcher&&);
@@ -686,7 +765,7 @@ private:
     bool m_onlySendMessagesAsDispatchWhenWaitingForSyncReplyWhenProcessingSuchAMessage { false };
     bool m_shouldExitOnSyncMessageSendFailure { false };
     DidCloseOnConnectionWorkQueueCallback m_didCloseOnConnectionWorkQueueCallback { nullptr };
-    OutgoingMessageQueueIsGrowingLargeCallback m_outgoingMessageQueueIsGrowingLargeCallback;
+    Box<OutgoingMessageQueueIsGrowingLargeCallback> m_outgoingMessageQueueIsGrowingLargeCallback WTF_GUARDED_BY_LOCK(m_outgoingMessagesLock);
     MonotonicTime m_lastOutgoingMessageQueueIsGrowingLargeCallbackCallTime WTF_GUARDED_BY_LOCK(m_outgoingMessagesLock);
 
     const Ref<WorkQueue> m_connectionQueue;
@@ -698,12 +777,7 @@ private:
     unsigned m_inDispatchMessageMarkedToUseFullySynchronousModeForTesting { 0 };
     bool m_fullySynchronousModeIsAllowedForTesting { false };
     bool m_ignoreTimeoutsForTesting { false };
-    bool m_didReceiveInvalidMessage { false };
     std::optional<uint8_t> m_incomingMessagesThrottlingLevel;
-
-#if ASSERT_ENABLED
-    std::atomic<unsigned> m_inDispatchMessageCount { 0 };
-#endif
 
     // Incoming messages.
 #if ENABLE(UNFAIR_LOCK)
@@ -747,7 +821,7 @@ private:
 
     Lock m_incomingSyncMessageCallbackLock;
     HashMap<uint64_t, WTF::Function<void()>> m_incomingSyncMessageCallbacks WTF_GUARDED_BY_LOCK(m_incomingSyncMessageCallbackLock);
-    RefPtr<WorkQueue> m_incomingSyncMessageCallbackQueue WTF_GUARDED_BY_LOCK(m_incomingSyncMessageCallbackLock);
+    const RefPtr<WorkQueue> m_incomingSyncMessageCallbackQueue WTF_GUARDED_BY_LOCK(m_incomingSyncMessageCallbackLock);
     uint64_t m_nextIncomingSyncMessageCallbackID WTF_GUARDED_BY_LOCK(m_incomingSyncMessageCallbackLock) { 0 };
 
     using AsyncReplyHandlerMap = HashMap<AsyncReplyID, CompletionHandler<void(Connection*, Decoder*)>>;
@@ -810,7 +884,7 @@ private:
 
     std::unique_ptr<MachMessage> m_pendingOutgoingMachMessage;
 
-    XPCObjectPtr<xpc_connection_t> m_xpcConnection;
+    OSObjectPtr<xpc_connection_t> m_xpcConnection;
     std::atomic<bool> m_didRequestProcessTermination { false };
     std::optional<audit_token_t> m_auditToken;
 #elif OS(WINDOWS)
@@ -825,7 +899,7 @@ private:
         void open(Function<void()>&&);
         void close();
 
-        OVERLAPPED& state() { return m_state; }
+        OVERLAPPED& state() LIFETIME_BOUND { return m_state; }
 
     private:
         static void WINAPI callback(void*, BOOLEAN);
@@ -843,14 +917,15 @@ private:
 #endif
 
 #if ENABLE(IPC_TESTING_API)
-    ASCIILiteral m_errorString;
+    mutable Lock m_errorStringLock;
+    String m_errorString WTF_GUARDED_BY_LOCK(m_errorStringLock);
 #endif
 
     friend class StreamClientConnection;
-} SWIFT_SHARED_REFERENCE(refConnection, derefConnection);
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refConnection, derefConnection);
 
 template<typename T>
-Error Connection::send(T&& message, uint64_t destinationID, OptionSet<SendOption> sendOptions, std::optional<Thread::QOS> qos)
+Error Connection::send(T&& message, uint64_t destinationID, OptionSet<SendOption> sendOptions, std::optional<ThreadQOS> qos)
 {
     static_assert(!T::isSync, "Async message expected");
 
@@ -861,7 +936,7 @@ Error Connection::send(T&& message, uint64_t destinationID, OptionSet<SendOption
 }
 
 template<typename T>
-Error Connection::send(UniqueID connectionID, T&& message, uint64_t destinationID, OptionSet<SendOption> sendOptions, std::optional<Thread::QOS> qos)
+Error Connection::send(UniqueID connectionID, T&& message, uint64_t destinationID, OptionSet<SendOption> sendOptions, std::optional<ThreadQOS> qos)
 {
     RefPtr connection = Connection::connection(connectionID);
     if (!connection)
@@ -960,14 +1035,14 @@ template<typename T> Error Connection::waitForAndDispatchImmediately(uint64_t de
         return Error::InvalidConnection;
 
     ASSERT(decoderOrError.value()->destinationID() == destinationID);
-    protectedClient()->didReceiveMessage(*this, decoderOrError.value());
+    protect(client())->didReceiveMessage(*this, decoderOrError.value());
     return Error::NoError;
 }
 
-template<typename T> Error Connection::waitForAsyncReplyAndDispatchImmediately(AsyncReplyID replyID, Timeout timeout)
+template<typename T> Error Connection::waitForAsyncReplyAndDispatchImmediately(AsyncReplyID replyID, Timeout timeout, OptionSet<WaitForOption> waitForOptions)
 {
     static_assert(T::replyCanDispatchOutOfOrder, "Can only use waitForAsyncReplyAndDispatchImmediately on messages declared with ReplyCanDispatchOutOfOrder");
-    auto decoderOrError = waitForMessage(T::asyncMessageReplyName(), replyID.toUInt64(), timeout, { });
+    auto decoderOrError = waitForMessage(T::asyncMessageReplyName(), replyID.toUInt64(), timeout, waitForOptions);
     if (!decoderOrError.has_value())
         return decoderOrError.error();
 
@@ -983,7 +1058,7 @@ template<typename T> Error Connection::waitForAsyncReplyAndDispatchImmediately(A
     return Error::NoError;
 }
 
-#if ENABLE(IPC_TESTING_API) && !defined(__swift__) // rdar://152496447
+#if ENABLE(IPC_TESTING_API)
 inline auto Connection::waitForMessageForTesting(MessageName messageName, uint64_t destinationID, Timeout timeout, OptionSet<WaitForOption> options) -> DecoderOrError
 {
     return waitForMessage(messageName, destinationID, timeout, options);
@@ -994,7 +1069,7 @@ template<typename T, typename C>
 CompletionHandler<void(Connection*, Decoder*)> Connection::makeAsyncReplyCompletionHandler(C&& completionHandler, ThreadLikeAssertion callThread)
 {
     return {
-        [completionHandler = WTF::move(completionHandler)] (Connection* connection, Decoder* decoder) mutable {
+        [completionHandler = std::forward<C>(completionHandler)] (Connection* connection, Decoder* decoder) mutable {
             if (decoder && decoder->isValid()) {
                 ASSERT(connection);
                 callReply<T>(connection, *decoder, WTF::move(completionHandler));
@@ -1025,8 +1100,8 @@ Connection::AsyncReplyHandlerWithDispatcher Connection::makeAsyncReplyHandlerWit
     // where it's been created.
     return {
         {
-            [completionHandler = makeAsyncReplyCompletionHandler<T, C>(std::forward<C>(completionHandler), CompletionHandlerCallThread::AnyThread), dispatcher = Ref { dispatcher }](Connection* connection, std::unique_ptr<Decoder>&& decoder) mutable {
-                dispatcher->dispatch([connection = RefPtr { connection }, completionHandler = WTF::move(completionHandler), decoder = WTF::move(decoder)]() mutable {
+            [completionHandler = makeAsyncReplyCompletionHandler<T, C>(std::forward<C>(completionHandler), CompletionHandlerCallThread::AnyThread), dispatcher = protect(dispatcher)](Connection* connection, std::unique_ptr<Decoder>&& decoder) mutable {
+                dispatcher->dispatch([connection = protect(connection), completionHandler = WTF::move(completionHandler), decoder = WTF::move(decoder)]() mutable {
                     completionHandler(connection.get(), decoder.get());
                 });
             }, CompletionHandlerCallThread::AnyThread
@@ -1107,15 +1182,43 @@ void Connection::cancelReply(C&& completionHandler)
         callWithConnectionAndArgsTuple(std::forward<C>(completionHandler), nullptr, WTF::move(emptyReplyTuple));
 }
 
+inline bool Connection::markCurrentMessageDispatchScopeAsInvalid()
+{
+    auto* scope = MessageDispatchScope::currentFor(*this);
+    if (!scope)
+        return false;
+    scope->m_didReceiveInvalidMessage = true;
+    return true;
+}
+
 inline void Connection::markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error)
 {
-    // This should only be called while processing a message.
-    ASSERT(m_inDispatchMessageCount > 0);
-    m_didReceiveInvalidMessage = true;
+    // This should only be called while processing a message. A message check that fails outside of
+    // message dispatch, for instance from an async reply completion handler that ran after its
+    // message handler returned, has no message left to attribute the failure to and therefore
+    // cannot terminate the sender.
+    bool didMarkMessage = markCurrentMessageDispatchScopeAsInvalid();
+    ASSERT_UNUSED(didMarkMessage, didMarkMessage);
 
 #if ENABLE(IPC_TESTING_API)
     if (!error.isNull())
         setErrorString(error);
+#else
+    UNUSED_PARAM(error);
+#endif
+}
+
+inline void Connection::markCurrentlyDispatchedMessageAsInvalid(const String& error)
+{
+    // This should only be called while processing a message. See the overload above.
+    bool didMarkMessage = markCurrentMessageDispatchScopeAsInvalid();
+    ASSERT_UNUSED(didMarkMessage, didMarkMessage);
+
+#if ENABLE(IPC_TESTING_API)
+    if (!error.isNull())
+        setErrorString(error);
+#else
+    UNUSED_PARAM(error);
 #endif
 }
 
@@ -1157,12 +1260,14 @@ inline void markCurrentlyDispatchedMessageAsInvalid(const RefPtr<Connection>& co
 
 } // namespace IPC
 
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
 inline void refConnection(IPC::Connection* WTF_NONNULL obj)
 {
-    WTF::ref(obj);
+    obj->ref();
 }
 
 inline void derefConnection(IPC::Connection* WTF_NONNULL obj)
 {
-    WTF::deref(obj);
+    obj->deref();
 }
+#endif

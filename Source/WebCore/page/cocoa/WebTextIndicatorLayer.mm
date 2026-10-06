@@ -45,8 +45,8 @@ constexpr CFTimeInterval fadeOutAnimationDuration = 0.3;
 
 constexpr CGFloat borderWidth = 0;
 constexpr CGFloat cornerRadius = 3;
-constexpr CGFloat dropShadowOffsetX = 0;
-constexpr CGFloat dropShadowOffsetY = 1;
+constexpr CGFloat dropShadowOffsetX [[maybe_unused]] = 0;
+constexpr CGFloat dropShadowOffsetY [[maybe_unused]] = 1;
 
 constexpr NSString * const textLayerKey = @"TextLayer";
 constexpr NSString * const dropShadowLayerKey = @"DropShadowLayer";
@@ -75,7 +75,7 @@ static bool indicatorWantsContentCrossfade(const WebCore::TextIndicator& indicat
     return false;
 }
 
-static bool indicatorWantsFadeIn(const WebCore::TextIndicator& indicator)
+static bool NODELETE indicatorWantsFadeIn(const WebCore::TextIndicator& indicator)
 {
     switch (indicator.presentationTransition()) {
     case WebCore::TextIndicatorPresentationTransition::FadeIn:
@@ -106,8 +106,8 @@ static bool indicatorWantsFadeIn(const WebCore::TextIndicator& indicator)
     if (RefPtr contentImage = _textIndicator->contentImage()) {
         contentsImageLogicalSize = contentImage->size();
         contentsImageLogicalSize.scale(1 / _textIndicator->contentImageScaleFactor());
-        if (indicatorWantsContentCrossfade(*_textIndicator) && _textIndicator->contentImageWithHighlight())
-            contentsImage = _textIndicator->contentImageWithHighlight()->nativeImage();
+        if (RefPtr contentImageWithHighlight = _textIndicator->contentImageWithHighlight(); contentImageWithHighlight && indicatorWantsContentCrossfade(*protect(_textIndicator)))
+            contentsImage = contentImageWithHighlight->nativeImage();
         else
             contentsImage = contentImage->nativeImage();
     }
@@ -135,6 +135,7 @@ static bool indicatorWantsFadeIn(const WebCore::TextIndicator& indicator)
         WebCore::AffineTransform transform;
         transform.translate(-pathBoundingRect.location());
         translatedPath.addPath(path, transform);
+        RetainPtr translatedPlatformPath = translatedPath.platformPath();
 
         WebCore::FloatRect offsetTextRect = pathBoundingRect;
         offsetTextRect.move(offset.x, offset.y);
@@ -157,7 +158,7 @@ static bool indicatorWantsFadeIn(const WebCore::TextIndicator& indicator)
         [dropShadowLayer setShadowColor:dropShadowColor.get()];
         [dropShadowLayer setShadowRadius:WebCore::dropShadowBlurRadius];
         [dropShadowLayer setShadowOffset:CGSizeMake(dropShadowOffsetX, dropShadowOffsetY)];
-        [dropShadowLayer setShadowPath:translatedPath.platformPath()];
+        [dropShadowLayer setShadowPath:translatedPlatformPath];
         [dropShadowLayer setShadowOpacity:1];
         [dropShadowLayer setFrame:yellowHighlightRect];
         [bounceLayer addSublayer:dropShadowLayer.get()];
@@ -168,7 +169,7 @@ static bool indicatorWantsFadeIn(const WebCore::TextIndicator& indicator)
         [rimShadowLayer setFrame:yellowHighlightRect];
         [rimShadowLayer setShadowColor:rimShadowColor.get()];
         [rimShadowLayer setShadowRadius:WebCore::rimShadowBlurRadius];
-        [rimShadowLayer setShadowPath:translatedPath.platformPath()];
+        [rimShadowLayer setShadowPath:translatedPlatformPath];
         [rimShadowLayer setShadowOffset:CGSizeZero];
         [rimShadowLayer setShadowOpacity:1];
         [rimShadowLayer setFrame:yellowHighlightRect];
@@ -186,7 +187,7 @@ static bool indicatorWantsFadeIn(const WebCore::TextIndicator& indicator)
 
         RetainPtr<CAShapeLayer> maskLayer = adoptNS([[CAShapeLayer alloc] init]);
         [maskLayer setDelegate:[WebActionDisablingCALayerDelegate shared]];
-        [maskLayer setPath:translatedPath.platformPath()];
+        [maskLayer setPath:translatedPlatformPath];
         [textLayer setMask:maskLayer.get()];
 
         WebCore::FloatRect imageRect = pathBoundingRect;
@@ -231,7 +232,7 @@ static RetainPtr<CAKeyframeAnimation> createBounceAnimation(CFTimeInterval durat
 static RetainPtr<CABasicAnimation> createContentCrossfadeAnimation(CFTimeInterval duration, WebCore::TextIndicator& textIndicator)
 {
     RetainPtr crossfadeAnimation = [CABasicAnimation animationWithKeyPath:@"contents"];
-    RefPtr contentsImage = textIndicator.protectedContentImage()->nativeImage();
+    RefPtr contentsImage = protect(textIndicator.contentImage())->nativeImage();
     [crossfadeAnimation setToValue:(__bridge id)contentsImage->platformImage().get()];
     [crossfadeAnimation setFillMode:kCAFillModeForwards];
     [crossfadeAnimation setRemovedOnCompletion:NO];
@@ -267,7 +268,7 @@ static RetainPtr<CABasicAnimation> createFadeInAnimation(CFTimeInterval duration
 - (CFTimeInterval)_animationDuration
 {
     if (_textIndicator->wantsBounce()) {
-        if (indicatorWantsContentCrossfade(*_textIndicator))
+        if (indicatorWantsContentCrossfade(*protect(_textIndicator)))
             return bounceWithCrossfadeAnimationDuration;
         return WebCore::bounceAnimationDuration.value();
     }

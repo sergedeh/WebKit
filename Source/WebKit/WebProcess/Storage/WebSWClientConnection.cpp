@@ -144,7 +144,26 @@ void WebSWClientConnection::postMessageToServiceWorker(ServiceWorkerIdentifier d
     for (auto& port : message.transferredPorts)
         WebMessagePortChannelProvider::singleton().messagePortSentToRemote(port.first);
 
-    send(Messages::WebSWServerConnection::PostMessageToServiceWorker { destinationIdentifier, WTF::move(message), sourceIdentifier });
+    Vector<URL> blobURLs;
+    if (auto& serializedScriptValue = message.message) {
+        blobURLs = serializedScriptValue->blobURLs().map([](auto& blobURL) {
+            return URL { blobURL };
+        });
+    }
+
+    send(Messages::WebSWServerConnection::PostMessageToServiceWorker { destinationIdentifier, WTF::move(message), sourceIdentifier, WTF::move(blobURLs) });
+}
+
+void WebSWClientConnection::postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&& message, ServiceWorkerData&& source, const SecurityOriginData& sourceOrigin)
+{
+    dispatchMessageToServiceWorkerClient(destinationContextIdentifier, WTF::move(message), WTF::move(source), sourceOrigin, { });
+}
+
+void WebSWClientConnection::postMessageToServiceWorkerClientAndNotifyWhenDispatched(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&& message, ServiceWorkerData&& source, const SecurityOriginData& sourceOrigin, CompletionHandler<void()>&& completionHandler)
+{
+    dispatchMessageToServiceWorkerClient(destinationContextIdentifier, WTF::move(message), WTF::move(source), sourceOrigin, CompletionHandlerCallingScope { CompletionHandler<void()> { [completionHandler = WTF::move(completionHandler)]() mutable {
+        ensureOnMainThread(WTF::move(completionHandler));
+    }, CompletionHandlerCallThread::AnyThread } });
 }
 
 void WebSWClientConnection::registerServiceWorkerClient(const ClientOrigin& clientOrigin, WebCore::ServiceWorkerClientData&& data, const std::optional<WebCore::ServiceWorkerRegistrationIdentifier>& controllingServiceWorkerRegistrationIdentifier, String&& userAgent)
@@ -244,9 +263,9 @@ void WebSWClientConnection::getRegistrations(SecurityOriginData&& topOrigin, con
         return;
     }
 
-    runOrDelayTaskForImport([weakThis = WeakPtr { *this }, callback = WTF::move(callback), topOrigin = WTF::move(topOrigin), clientURL]() mutable {
+    runOrDelayTaskForImport([weakThis = WeakPtr { *this }, completionHandler = CompletionHandlerWithFinalizer<void(Vector<ServiceWorkerRegistrationData>&&)>(WTF::move(callback), [](auto& callback) { callback({ }); }), topOrigin = WTF::move(topOrigin), clientURL]() mutable {
         if (RefPtr protectedThis = weakThis.get())
-            protectedThis->sendWithAsyncReply(Messages::WebSWServerConnection::GetRegistrations { topOrigin, clientURL }, WTF::move(callback));
+            protectedThis->sendWithAsyncReply(Messages::WebSWServerConnection::GetRegistrations { topOrigin, clientURL }, WTF::move(completionHandler));
     });
 }
 
@@ -259,6 +278,14 @@ void WebSWClientConnection::connectionToServerLost()
 void WebSWClientConnection::clear()
 {
     clearPendingJobs();
+
+    auto retrieveRecordResponseBodyCallbacks = std::exchange(m_retrieveRecordResponseBodyCallbacks, { });
+    for (auto& callback : retrieveRecordResponseBodyCallbacks.values())
+        callback(makeUnexpected(ResourceError { errorDomainWebKitInternal, 0, { }, "Connection to network process lost"_s }));
+
+    // Destroying these tasks fires their captured CompletionHandlerWithFinalizer
+    // objects, which resolves the corresponding JS-visible promises with default values.
+    m_tasksPendingOriginImport.clear();
 }
 
 void WebSWClientConnection::terminateWorkerForTesting(ServiceWorkerIdentifier identifier, CompletionHandler<void()>&& callback)
@@ -282,7 +309,7 @@ void WebSWClientConnection::storeRegistrationsOnDiskForTesting(CompletionHandler
     sendWithAsyncReply(Messages::WebSWServerConnection::StoreRegistrationsOnDisk { }, WTF::move(callback));
 }
 
-template<typename C, typename U> void callExceptionOrResultCallback(C&& callback, U&& valueOrException)
+template<typename C, typename U> void callExceptionOrResultCallback(NOESCAPE C&& callback, U&& valueOrException)
 {
     if (!valueOrException.has_value()) {
         callback(valueOrException.error().toException());
@@ -337,7 +364,7 @@ void WebSWClientConnection::getNotifications(const URL& registrationURL, const S
     }
 #endif
 
-    WebProcess::singleton().protectedParentProcessConnection()->sendWithAsyncReply(Messages::WebProcessProxy::GetNotifications { registrationURL, tag }, WTF::move(callback));
+    protect(WebProcess::singleton().parentProcessConnection())->sendWithAsyncReply(Messages::WebProcessProxy::GetNotifications { registrationURL, tag }, WTF::move(callback));
 }
 #endif
 
@@ -420,14 +447,14 @@ void WebSWClientConnection::retrieveRecordResponseBody(BackgroundFetchRecordIden
 
 void WebSWClientConnection::notifyRecordResponseBodyChunk(RetrieveRecordResponseBodyCallbackIdentifier identifier, IPC::SharedBufferReference&& data)
 {
-    auto iterator = m_retrieveRecordResponseBodyCallbacks.find(identifier);
-    if (iterator == m_retrieveRecordResponseBodyCallbacks.end())
+    auto callback = m_retrieveRecordResponseBodyCallbacks.take(identifier);
+    if (!callback)
         return;
     auto buffer = data.unsafeBuffer();
     bool isDone = !buffer;
-    iterator->value(WTF::move(buffer));
-    if (isDone)
-        m_retrieveRecordResponseBodyCallbacks.remove(iterator);
+    callback(WTF::move(buffer));
+    if (!isDone)
+        m_retrieveRecordResponseBodyCallbacks.add(identifier, WTF::move(callback));
 }
 
 void WebSWClientConnection::notifyRecordResponseBodyEnd(RetrieveRecordResponseBodyCallbackIdentifier identifier, WebCore::ResourceError&& error)
@@ -438,10 +465,10 @@ void WebSWClientConnection::notifyRecordResponseBodyEnd(RetrieveRecordResponseBo
 
 static RefPtr<Page> pageFromScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier clientIdentifier)
 {
-    RefPtr document = Document::allDocumentsMap().get(clientIdentifier);
+    auto* document = Document::allDocumentsMap().get(clientIdentifier);
     if (!document) {
-        RefPtr loader = DocumentLoader::fromScriptExecutionContextIdentifier(clientIdentifier);
-        RefPtr frame = loader ? loader->frame() : nullptr;
+        auto* loader = DocumentLoader::fromScriptExecutionContextIdentifier(clientIdentifier);
+        auto* frame = loader ? loader->frame() : nullptr;
         return frame ? frame->page() : nullptr;
     }
     return document->page();
@@ -462,7 +489,7 @@ void WebSWClientConnection::focusServiceWorkerClient(ScriptExecutionContextIdent
                 return;
             }
 
-            document->eventLoop().queueTask(TaskSource::Networking, [document = RefPtr { document }, callback = WTF::move(callback)] () mutable {
+            protect(document->eventLoop())->queueTask(TaskSource::Networking, [document = RefPtr { document }, callback = WTF::move(callback)] () mutable {
                 RefPtr frame = document ? document->frame() : nullptr;
                 RefPtr page = frame ? frame->page() : nullptr;
 
@@ -472,7 +499,7 @@ void WebSWClientConnection::focusServiceWorkerClient(ScriptExecutionContextIdent
                 }
 
                 page->focusController().setFocusedFrame(frame.get());
-                // FIXME: This is a safer cpp false positive.
+                // FIXME: This is a safer cpp false positive (rdar://186727155).
                 SUPPRESS_UNCOUNTED_ARG callback(ServiceWorkerClientData::from(*document));
             });
         };
@@ -525,7 +552,7 @@ Ref<WebSWClientConnection::AddRoutePromise> WebSWClientConnection::addRoutes(Ser
             return makeUnexpected(WebCore::ExceptionData { WebCore::ExceptionCode::TypeError, "Internal error"_s });
         }
     };
-    return WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithPromisedReply<PromiseConverter>(Messages::WebSWServerConnection::AddRoutes { identifier, routes });
+    return protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithPromisedReply<PromiseConverter>(Messages::WebSWServerConnection::AddRoutes { identifier, routes });
 }
 
 } // namespace WebKit

@@ -43,6 +43,7 @@
 #include "XLinkNames.h"
 #include "XMLNSNames.h"
 #include "XMLNames.h"
+#include <wtf/Language.h>
 
 namespace WebCore {
 
@@ -79,16 +80,18 @@ void ProcessWarming::prewarmGlobally()
 #if ENABLE(TELEPHONE_NUMBER_DETECTION)
     TelephoneNumberDetector::prewarm();
 #endif
+
+    defaultLanguage();
 }
 
 WebCore::PrewarmInformation ProcessWarming::collectPrewarmInformation()
 {
-    return { FontCache::forCurrentThread()->collectPrewarmInformation() };
+    return { protect(FontCache::forCurrentThread())->collectPrewarmInformation() };
 }
 
 void ProcessWarming::prewarmWithInformation(PrewarmInformation&& prewarmInfo)
 {
-    FontCache::forCurrentThread()->prewarm(WTF::move(prewarmInfo.fontCache));
+    protect(FontCache::forCurrentThread())->prewarm(WTF::move(prewarmInfo.fontCache));
 }
 
 }

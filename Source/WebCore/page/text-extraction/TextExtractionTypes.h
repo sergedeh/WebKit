@@ -29,6 +29,7 @@
 #include <WebCore/CharacterRange.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/FloatSize.h>
+#include <WebCore/IntPoint.h>
 #include <WebCore/NodeIdentifier.h>
 #include <WebCore/WebKitJSHandle.h>
 #include <wtf/Forward.h>
@@ -54,7 +55,8 @@ enum class Action : uint8_t {
     TextInput,
     KeyPress,
     HighlightText,
-    ScrollBy,
+    Scroll,
+    Hover,
 };
 
 struct Interaction {
@@ -62,6 +64,7 @@ struct Interaction {
     String text;
     std::optional<FloatPoint> locationInRootView;
     std::optional<NodeIdentifier> nodeIdentifier;
+    std::optional<JSHandleIdentifier> targetNodeHandleIdentifier;
     FloatSize scrollDelta;
     bool replaceAll { false };
     bool scrollToVisible { false };
@@ -75,6 +78,8 @@ struct ExtractedText {
 struct InteractionDescription {
     String description;
     Vector<String> stringsToValidate;
+    bool didFindTargetNode { true };
+    bool describesInteractionTarget { true };
 };
 
 enum class EventListenerCategory : uint8_t {
@@ -97,12 +102,15 @@ struct Request {
     std::optional<FloatRect> collectionRectInRootView;
     std::optional<JSHandleIdentifier> targetNodeHandleIdentifier;
     Vector<JSHandleIdentifier> handleIdentifiersOfNodesToSkip;
+    std::optional<NodeIdentifier> contextMenuTargetNodeIdentifier;
     bool mergeParagraphs { false };
     bool skipNearlyTransparentContent { false };
     NodeIdentifierInclusion nodeIdentifierInclusion { NodeIdentifierInclusion::None };
-    bool includeEventListeners { false };
+    OptionSet<EventListenerCategory> eventListenerCategories;
     bool includeAccessibilityAttributes { false };
     bool includeTextInAutoFilledControls { false };
+    bool includeOffscreenPasswordFields { false };
+    bool includeTagName { false };
 #if ENABLE(DATA_DETECTION)
     OptionSet<DataDetectorType> dataDetectorTypes;
 #endif
@@ -124,6 +132,9 @@ struct TextItemData {
 
 struct ScrollableItemData {
     FloatSize contentSize;
+    IntPoint scrollPosition;
+    bool isRoot { false };
+    bool hasOverflowItems { false };
 };
 
 struct ImageItemData {
@@ -136,10 +147,14 @@ struct LinkItemData {
     String target;
     URL completedURL;
     String shortenedURLString;
+    bool linksToCurrentURL { false };
+    String shortenedSelfLinkURLString;
 };
 
 struct IFrameData {
     String origin;
+    String shortenedOrigin;
+    bool isSameOriginAsParent { false };
     FrameIdentifier identifier;
 };
 
@@ -159,21 +174,28 @@ struct TextFormControlData {
     String autocomplete;
     String pattern;
     String name;
+    String value;
     std::optional<int> minLength;
     std::optional<int> maxLength;
     bool isRequired { false };
     bool isReadonly { false };
     bool isDisabled { false };
     bool isChecked { false };
+    bool isAutofilled { false };
+};
+
+struct SelectOptionData {
+    String value;
+    String label;
+    bool isSelected { false };
 };
 
 struct SelectData {
-    Vector<String> selectedValues;
+    Vector<SelectOptionData> options;
     bool isMultiple { false };
 };
 
 enum class ContainerType : uint8_t {
-    Root,
     ViewportConstrained,
     List,
     ListItem,
@@ -192,8 +214,6 @@ enum class ContainerType : uint8_t {
 using ItemData = Variant<ContainerType, TextItemData, ScrollableItemData, ImageItemData, SelectData, ContentEditableData, TextFormControlData, FormData, LinkItemData, IFrameData>;
 
 struct Item {
-    WTF_MAKE_STRUCT_TZONE_ALLOCATED_EXPORT(Item, WEBCORE_EXPORT);
-
     ItemData data;
     FloatRect rectInRootView;
     Vector<Item> children;
@@ -205,7 +225,13 @@ struct Item {
     String accessibilityRole;
     String title;
     HashMap<String, String> clientAttributes;
+    Vector<String> classNames;
+    String idAttribute;
     unsigned enclosingBlockNumber { 0 };
+    unsigned visualBlockContainerNumber { 0 };
+    bool hasLineThrough { false };
+    bool isVisuallyClickable { false };
+    bool isDisabled { false };
 
     template<typename T> bool hasData() const
     {
@@ -220,12 +246,19 @@ struct Item {
     }
 };
 
-struct PageItems {
-    Item mainFrameItem;
-    HashMap<FrameIdentifier, UniqueRef<Item>> subFrameItems;
+struct Result {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED_EXPORT(Result, WEBCORE_EXPORT);
+
+    Item rootItem;
+    unsigned visibleTextLength { 0 };
 };
 
-WEBCORE_EXPORT Item collatePageItems(PageItems&&);
+struct PageResults {
+    Result mainFrameResult;
+    HashMap<FrameIdentifier, UniqueRef<Result>> subFrameResults;
+};
+
+WEBCORE_EXPORT Result collatePageResults(PageResults&&);
 
 struct FilterRuleData {
     String name;

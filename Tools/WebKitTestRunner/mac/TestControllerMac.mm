@@ -67,8 +67,12 @@
 
 namespace WTR {
 
+static __weak NSMenu *gCurrentPopUpMenu;
+
 void TestController::notifyDone()
 {
+    if (RetainPtr menu = gCurrentPopUpMenu)
+        [menu cancelTracking];
 }
 
 static PlatformWindow wtr_NSApplication_keyWindow(id self, SEL _cmd)
@@ -87,7 +91,6 @@ static Class menuImplClassSingleton()
     return menuImplClass;
 }
 
-static __weak NSMenu *gCurrentPopUpMenu = nil;
 static void setSwizzledPopUpMenu(NSMenu *menu)
 {
     if (gCurrentPopUpMenu == menu)
@@ -112,6 +115,9 @@ static void swizzledPopUpContextMenu(Class, SEL, NSMenu *menu, NSEvent *event, N
 static void swizzledPopUpMenu(id, SEL, NSMenu *menu, NSPoint, CGFloat, NSView *, NSInteger, NSFont *, NSUInteger, NSDictionary *)
 {
     setSwizzledPopUpMenu(menu);
+
+    while (gCurrentPopUpMenu)
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantFuture]];
 }
 
 static void swizzledCancelTracking(NSMenu *menu, SEL)
@@ -182,6 +188,9 @@ void TestController::initializeTestPluginDirectory()
 
 bool TestController::platformResetStateToConsistentValues(const TestOptions& options)
 {
+    if (RetainPtr menu = gCurrentPopUpMenu)
+        [menu cancelTracking];
+
     cocoaResetStateToConsistentValues(options);
 
     if (RetainPtr webView = m_mainWebView ? m_mainWebView->platformView() : nil) {
@@ -488,6 +497,43 @@ const char* TestController::platformLibraryPathForTesting()
         platformLibraryPath.get() = [@"~/Library/Application Support/DumpRenderTree" stringByExpandingTildeInPath];
     });
     return [platformLibraryPath.get() UTF8String];
+}
+
+CFDataRef TestController::getRemoteAccessibilityToken()
+{
+    if (!m_mainWebView)
+        return nullptr;
+
+    auto* platformView = m_mainWebView->platformView();
+    if (!platformView)
+        return nullptr;
+
+    return (__bridge CFDataRef)[platformView _remoteAccessibilityChildToken];
+}
+
+void TestController::initializeWebProcessAccessibility()
+{
+    auto* platformView = m_mainWebView->platformView();
+    if (!platformView)
+        return;
+
+    // Allow all accessibility authentication requests for testing, so that
+    // site-isolated iframe web content processes can be accessed by AX clients
+    // without requiring TCC accessibility permission.
+    WKContextSetAllowAXAuthenticationForTesting(m_context.get(), true);
+
+    // Reduce the messaging timeout. Occasionally an accessibility client request goes to
+    // a web content process before it's ready to serve that request on the AX thread, causing
+    // it to time out. Reduce the timeout from the default of 1.5 seconds to 0.05 seconds so
+    // that it retries quickly and doesn't slow down the test.
+    auto systemWide = adoptCF(AXUIElementCreateSystemWide());
+    AXUIElementSetMessagingTimeout(systemWide.get(), 0.05);
+
+    // Trigger accessibility initialization by accessing an accessibility attribute.
+    // This will call WebViewImpl::enableAccessibilityIfNecessary() which then calls
+    // WebProcessPool::initializeAccessibilityIfNecessary() to send the InitializeAccessibility
+    // IPC message to the web content process.
+    [platformView accessibilityAttributeValue:NSAccessibilityRoleAttribute];
 }
 
 } // namespace WTR

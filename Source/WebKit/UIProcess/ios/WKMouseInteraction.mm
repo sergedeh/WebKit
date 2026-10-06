@@ -50,7 +50,7 @@ struct PointerLockState {
     bool isActive { false };
     bool isObservingNotifications { false };
     RetainPtr<GCMouse> currentMouse;
-    GCMouseMoved originalMouseMovedHandler { nil };
+    BlockPtr<void(GCMouseInput *, float, float)> originalMouseMovedHandler;
     std::optional<CGPoint> lockedCursorPosition;
 
     void reset()
@@ -95,28 +95,28 @@ struct PointerLockState {
 {
     self.state = UIGestureRecognizerStateBegan;
 
-    [_interaction _updateMouseTouches:touches];
+    [protect(_interaction) _updateMouseTouches:touches];
 }
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
     self.state = UIGestureRecognizerStateChanged;
 
-    [_interaction _updateMouseTouches:touches];
+    [protect(_interaction) _updateMouseTouches:touches];
 }
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
     self.state = UIGestureRecognizerStateEnded;
 
-    [_interaction _updateMouseTouches:touches];
+    [protect(_interaction) _updateMouseTouches:touches];
 }
 
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
     self.state = UIGestureRecognizerStateCancelled;
 
-    [_interaction _updateMouseTouches:touches];
+    [protect(_interaction) _updateMouseTouches:touches];
 }
 
 #if PLATFORM(MACCATALYST)
@@ -255,10 +255,10 @@ inline static String pointerType(UITouchType type)
     return WebCore::mousePointerEventType();
 }
 
-- (std::optional<WebKit::NativeWebMouseEvent>)createMouseEventWithType:(std::optional<WebKit::WebEventType>)type wasCancelled:(BOOL)cancelled
+- (RefPtr<WebKit::NativeWebMouseEvent>)createMouseEventWithType:(std::optional<WebKit::WebEventType>)type wasCancelled:(BOOL)cancelled
 {
     if (!type)
-        return std::nullopt;
+        return nullptr;
 
     auto modifiers = WebKit::WebIOSEventFactory::webEventModifiersForUIKeyModifierFlags(self._activeGesture.modifierFlags);
     UIEventButtonMask currentButtonMask = _pressedButtonMask.value_or(0);
@@ -311,7 +311,7 @@ inline static String pointerType(UITouchType type)
     }();
     auto delta = point - WebCore::DoublePoint { [currentTouch previousLocationInView:self.view] };
     // UITouch's timestamp uses mach_absolute_time as its timebase, same as MonotonicTime.
-    return WebKit::NativeWebMouseEvent {
+    return WebKit::NativeWebMouseEvent::create(
         *type,
         button,
         static_cast<unsigned short>(buttons),
@@ -325,8 +325,7 @@ inline static String pointerType(UITouchType type)
         MonotonicTime::fromRawSeconds(currentTouch.timestamp),
         0,
         cancelled ? WebKit::GestureWasCancelled::Yes : WebKit::GestureWasCancelled::No,
-        pointerType(currentTouch.type)
-    };
+        pointerType(currentTouch.type));
 }
 
 #pragma mark - UIInteraction
@@ -337,7 +336,7 @@ inline static String pointerType(UITouchType type)
         return;
 
     [self _forEachGesture:^(UIGestureRecognizer *gesture) {
-        [_view removeGestureRecognizer:gesture];
+        [protect(_view) removeGestureRecognizer:gesture];
     }];
     [self _resetCachedState];
 }
@@ -406,13 +405,13 @@ inline static String pointerType(UITouchType type)
     _lastLocation = location;
     auto mouseEvent = [self createMouseEventWithType:WebKit::WebEventType::MouseMove wasCancelled:isCancelled];
     if (mouseEvent)
-        [_delegate mouseInteraction:self changedWithEvent:*mouseEvent];
+        [protect(_delegate) mouseInteraction:self changedWithEvent:mouseEvent.releaseNonNull()];
 }
 
 - (void)_updateMouseTouches:(NSSet<UITouch *> *)touches
 {
     _currentMouseTouch = touches.anyObject;
-    _lastLocation = [_mouseTouchGestureRecognizer locationInView:_view];
+    _lastLocation = [_mouseTouchGestureRecognizer locationInView:protect(_view).get()];
 
     std::optional<WebKit::WebEventType> eventType;
     auto phase = [_currentMouseTouch phase];
@@ -443,7 +442,7 @@ inline static String pointerType(UITouchType type)
         return;
 
     if (eventType)
-        [_delegate mouseInteraction:self changedWithEvent:*mouseEvent];
+        [protect(_delegate) mouseInteraction:self changedWithEvent:mouseEvent.releaseNonNull()];
 
     if (eventType == WebKit::WebEventType::MouseUp) {
         _touching = NO;
@@ -477,6 +476,9 @@ inline static String pointerType(UITouchType type)
         return;
 #endif
 
+    if (_pointerLockState.isActive)
+        return;
+
     _pointerLockState.currentMouse = dynamic_objc_cast<GCMouse>([WebCore::getGCMouseClassSingleton() current]);
     if (!_pointerLockState.currentMouse)
         return;
@@ -497,7 +499,7 @@ inline static String pointerType(UITouchType type)
 
     [self _stopObservingMouseNotifications];
 
-    [[_pointerLockState.currentMouse mouseInput] setMouseMovedHandler:_pointerLockState.originalMouseMovedHandler];
+    [[_pointerLockState.currentMouse mouseInput] setMouseMovedHandler:_pointerLockState.originalMouseMovedHandler.get()];
     _pointerLockState.originalMouseMovedHandler = nil;
     _pointerLockState.currentMouse = nil;
 
@@ -514,7 +516,7 @@ inline static String pointerType(UITouchType type)
         return;
 
     WebCore::DoublePoint lockedPoint { _pointerLockState.lockedCursorPosition.value_or(CGPointZero) };
-    WebKit::NativeWebMouseEvent mouseEvent {
+    Ref mouseEvent = WebKit::NativeWebMouseEvent::create(
         WebKit::WebEventType::MouseMove,
         WebKit::WebMouseEventButton::None,
         0,
@@ -528,10 +530,9 @@ inline static String pointerType(UITouchType type)
         MonotonicTime::now(),
         0,
         WebKit::GestureWasCancelled::No,
-        WebCore::mousePointerEventType()
-    };
+        WebCore::mousePointerEventType());
 
-    [_delegate mouseInteraction:self changedWithEvent:mouseEvent];
+    [protect(_delegate) mouseInteraction:self changedWithEvent:WTF::move(mouseEvent)];
 }
 
 - (void)_startObservingMouseNotifications
@@ -556,7 +557,7 @@ inline static String pointerType(UITouchType type)
     if (!_pointerLockState.isActive)
         return;
     LOG(PointerLock, "Handling mouse disconnection during pointer lock");
-    [_delegate mouseInteractionDidLoseMouseDeviceDuringPointerLock:self];
+    [protect(_delegate) mouseInteractionDidLoseMouseDeviceDuringPointerLock:self];
     [self endPointerLockMouseTracking];
 }
 
@@ -564,7 +565,7 @@ inline static String pointerType(UITouchType type)
 {
     if (!mouse)
         return;
-    _pointerLockState.originalMouseMovedHandler = [[mouse mouseInput] mouseMovedHandler];
+    _pointerLockState.originalMouseMovedHandler = makeBlockPtr([[mouse mouseInput] mouseMovedHandler]);
     [[mouse mouseInput] setMouseMovedHandler:makeBlockPtr([weakSelf = WeakObjCPtr<WKMouseInteraction> { self }](GCMouseInput *mouseInput, float deltaX, float deltaY) {
         if (RetainPtr strongSelf = weakSelf.get())
             [strongSelf handleGameControllerMouseMove:deltaX deltaY:deltaY];

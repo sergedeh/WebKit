@@ -29,6 +29,7 @@
 #if ENABLE(VIDEO)
 
 #include "FloatPoint.h"
+#include "FloatRect.h"
 #include "InlineIteratorInlineBox.h"
 #include "RenderBlockFlow.h"
 
@@ -42,32 +43,33 @@ class RenderVTTCue final : public RenderBlockFlow {
     WTF_MAKE_TZONE_ALLOCATED(RenderVTTCue);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderVTTCue);
 public:
-    RenderVTTCue(VTTCueBox&, RenderStyle&&);
+    RenderVTTCue(VTTCueBox&, Style::ComputedStyle&&);
     virtual ~RenderVTTCue();
 
 private:
     void layout() override;
 
     bool isOutside() const;
-    bool rectIsWithinContainer(const IntRect&) const;
+    bool rectIsWithinContainer(const FloatRect&) const;
     bool isOverlapping() const;
     RenderVTTCue* overlappingObject() const;
-    RenderVTTCue* overlappingObjectForRect(const IntRect&) const;
+    RenderVTTCue* overlappingObjectForRect(const FloatRect&) const;
     bool shouldSwitchDirection(const InlineIterator::InlineBox&, LayoutUnit) const;
 
-    void moveBoxesByStep(LayoutUnit);
-    bool switchDirection(bool&, LayoutUnit&);
+    void NODELETE moveBoxesByStep(LayoutUnit);
+    bool NODELETE switchDirection(bool&, LayoutUnit&);
     void moveIfNecessaryToKeepWithinContainer();
-    bool findNonOverlappingPosition(int& x, int& y) const;
+    bool findNonOverlappingPosition(float& x, float& y) const;
 
     bool initializeLayoutParameters(LayoutUnit&, LayoutUnit&);
-    void placeBoxInDefaultPosition(LayoutUnit, bool&);
+    void NODELETE placeBoxInDefaultPosition(LayoutUnit, bool&);
     void repositionCueSnapToLinesSet();
     void repositionCueSnapToLinesNotSet();
     void repositionGenericCue();
 
     RenderBlockFlow* backdropBox() const;
     RenderInline* cueBox() const;
+    static FloatRect unroundedAbsoluteBoundingBoxRect(const RenderBox&);
 
     WeakPtr<VTTCue, WeakPtrImplWithEventTargetData> m_cue;
     FloatPoint m_fallbackPosition;

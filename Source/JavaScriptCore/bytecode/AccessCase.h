@@ -57,6 +57,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AccessCase);
 #define JSC_FOR_EACH_ACCESS_TYPE(macro) \
     macro(Load) \
     macro(LoadMegamorphic) \
+    macro(LoadMegamorphicGetter) \
     macro(Transition) \
     macro(StoreMegamorphic) \
     macro(Delete) \
@@ -79,6 +80,9 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AccessCase);
     macro(StringLength) \
     macro(DirectArgumentsLength) \
     macro(ScopedArgumentsLength) \
+    macro(RegExpLastIndexLoad) \
+    macro(RegExpLastIndexStore) \
+    macro(ArrayLengthStore) \
     macro(ModuleNamespaceLoad) \
     macro(ProxyObjectIn) \
     macro(ProxyObjectLoad) \
@@ -118,6 +122,22 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AccessCase);
     macro(IndexedResizableTypedArrayFloat64Load) \
     macro(IndexedStringLoad) \
     macro(IndexedNoIndexingMiss) \
+    macro(IndexedUndefinedKeyLoad) \
+    macro(IndexedUndefinedKeyMiss) \
+    macro(IndexedNullKeyLoad) \
+    macro(IndexedNullKeyMiss) \
+    macro(IndexedTrueKeyLoad) \
+    macro(IndexedTrueKeyMiss) \
+    macro(IndexedFalseKeyLoad) \
+    macro(IndexedFalseKeyMiss) \
+    macro(IndexedUndefinedKeyReplace) \
+    macro(IndexedUndefinedKeyTransition) \
+    macro(IndexedNullKeyReplace) \
+    macro(IndexedNullKeyTransition) \
+    macro(IndexedTrueKeyReplace) \
+    macro(IndexedTrueKeyTransition) \
+    macro(IndexedFalseKeyReplace) \
+    macro(IndexedFalseKeyTransition) \
     macro(IndexedProxyObjectStore) \
     macro(IndexedMegamorphicStore) \
     macro(IndexedInt32Store) \
@@ -196,7 +216,7 @@ public:
         Structure* = nullptr, const ObjectPropertyConditionSet& = ObjectPropertyConditionSet(), RefPtr<PolyProtoAccessChain>&& = nullptr);
 
     static RefPtr<AccessCase> createTransition(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure,
-        Structure* newStructure, const ObjectPropertyConditionSet&, RefPtr<PolyProtoAccessChain>&&, const StructureStubInfo&);
+        Structure* newStructure, const ObjectPropertyConditionSet&, RefPtr<PolyProtoAccessChain>&&, const PropertyInlineCache&);
 
     static Ref<AccessCase> createDelete(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure, Structure* newStructure);
 
@@ -206,14 +226,17 @@ public:
 
     static Ref<AccessCase> createReplace(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure, bool viaGlobalProxy);
     
-    static RefPtr<AccessCase> fromStructureStubInfo(VM&, JSCell* owner, CacheableIdentifier, StructureStubInfo&);
+    static RefPtr<AccessCase> fromPropertyInlineCache(VM&, JSCell* owner, CacheableIdentifier, PropertyInlineCache&);
 
     AccessType type() const { return m_type; }
+    void convertToNonStringPrimitiveKeyAccessType(AccessType);
     PropertyOffset offset() const { return m_offset; }
 
     Structure* structure() const
     {
-        if (m_type == Transition || m_type == Delete || m_type == SetPrivateBrand)
+        if (m_type == Transition || m_type == Delete || m_type == SetPrivateBrand
+            || m_type == IndexedUndefinedKeyTransition || m_type == IndexedNullKeyTransition
+            || m_type == IndexedTrueKeyTransition || m_type == IndexedFalseKeyTransition)
             return m_structureID->previousID();
         return m_structureID.get();
     }
@@ -227,17 +250,21 @@ public:
 
     Structure* newStructure() const
     {
-        ASSERT(m_type == Transition || m_type == Delete || m_type == SetPrivateBrand);
+        ASSERT(m_type == Transition || m_type == Delete || m_type == SetPrivateBrand
+            || m_type == IndexedUndefinedKeyTransition || m_type == IndexedNullKeyTransition
+            || m_type == IndexedTrueKeyTransition || m_type == IndexedFalseKeyTransition);
         return m_structureID.get();
     }
 
     StructureID newStructureID() const
     {
-        ASSERT(m_type == Transition || m_type == Delete || m_type == SetPrivateBrand);
+        ASSERT(m_type == Transition || m_type == Delete || m_type == SetPrivateBrand
+            || m_type == IndexedUndefinedKeyTransition || m_type == IndexedNullKeyTransition
+            || m_type == IndexedTrueKeyTransition || m_type == IndexedFalseKeyTransition);
         return m_structureID.value();
     }
 
-    const ObjectPropertyConditionSet& conditionSet() const { return m_conditionSet; }
+    const ObjectPropertyConditionSet& conditionSet() const LIFETIME_BOUND { return m_conditionSet; }
 
     JSObject* tryGetAlternateBase() const;
 
@@ -293,16 +320,16 @@ public:
         return !!m_polyProtoAccessChain;
     }
 
-    bool requiresIdentifierNameMatch() const;
-    bool requiresInt32PropertyCheck() const;
+    bool NODELETE requiresIdentifierNameMatch() const;
+    bool NODELETE requiresInt32PropertyCheck() const;
 
     UniquedStringImpl* uid() const { return m_identifier.uid(); }
     CacheableIdentifier identifier() const { return m_identifier; }
 
 #if ASSERT_ENABLED
-    void checkConsistency(StructureStubInfo&);
+    void checkConsistency(PropertyInlineCache&);
 #else
-    ALWAYS_INLINE void checkConsistency(StructureStubInfo&) { }
+    ALWAYS_INLINE void checkConsistency(PropertyInlineCache&) { }
 #endif
 
     unsigned hash() const
@@ -315,7 +342,7 @@ public:
     void collectDependentCells(VM&, Vector<JSCell*>&) const;
 
     template<typename Func>
-    void runWithDowncast(const Func&);
+    void runWithDowncast(NOESCAPE const Func&);
 
     void operator delete(AccessCase*, std::destroying_delete_t);
 
@@ -347,7 +374,7 @@ protected:
     JSObject* tryGetAlternateBaseImpl() const;
     void dumpImpl(PrintStream&, CommaPrinter&, Indenter&) const { }
 
-    bool guardedByStructureCheckSkippingConstantIdentifierCheck() const;
+    bool NODELETE guardedByStructureCheckSkippingConstantIdentifierCheck() const;
 
 private:
     friend class CodeBlock;
@@ -360,10 +387,10 @@ private:
     friend class InstanceOfAccessCase;
 
     template<typename Functor>
-    void forEachDependentCell(VM&, const Functor&) const;
+    void forEachDependentCell(VM&, NOESCAPE const Functor&) const;
 
     DECLARE_VISIT_AGGREGATE_WITH_MODIFIER(const);
-    bool visitWeak(VM&) const;
+    bool isStillLive(VM&) const;
     template<typename Visitor> void propagateTransitions(Visitor&) const;
 
     AccessType m_type;

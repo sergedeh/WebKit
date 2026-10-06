@@ -26,10 +26,12 @@
 #include "config.h"
 #include "CSSValuePool.h"
 
-#include "CSSPrimitiveValueMappings.h"
+#include "CSSFontFamilyNameValue.h"
+#include "CSSParserContext.h"
 #include "CSSPropertyParser.h"
 #include "CSSValueKeywords.h"
 #include "CSSValueList.h"
+#include "StyleKeyword+Mappings.h"
 
 namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSValuePool);
@@ -37,18 +39,18 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSValuePool);
 LazyNeverDestroyed<StaticCSSValuePool> staticCSSValuePool;
 
 StaticCSSValuePool::StaticCSSValuePool()
-    : m_implicitInitialValue(CSSValue::StaticCSSValue, CSSPrimitiveValue::ImplicitInitialValue)
+    : m_implicitInitialValue(CSSValue::StaticCSSValue, CSSKeywordValue::ImplicitInitialValue)
     , m_transparentColor(CSSValue::StaticCSSValue, WebCore::Color::transparentBlack)
     , m_whiteColor(CSSValue::StaticCSSValue, WebCore::Color::white)
     , m_blackColor(CSSValue::StaticCSSValue, WebCore::Color::black)
 {
     for (auto keyword : allCSSValueKeywords())
-        new (m_identifierValues[enumToUnderlyingType(keyword)].get()) CSSPrimitiveValue { CSSValue::StaticCSSValue, keyword };
+        new (m_identifierValues[std::to_underlying(keyword)].get()) CSSKeywordValue { CSSValue::StaticCSSValue, CSS::Keyword { keyword } };
 
     for (unsigned i = 0; i <= maximumCacheableIntegerValue; ++i) {
-        new (m_pixelValues[i].get()) CSSPrimitiveValue(CSSValue::StaticCSSValue, i, CSSUnitType::CSS_PX);
-        new (m_percentageValues[i].get()) CSSPrimitiveValue(CSSValue::StaticCSSValue, i, CSSUnitType::CSS_PERCENTAGE);
-        new (m_numberValues[i].get()) CSSPrimitiveValue(CSSValue::StaticCSSValue, i, CSSUnitType::CSS_NUMBER);
+        new (m_pixelValues[i].get()) CSSPrimitiveValue(CSSValue::StaticCSSValue, i, CSSUnitType::Px);
+        new (m_percentageValues[i].get()) CSSPrimitiveValue(CSSValue::StaticCSSValue, i, CSSUnitType::Percentage);
+        new (m_numberValues[i].get()) CSSPrimitiveValue(CSSValue::StaticCSSValue, i, CSSUnitType::Number);
     }
 }
 
@@ -92,16 +94,16 @@ Ref<CSSColorValue> CSSValuePool::createColorValue(const WebCore::Color& color)
     }).iterator->value;
 }
 
-Ref<CSSPrimitiveValue> CSSValuePool::createFontFamilyValue(const AtomString& familyName)
+Ref<CSSValue> CSSValuePool::createFontFamilyNameValue(const AtomString& familyName)
 {
     // Remove one entry at random if the cache grows too large.
     // FIXME: Use TinyLRUCache instead?
     const int maximumFontFamilyCacheSize = 128;
-    if (m_fontFamilyValueCache.size() >= maximumFontFamilyCacheSize)
-        m_fontFamilyValueCache.remove(m_fontFamilyValueCache.random());
+    if (m_fontFamilyNameValueCache.size() >= maximumFontFamilyCacheSize)
+        m_fontFamilyNameValueCache.remove(m_fontFamilyNameValueCache.random());
 
-    return m_fontFamilyValueCache.ensure(familyName, [&familyName] {
-        return CSSPrimitiveValue::createFontFamily(familyName);
+    return m_fontFamilyNameValueCache.ensure(familyName, [&familyName] {
+        return CSSFontFamilyNameValue::create(CSS::FontFamilyName { familyName });
     }).iterator->value;
 }
 
@@ -113,9 +115,13 @@ RefPtr<CSSValueList> CSSValuePool::createFontFaceValue(const AtomString& string)
     if (m_fontFaceValueCache.size() >= maximumFontFaceCacheSize)
         m_fontFaceValueCache.remove(m_fontFaceValueCache.random());
 
-    return m_fontFaceValueCache.ensure(string, [&string]() -> RefPtr<CSSValueList> {
-        auto value = CSSPropertyParser::parseStylePropertyLonghand(CSSPropertyFontFamily, string, strictCSSParserContext());
-        return dynamicDowncast<CSSValueList>(value.get());
+    return m_fontFaceValueCache.ensure(string, [&string] {
+        // Parse the legacy <font face> attribute as a font-family value, relaxing the family-name
+        // grammar to accept numeric-token names such as "Bodoni 72" (legacyFontFaceAttributeMode).
+        // Regular CSS font-family parsing is unaffected and still rejects such names.
+        CSSParserContext context = strictCSSParserContext();
+        context.legacyFontFaceAttributeMode = true;
+        return dynamicDowncast<CSSValueList>(CSSPropertyParser::parseStylePropertyLonghand(CSSPropertyFontFamily, string, context));
     }).iterator->value;
 }
 
@@ -123,7 +129,7 @@ void CSSValuePool::drain()
 {
     m_colorValueCache.clear();
     m_fontFaceValueCache.clear();
-    m_fontFamilyValueCache.clear();
+    m_fontFamilyNameValueCache.clear();
 }
 
-}
+} // namespace WebCore

@@ -28,12 +28,13 @@
 #include "Connection.h"
 #include "Decoder.h"
 #include "Encoder.h"
+#include "IPCEvent.h"
 #include "MessageNames.h"
 #include "StreamMessageReceiver.h"
 #include "StreamServerConnectionBuffer.h"
 #include <wtf/Deque.h>
 #include <wtf/Lock.h>
-#include <wtf/Threading.h>
+#include <wtf/SwiftBridging.h>
 
 namespace IPC {
 
@@ -41,15 +42,19 @@ class StreamConnectionWorkQueue;
 
 struct StreamServerConnectionHandle {
     WTF_MAKE_NONCOPYABLE(StreamServerConnectionHandle);
-    StreamServerConnectionHandle(Connection::Handle&& connection, StreamConnectionBuffer::Handle&& bufferHandle)
+    StreamServerConnectionHandle(Connection::Handle&& connection, StreamConnectionBuffer::Handle&& bufferHandle, Signal&& clientWaitSignal)
         : outOfStreamConnection(WTF::move(connection))
         , buffer(WTF::move(bufferHandle))
+        , clientWaitSignal(WTF::move(clientWaitSignal))
     { }
     StreamServerConnectionHandle(StreamServerConnectionHandle&&) = default;
     StreamServerConnectionHandle& operator=(StreamServerConnectionHandle&&) = default;
 
     Connection::Handle outOfStreamConnection;
     StreamConnectionBuffer::Handle buffer;
+    // Signals the client's clientWait Event to release it from ring buffer backpressure. The client
+    // creates the pair so that the wait is interrupted if this process dies and no senders remain.
+    Signal clientWaitSignal;
 };
 
 struct StreamServerConnectionParameters {
@@ -63,6 +68,7 @@ class StreamServerConnectionClient : public StreamMessageReceiver, public CanMak
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(StreamServerConnectionClient);
 public:
     virtual void didReceiveInvalidMessage(StreamServerConnection&, MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) = 0;
+    virtual void didRunOutOfMessages() { }
 
 protected:
     virtual ~StreamServerConnectionClient() = default;
@@ -98,18 +104,18 @@ public:
     void stopReceivingMessages(ReceiverName, uint64_t destinationID);
 
     Connection& connection() { return m_connection; }
-    Ref<Connection> protectedConnection() { return m_connection; }
 
     enum DispatchResult : bool {
         HasNoMessages,
         HasMoreMessages
     };
     DispatchResult dispatchStreamMessages(size_t messageLimit);
-    void markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error);
+    void NODELETE markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error);
+    void NODELETE markCurrentlyDispatchedMessageAsInvalid(const String&);
 
     void open(Client&, StreamConnectionWorkQueue&);
     void invalidate();
-    template<typename T, typename RawValue> Error send(T&& message, const ObjectIdentifierGenericBase<RawValue>& destinationID);
+    template<typename T> Error send(T&& message, const ObjectIdentifierGenericBase& destinationID);
 
     template<typename T, typename... Arguments>
     void sendSyncReply(Connection::SyncRequestID, Arguments&&...);
@@ -122,10 +128,8 @@ public:
     template<typename T, typename... Arguments>
     void sendAsyncReply(AsyncReplyID, Arguments&&...);
 
-    Semaphore& clientWaitSemaphore() { return m_clientWaitSemaphore; }
-
 private:
-    StreamServerConnection(Ref<Connection>, StreamServerConnectionBuffer&&);
+    StreamServerConnection(Ref<Connection>, StreamServerConnectionBuffer&&, Signal&& clientWaitSignal);
 
     // MessageReceiveQueue
     void enqueueMessage(Connection&, UniqueRef<Decoder>&&) final;
@@ -142,8 +146,6 @@ private:
     bool dispatchStreamMessage(Decoder&, StreamMessageReceiver&);
     void dispatchDidReceiveInvalidMessage(Decoder&);
 
-    RefPtr<StreamConnectionWorkQueue> protectedWorkQueue() const;
-
     using WakeUpClient = StreamServerConnectionBuffer::WakeUpClient;
     const Ref<IPC::Connection> m_connection;
     RefPtr<StreamConnectionWorkQueue> m_workQueue;
@@ -158,17 +160,18 @@ private:
     using ReceiversMap = HashMap<std::pair<uint8_t, uint64_t>, Ref<StreamMessageReceiver>>;
     ReceiversMap m_receivers WTF_GUARDED_BY_LOCK(m_receiversLock);
     uint64_t m_currentDestinationID { 0 };
-    Semaphore m_clientWaitSemaphore;
+    // Signalled to release the client from ring buffer backpressure.
+    Signal m_clientWaitSignal;
     bool m_isProcessingStreamMessage { false };
     bool m_didReceiveInvalidMessage { false };
 #if ASSERT_ENABLED
     bool m_isDispatchingMessage { false };
 #endif
     friend class StreamConnectionWorkQueue;
-};
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refStreamServerConnection, derefStreamServerConnection);
 
-template<typename T, typename RawValue>
-Error StreamServerConnection::send(T&& message, const ObjectIdentifierGenericBase<RawValue>& destinationID)
+template<typename T>
+Error StreamServerConnection::send(T&& message, const ObjectIdentifierGenericBase& destinationID)
 {
     return m_connection->send(std::forward<T>(message), destinationID);
 }
@@ -218,3 +221,15 @@ inline void markCurrentlyDispatchedMessageAsInvalid(const RefPtr<StreamServerCon
 }
 
 }
+
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+inline void refStreamServerConnection(IPC::StreamServerConnection* obj)
+{
+    obj->ref();
+}
+
+inline void derefStreamServerConnection(IPC::StreamServerConnection* obj)
+{
+    obj->deref();
+}
+#endif

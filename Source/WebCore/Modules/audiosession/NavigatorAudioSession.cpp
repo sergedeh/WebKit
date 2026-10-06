@@ -45,8 +45,14 @@ Ref<DOMAudioSession> NavigatorAudioSession::audioSession(Navigator& navigator)
 {
     auto* navigatorAudioSession = NavigatorAudioSession::from(navigator);
     if (!navigatorAudioSession->m_audioSession)
-        lazyInitialize(navigatorAudioSession->m_audioSession, DOMAudioSession::create(navigator.protectedScriptExecutionContext().get()));
+        lazyInitialize(navigatorAudioSession->m_audioSession, DOMAudioSession::create(protect(navigator.scriptExecutionContext()).get()));
     return *navigatorAudioSession->m_audioSession;
+}
+
+RefPtr<DOMAudioSession> NavigatorAudioSession::audioSessionIfExists(Navigator& navigator)
+{
+    auto* supplement = downcast<NavigatorAudioSession>(Supplement<Navigator>::from(&navigator, supplementName()));
+    return supplement ? supplement->m_audioSession : nullptr;
 }
 
 NavigatorAudioSession* NavigatorAudioSession::from(Navigator& navigator)

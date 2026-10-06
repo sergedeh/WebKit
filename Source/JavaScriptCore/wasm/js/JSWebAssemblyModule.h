@@ -35,7 +35,7 @@
 #include <JavaScriptCore/MemoryMode.h>
 #include <JavaScriptCore/WasmFormat.h>
 #include <wtf/Bag.h>
-#include <wtf/Expected.h>
+#include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
 #include <wtf/text/WTFString.h>
@@ -70,11 +70,18 @@ public:
     JS_EXPORT_PRIVATE static JSWebAssemblyModule* create(VM&, Structure*, Ref<Wasm::Module>&&);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
-    const Wasm::ModuleInformation& moduleInformation() const;
-    SymbolTable* exportSymbolTable() const;
-    Wasm::TypeIndex typeIndexFromFunctionIndexSpace(Wasm::FunctionSpaceIndex functionIndexSpace) const;
+    const Wasm::ModuleInformation& NODELETE moduleInformation() const;
+    SymbolTable* NODELETE exportSymbolTable() const;
+    const Wasm::RTT& rttFromFunctionIndexSpace(Wasm::FunctionSpaceIndex functionIndexSpace) const;
 
-    JS_EXPORT_PRIVATE Wasm::Module& module();
+    JS_EXPORT_PRIVATE Wasm::Module& NODELETE module();
+
+    struct ImportName {
+        Identifier module;
+        Identifier field;
+    };
+
+    std::span<const ImportName> importNames(VM&) LIFETIME_BOUND;
 
 private:
     JSWebAssemblyModule(VM&, Structure*, Ref<Wasm::Module>&&);
@@ -82,6 +89,7 @@ private:
 
     const Ref<Wasm::Module> m_module;
     WriteBarrier<SymbolTable> m_exportSymbolTable;
+    FixedVector<ImportName> m_importNames;
 };
 
 } // namespace JSC

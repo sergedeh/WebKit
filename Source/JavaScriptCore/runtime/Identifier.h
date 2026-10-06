@@ -91,15 +91,15 @@ public:
     enum class EmptyIdentifierFlag { EmptyIdentifier };
     Identifier(EmptyIdentifierFlag) : m_string(StringImpl::empty()) { ASSERT(m_string.impl()->isAtom()); }
 
-    const AtomString& string() const { return m_string; }
+    const AtomString& string() const LIFETIME_BOUND { return m_string; }
 
     UniquedStringImpl* impl() const { return m_string.impl(); }
     RefPtr<AtomStringImpl> releaseImpl() { return m_string.releaseImpl(); }
 
     int length() const { return m_string.length(); }
 
-    CString ascii() const { return m_string.string().ascii(); }
-    CString utf8() const { return m_string.string().utf8(); }
+    ASCIICString ascii() const { return m_string.string().ascii(); }
+    UTF8CString utf8() const { return m_string.string().utf8(); }
 
     // There's 2 functions to construct Identifier from string, (1) fromString and (2) fromUid.
     // They have different meanings in keeping or discarding symbol-ness of strings.
@@ -121,11 +121,11 @@ public:
     static Identifier fromString(VM&, const AtomString&);
     static Identifier fromString(VM&, SymbolImpl*);
 
-    static Identifier fromUid(VM&, UniquedStringImpl* uid);
+    static Identifier NODELETE fromUid(VM&, UniquedStringImpl* uid);
     static Identifier fromUid(const PrivateName&);
     static Identifier fromUid(SymbolImpl&);
 
-    static Identifier createLatin1(VM& vm, std::span<const char16_t> string) { return Identifier(vm, add8(vm, string)); }
+    static inline Identifier createLatin1(VM& vm, std::span<const char16_t> string); // Defined in IdentifierInlines.h
 
     JS_EXPORT_PRIVATE static Identifier from(VM&, unsigned y);
     JS_EXPORT_PRIVATE static Identifier from(VM&, int y);

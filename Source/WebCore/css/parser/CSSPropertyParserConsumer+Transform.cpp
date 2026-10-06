@@ -27,6 +27,7 @@
 #include "CSSPropertyParserConsumer+Transform.h"
 
 #include "CSSFunctionValue.h"
+#include "CSSKeywordValue.h"
 #include "CSSParserContext.h"
 #include "CSSParserTokenRange.h"
 #include "CSSPrimitiveValue.h"
@@ -41,10 +42,11 @@
 #include "CSSPropertyParserConsumer+Primitives.h"
 #include "CSSPropertyParserState.h"
 #include "CSSPropertyParsing.h"
+#include "CSSTransformListValue.h"
 #include "CSSValueList.h"
 #include "CSSValuePool.h"
-#include "RenderStyle.h"
 #include "StyleBuilderState.h"
+#include "StyleComputedStyle.h"
 #include "StyleTransform.h"
 #include "StyleValueTypes+CSSValueConversion.h"
 
@@ -243,7 +245,7 @@ RefPtr<CSSValue> consumeTranslate(CSSParserTokenRange& range, CSS::PropertyParse
         return nullptr;
 
     // If the z value is a zero value and not a percent value, we have nothing left to add to the list.
-    bool haveNonZeroZ = z && (z->isCalculated() || z->isPercentage() || !*z->isZero());
+    bool haveNonZeroZ = z->isCalculated() || z->isPercentage() || !*z->isZero();
 
     if (!haveNonZeroY && !haveNonZeroZ)
         return CSSValueList::createSpaceSeparated(x.releaseNonNull());
@@ -273,39 +275,37 @@ RefPtr<CSSValue> consumeRotate(CSSParserTokenRange& range, CSS::PropertyParserSt
 
     CSSValueListBuilder list;
     RefPtr<CSSPrimitiveValue> angle;
-    RefPtr<CSSPrimitiveValue> axisIdentifier;
+    RefPtr<CSSKeywordValue> axisIdentifier;
 
     while (!range.atEnd()) {
         // First, attempt to parse a number, which might be in a series of 3 specifying the rotation axis.
-        auto parsedValue = CSSPrimitiveValueResolver<CSS::Number<>>::consumeAndResolve(range, state);
-        if (parsedValue) {
+        if (auto parsedNumber = CSSPrimitiveValueResolver<CSS::Number<>>::consumeAndResolve(range, state)) {
             // If we've encountered an axis identifier, then this value is invalid.
             if (axisIdentifier)
                 return nullptr;
-            list.append(parsedValue.releaseNonNull());
+            list.append(parsedNumber.releaseNonNull());
             range.consumeWhitespace();
             continue;
         }
 
         // Then, attempt to parse an angle. We try this as a fallback rather than the first option because
         // a unitless 0 angle would be consumed as an angle.
-        parsedValue = CSSPrimitiveValueResolver<CSS::Angle<>>::consumeAndResolve(range, state);
-        if (parsedValue) {
+        if (auto parsedAngle = CSSPrimitiveValueResolver<CSS::Angle<>>::consumeAndResolve(range, state)) {
             // If we had already parsed an angle or numbers but not 3 in a row, this value is invalid.
             if (angle || (!list.isEmpty() && list.size() != 3))
                 return nullptr;
-            angle = WTF::move(parsedValue);
+            angle = WTF::move(parsedAngle);
             range.consumeWhitespace();
             continue;
         }
 
         // Finally, attempt to parse one of the axis identifiers.
-        parsedValue = consumeIdent<CSSValueX, CSSValueY, CSSValueZ>(range);
+        auto parsedIdent = consumeIdent<CSSValueX, CSSValueY, CSSValueZ>(range);
         // If we failed to find one of those identifiers or one was already specified, or we'd previously
         // encountered numbers to specify a rotation axis, then this value is invalid.
-        if (!parsedValue || axisIdentifier || !list.isEmpty())
+        if (!parsedIdent || axisIdentifier || !list.isEmpty())
             return nullptr;
-        axisIdentifier = WTF::move(parsedValue);
+        axisIdentifier = WTF::move(parsedIdent);
         range.consumeWhitespace();
     }
 
@@ -314,11 +314,15 @@ RefPtr<CSSValue> consumeRotate(CSSParserTokenRange& range, CSS::PropertyParserSt
         return nullptr;
 
     auto knownToBeZero = [](std::optional<bool> value) -> bool {
-        return !value ? false : *value == true;
+        return value && *value;
     };
 
     auto knownToBeNotZero = [](std::optional<bool> value) -> bool {
-        return !value ? false : *value == false;
+        return value && !*value;
+    };
+
+    auto knownToBeNegative = [](std::optional<bool> value) -> bool {
+        return value && *value;
     };
 
     if (list.size() == 3) {
@@ -328,16 +332,30 @@ RefPtr<CSSValue> consumeRotate(CSSParserTokenRange& range, CSS::PropertyParserSt
 
         // Now we must check the values since if we have a vector in the x, y or z axis alone we must serialize to the
         // matching identifier.
-        auto xIsZero = downcast<CSSPrimitiveValue>(list[0].get()).isZero();
-        auto yIsZero = downcast<CSSPrimitiveValue>(list[1].get()).isZero();
-        auto zIsZero = downcast<CSSPrimitiveValue>(list[2].get()).isZero();
+        Ref x = downcast<CSSPrimitiveValue>(list[0].get());
+        Ref y = downcast<CSSPrimitiveValue>(list[1].get());
+        Ref z = downcast<CSSPrimitiveValue>(list[2].get());
+        auto xIsZero = x->isZero();
+        auto yIsZero = y->isZero();
+        auto zIsZero = z->isZero();
+
+        // If the axis points in the reverse direction of a named axis, it still serializes to the matching keyword
+        // (or is omitted, for z), but the angle is negated so that the same rotation is represented.
+        // https://drafts.csswg.org/css-transforms-2/#individual-transform-serialization
+        auto angleAlong = [&](const CSSPrimitiveValue& axis) -> Ref<CSSPrimitiveValue> {
+            if (knownToBeNegative(axis.isNegative())) {
+                if (auto raw = angle->raw())
+                    return CSSPrimitiveValue::create(-raw->value, raw->unit);
+            }
+            return angle.releaseNonNull();
+        };
 
         if (knownToBeNotZero(xIsZero) && knownToBeZero(yIsZero) && knownToBeZero(zIsZero))
-            return CSSValueList::createSpaceSeparated(CSSPrimitiveValue::create(CSSValueX), angle.releaseNonNull());
+            return CSSValueList::createSpaceSeparated(CSSKeywordValue::create(CSSValueX), angleAlong(x));
         if (knownToBeZero(xIsZero) && knownToBeNotZero(yIsZero) && knownToBeZero(zIsZero))
-            return CSSValueList::createSpaceSeparated(CSSPrimitiveValue::create(CSSValueY), angle.releaseNonNull());
+            return CSSValueList::createSpaceSeparated(CSSKeywordValue::create(CSSValueY), angleAlong(y));
         if (knownToBeZero(xIsZero) && knownToBeZero(yIsZero) && knownToBeNotZero(zIsZero))
-            return CSSValueList::createSpaceSeparated(angle.releaseNonNull());
+            return CSSValueList::createSpaceSeparated(angleAlong(z));
 
         list.append(angle.releaseNonNull());
         return CSSValueList::createSpaceSeparated(WTF::move(list));
@@ -386,11 +404,11 @@ RefPtr<CSSValue> consumeScale(CSSParserTokenRange& range, CSS::PropertyParserSta
 
     range.consumeWhitespace();
 
-    auto xValue = x->resolveAsNumberIfNotCalculated();
-    auto yValue = y->resolveAsNumberIfNotCalculated();
+    auto xRaw = x->raw();
+    auto yRaw = y->raw();
 
     if (range.atEnd()) {
-        if (!xValue || !yValue || *xValue != *yValue)
+        if (!xRaw || !yRaw || *xRaw != *yRaw)
             return CSSValueList::createSpaceSeparated(x.releaseNonNull(), y.releaseNonNull());
 
         return CSSValueList::createSpaceSeparated(x.releaseNonNull());
@@ -400,18 +418,18 @@ RefPtr<CSSValue> consumeScale(CSSParserTokenRange& range, CSS::PropertyParserSta
     if (!z)
         return nullptr;
 
-    auto zValue = z->resolveAsNumberIfNotCalculated();
+    auto zRaw = z->raw();
 
-    if (zValue != 1.0)
+    if (!zRaw || zRaw->value != 1.0)
         return CSSValueList::createSpaceSeparated(x.releaseNonNull(), y.releaseNonNull(), z.releaseNonNull());
 
-    if (!xValue || !yValue || *xValue != *yValue)
+    if (!xRaw || !yRaw || *xRaw != *yRaw)
         return CSSValueList::createSpaceSeparated(x.releaseNonNull(), y.releaseNonNull());
 
     return CSSValueList::createSpaceSeparated(x.releaseNonNull());
 }
 
-std::optional<Style::Transform> parseTransformRaw(const String& string, const CSSParserContext& context)
+std::optional<Style::Transform> parseTransformRaw(StringView string, const CSSParserContext& context, const Document& document)
 {
     auto tokenizer = CSSTokenizer(string);
     auto range = tokenizer.tokenRange();
@@ -419,7 +437,7 @@ std::optional<Style::Transform> parseTransformRaw(const String& string, const CS
     // Handle leading whitespace.
     range.consumeWhitespace();
 
-    auto state = CSS::PropertyParserState { .context = context };
+    auto state = CSS::PropertyParserState { .context = context, .absoluteLengthUnitsOnly = true };
     auto parsedValue = CSSPropertyParsing::consumeTransform(range, state);
     if (!parsedValue)
         return { };
@@ -430,14 +448,62 @@ std::optional<Style::Transform> parseTransformRaw(const String& string, const CS
     if (!range.atEnd())
         return { };
 
-    auto dummyStyle = RenderStyle::create();
-    auto dummyState = Style::BuilderState::create(dummyStyle);
+    auto dummyStyle = Style::ComputedStyle::create();
+    auto dummyState = Style::BuilderState::create(dummyStyle, Style::BuilderContext { document });
 
-    if (!parsedValue->canResolveDependenciesWithConversionData(dummyState->cssToLengthConversionData()))
-        return { };
+    ASSERT(parsedValue->computedStyleDependencies().isAbsolute());
 
     return Style::toStyleFromCSSValue<Style::Transform>(*CheckedPtr { dummyState.ptr() }, *parsedValue);
 }
+
+#if ENABLE(SPATIAL_PORTAL)
+
+static void flattenTransformListValues(CSSValueListBuilder& builder, CSSValue& transformList)
+{
+    builder.appendVector(downcast<CSSTransformListValue>(transformList).copyValues());
+}
+
+RefPtr<CSSValue> consumePortalTransform(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    // <'portal-transform'> = none | auto | auto? <transform-list> | <transform-list> auto <transform-list>?
+    // https://webkit.github.io/explainers/css-spatial/Overview.html#stage-transform
+
+    if (range.peek().id() == CSSValueNone)
+        return consumeIdent(range);
+
+    RefPtr leadingAuto = consumeIdent<CSSValueAuto>(range);
+    RefPtr firstList = CSSPropertyParsing::consumeTransformList(range, state);
+
+    if (leadingAuto) {
+        // `auto` | `auto <transform-list>`
+        if (!firstList)
+            return leadingAuto;
+
+        CSSValueListBuilder builder;
+        builder.append(leadingAuto.releaseNonNull());
+        flattenTransformListValues(builder, *firstList);
+        return CSSValueList::createSpaceSeparated(WTF::move(builder));
+    }
+
+    if (!firstList)
+        return nullptr;
+
+    RefPtr trailingAuto = consumeIdent<CSSValueAuto>(range);
+    if (!trailingAuto)
+        return firstList; // `<transform-list>`
+
+    // `<transform-list> auto` | `<transform-list> auto <transform-list>`
+    CSSValueListBuilder builder;
+    flattenTransformListValues(builder, *firstList);
+    builder.append(trailingAuto.releaseNonNull());
+
+    if (RefPtr secondList = CSSPropertyParsing::consumeTransformList(range, state))
+        flattenTransformListValues(builder, *secondList);
+
+    return CSSValueList::createSpaceSeparated(WTF::move(builder));
+}
+
+#endif // ENABLE(SPATIAL_PORTAL)
 
 } // namespace CSSPropertyParserHelpers
 } // namespace WebCore

@@ -25,12 +25,16 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/URLHash.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 
+class CachedImage;
 class Document;
+class IsolatedSVGDocumentContext;
 class Element;
+class SVGDocument;
 class SVGElement;
 class SVGFontFaceElement;
 class SVGResourcesCache;
@@ -56,11 +60,12 @@ public:
     void unpauseAnimations();
     void dispatchLoadEventToOutermostSVGElements();
     bool areAnimationsPaused() const { return m_areAnimationsPaused; }
+    bool hasActiveSMILAnimations() const;
 
     void reportWarning(const String&);
     void reportError(const String&);
 
-    SVGResourcesCache& resourcesCache() { return m_resourcesCache; }
+    SVGResourcesCache& resourcesCache() LIFETIME_BOUND { return m_resourcesCache; }
 
     void addElementToRebuild(SVGElement&);
     void removeElementToRebuild(SVGElement&);
@@ -68,21 +73,30 @@ public:
     void clearTargetDependencies(SVGElement&);
     void rebuildAllElementReferencesForTarget(SVGElement&);
 
-    const WeakHashSet<SVGFontFaceElement, WeakPtrImplWithEventTargetData>& svgFontFaceElements() const { return m_svgFontFaceElements; }
+    const WeakHashSet<SVGFontFaceElement, WeakPtrImplWithEventTargetData>& svgFontFaceElements() const LIFETIME_BOUND { return m_svgFontFaceElements; }
     void registerSVGFontFaceElement(SVGFontFaceElement&);
     void unregisterSVGFontFaceElement(SVGFontFaceElement&);
 
-private:
-    Ref<Document> protectedDocument() const;
+    bool hasExternalSVGResource(const URL&) const;
+    void addExternalSVGResource(const URL&, CachedImage&, Document&);
+    IsolatedSVGDocumentContext* isolatedSVGDocumentContext(const URL&) const;
 
+    // The return value is tri-state because callers need to distinguish whether the reference is external
+    // at all, and if so whether it's loaded yet: nullopt = not an external/data reference (resolve
+    // locally); null RefPtr = external but not loaded yet (resolve to nothing); non-null = the isolated
+    // document to resolve in. Requires the SVGExternalResourcesEnabled setting.
+    std::optional<RefPtr<SVGDocument>> externalResourceDocument(const URL&) const;
+
+private:
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
     WeakHashSet<SVGSVGElement, WeakPtrImplWithEventTargetData> m_timeContainers; // For SVG 1.2 support this will need to be made more general.
     WeakHashSet<SVGFontFaceElement, WeakPtrImplWithEventTargetData> m_svgFontFaceElements;
     const UniqueRef<SVGResourcesCache> m_resourcesCache;
 
     Vector<Ref<SVGElement>> m_rebuildElements;
-    bool m_areAnimationsPaused;
+    bool m_areAnimationsPaused { false };
 
+    HashMap<URL, Ref<IsolatedSVGDocumentContext>> m_externalSVGDocuments;
 };
 
 } // namespace WebCore

@@ -35,6 +35,7 @@ namespace WebCore {
 
 class InbandWebVTTTextTrack final : public InbandTextTrack, private WebVTTParserClient {
     WTF_MAKE_TZONE_ALLOCATED(InbandWebVTTTextTrack);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InbandWebVTTTextTrack);
 public:
     static Ref<InbandTextTrack> create(ScriptExecutionContext&, InbandTextTrackPrivate&);
     virtual ~InbandWebVTTTextTrack();
@@ -58,7 +59,7 @@ private:
     ASCIILiteral logClassName() const final { return "InbandWebVTTTextTrack"_s; }
 #endif
 
-    std::unique_ptr<WebVTTParser> m_webVTTParser;
+    const std::unique_ptr<WebVTTParser> m_webVTTParser;
 };
 
 } // namespace WebCore

@@ -40,7 +40,10 @@
 #include "WebContextMenuProxyWPE.h"
 #include "WebDataListSuggestionsDropdown.h"
 #include "WebDateTimePicker.h"
+#include "WebKitClipboardPermissionRequestPrivate.h"
+#include "WebKitColorChooser.h"
 #include "WebKitPopupMenu.h"
+#include "WebKitWebViewClient.h"
 #include <WebCore/ActivityState.h>
 #include <WebCore/Cursor.h>
 #include <WebCore/DOMPasteAccess.h>
@@ -72,6 +75,13 @@ PageClientImpl::PageClientImpl(WKWPE::View& view)
 }
 
 PageClientImpl::~PageClientImpl() = default;
+
+#if ENABLE(DRAG_SUPPORT)
+void PageClientImpl::startDrag(WebCore::SelectionData&& selection, OptionSet<WebCore::DragOperation> dragOperationMask, RefPtr<WebCore::ShareableBitmap>&&, WebCore::IntPoint&&)
+{
+    m_view.setDragData(WTF::move(selection), dragOperationMask);
+}
+#endif
 
 #if USE(LIBWPE)
 struct wpe_view_backend* PageClientImpl::viewBackend()
@@ -105,7 +115,7 @@ void PageClientImpl::setViewNeedsDisplay(const WebCore::Region&)
 {
 }
 
-void PageClientImpl::requestScroll(const WebCore::FloatPoint&, const WebCore::IntPoint&, WebCore::ScrollIsAnimated)
+void PageClientImpl::requestScroll(const WebCore::FloatPoint&, const WebCore::IntPoint&, WebCore::ScrollIsAnimated, WebCore::InterruptScrollAnimation)
 {
 }
 
@@ -277,7 +287,7 @@ void PageClientImpl::doneWithTouchEvent(const WebTouchEvent& touchEvent, bool wa
 
             // Mouse motion towards the point of the click.
             event->type = wpe_input_pointer_event_type_motion;
-            page.handleMouseEvent(NativeWebMouseEvent(event, page.deviceScaleFactor(), WebMouseEventSyntheticClickType::OneFingerTap));
+            page.handleMouseEvent(NativeWebMouseEvent::create(event, page.deviceScaleFactor(), WebMouseEventSyntheticClickType::OneFingerTap));
 
             event->type = wpe_input_pointer_event_type_button;
             event->button = 1;
@@ -285,12 +295,12 @@ void PageClientImpl::doneWithTouchEvent(const WebTouchEvent& touchEvent, bool wa
             // Mouse down on the point of the click.
             event->state = 1;
             event->modifiers |= wpe_input_pointer_modifier_button1;
-            page.handleMouseEvent(NativeWebMouseEvent(event, page.deviceScaleFactor(), WebMouseEventSyntheticClickType::OneFingerTap));
+            page.handleMouseEvent(NativeWebMouseEvent::create(event, page.deviceScaleFactor(), WebMouseEventSyntheticClickType::OneFingerTap));
 
             // Mouse up on the same location.
             event->state = 0;
             event->modifiers &= ~wpe_input_pointer_modifier_button1;
-            page.handleMouseEvent(NativeWebMouseEvent(event, page.deviceScaleFactor(), WebMouseEventSyntheticClickType::OneFingerTap));
+            page.handleMouseEvent(NativeWebMouseEvent::create(event, page.deviceScaleFactor(), WebMouseEventSyntheticClickType::OneFingerTap));
         },
         [&](TouchGestureController::ContextMenuEvent&) {
             // FIXME: Generate contextmenuevent without accidentally generating mouseup/mousedown events
@@ -318,9 +328,11 @@ Ref<WebContextMenuProxy> PageClientImpl::createContextMenuProxy(WebPageProxy& pa
 }
 #endif
 
-RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy&, const WebCore::Color& intialColor, const WebCore::IntRect&, ColorControlSupportsAlpha supportsAlpha, Vector<WebCore::Color>&&)
+RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy& page, const WebCore::Color&, ColorControlSupportsAlpha supportsAlpha, Vector<WebCore::Color>&&, std::optional<WebCore::FrameIdentifier> frameID)
 {
-    return nullptr;
+    if (!m_view.client().isGLibBasedAPI())
+        return nullptr;
+    return WebKitColorChooser::create(m_view, page, supportsAlpha, frameID);
 }
 
 RefPtr<WebDataListSuggestionsDropdown> PageClientImpl::createDataListSuggestionsDropdown(WebPageProxy&)
@@ -429,6 +441,11 @@ void PageClientImpl::didRestoreScrollPosition()
 {
 }
 
+void PageClientImpl::pageScaleFactorDidChange()
+{
+    m_view.pageScaleFactorDidChange();
+}
+
 WebCore::UserInterfaceLayoutDirection PageClientImpl::userInterfaceLayoutDirection()
 {
     return WebCore::UserInterfaceLayoutDirection::LTR;
@@ -514,7 +531,7 @@ void PageClientImpl::beganExitFullScreen(const WebCore::IntRect& /* initialFrame
 
 #endif // ENABLE(FULLSCREEN_API)
 
-void PageClientImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction requiresInteraction, const WebCore::IntRect&, const String& originIdentifier, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&& completionHandler)
+void PageClientImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction requiresInteraction, WebCore::FrameIdentifier, const WebCore::IntRect&, const String& originIdentifier, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&& completionHandler)
 {
 #if ENABLE(WPE_PLATFORM)
     if (auto* view = m_view.wpeView()) {
@@ -528,7 +545,12 @@ void PageClientImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebC
                 }
             }
         }
-        // FIXME: add WebKitClipboardPermissionRequest support.
+
+        if (m_view.client().isGLibBasedAPI()) {
+            GRefPtr<WebKitClipboardPermissionRequest> request = adoptGRef(webkitClipboardPermissionRequestCreate(WTF::move(completionHandler)));
+            static_cast<WebKitWebViewClient&>(m_view.client()).requestClipboardPermission(request.get());
+            return;
+        }
     }
 #endif
     completionHandler(WebCore::DOMPasteAccessResponse::DeniedForGesture);
@@ -585,7 +607,6 @@ void PageClientImpl::callAfterNextPresentationUpdate(CompletionHandler<void()>&&
     m_view.callAfterNextPresentationUpdate(WTF::move(callback));
 }
 
-#if USE(SKIA)
 RefPtr<ViewSnapshot> PageClientImpl::takeViewSnapshot(std::optional<WebCore::IntRect>&& clipRect)
 {
 #if ENABLE(WPE_PLATFORM)
@@ -600,6 +621,5 @@ RefPtr<ViewSnapshot> PageClientImpl::takeViewSnapshot(std::optional<WebCore::Int
 #endif
     return nullptr;
 }
-#endif
 
 } // namespace WebKit

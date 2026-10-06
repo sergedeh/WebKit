@@ -102,9 +102,98 @@ static void assertedElementSetState(GstElement* element, GstState desiredState)
     gst_element_get_state(element, &newState, nullptr, 0);
 
     if (desiredState != newState || result != GST_STATE_CHANGE_SUCCESS) {
-        GST_ERROR_OBJECT(element, "AppendPipeline state change failed (returned %s): %s -> %s (expected %s)", gst_element_state_change_return_get_name(result), gst_element_state_get_name(oldState), gst_element_state_get_name(newState), gst_element_state_get_name(desiredState));
+        GST_ERROR_OBJECT(element, "AppendPipeline state change failed (returned %s): %s -> %s (expected %s)", gst_state_change_return_get_name(result), gst_state_get_name(oldState), gst_state_get_name(newState), gst_state_get_name(desiredState));
         ASSERT_NOT_REACHED();
     }
+}
+
+void AppendPipeline::setupDemuxing()
+{
+    // We assign the created instances here instead of adoptRef() because gst_bin_add_many()
+    // below will already take the initial reference and we need an additional one for us.
+    m_appsrc = makeGStreamerElement("appsrc"_s);
+
+    GRefPtr<GstPad> appsrcPad = adoptGRef(gst_element_get_static_pad(m_appsrc.get(), "src"));
+    gst_pad_add_probe(appsrcPad.get(), GST_PAD_PROBE_TYPE_BUFFER, [](GstPad*, GstPadProbeInfo* padProbeInfo, void* userData) {
+        return static_cast<AppendPipeline*>(userData)->appsrcEndOfAppendCheckerProbe(padProbeInfo);
+    }, this, nullptr);
+
+    const String& type = m_sourceBufferPrivate.type().containerType();
+    GST_DEBUG_OBJECT(pipeline(), "SourceBuffer containerType: %s", type.utf8());
+
+    if (type.endsWith("mp4"_s) || type.endsWith("aac"_s)) {
+        m_demux = makeGStreamerElement("qtdemux"_s);
+        m_typefind = makeGStreamerElement("identity"_s);
+        GRefPtr<GstCaps> caps = adoptGRef(gst_caps_new_simple("video/quicktime", "variant", G_TYPE_STRING, "mse-bytestream", NULL));
+        gst_app_src_set_caps(GST_APP_SRC(m_appsrc.get()), caps.get());
+    } else if (type.endsWith("webm"_s)) {
+        m_demux = makeGStreamerElement("matroskademux"_s);
+        m_typefind = makeGStreamerElement("identity"_s);
+    } else if (type == "audio/mpeg"_s) {
+        // Will be instantiated later based on typefind results.
+        m_demux = nullptr;
+        m_typefind = makeGStreamerElement("typefind"_s);
+
+        g_signal_connect(m_typefind.get(), "have-type", G_CALLBACK(+[](
+            GstElement* typefind, guint, GstCaps* caps, AppendPipeline* appendPipeline) {
+            ASSERT(!isMainThread());
+
+            // We don't want to create the demuxer twice if the type changes for whatever reason.
+            if (appendPipeline->m_demux)
+                return;
+
+            auto capsStructure = gst_caps_get_structure(caps, 0);
+            ASCIILiteral demuxerElementName = nullptr;
+            if (gst_structure_has_name(capsStructure, "application/x-id3"))
+                demuxerElementName = "id3demux"_s;
+            else if (gst_structure_has_name(capsStructure, "audio/mpeg"))
+                demuxerElementName = "identity"_s;
+
+            if (demuxerElementName.isNull()) {
+                GST_ELEMENT_ERROR(appendPipeline->pipeline(), STREAM, WRONG_TYPE,
+                    ("Unsupported caps for audio/mpeg mimetype: %s",
+                    gstStructureGetName(capsStructure).utf8()), (nullptr));
+                return;
+            }
+
+            GST_DEBUG_OBJECT(appendPipeline->pipeline(), "Creating %s demuxer for caps: %s",
+                demuxerElementName.characters(), gstStructureGetName(capsStructure).utf8());
+            appendPipeline->m_demux = makeGStreamerElement(demuxerElementName);
+            ASSERT(appendPipeline->m_demux);
+
+            appendPipeline->configureOptionalDemuxerFromAnyThread();
+
+            // The added element had its floating reference sunk after being assigned to the GRefPtr, so the transfer-floating
+            // parameter is working as transfer-none here.
+            gst_bin_add(GST_BIN(GST_ELEMENT_PARENT(typefind)), appendPipeline->m_demux.get());
+            gst_element_link(appendPipeline->m_typefind.get(), appendPipeline->m_demux.get());
+
+            assertedElementSetState(appendPipeline->m_demux.get(), GST_STATE_PLAYING);
+        }), this);
+    } else {
+        GST_ELEMENT_ERROR(pipeline(), STREAM, WRONG_TYPE, ("Unsupported container mimetype: %s", type.utf8().legacyCStringPointer()), (nullptr));
+        return;
+    }
+
+    if (m_typefind)
+        GST_INFO_OBJECT(pipeline(), "Created typefind: %s", gst_element_get_name(m_typefind.get()));
+
+    // m_demux might be null at this point if there's a typefind pending to identify the proper demuxer to be used
+    // (see the audio/mpeg case right above).
+    if (m_demux) {
+        configureOptionalDemuxerFromAnyThread();
+        GST_INFO_OBJECT(pipeline(), "Created demuxer: %s", gst_element_get_name(m_demux.get()));
+    }
+
+    // The added elements had their floating references sunk after being assigned to the GRefPtr, so the transfer-floating
+    // parameters are working as transfer-none here.
+    // Note that m_demux may be null at this point, so the variable argument list would ignore it (m_demux would
+    // act as a nullptr list guard).
+    GST_INFO_OBJECT(pipeline(), "Linking elements up until demuxer");
+    gst_bin_add_many(GST_BIN(m_pipeline.get()), m_appsrc.get(), m_typefind.get(), m_demux.get(), nullptr);
+    gst_element_link_many(m_appsrc.get(), m_typefind.get(), m_demux.get(), nullptr);
+
+    assertedElementSetState(m_pipeline.get(), GST_STATE_PLAYING);
 }
 
 void AppendPipeline::configureOptionalDemuxerFromAnyThread()
@@ -117,7 +206,7 @@ void AppendPipeline::configureOptionalDemuxerFromAnyThread()
     m_demuxerDataEnteringPadProbeInformation.probeId = gst_pad_add_probe(demuxerSinkPad.get(), GST_PAD_PROBE_TYPE_BUFFER, reinterpret_cast<GstPadProbeCallback>(appendPipelinePadProbeDebugInformation), &m_demuxerDataEnteringPadProbeInformation, nullptr);
 #endif
 
-    String elementClass = unsafeSpan(gst_element_get_metadata(m_demux.get(), GST_ELEMENT_METADATA_KLASS));
+    String elementClass = String::fromLatin1(unsafeSpan(gst_element_get_metadata(m_demux.get(), GST_ELEMENT_METADATA_KLASS)));
     // We try to detect special cases of demuxers that have a single static src pad, such as id3demux.
     GRefPtr<GstPad> demuxerSrcPad = adoptGRef(gst_element_get_static_pad(m_demux.get(), "src"));
     if (!demuxerSrcPad && elementClass.split('/').contains("Demuxer"_s)) {
@@ -181,11 +270,11 @@ AppendPipeline::AppendPipeline(SourceBufferPrivateGStreamer& sourceBufferPrivate
     static size_t appendPipelineCount = 0;
     String pipelineName = makeString("append-pipeline-"_s,
         makeStringByReplacingAll(m_sourceBufferPrivate.type().containerType(), '/', '-'), '-', appendPipelineCount++);
-    m_pipeline = gst_pipeline_new(pipelineName.utf8().data());
+    m_pipeline = gst_pipeline_new(pipelineName.utf8().legacyCStringPointer());
     registerActivePipeline(m_pipeline);
     connectSimpleBusMessageCallback(m_pipeline.get());
 
-    auto bus = adoptGRef(gst_pipeline_get_bus(GST_PIPELINE(m_pipeline.get())));
+    GRefPtr bus = adoptGRef(gst_pipeline_get_bus(GST_PIPELINE(m_pipeline.get())));
     gst_bus_enable_sync_message_emission(bus.get());
 
     g_signal_connect(bus.get(), "sync-message::error", G_CALLBACK(+[](GstBus*, GstMessage* message, AppendPipeline* appendPipeline) {
@@ -195,85 +284,7 @@ AppendPipeline::AppendPipeline(SourceBufferPrivateGStreamer& sourceBufferPrivate
         appendPipeline->handleNeedContextSyncMessage(message);
     }), this);
 
-    // We assign the created instances here instead of adoptRef() because gst_bin_add_many()
-    // below will already take the initial reference and we need an additional one for us.
-    m_appsrc = makeGStreamerElement("appsrc"_s);
-
-    GRefPtr<GstPad> appsrcPad = adoptGRef(gst_element_get_static_pad(m_appsrc.get(), "src"));
-    gst_pad_add_probe(appsrcPad.get(), GST_PAD_PROBE_TYPE_BUFFER, [](GstPad*, GstPadProbeInfo* padProbeInfo, void* userData) {
-        return static_cast<AppendPipeline*>(userData)->appsrcEndOfAppendCheckerProbe(padProbeInfo);
-    }, this, nullptr);
-
-    const String& type = m_sourceBufferPrivate.type().containerType();
-    GST_DEBUG_OBJECT(pipeline(), "SourceBuffer containerType: %s", type.utf8().data());
-
-    if (type.endsWith("mp4"_s) || type.endsWith("aac"_s)) {
-        m_demux = makeGStreamerElement("qtdemux"_s);
-        m_typefind = makeGStreamerElement("identity"_s);
-        GRefPtr<GstCaps> caps = adoptGRef(gst_caps_new_simple("video/quicktime", "variant", G_TYPE_STRING, "mse-bytestream", NULL));
-        gst_app_src_set_caps(GST_APP_SRC(m_appsrc.get()), caps.get());
-    } else if (type.endsWith("webm"_s)) {
-        m_demux = makeGStreamerElement("matroskademux"_s);
-        m_typefind = makeGStreamerElement("identity"_s);
-    } else if (type == "audio/mpeg"_s) {
-        // Will be instantiated later based on typefind results.
-        m_demux = nullptr;
-        m_typefind = makeGStreamerElement("typefind"_s);
-
-        g_signal_connect(m_typefind.get(), "have-type", G_CALLBACK(+[](
-            GstElement* typefind, guint, GstCaps* caps, AppendPipeline* appendPipeline) {
-            ASSERT(!isMainThread());
-
-            // We don't want to create the demuxer twice if the type changes for whatever reason.
-            if (appendPipeline->m_demux)
-                return;
-
-            auto capsStructure = gst_caps_get_structure(caps, 0);
-            ASCIILiteral demuxerElementName = nullptr;
-            if (gst_structure_has_name(capsStructure, "application/x-id3"))
-                demuxerElementName = "id3demux"_s;
-            else if (gst_structure_has_name(capsStructure, "audio/mpeg"))
-                demuxerElementName = "identity"_s;
-
-            if (demuxerElementName.isNull()) {
-                GST_ELEMENT_ERROR(appendPipeline->pipeline(), STREAM, WRONG_TYPE,
-                    ("Unsupported caps for audio/mpeg mimetype: %s",
-                    gstStructureGetName(capsStructure).utf8()), (nullptr));
-                return;
-            }
-
-            GST_DEBUG_OBJECT(appendPipeline->pipeline(), "Creating %s demuxer for caps: %s",
-                demuxerElementName.characters(), gstStructureGetName(capsStructure).utf8());
-            appendPipeline->m_demux = makeGStreamerElement(demuxerElementName);
-            ASSERT(appendPipeline->m_demux);
-
-            appendPipeline->configureOptionalDemuxerFromAnyThread();
-
-            // The added element had its floating reference sunk after being assigned to the GRefPtr, so the transfer-floating
-            // parameter is working as transfer-none here.
-            gst_bin_add(GST_BIN(GST_ELEMENT_PARENT(typefind)), appendPipeline->m_demux.get());
-            gst_element_link(appendPipeline->m_typefind.get(), appendPipeline->m_demux.get());
-
-            assertedElementSetState(appendPipeline->m_demux.get(), GST_STATE_PLAYING);
-        }), this);
-    } else {
-        GST_ELEMENT_ERROR(pipeline(), STREAM, WRONG_TYPE, ("Unsupported container mimetype: %s", type.utf8().data()), (nullptr));
-        return;
-    }
-
-    // m_demux might be null at this point if there's a typefind pending to identify the proper demuxer to be used
-    // (see the audio/mpeg case right above).
-    if (m_demux)
-        configureOptionalDemuxerFromAnyThread();
-
-    // The added elements had their floating references sunk after being assigned to the GRefPtr, so the transfer-floating
-    // parameters are working as transfer-none here.
-    // Note that m_demux may be null at this point, so the variable argument list would ignore it (m_demux would
-    // act as a nullptr list guard).
-    gst_bin_add_many(GST_BIN(m_pipeline.get()), m_appsrc.get(), m_typefind.get(), m_demux.get(), nullptr);
-    gst_element_link_many(m_appsrc.get(), m_typefind.get(), m_demux.get(), nullptr);
-
-    assertedElementSetState(m_pipeline.get(), GST_STATE_PLAYING);
+    setupDemuxing();
 }
 
 AppendPipeline::~AppendPipeline()
@@ -288,7 +299,7 @@ AppendPipeline::~AppendPipeline()
     // when changing the pipeline state.
 
     if (m_pipeline) {
-        auto bus = adoptGRef(gst_pipeline_get_bus(GST_PIPELINE(m_pipeline.get())));
+        GRefPtr bus = adoptGRef(gst_pipeline_get_bus(GST_PIPELINE(m_pipeline.get())));
         ASSERT(bus);
         g_signal_handlers_disconnect_by_data(bus.get(), this);
         gst_bus_disable_sync_message_emission(bus.get());
@@ -340,7 +351,7 @@ void AppendPipeline::handleErrorSyncMessage([[maybe_unused]] GstMessage* message
     ASSERT(!isMainThread());
     GST_WARNING_OBJECT(pipeline(), "Demuxing error: %" GST_PTR_FORMAT, message);
     handleErrorConditionFromStreamingThread();
-    GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(GST_BIN(m_pipeline.get()), GST_DEBUG_GRAPH_SHOW_ALL, "demuxing-error");
+    dumpBinToDotFile(m_pipeline, "demuxing-error"_s);
 }
 
 GstPadProbeReturn AppendPipeline::appsrcEndOfAppendCheckerProbe(GstPadProbeInfo* padProbeInfo)
@@ -360,7 +371,8 @@ GstPadProbeReturn AppendPipeline::appsrcEndOfAppendCheckerProbe(GstPadProbeInfo*
     }
 
     GST_TRACE_OBJECT(pipeline(), "Posting end-of-append task to the main thread");
-    GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(GST_BIN(m_pipeline.get()), GST_DEBUG_GRAPH_SHOW_ALL, "end-of-append");
+    if (enableMSEAdditionalPipelineDumps())
+        dumpBinToDotFile(m_pipeline, makeString(unsafeSpan(GST_ELEMENT_NAME(m_pipeline.get())), "-end-of-append"_s));
     m_taskQueue.enqueueTask([this]() {
         handleEndOfAppend();
     });
@@ -369,11 +381,11 @@ GstPadProbeReturn AppendPipeline::appsrcEndOfAppendCheckerProbe(GstPadProbeInfo*
 
 void AppendPipeline::removeParserForDemuxerPad(const GRefPtr<GstPad>& pad)
 {
-    auto peer = adoptGRef(gst_pad_get_peer(pad.get()));
+    GRefPtr peer = adoptGRef(gst_pad_get_peer(pad.get()));
     if (!peer)
         return;
 
-    auto parser = adoptGRef(gst_pad_get_parent_element(peer.get()));
+    GRefPtr parser = adoptGRef(gst_pad_get_parent_element(peer.get()));
     if (!parser) [[unlikely]]
         return;
 
@@ -387,11 +399,11 @@ void AppendPipeline::removeParserForDemuxerPad(const GRefPtr<GstPad>& pad)
     if (!matchingTrack)
         return;
 
-    auto srcPad = adoptGRef(gst_element_get_static_pad(parser.get(), "src"));
+    GRefPtr srcPad = adoptGRef(gst_element_get_static_pad(parser.get(), "src"));
     if (!srcPad) [[unlikely]]
         return;
 
-    auto parserPeerPad = adoptGRef(gst_pad_get_peer(srcPad.get()));
+    GRefPtr parserPeerPad = adoptGRef(gst_pad_get_peer(srcPad.get()));
     if (!parserPeerPad) [[unlikely]]
         return;
 
@@ -427,17 +439,15 @@ std::tuple<GRefPtr<GstCaps>, StreamType, FloatSize> AppendPipeline::parseDemuxer
 
     auto originalMediaType = capsMediaType(demuxerSrcPadCaps);
     auto& gstRegistryScanner = GStreamerRegistryScannerMSE::singleton();
-    if (doCapsHaveType(demuxerSrcPadCaps, GST_TEXT_CAPS_TYPE_PREFIX) || originalMediaType == "application/x-subtitle-vtt"_s || originalMediaType == "closedcaption/x-cea-608") {
+    if (doCapsHaveType(demuxerSrcPadCaps, GST_TEXT_CAPS_TYPE_PREFIX) || originalMediaType == "application/x-subtitle-vtt"_s || originalMediaType == "closedcaption/x-cea-608"_s) {
         streamType = StreamType::Text;
     } else if (!gstRegistryScanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, originalMediaType.span())) {
         streamType = StreamType::Invalid;
     } else if (doCapsHaveType(demuxerSrcPadCaps, GST_VIDEO_CAPS_TYPE_PREFIX)) {
         presentationSize = getVideoResolutionFromCaps(demuxerSrcPadCaps).value_or(FloatSize());
         streamType = StreamType::Video;
-    } else {
-        if (doCapsHaveType(demuxerSrcPadCaps, GST_AUDIO_CAPS_TYPE_PREFIX))
-            streamType = StreamType::Audio;
-    }
+    } else if (doCapsHaveType(demuxerSrcPadCaps, GST_AUDIO_CAPS_TYPE_PREFIX))
+        streamType = StreamType::Audio;
 
     return { WTF::move(parsedCaps), streamType, WTF::move(presentationSize) };
 }
@@ -445,6 +455,7 @@ std::tuple<GRefPtr<GstCaps>, StreamType, FloatSize> AppendPipeline::parseDemuxer
 void AppendPipeline::appsinkCapsChanged(Track& track)
 {
     ASSERT(isMainThread());
+    GST_TRACE_OBJECT(pipeline(), "Processing caps-changed notification");
 
     // Consume any pending samples with the previous caps.
     consumeAppsinksAvailableSamples();
@@ -452,15 +463,16 @@ void AppendPipeline::appsinkCapsChanged(Track& track)
     GRefPtr<GstPad> pad = adoptGRef(gst_element_get_static_pad(track.appsink.get(), "sink"));
     GRefPtr<GstCaps> caps = adoptGRef(gst_pad_get_current_caps(pad.get()));
 
+    GST_DEBUG_OBJECT(pipeline(), "Caps changed to %" GST_PTR_FORMAT, caps.get());
     if (!caps)
         return;
 
-    // If this is not the first time we're parsing an initialization segment, fail if the track
-    // has a different codec or type (e.g. if we were previously demuxing an audio stream and
-    // someone appends a video stream).
+    // If this is neither the first time we're parsing an initialization segment, nor a change
+    // announced by a changeType(), then fail if the track has a different codec or type
+    // (e.g. if we were previously demuxing an audio stream and someone appends a video stream).
     auto currentMediaType = capsMediaType(caps.get());
     auto trackMediaType = capsMediaType(track.finalCaps.get());
-    if (track.finalCaps && currentMediaType != trackMediaType) {
+    if (track.finalCaps && !track.ongoingChangeType && currentMediaType != trackMediaType) {
         GST_WARNING_OBJECT(pipeline(), "Track received incompatible caps, received '%s' for a track previously handling '%s'. Erroring out.", currentMediaType.utf8(), trackMediaType.utf8());
         m_sourceBufferPrivate.appendParsingFailed();
         return;
@@ -471,7 +483,14 @@ void AppendPipeline::appsinkCapsChanged(Track& track)
             track.presentationSize = *size;
     }
 
-    if (track.caps != caps)
+    // Since a changeType entails replacing most of the elements in the AppendPipeline,
+    // we will always receive a new CAPS event, even if those caps happen to be identical to the old ones.
+    if (track.ongoingChangeType) {
+        GST_DEBUG_OBJECT(pipeline(), "Track %" PRIu64 " type change finished", track.trackId);
+        track.ongoingChangeType = false;
+    }
+
+    if (!gst_caps_is_equal(track.caps.get(), caps.get()))
         track.caps = WTF::move(caps);
 }
 
@@ -481,6 +500,20 @@ void AppendPipeline::handleEndOfAppend()
     consumeAppsinksAvailableSamples();
     GST_TRACE_OBJECT(pipeline(), "Notifying SourceBufferPrivate the append is complete");
     sourceBufferPrivate().didReceiveAllPendingSamples();
+}
+
+static MediaTime bufferTimeToStreamTime(const GstSegment& segment, GstClockTime bufferTime)
+{
+    if (bufferTime == GST_CLOCK_TIME_NONE)
+        return MediaTime::invalidTime();
+
+    guint64 streamTime;
+    int sign = gst_segment_to_stream_time_full(&segment, GST_FORMAT_TIME, bufferTime, &streamTime);
+    if (!sign) {
+        GST_ERROR("Couldn't map buffer time %" GST_TIME_FORMAT " to segment %" GST_PTR_FORMAT, GST_TIME_ARGS(bufferTime), &segment);
+        return MediaTime::invalidTime();
+    }
+    return sign * fromGstClockTime(streamTime);
 }
 
 void AppendPipeline::appsinkNewSample(const Track& track, GRefPtr<GstSample>&& sample)
@@ -501,35 +534,46 @@ void AppendPipeline::appsinkNewSample(const Track& track, GRefPtr<GstSample>&& s
         return;
     }
 
+    GstSegment segment;
+    gst_segment_init(&segment, GST_FORMAT_UNDEFINED);
+    gst_segment_copy_into(gst_sample_get_segment(sample.get()), &segment);
+
     auto mediaSample = MediaSampleGStreamer::create(WTF::move(sample), track.presentationSize, track.trackId);
+
+    if (segment.format == GST_FORMAT_TIME && (segment.time || segment.start) && GST_BUFFER_PTS_IS_VALID(buffer)) {
+        // MP4 has the concept of edit lists, where some buffer time needs to be offsetted, often very slightly,
+        // to get exact timestamps.
+        MediaTime pts = bufferTimeToStreamTime(segment, GST_BUFFER_PTS(buffer));
+        MediaTime dts = bufferTimeToStreamTime(segment, GST_BUFFER_DTS_IS_VALID(buffer) ? GST_BUFFER_DTS(buffer) : GST_BUFFER_DTS_OR_PTS(buffer));
+        GST_TRACE_OBJECT(track.appsinkPad.get(), "Mapped buffer to segment, PTS %" GST_TIME_FORMAT " -> %s DTS %" GST_TIME_FORMAT " -> %s",
+            GST_TIME_ARGS(GST_BUFFER_PTS(buffer)), pts.toString().utf8(), GST_TIME_ARGS(GST_BUFFER_DTS(buffer)), dts.toString().utf8());
+        mediaSample->setTimestamps(pts, dts);
+    } else if (!GST_BUFFER_DTS(buffer) && GST_BUFFER_PTS(buffer) > 0
+        && GST_BUFFER_PTS(buffer) <= toGstClockTime(PlatformTimeRanges::timeFudgeFactor())
+        && mediaSample->isSync()) {
+        // Because a track presentation time starting at some close to zero, but not exactly zero time can cause unexpected
+        // results for applications, we used to extend the duration of this first sample to the left so that it starts at zero.
+        // This should be relevant for files that should have an edit list but don't, but we think those files don't exist in
+        // the wild anymore. Instead of correcting the sample, we log a warning. If many users report issues that trigger this
+        // warning, we can consider to return to the old behaviour.
+        if (gst_check_version(1, 20, 0)) {
+            GST_WARNING_OBJECT(pipeline(), "Detected first sample of track '%" PRIu64 "' eligible to be extended to "
+            "start at PTS=0 %" GST_PTR_FORMAT ", but extending the first sample has been deprecated for GStreamer 1.20 and above "
+            "after the addition of edit lists support. Please report this video for analysis.", track.trackId, buffer);
+        } else {
+            GST_WARNING_OBJECT(pipeline(), "Detected first sample of track '%" PRIu64 "' eligible to be extended to "
+            "start at PTS=0 %" GST_PTR_FORMAT ". Extending the first sample for GStreamer <1.20 for backwards compatibility. "
+            "Please report this video for analysis.", track.trackId, buffer);
+            mediaSample->extendToTheBeginning();
+        }
+    }
 
     GST_TRACE_OBJECT(pipeline(), "append: trackId=%" PRIu64 " PTS=%s DTS=%s DUR=%s presentationSize=%.0fx%.0f",
         mediaSample->trackID(),
-        mediaSample->presentationTime().toString().utf8().data(),
-        mediaSample->decodeTime().toString().utf8().data(),
-        mediaSample->duration().toString().utf8().data(),
+        mediaSample->presentationTime().toString().utf8(),
+        mediaSample->decodeTime().toString().utf8(),
+        mediaSample->duration().toString().utf8(),
         mediaSample->presentationSize().width(), mediaSample->presentationSize().height());
-
-    // Hack, rework when GStreamer >= 1.16 becomes a requirement:
-    // We're not applying edit lists. GStreamer < 1.16 doesn't emit the correct segments to do so.
-    // GStreamer fix in https://gitlab.freedesktop.org/gstreamer/gst-plugins-good/-/commit/c2a0da8096009f0f99943f78dc18066965be60f9
-    // Also, in order to apply them we would need to convert the timestamps to stream time, which we're not currently
-    // doing for consistency between GStreamer versions.
-    //
-    // In consequence, the timestamps we're handling here are unedited track time. In track time, the first sample is
-    // guaranteed to have DTS == 0, but in the case of streams with B-frames, often PTS > 0. Edit lists fix this by
-    // offsetting all timestamps by that amount in movie time, but we can't do that if we don't have access to them.
-    // (We could assume the track PTS of the sample with track DTS = 0 is the offset, but we don't have any guarantee
-    // we will get appended that sample first, or ever).
-    //
-    // Because a track presentation time starting at some close to zero, but not exactly zero time can cause unexpected
-    // results for applications, we extend the duration of this first sample to the left so that it starts at zero.
-    if (mediaSample->decodeTime() == MediaTime::zeroTime() && mediaSample->presentationTime() > MediaTime::zeroTime()
-        && mediaSample->presentationTime() <= MediaTime(1, 10)
-        && mediaSample->isSync()) {
-        GST_DEBUG_OBJECT(pipeline(), "Extending first sample to make it start at PTS=0");
-        mediaSample->extendToTheBeginning();
-    }
 
     if (track.streamType == StreamType::Text) {
         const auto textTrack = static_cast<InbandTextTrackPrivateGStreamer*>(track.webKitTrack.get());
@@ -537,7 +581,7 @@ void AppendPipeline::appsinkNewSample(const Track& track, GRefPtr<GstSample>&& s
     }
 
     if (hasValidPTS)
-        m_sourceBufferPrivate.didReceiveSample(mediaSample.get());
+        m_sourceBufferPrivate.didReceiveSample(WTF::move(mediaSample));
 }
 
 #ifndef GST_DISABLE_GST_DEBUG
@@ -601,7 +645,7 @@ void AppendPipeline::didReceiveInitializationSegment()
                 audioPadStreamIDs.add(WTF::move(streamID));
             else if (streamType == StreamType::Video)
                 videoPadStreamIDs.add(WTF::move(streamID));
-            else if (streamType == StreamType::Text)
+            else if (streamType == StreamType::Text && m_sourceBufferPrivate.textTracksEnabled())
                 textPadStreamIDs.add(WTF::move(streamID));
         }
 
@@ -621,7 +665,7 @@ void AppendPipeline::didReceiveInitializationSegment()
                 videoTracksCount++;
                 if (streamID.isEmpty() || !videoPadStreamIDs.contains(streamID))
                     doVideoTrackStreamIDsMatch = false;
-            } else if (track->streamType == StreamType::Text) {
+            } else if (track->streamType == StreamType::Text && m_sourceBufferPrivate.textTracksEnabled()) {
                 textTracksCount++;
                 if (streamID.isEmpty() || !textPadStreamIDs.contains(streamID))
                     doTextTrackStreamIDsMatch = false;
@@ -647,13 +691,8 @@ void AppendPipeline::didReceiveInitializationSegment()
 
         // Link pads to existing Track objects that don't have a linked pad yet. Existing linked
         // tracks are recycled if their stream type matches the new demuxer source pads.
-        for (GstPad* pad : GstIteratorAdaptor<GstPad>(gst_element_iterate_src_pads(m_demux.get()))) {
-            if (!recycleTrackForPad(pad)) {
-                GST_WARNING_OBJECT(pipeline(), "Can't match pad to existing tracks in the AppendPipeline: %" GST_PTR_FORMAT, pad);
-                m_sourceBufferPrivate.appendParsingFailed();
-                return;
-            }
-        }
+        for (GstPad* pad : GstIteratorAdaptor<GstPad>(gst_element_iterate_src_pads(m_demux.get())))
+            recycleTrackForPad(pad);
     }
 
     for (std::unique_ptr<Track>& track : m_tracks) {
@@ -703,8 +742,12 @@ void AppendPipeline::didReceiveInitializationSegment()
     }
 
     m_hasReceivedFirstInitializationSegment = true;
+
     GST_DEBUG_OBJECT(pipeline(), "Notifying SourceBuffer of initialization segment.");
-    GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(GST_BIN(m_pipeline.get()), GST_DEBUG_GRAPH_SHOW_ALL, "append-pipeline-received-init-segment");
+    if (enableMSEAdditionalPipelineDumps())
+        dumpBinToDotFile(m_pipeline, makeString(unsafeSpan(GST_ELEMENT_NAME(m_pipeline.get())), "-received-init-segment"_s, m_pendingInitializationSegmentForChangeType ? "-for-change-type"_s : ""_s));
+
+    m_pendingInitializationSegmentForChangeType = false;
     m_sourceBufferPrivate.didReceiveInitializationSegment(WTF::move(initializationSegment));
 }
 
@@ -758,6 +801,9 @@ void AppendPipeline::resetParserState()
         assertedElementSetState(m_pipeline.get(), GST_STATE_PLAYING);
     }
 
+    if (m_pendingInitializationSegmentForChangeType)
+        resetElementsForChangeType();
+
     // All processing related to the previous append has been aborted and the pipeline is idle.
     // We can listen again to new requests coming from the streaming thread.
     m_taskQueue.finishAborting();
@@ -767,7 +813,7 @@ void AppendPipeline::resetParserState()
         static unsigned i = 0;
         // This is here for debugging purposes. It does not make sense to have it as class member.
         String dotFileName = makeString("reset-pipeline-"_s, ++i);
-        gst_debug_bin_to_dot_file(GST_BIN(m_pipeline.get()), GST_DEBUG_GRAPH_SHOW_ALL, dotFileName.utf8().data());
+        gst_debug_bin_to_dot_file(GST_BIN(m_pipeline.get()), GST_DEBUG_GRAPH_SHOW_ALL, dotFileName.utf8().legacyCStringPointer());
     }
 #endif
 }
@@ -784,6 +830,38 @@ void AppendPipeline::stopParser()
     assertedElementSetState(m_pipeline.get(), GST_STATE_READY);
 
     m_taskQueue.finishAborting();
+}
+
+void AppendPipeline::startChangingType()
+{
+    ASSERT(isMainThread());
+    m_pendingInitializationSegmentForChangeType = true;
+
+    auto type = sourceBufferPrivate().m_type;
+    GST_INFO_OBJECT(pipeline(), "Pending type change -> %s", type.raw().utf8());
+}
+
+void AppendPipeline::resetElementsForChangeType()
+{
+    ASSERT(isMainThread());
+
+    auto type = sourceBufferPrivate().m_type;
+    GST_INFO_OBJECT(pipeline(), "Replacing appsrc, typefind and demuxer for type change -> %s", type.raw().utf8());
+
+    gst_element_unlink_many(m_appsrc.get(), m_typefind.get(), m_demux.get(), nullptr);
+    for (const auto& track : m_tracks) {
+        gst_element_set_state(track->parser.get(), GST_STATE_NULL);
+        gst_element_unlink(m_demux.get(), track->parser.get());
+        track->demuxerSrcPad = nullptr;
+        track->ongoingChangeType = true;
+    }
+
+    gst_element_set_state(m_appsrc.get(), GST_STATE_NULL);
+    gst_element_set_state(m_typefind.get(), GST_STATE_NULL);
+    gst_element_set_state(m_demux.get(), GST_STATE_NULL);
+    gst_bin_remove_many(GST_BIN(pipeline()), m_appsrc.get(), m_typefind.get(), m_demux.get(), nullptr);
+
+    setupDemuxing();
 }
 
 void AppendPipeline::pushNewBuffer(GRefPtr<GstBuffer>&& buffer)
@@ -891,9 +969,9 @@ static GRefPtr<GstCaps> aacSbrForceImplicitSignalling([[maybe_unused]] GstPad* p
     ASSERT_WITH_MESSAGE(writeResult, "AAC channels write failed");
 
     auto newCodecData = gst_bit_writer_get_data(&writer);
-    auto newCaps = adoptGRef(gst_caps_copy(caps));
+    GRefPtr newCaps = adoptGRef(gst_caps_copy(caps));
     gst_codec_utils_aac_caps_set_level_and_profile(newCaps.get(), newCodecData, 2);
-    auto newCodecDataBuffer = adoptGRef(gst_buffer_new_and_alloc(2));
+    GRefPtr newCodecDataBuffer = adoptGRef(gst_buffer_new_and_alloc(2));
     gst_buffer_fill(newCodecDataBuffer.get(), 0, newCodecData, 2);
     gst_caps_set_simple(newCaps.get(), "codec_data", GST_TYPE_BUFFER, newCodecDataBuffer.get(), nullptr);
     return newCaps;
@@ -1014,7 +1092,7 @@ static GRefPtr<GstElement> createOptionalParserForFormat([[maybe_unused]] GstBin
         // Necessary for: metadata filling.
         // Without this parser the codec string set on the corresponding video track will be incomplete.
         elementClass = "vp9parse"_s;
-    } else if (mediaType == "closedcaption/x-cea-608") {
+    } else if (mediaType == "closedcaption/x-cea-608"_s) {
         // Used in converting cea-608 to WebVTT.
         // qtdemux pushes captions in format: s334-1a, while cea608tott expects format: raw.
         elementClass = "ccconverter"_s;
@@ -1044,7 +1122,7 @@ GRefPtr<GstElement> createOptionalEncoderForFormat([[maybe_unused]] GstBin* bin,
     //   - SouceBuffer timestampOffset   (Media Source Extensions, 5.1 Attributes)
     if (mediaType == "text/x-raw"_s)
         elementClass = "webvttenc"_s;
-    else if (mediaType == "closedcaption/x-cea-608")
+    else if (mediaType == "closedcaption/x-cea-608"_s)
         elementClass = "cea608tott"_s;
 
     GST_DEBUG_OBJECT(bin, "Creating %s encoder for stream with caps %" GST_PTR_FORMAT, elementClass.characters(), caps);
@@ -1069,6 +1147,12 @@ std::pair<AppendPipeline::CreateTrackResult, AppendPipeline::Track*> AppendPipel
 
     auto [parsedCaps, streamType, presentationSize] = parseDemuxerSrcPadCaps(adoptGRef(gst_pad_get_current_caps(demuxerSrcPad)).get());
     GST_DEBUG_OBJECT(pipeline(), "Demuxer src pad caps: %" GST_PTR_FORMAT, parsedCaps.get());
+
+    if (!m_sourceBufferPrivate.textTracksEnabled() && streamType == StreamType::Text) {
+        GST_INFO_OBJECT(pipeline(), "Pad '%s' with parsed caps %" GST_PTR_FORMAT " has an text type but the runtime text track feature is disabled, will be connected to a black hole probe.", GST_PAD_NAME(demuxerSrcPad), parsedCaps.get());
+        gst_pad_add_probe(demuxerSrcPad, GST_PAD_PROBE_TYPE_BUFFER, reinterpret_cast<GstPadProbeCallback>(appendPipelineDemuxerBlackHolePadProbe), nullptr, nullptr);
+        return { CreateTrackResult::TrackIgnored, nullptr };
+    }
 
     if (streamType == StreamType::Invalid) {
         GST_WARNING_OBJECT(pipeline(), "Unsupported track codec: %" GST_PTR_FORMAT, parsedCaps.get());
@@ -1099,7 +1183,7 @@ std::pair<AppendPipeline::CreateTrackResult, AppendPipeline::Track*> AppendPipel
     return { CreateTrackResult::TrackCreated, &track };
 }
 
-bool AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
+void AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
 {
     ASSERT(isMainThread());
     ASSERT(m_hasReceivedFirstInitializationSegment);
@@ -1122,10 +1206,13 @@ bool AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
         GST_WARNING_OBJECT(pipeline(), "Couldn't find a matching pre-existing track for pad '%s' with parsed caps %" GST_PTR_FORMAT
             " on non-first initialization segment, will be connected to a black hole probe.", GST_PAD_NAME(demuxerSrcPad), parsedCaps.get());
         gst_pad_add_probe(demuxerSrcPad, GST_PAD_PROBE_TYPE_BUFFER, reinterpret_cast<GstPadProbeCallback>(appendPipelineDemuxerBlackHolePadProbe), nullptr, nullptr);
-        return false;
+        return;
     }
 
     matchingTrack->demuxerSrcPad = demuxerSrcPad;
+
+    // Get the caps before stopping the parser and sink, since setting the state to GST_STATE_NULL clears sticky events.
+    GRefPtr<GstCaps> matchingTrackCaps = adoptGRef(gst_pad_get_current_caps(matchingTrack->entryPad.get()));
 
     // The https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/4535 merge request in qtdemux is causing EOS on
     // a "to be removed" stream before the no-more-pads message is triggered. That message makes AppendPipeline realize that
@@ -1137,12 +1224,11 @@ bool AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
         gst_element_set_state(matchingTrack->parser.get(), GST_STATE_NULL);
     gst_element_set_state(matchingTrack->appsink.get(), GST_STATE_NULL);
 
-    GRefPtr<GstCaps> matchingTrackCaps = adoptGRef(gst_pad_get_current_caps(matchingTrack->entryPad.get()));
-    if (!matchingTrack->isLinked() && (!matchingTrackCaps || gst_caps_can_intersect(parsedCaps.get(), matchingTrackCaps.get())))
+    if (!matchingTrack->isLinked() && !matchingTrack->ongoingChangeType && (!matchingTrackCaps || gst_caps_can_intersect(parsedCaps.get(), matchingTrackCaps.get())))
         linkPadWithTrack(demuxerSrcPad, *matchingTrack);
     else {
         // Unlink from old track and link to new track.
-        auto peer = adoptGRef(gst_pad_get_peer(matchingTrack->entryPad.get()));
+        GRefPtr peer = adoptGRef(gst_pad_get_peer(matchingTrack->entryPad.get()));
         if (peer.get() != demuxerSrcPad) {
             if (peer) {
                 GST_DEBUG_OBJECT(peer.get(), "Unlinking from track %" PRIu64 "", matchingTrack->trackId);
@@ -1158,25 +1244,27 @@ bool AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
             matchingTrack->caps = WTF::move(parsedCaps);
             matchingTrack->presentationSize = presentationSize;
         } else
-            GST_DEBUG_OBJECT(pipeline(), "%" PRIu64 " track pads match, nothing to re-link", matchingTrack->trackId);
+            GST_DEBUG_OBJECT(pipeline(), "track %" PRIu64 " pads match, nothing to re-link", matchingTrack->trackId);
 
     }
 
     gst_element_set_state(matchingTrack->appsink.get(), GST_STATE_PLAYING);
     if (matchingTrack->parser)
         gst_element_set_state(matchingTrack->parser.get(), GST_STATE_PLAYING);
-
-    return true;
 }
 
 void AppendPipeline::linkPadWithTrack(GstPad* demuxerSrcPad, Track& track)
 {
+    auto pipelineName = unsafeSpan(GST_ELEMENT_NAME(m_pipeline.get()));
+
     GST_DEBUG_OBJECT(demuxerSrcPad, "Linking to track %" PRIu64 "", track.trackId);
-    GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(GST_BIN(m_pipeline.get()), GST_DEBUG_GRAPH_SHOW_ALL, "append-pipeline-before-link");
+    if (enableMSEAdditionalPipelineDumps())
+        dumpBinToDotFile(m_pipeline, makeString(pipelineName, "-before-link"_s));
     ASSERT(!GST_PAD_IS_LINKED(track.entryPad.get()));
     gst_pad_link(demuxerSrcPad, track.entryPad.get());
     ASSERT(GST_PAD_IS_LINKED(track.entryPad.get()));
-    GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(GST_BIN(m_pipeline.get()), GST_DEBUG_GRAPH_SHOW_ALL, "append-pipeline-after-link");
+    if (enableMSEAdditionalPipelineDumps())
+        dumpBinToDotFile(m_pipeline, makeString(pipelineName, "-after-link"_s));
 }
 
 Ref<WebCore::TrackPrivateBase> AppendPipeline::makeWebKitTrack(Track& appendPipelineTrack, int trackIndex, TrackID trackId)
@@ -1240,8 +1328,10 @@ void AppendPipeline::Track::emplaceOptionalElementsForFormat(GstBin* bin, const 
     if (parser) {
         ASSERT(caps);
         ASSERT(encoder);
-        // When switching from encrypted to unencrypted content the caps can change and we need to replace the parser.
-        if (gstStructureGetName(gst_caps_get_structure(caps.get(), 0)) == gstStructureGetName(gst_caps_get_structure(newCaps.get(), 0))) {
+        // During a type change or when switching from encrypted to unencrypted content
+        // the caps can change and we need to replace the parser.
+        if (gstStructureGetName(gst_caps_get_structure(caps.get(), 0)) == gstStructureGetName(gst_caps_get_structure(newCaps.get(), 0))
+            && !ongoingChangeType) {
             GST_TRACE_OBJECT(bin, "caps are compatible, bailing out");
             return;
         }
@@ -1419,6 +1509,7 @@ static GstPadProbeReturn matroskademuxForceSegmentStartToEqualZero(GstPad*, GstP
         gst_event_copy_segment(event, &segment);
 
         segment.start = 0;
+        segment.time = 0;
 
         GRefPtr<GstEvent> newEvent = adoptGRef(gst_event_new_segment(&segment));
         gst_event_replace(reinterpret_cast<GstEvent**>(&info->data), newEvent.get());

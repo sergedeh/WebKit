@@ -67,8 +67,12 @@ DECLARE_SYSTEM_HEADER
 #import <UIKit/UIPopoverPresentationController_Private.h>
 #import <UIKit/UIPresentationController_Private.h>
 #import <UIKit/UIPress_Private.h>
+#if HAVE(UIKIT_PRINTING)
 #import <UIKit/UIPrintPageRenderer_Private.h>
+#endif
 #import <UIKit/UIResponder_Private.h>
+#import <UIKit/UISceneConfiguration_Private.h>
+#import <UIKit/UISceneSessionActivationRequest_Private.h>
 #import <UIKit/UIScene_Private.h>
 #import <UIKit/UIScrollEvent_Private.h>
 #import <UIKit/UIScrollView_ForWebKitOnly.h>
@@ -151,6 +155,7 @@ DECLARE_SYSTEM_HEADER
 #if PLATFORM(VISION)
 #import <UIKit/UIActivityViewController_Private.h>
 #import <UIKit/UIView+SpatialComputing.h>
+#import <UIKit/_UIVolumetricWindowSceneActivationRequestOptions_ForUIFrameworksOnly.h>
 #endif
 
 #if HAVE(UITOOLTIPINTERACTION)
@@ -267,12 +272,6 @@ typedef enum {
     kUIKeyboardInputRepeat                 = 1 << 0,
     kUIKeyboardInputModifierFlagsChanged   = 1 << 5,
 } UIKeyboardInputFlags;
-
-#if PLATFORM(IOS) && !defined(__IPHONE_13_4)
-typedef NS_OPTIONS(NSInteger, UIEventButtonMask) {
-    UIEventButtonMaskSecondary = 1 << 1,
-};
-#endif
 
 @interface UIEvent ()
 - (void *)_hidEvent;
@@ -448,9 +447,11 @@ typedef struct CGSVGDocument *CGSVGDocumentRef;
 @property (nonatomic, setter=_setMagnifierEnabled:) BOOL _magnifierEnabled;
 @end
 
+#if HAVE(UIKIT_PRINTING)
 @interface UIPrintPageRenderer ()
 @property (readonly) UIPrintRenderingQuality requestedRenderingQuality;
 @end
+#endif
 
 @interface UIResponder ()
 - (void)_wheelChangedWithEvent:(UIEvent *)event;
@@ -482,6 +483,8 @@ typedef struct CGSVGDocument *CGSVGDocumentRef;
 #endif
 @property (nonatomic, setter=_setAllowsParentToBeginHorizontally:) BOOL _allowsParentToBeginHorizontally;
 @property (nonatomic, setter=_setAllowsParentToBeginVertically:) BOOL _allowsParentToBeginVertically;
+@property (nonatomic) BOOL tracksImmediatelyWhileDecelerating;
+@property (nonatomic, getter=_avoidsJumpOnInterruptedBounce, setter=_setAvoidsJumpOnInterruptedBounce:) BOOL _avoidsJumpOnInterruptedBounce;
 #if HAVE(UIKIT_SCROLLBAR_COLOR_SPI)
 @property (nonatomic, nullable, setter=_setVerticalScrollIndicatorColor:) UIColor *_verticalScrollIndicatorColor;
 @property (nonatomic, nullable, setter=_setHorizontalScrollIndicatorColor:) UIColor *_horizontalScrollIndicatorColor;
@@ -641,6 +644,8 @@ extern NSString * const UIPresentationControllerDismissalTransitionDidEndComplet
 @end
 @interface UIView ()
 - (void)_requestRemoteEffects:(NSArray *)effects forKey:(NSString *)key;
+- (void)_removeRemoteEffectsForKey:(NSString *)key;
+- (NSArray *)_remoteEffectsForKey:(NSString *)key;
 @end
 #endif // PLATFORM(VISION)
 
@@ -1042,6 +1047,22 @@ typedef NS_OPTIONS(NSInteger, UIWKDocumentRequestFlags) {
 @property (nonatomic, readonly) NSString *_sceneIdentifier;
 @end
 
+@interface UISceneConfiguration ()
++ (instancetype)_internalConfigurationWithRole:(UISceneSessionRole)sessionRole sceneClass:(Class)sceneClass delegateClass:(Class)delegateClass storyboard:(UIStoryboard *)storyboard;
+@end
+
+@interface UISceneSessionActivationRequest ()
++ (instancetype)_requestWithConfiguration:(UISceneConfiguration *)configuration;
+@end
+
+#if PLATFORM(VISION)
+
+@interface _UIVolumetricWindowSceneActivationRequestOptions : UIWindowSceneActivationRequestOptions
+@property (nonatomic, assign, setter=_setInternal:, getter=_isInternal) BOOL _internal;
+@end
+
+#endif // PLATFORM(VISION)
+
 #if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
 @interface UITouch ()
 @property (nonatomic, readonly) BOOL _isPointerTouch;
@@ -1120,6 +1141,7 @@ typedef NS_ENUM(NSInteger, _UIScrollViewDecelerationTrackingBehavior) {
 @end
 
 @interface UITextChecker (Staging_165842824)
+- (void)requestGrammarCheckingOfString:(NSString *)stringToCheck range:(NSRange)range waitForAllResults:(BOOL)waitForAllResults completionHandler:(void (^)(NSArray<NSTextCheckingResult *> *results))completionHandler;
 - (void)requestProofreadingReviewOfString:(NSString *)stringToCheck range:(NSRange)range language:(NSString *)language options:(NSDictionary<NSString *, id> *)options completionHandler:(void (^)(NSArray<NSTextCheckingResult *> *results))completionHandler;
 @end
 
@@ -1409,6 +1431,15 @@ typedef NS_ENUM(NSUInteger, _UIScrollDeviceCategory) {
 @end
 
 #endif // HAVE(LIQUID_GLASS)
+
+#if PLATFORM(VISION)
+
+@interface UIScrollView ()
+@property (nonatomic, setter=_setUseVisionAlternateScrollIndicatorRendering:) BOOL _useVisionAlternateScrollIndicatorRendering;
+@property (readonly) NSString *_lookToScrollGroupName;
+@end
+
+#endif // PLATFORM(VISION)
 
 WTF_EXTERN_C_BEGIN
 

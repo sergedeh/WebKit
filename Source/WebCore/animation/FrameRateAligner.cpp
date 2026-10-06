@@ -34,7 +34,7 @@ FrameRateAligner::~FrameRateAligner() = default;
 
 static ReducedResolutionSeconds idealTimeForNextUpdate(ReducedResolutionSeconds firstUpdateTime, ReducedResolutionSeconds lastUpdateTime, FramesPerSecond frameRate)
 {
-    ReducedResolutionSeconds interval(1.0 / frameRate);
+    Seconds interval { 1.0 / frameRate };
     auto timeUntilNextUpdate = (lastUpdateTime - firstUpdateTime) % interval;
     return lastUpdateTime + interval - timeUntilNextUpdate;
 }
@@ -90,7 +90,7 @@ auto FrameRateAligner::updateFrameRate(FramesPerSecond frameRate) -> ShouldUpdat
 }
 
 // For two frame rates to be aligned, one must be the multitple of the other, or vice versa.
-static bool frameRatesCanBeAligned(FramesPerSecond a, FramesPerSecond b)
+static bool NODELETE frameRatesCanBeAligned(FramesPerSecond a, FramesPerSecond b)
 {
     return (a > b && a % b == 0) || (b > a && b % a == 0);
 }
@@ -111,7 +111,7 @@ void FrameRateAligner::finishUpdate()
                 continue;
 
             if (frameRatesCanBeAligned(frameRate, potentiallyCompatibleFrameRate)) {
-                if (!highestCompatibleFrameRate || *highestCompatibleFrameRate > potentiallyCompatibleFrameRate)
+                if (!highestCompatibleFrameRate || *highestCompatibleFrameRate < potentiallyCompatibleFrameRate)
                     highestCompatibleFrameRate = potentiallyCompatibleFrameRate;
             }
         }

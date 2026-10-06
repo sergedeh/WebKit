@@ -30,7 +30,8 @@
 namespace WebCore {
     
 template<typename PropertyType>
-class SVGAnimatedValueProperty : public SVGAnimatedProperty {
+class SVGAnimatedValueProperty : public SVGAnimatedProperty<SVGAnimatedValueProperty<PropertyType>> {
+    using Base = SVGAnimatedProperty<SVGAnimatedValueProperty<PropertyType>>;
 public:
     using ValueType = typename PropertyType::ValueType;
 
@@ -42,17 +43,17 @@ public:
 
     ~SVGAnimatedValueProperty()
     {
-        m_baseVal->detach();
+        protect(m_baseVal)->detach();
         if (m_animVal)
-            m_animVal->detach();
+            protect(m_animVal)->detach();
     }
 
     // Used by SVGElement::parseAttribute().
     void setBaseValInternal(const ValueType& baseVal)
     {
-        m_baseVal->setValue(baseVal);
+        protect(m_baseVal)->setValue(baseVal);
         if (m_animVal)
-            m_animVal->setValue(baseVal);
+            protect(m_animVal)->setValue(baseVal);
     }
 
     // Used by the DOM.
@@ -63,7 +64,7 @@ public:
     // Used by SVGAnimator::progress.
     void setAnimVal(const ValueType& animVal)
     {
-        ASSERT(isAnimating() && m_animVal);
+        ASSERT(this->isAnimating() && m_animVal);
         m_animVal->setValue(animVal);
     }
 
@@ -74,57 +75,61 @@ public:
     PropertyType& animVal() { return ensureAnimVal(); }
 
     // Used when committing a change from the SVGAnimatedProperty to the attribute.
-    String baseValAsString() const override { return m_baseVal->valueAsString(); }
+    String baseValAsString() const override { return protect(m_baseVal)->valueAsString(); }
 
     // Used to apply the SVGAnimator change to the target element.
     String animValAsString() const override
     {
-        ASSERT(isAnimating() && m_animVal);
-        return m_animVal->valueAsString();
+        ASSERT(this->isAnimating() && m_animVal);
+        return protect(m_animVal)->valueAsString();
     }
 
     // Managing the relationship with the owner.
     void setDirty() override { m_baseVal->setDirty(); }
     bool isDirty() const override { return m_baseVal->isDirty(); }
-    std::optional<String> synchronize() override { return m_baseVal->synchronize(); }
+    std::optional<String> synchronize() override { return protect(m_baseVal)->synchronize(); }
 
     // Used by RenderSVGElements and DumpRenderTree.
-    const ValueType& currentValue() const
+    const ValueType& currentValue() const LIFETIME_BOUND
     {
-        ASSERT_IMPLIES(isAnimating(), m_animVal);
-        return (isAnimating() ? *m_animVal : m_baseVal.get()).value();
+        ASSERT_IMPLIES(this->isAnimating(), m_animVal);
+        return (this->isAnimating() ? *m_animVal : m_baseVal.get()).value();
     }
 
     // Controlling the animation.
     void startAnimation(SVGAttributeAnimator& animator) override
     {
         if (m_animVal)
-            m_animVal->setValue(m_baseVal->value());
+            protect(m_animVal)->setValue(m_baseVal->value());
         else
             ensureAnimVal();
-        SVGAnimatedProperty::startAnimation(animator);
+        Base::startAnimation(animator);
     }
 
     void stopAnimation(SVGAttributeAnimator& animator) override
     {
-        SVGAnimatedProperty::stopAnimation(animator);
-        if (m_animVal)
-            m_animVal->setValue(m_baseVal->value());
+        Base::stopAnimation(animator);
+        if (!this->isAnimating())
+            detachAnimVal();
+        else if (m_animVal)
+            protect(m_animVal)->setValue(m_baseVal->value());
     }
 
     // Controlling the instance animation.
-    void instanceStartAnimation(SVGAttributeAnimator& animator, SVGAnimatedProperty& animated) override
+    void instanceStartAnimationImpl(SVGAttributeAnimator& animator, SVGAnimatedValueProperty& animated) override
     {
-        if (!isAnimating())
-            m_animVal = static_cast<SVGAnimatedValueProperty&>(animated).animVal();
-        SVGAnimatedProperty::instanceStartAnimation(animator, animated);
+        if (!this->isAnimating()) {
+            detachAnimVal();
+            m_animVal = animated.animVal();
+        }
+        Base::startAnimation(animator);
     }
 
-    void instanceStopAnimation(SVGAttributeAnimator& animator) override
+    void instanceStopAnimationImpl(SVGAttributeAnimator& animator) override
     {
-        SVGAnimatedProperty::instanceStopAnimation(animator);
-        if (!isAnimating())
-            m_animVal = nullptr;
+        Base::stopAnimation(animator);
+        if (!this->isAnimating())
+            detachAnimVal();
     }
 
 protected:
@@ -132,14 +137,14 @@ protected:
     // SVGLengthMode to SVGLength.
     template<typename... Arguments>
     SVGAnimatedValueProperty(SVGElement* contextElement, Arguments&&... arguments)
-        : SVGAnimatedProperty(contextElement)
+        : Base(contextElement)
         , m_baseVal(PropertyType::create(this, SVGPropertyAccess::ReadWrite, ValueType(std::forward<Arguments>(arguments)...)))
     {
     }
 
     template<typename... Arguments>
     SVGAnimatedValueProperty(SVGElement* contextElement, SVGPropertyAccess access, Arguments&&... arguments)
-        : SVGAnimatedProperty(contextElement)
+        : Base(contextElement)
         , m_baseVal(PropertyType::create(this, access, ValueType(std::forward<Arguments>(arguments)...)))
     {
     }
@@ -151,12 +156,20 @@ protected:
         return *m_animVal;
     }
 
+    void detachAnimVal()
+    {
+        // m_animVal may be retained by the bindings after we drop it. Detach it now so its
+        // raw SVGProperty::m_owner back-pointer cannot dangle once |this| is destroyed.
+        if (RefPtr animVal = std::exchange(m_animVal, nullptr))
+            animVal->detach();
+    }
+
     // Called when m_baseVal changes.
     void commitPropertyChange(SVGProperty* property) override
     {
         if (m_animVal)
-            m_animVal->setValue(m_baseVal->value());
-        SVGAnimatedProperty::commitPropertyChange(property);
+            protect(m_animVal)->setValue(m_baseVal->value());
+        Base::commitPropertyChange(property);
     }
 
     Ref<PropertyType> m_baseVal;

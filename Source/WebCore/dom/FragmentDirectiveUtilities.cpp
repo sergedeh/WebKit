@@ -29,7 +29,7 @@
 #include "NodeDocument.h"
 #include "NodeRenderStyle.h"
 #include "NodeTraversal.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
@@ -54,8 +54,8 @@ namespace FragmentDirectiveUtilities {
 // https://wicg.github.io/scroll-to-text-fragment/#nearest-block-ancestor
 ContainerNode& nearestBlockAncestor(Node& node)
 {
-    for (RefPtr currentNode = node; currentNode; currentNode = currentNode->parentNode()) {
-        if (CheckedPtr renderElement = dynamicDowncast<RenderElement>(currentNode->renderer()); renderElement && renderElement->style().isDisplayBlockLevel())
+    for (auto* currentNode = &node; currentNode; currentNode = currentNode->parentNode()) {
+        if (auto* renderElement = dynamicDowncast<RenderElement>(currentNode->renderer()); renderElement && renderElement->style().display().isBlockType())
             return downcast<ContainerNode>(*currentNode);
     }
     return node.document();

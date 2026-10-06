@@ -28,9 +28,9 @@
 #include <wtf/Platform.h>
 #if PLATFORM(MAC)
 
-#include <WebCore/IntRect.h>
-#include <WebCore/ScrollbarsController.h>
-#include <WebCore/Timer.h>
+#include "IntRect.h"
+#include "ScrollbarsController.h"
+#include "Timer.h"
 #include <wtf/CheckedPtr.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
@@ -96,7 +96,7 @@ public:
 
     // Public to be callable from Obj-C.
     void updateScrollerStyle() final;
-    bool scrollbarPaintTimerIsActive() const;
+    bool NODELETE scrollbarPaintTimerIsActive() const;
     void startScrollbarPaintTimer();
     void stopScrollbarPaintTimer();
     void setVisibleScrollerThumbRect(const IntRect&);
@@ -120,8 +120,8 @@ private:
     Timer m_initialScrollbarPaintTimer;
     Timer m_sendContentAreaScrolledTimer;
 
-    RetainPtr<ScrollerImpPair> m_scrollerImpPair;
-    RetainPtr<WebScrollerImpPairDelegate> m_scrollerImpPairDelegate;
+    const RetainPtr<ScrollerImpPair> m_scrollerImpPair;
+    const RetainPtr<WebScrollerImpPairDelegate> m_scrollerImpPairDelegate;
     RetainPtr<WebScrollerImpDelegate> m_horizontalScrollerImpDelegate;
     RetainPtr<WebScrollerImpDelegate> m_verticalScrollerImpDelegate;
 

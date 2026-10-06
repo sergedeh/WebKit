@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/URL.h>
 #include <wtf/Variant.h>
@@ -139,7 +139,7 @@ TEST(WTF_CrossThreadCopier, Variant)
 
 TEST(WTF_CrossThreadCopier, UncheckedKeyHashMap)
 {
-    UncheckedKeyHashMap<CString, StringImpl*> impls;
+    UncheckedKeyHashMap<UTF8CString, StringImpl*> impls;
 
     UncheckedKeyHashMap<String, String> map;
     map.add("foo"_str, "fooValue"_str);
@@ -167,7 +167,7 @@ TEST(WTF_CrossThreadCopier, UncheckedKeyHashMap)
 
 TEST(WTF_CrossThreadCopier, HashMap)
 {
-    HashMap<CString, StringImpl*> impls;
+    HashMap<UTF8CString, StringImpl*> impls;
 
     HashMap<String, String> map;
     map.add("foo"_str, "fooValue"_str);
@@ -195,7 +195,7 @@ TEST(WTF_CrossThreadCopier, HashMap)
 
 TEST(WTF_CrossThreadCopier, HashSet)
 {
-    HashMap<CString, StringImpl*> impls;
+    HashMap<UTF8CString, StringImpl*> impls;
 
     HashSet<String> set;
     set.add("foo"_str);

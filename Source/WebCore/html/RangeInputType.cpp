@@ -100,17 +100,17 @@ const AtomString& RangeInputType::formControlType() const
 double RangeInputType::valueAsDouble() const
 {
     ASSERT(element());
-    return parseToDoubleForNumberType(protectedElement()->value().get());
+    return parseToDoubleForNumberType(protect(element())->value().get());
 }
 
 ExceptionOr<void> RangeInputType::setValueAsDecimal(const Decimal& newValue, TextFieldEventBehavior eventBehavior) const
 {
     ASSERT(element());
-    protectedElement()->setValue(serialize(newValue), eventBehavior);
+    protect(element())->setValue(serialize(newValue), eventBehavior);
     return { };
 }
 
-bool RangeInputType::typeMismatchFor(const String& value) const
+bool RangeInputType::typeMismatchFor(StringView value) const
 {
     return !value.isEmpty() && !std::isfinite(parseToDoubleForNumberType(value));
 }
@@ -149,7 +149,7 @@ void RangeInputType::handleMouseDownEvent(MouseEvent& event)
         return;
 
     ASSERT(element->shadowRoot());
-    if (targetNode != element.ptr() && !targetNode->isDescendantOf(element->protectedUserAgentShadowRoot().get()))
+    if (targetNode != element.ptr() && !targetNode->isDescendantOf(element->userAgentShadowRoot()))
         return;
     Ref thumb = typedSliderThumbElement();
     if (targetNode == thumb.ptr())
@@ -166,7 +166,7 @@ void RangeInputType::handleTouchEvent(TouchEvent& event)
         return;
 
 #if ENABLE(IOS_TOUCH_EVENTS)
-    protectedTypedSliderThumbElement()->handleTouchEvent(event);
+    protect(typedSliderThumbElement())->handleTouchEvent(event);
 #else
 
     if (element()->isDisabledFormControl())
@@ -180,7 +180,7 @@ void RangeInputType::handleTouchEvent(TouchEvent& event)
     RefPtr<TouchList> touches = event.targetTouches();
     if (touches->length() == 1) {
         auto touchPoint = touches->item(0)->absoluteLocation();
-        protectedTypedSliderThumbElement()->setPositionFromPoint(LayoutPoint(touchPoint));
+        protect(typedSliderThumbElement())->setPositionFromPoint(LayoutPoint(touchPoint));
         event.setDefaultHandled();
     }
 #endif // ENABLE(IOS_TOUCH_EVENTS)
@@ -191,7 +191,7 @@ void RangeInputType::disabledStateChanged()
 {
     if (!hasCreatedShadowSubtree())
         return;
-    protectedTypedSliderThumbElement()->hostDisabledStateChanged();
+    protect(typedSliderThumbElement())->hostDisabledStateChanged();
 }
 
 auto RangeInputType::handleKeydownEvent(KeyboardEvent& event) -> ShouldCallBaseEventHandler
@@ -215,7 +215,7 @@ auto RangeInputType::handleKeydownEvent(KeyboardEvent& event) -> ShouldCallBaseE
     const Decimal bigStep = std::max((stepRange.maximum() - stepRange.minimum()) / 10, step);
 
     bool isVertical = false;
-    if (CheckedPtr renderer = element->renderer())
+    if (auto* renderer = element->renderer())
         isVertical = renderer->style().usedAppearance() == StyleAppearance::SliderVertical;
 
     Decimal newValue;
@@ -283,15 +283,15 @@ HTMLElement* RangeInputType::sliderTrackElement() const
     if (!hasCreatedShadowSubtree())
         return nullptr;
 
-    RefPtr root = protectedElement()->userAgentShadowRoot();
+    auto* root = element()->userAgentShadowRoot();
     ASSERT(root);
     ASSERT(is<SliderContainerElement>(root->firstChild())); // container
     ASSERT(root->firstChild()->firstChild()); // track
 
     if (!root)
         return nullptr;
-    
-    RefPtr container = root->firstChild();
+
+    auto* container = root->firstChild();
     return container ? downcast<HTMLElement>(container->firstChild()) : nullptr;
 }
 
@@ -303,24 +303,18 @@ SliderThumbElement& RangeInputType::typedSliderThumbElement() const
     return downcast<SliderThumbElement>(*sliderTrackElement()->firstChild());
 }
 
-Ref<SliderThumbElement> RangeInputType::protectedTypedSliderThumbElement() const
-{
-    return typedSliderThumbElement();
-}
-
 HTMLElement* RangeInputType::sliderThumbElement() const
 {
     return &typedSliderThumbElement();
 }
 
-RenderPtr<RenderElement> RangeInputType::createInputRenderer(RenderStyle&& style)
+RenderPtr<RenderElement> RangeInputType::createInputRenderer(Style::ComputedStyle&& style)
 {
     ASSERT(element());
-    // FIXME: https://github.com/llvm/llvm-project/pull/142471 Moving style is not unsafe.
-    SUPPRESS_UNCOUNTED_ARG return createRenderer<RenderSlider>(*protectedElement(), WTF::move(style));
+    return createRenderer<RenderSlider>(*protect(element()), WTF::move(style));
 }
 
-Decimal RangeInputType::parseToNumber(const String& src, const Decimal& defaultValue) const
+Decimal RangeInputType::parseToNumber(StringView src, const Decimal& defaultValue) const
 {
     return parseToDecimalForNumberType(src, defaultValue);
 }
@@ -351,7 +345,7 @@ void RangeInputType::attributeChanged(const QualifiedName& name)
                 element->setValue(element->value());
         }
         if (hasCreatedShadowSubtree())
-            protectedTypedSliderThumbElement()->setPositionFromValue();
+            protect(typedSliderThumbElement())->setPositionFromValue();
         break;
     default:
         break;
@@ -366,13 +360,11 @@ void RangeInputType::setValue(const String& value, bool valueChanged, TextFieldE
     if (!valueChanged)
         return;
 
-    if (eventBehavior == DispatchNoEvent) {
-        ASSERT(element());
-        element()->setTextAsOfLastFormControlChangeEvent(String(value));
-    }
+    if (eventBehavior == DispatchNoEvent)
+        protect(element())->setTextAsOfLastFormControlChangeEvent(String(value));
 
     if (hasCreatedShadowSubtree())
-        protectedTypedSliderThumbElement()->setPositionFromValue();
+        protect(typedSliderThumbElement())->setPositionFromValue();
 }
 
 ValueOrReference<String> RangeInputType::fallbackValue() const

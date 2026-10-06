@@ -42,9 +42,7 @@ public:
 
 #ifdef __OBJC__
     id sender() const { return m_sender.get(); }
-    RetainPtr<id> protectedSender() const { return sender(); }
     NSURLAuthenticationChallenge *nsURLAuthenticationChallenge() const { return m_nsChallenge.get(); }
-    RetainPtr<NSURLAuthenticationChallenge> protectedNSURLAuthenticationChallenge() const { return m_nsChallenge; }
 #endif
 
     WEBCORE_EXPORT void setAuthenticationClient(AuthenticationClient*); // Changes sender to one that invokes client methods.
@@ -52,7 +50,7 @@ public:
 
 private:
     friend class AuthenticationChallengeBase;
-    static bool platformCompare(const AuthenticationChallenge& a, const AuthenticationChallenge& b);
+    static bool NODELETE platformCompare(const AuthenticationChallenge& a, const AuthenticationChallenge& b);
 
     // Platform challenge may be null. If it's non-null, it's always up to date with other fields.
     RetainPtr<id> m_sender;

@@ -26,6 +26,7 @@
 #import "DOMInternal.h"
 
 #import "DOMNodeInternal.h"
+#import <WebCore/DOMWrapperWorld.h>
 #import <WebCore/Document.h>
 #import <WebCore/FrameDestructionObserverInlines.h>
 #import <WebCore/JSNode.h>
@@ -49,7 +50,7 @@
 static Lock wrapperCacheLock;
 static HashMap<DOMObjectInternal*, NSObject *>& wrapperCache() WTF_REQUIRES_LOCK(wrapperCacheLock)
 #else
-static HashMap<DOMObjectInternal*, NSObject *>& wrapperCache()
+static HashMap<DOMObjectInternal*, NSObject *>& NODELETE wrapperCache()
 #endif
 {
     static NeverDestroyed<HashMap<DOMObjectInternal*, NSObject *>> map;
@@ -112,22 +113,23 @@ void removeDOMWrapper(DOMObjectInternal* impl)
     
     // Extract the WebCore::Node from the ObjectiveC wrapper.
     RetainPtr n = dynamic_objc_cast<DOMNode>(self);
-    WebCore::Node *nodeImpl = core(n.get());
+    RefPtr nodeImpl = core(n.get());
 
     // Dig up Interpreter and ExecState.
-    auto* frame = nodeImpl->document().frame();
+    RefPtr frame = nodeImpl->document().frame();
     if (!frame)
         return;
 
     // The global object which should own this node - FIXME: does this need to be isolated-world aware?
-    auto* globalObject = frame->script().globalObject(WebCore::mainThreadNormalWorldSingleton());
+    CheckedRef script = frame->script();
+    auto* globalObject = script->globalObject(WebCore::mainThreadNormalWorldSingleton());
 
     // Get (or create) a cached JS object for the DOM node.
     JSC::JSObject *scriptImp = asObject(WebCore::toJS(globalObject, globalObject, *nodeImpl));
 
-    JSC::Bindings::RootObject* rootObject = frame->script().bindingRootObject();
+    RefPtr rootObject = script->bindingRootObject();
 
-    [self _setImp:scriptImp originRootObject:rootObject rootObject:rootObject];
+    [self _setImp:scriptImp originRootObject:rootObject.copyRef() rootObject:rootObject.copyRef()];
 }
 
 @end

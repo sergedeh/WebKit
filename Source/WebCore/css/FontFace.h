@@ -51,11 +51,14 @@ public:
         String unicodeRange;
         String featureSettings;
         String display;
+        String ascentOverride;
+        String descentOverride;
+        String lineGapOverride;
         String sizeAdjust;
     };
     
-    using Source = Variant<String, RefPtr<JSC::ArrayBuffer>, RefPtr<JSC::ArrayBufferView>>;
-    static Ref<FontFace> create(ScriptExecutionContext&, const String& family, Source&&, const Descriptors&);
+    using Source = Variant<String, Ref<JSC::ArrayBuffer>, Ref<JSC::ArrayBufferView>>;
+    static Ref<FontFace> create(ScriptExecutionContext&, const AtomString& family, Source&&, const Descriptors&);
     static Ref<FontFace> create(ScriptExecutionContext*, CSSFontFace&);
     virtual ~FontFace();
 
@@ -64,29 +67,35 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(CSSFontFaceClient);
 
-    ExceptionOr<void> setFamily(const String&);
+    ExceptionOr<void> setFamily(ScriptExecutionContext&, const AtomString&);
     ExceptionOr<void> setStyle(ScriptExecutionContext&, const String&);
     ExceptionOr<void> setWeight(ScriptExecutionContext&, const String&);
     ExceptionOr<void> setWidth(ScriptExecutionContext&, const String&);
     ExceptionOr<void> setUnicodeRange(ScriptExecutionContext&, const String&);
     ExceptionOr<void> setFeatureSettings(ScriptExecutionContext&, const String&);
     ExceptionOr<void> setDisplay(ScriptExecutionContext&, const String&);
+    ExceptionOr<void> setAscentOverride(ScriptExecutionContext&, const String&);
+    ExceptionOr<void> setDescentOverride(ScriptExecutionContext&, const String&);
+    ExceptionOr<void> setLineGapOverride(ScriptExecutionContext&, const String&);
     ExceptionOr<void> setSizeAdjust(ScriptExecutionContext&, const String&);
 
-    String family() const;
+    AtomString family() const;
     String style() const;
     String weight() const;
     String width() const;
     String unicodeRange() const;
     String featureSettings() const;
     String display() const;
+    String ascentOverride() const;
+    String descentOverride() const;
+    String lineGapOverride() const;
     String sizeAdjust() const;
 
     enum class LoadStatus { Unloaded, Loading, Loaded, Error };
-    LoadStatus status() const;
+    LoadStatus NODELETE status() const;
 
     using LoadedPromise = DOMPromiseProxyWithResolveCallback<IDLInterface<FontFace>>;
-    LoadedPromise& loadedForBindings();
+    LoadedPromise& NODELETE loadedForBindings();
     LoadedPromise& loadForBindings();
 
     void adopt(CSSFontFace&);
@@ -100,15 +109,16 @@ private:
     explicit FontFace(ScriptExecutionContext*, CSSFontFace&);
 
     // ActiveDOMObject.
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     // Callback for LoadedPromise.
-    FontFace& loadedPromiseResolve();
+    FontFace& NODELETE loadedPromiseResolve();
     void setErrorState();
 
     Ref<CSSFontFace> m_backing;
     const UniqueRef<LoadedPromise> m_loadedPromise;
     bool m_mayLoadedPromiseBeScriptObservable { false };
+    bool m_sourceIsImmediateBuffer { false };
 };
 
 }

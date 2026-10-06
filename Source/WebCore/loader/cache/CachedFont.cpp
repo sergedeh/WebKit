@@ -34,6 +34,7 @@
 #include "FontCustomPlatformData.h"
 #include "FontDescription.h"
 #include "FontPlatformData.h"
+#include "LocalFrame.h"
 #include "Logging.h"
 #include "MemoryCache.h"
 #include "Settings.h"
@@ -108,7 +109,7 @@ void CachedFont::finishLoading(const FragmentedSharedBuffer* data, const Network
 
 void CachedFont::setErrorAndDeleteData()
 {
-    CachedResourceHandle protectedThis { *this };
+    RefPtr protectedThis { *this };
     setEncodedSize(0);
     error(Status::DecodeError);
     if (inCache())
@@ -215,21 +216,21 @@ RefPtr<FontCustomPlatformData> CachedFont::createCustomFontDataSafeFontParser(Sh
     return FontCustomPlatformData::createMemorySafe(*buffer, itemInCollection);
 }
 
-RefPtr<Font> CachedFont::createFont(const FontDescription& fontDescription, bool syntheticBold, bool syntheticItalic, const FontCreationContext& fontCreationContext)
+RefPtr<Font> CachedFont::createFont(const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
-    return Font::create(platformDataFromCustomData(fontDescription, syntheticBold, syntheticItalic, fontCreationContext), Font::Origin::Remote);
+    return Font::create(platformDataFromCustomData(fontDescription, fontCreationContext), Font::Origin::Remote);
 }
 
-FontPlatformData CachedFont::platformDataFromCustomData(const FontDescription& fontDescription, bool bold, bool italic, const FontCreationContext& fontCreationContext)
+FontPlatformData CachedFont::platformDataFromCustomData(const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
     RefPtr fontCustomPlatformData = m_fontCustomPlatformData;
     ASSERT(fontCustomPlatformData);
-    return platformDataFromCustomData(*fontCustomPlatformData, fontDescription, bold, italic, fontCreationContext);
+    return platformDataFromCustomData(*fontCustomPlatformData, fontDescription, fontCreationContext);
 }
 
-FontPlatformData CachedFont::platformDataFromCustomData(FontCustomPlatformData& fontCustomPlatformData, const FontDescription& fontDescription, bool bold, bool italic, const FontCreationContext& fontCreationContext)
+FontPlatformData CachedFont::platformDataFromCustomData(FontCustomPlatformData& fontCustomPlatformData, const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
-    return fontCustomPlatformData.fontPlatformData(fontDescription, bold, italic, fontCreationContext);
+    return fontCustomPlatformData.fontPlatformData(fontDescription, fontCreationContext);
 }
 
 void CachedFont::allClientsRemoved()

@@ -33,13 +33,17 @@
 #include "HTMLDetailsElement.h"
 #include "HTMLDialogElement.h"
 #include "HTMLFrameElement.h"
+#include "HTMLHeadingElement.h"
 #include "HTMLIFrameElement.h"
 #include "HTMLImageElement.h"
 #include "HTMLInputElement.h"
+#include "HTMLMeterElement.h"
 #include "HTMLOptionElement.h"
+#include "HTMLSelectElement.h"
 #include "InspectorInstrumentation.h"
 #include "LocalFrameInlines.h"
 #include "Page.h"
+#include "SelectPopoverElement.h"
 #include "SelectorChecker.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
@@ -195,8 +199,8 @@ ALWAYS_INLINE bool containslanguageSubtagMatchingRange(StringView language, Stri
 
         StringView languageSubtag = language.substring(languageSubtagsStartIndex, languageSubtagsEndIndex - languageSubtagsStartIndex);
         bool isEqual = equalIgnoringASCIICase(range, languageSubtag);
-        if (!isAsteriskRange) {
-            if ((!isEqual && !languageSubtagsStartIndex) || (languageSubtag.length() == 1 && languageSubtagsStartIndex > 0))
+        if (!isAsteriskRange && !isEqual) {
+            if (!languageSubtagsStartIndex || (languageSubtag.length() == 1 && languageSubtagsStartIndex > 0))
                 return false;
         }
         languageSubtagsStartIndex = languageSubtagsEndIndex;
@@ -231,7 +235,7 @@ ALWAYS_INLINE bool matchesLangPseudoClass(const Element& element, const FixedVec
             continue;
         if (rangeStringView == "*"_s)
             return true;
-        if (equalIgnoringASCIICase(languageStringView, rangeStringView) && !languageStringView.contains('-'))
+        if (equalIgnoringASCIICase(languageStringView, rangeStringView))
             return true;
 
         unsigned rangeLength = rangeStringView.length();
@@ -256,6 +260,16 @@ ALWAYS_INLINE bool matchesLangPseudoClass(const Element& element, const FixedVec
             return true;
     }
     return false;
+}
+
+ALWAYS_INLINE bool matchesHeadingPseudoClass(const Element& element, const FixedVector<int>* integerList)
+{
+    CheckedPtr headingElement = dynamicDowncast<HTMLHeadingElement>(element);
+    if (!headingElement)
+        return false;
+    if (!integerList)
+        return true;
+    return integerList->contains(static_cast<int>(headingElement->level()));
 }
 
 ALWAYS_INLINE bool matchesDirPseudoClass(const Element& element, const AtomString& argument)
@@ -596,6 +610,10 @@ ALWAYS_INLINE bool matchesOpenPseudoClass(const Element& element)
         return dialog->isOpen();
     if (auto* details = dynamicDowncast<HTMLDetailsElement>(element))
         return details->isOpen();
+    if (auto* select = dynamicDowncast<HTMLSelectElement>(element))
+        return select->isOpen();
+    if (auto* input = dynamicDowncast<HTMLInputElement>(element))
+        return input->isPresentingAttachedView();
 
     return false;
 }
@@ -615,6 +633,45 @@ ALWAYS_INLINE bool matchesActiveViewTransitionPseudoClass(const Element& element
     if (&element != element.document().documentElement())
         return false;
     return !!element.document().activeViewTransition();
+}
+
+ALWAYS_INLINE bool matchesEvenLessGoodPseudoClass(const Element& element)
+{
+    if (RefPtr meterElement = dynamicDowncast<HTMLMeterElement>(element))
+        return meterElement->gaugeRegion() == HTMLMeterElement::GaugeRegion::EvenLessGood;
+    return false;
+}
+
+ALWAYS_INLINE bool matchesOptimumPseudoClass(const Element& element)
+{
+    if (RefPtr meterElement = dynamicDowncast<HTMLMeterElement>(element))
+        return meterElement->gaugeRegion() == HTMLMeterElement::GaugeRegion::Optimum;
+    return false;
+}
+
+ALWAYS_INLINE bool matchesSuboptimumPseudoClass(const Element& element)
+{
+    if (RefPtr meterElement = dynamicDowncast<HTMLMeterElement>(element))
+        return meterElement->gaugeRegion() == HTMLMeterElement::GaugeRegion::Suboptimal;
+    return false;
+}
+
+ALWAYS_INLINE bool matchesUsesMenulistPseudoClass(const Element& element)
+{
+    if (auto* select = dynamicDowncast<HTMLSelectElement>(element))
+        return select->usesMenuList();
+    return false;
+}
+
+ALWAYS_INLINE bool matchesSelectPopoverPseudoClass(const Element& element)
+{
+    return is<SelectPopoverElement>(element);
+}
+
+ALWAYS_INLINE bool matchesSelectPreferredSizeOnePseudoClass(const Element& element)
+{
+    auto* select = dynamicDowncast<HTMLSelectElement>(element);
+    return select && select->preferredSize() == 1;
 }
 
 } // namespace WebCore

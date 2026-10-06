@@ -41,15 +41,14 @@ class LegacyRenderSVGResourceMasker final : public LegacyRenderSVGResourceContai
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGResourceMasker);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGResourceMasker);
 public:
-    LegacyRenderSVGResourceMasker(SVGMaskElement&, RenderStyle&&);
+    LegacyRenderSVGResourceMasker(SVGMaskElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGResourceMasker();
 
     inline SVGMaskElement& maskElement() const;
-    inline Ref<SVGMaskElement> protectedMaskElement() const;
 
     void removeAllClientsFromCache() override;
     void removeClientFromCache(RenderElement&) override;
-    OptionSet<ApplyResult> applyResource(RenderElement&, const RenderStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) override;
+    OptionSet<ApplyResult> applyResource(RenderElement&, const Style::ComputedStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) override;
     bool drawContentIntoContext(GraphicsContext&, const FloatRect& objectBoundingBox);
     bool drawContentIntoContext(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions);
     FloatRect resourceBoundingBox(const RenderObject&, RepaintRectCalculation) override;
@@ -64,7 +63,7 @@ private:
 
     ASCIILiteral renderName() const override { return "RenderSVGResourceMasker"_s; }
 
-    bool drawContentIntoMaskImage(MaskerData*, const DestinationColorSpace&, RenderObject*);
+    bool drawContentIntoMaskImage(MaskerData*, const ColorSpace&, RenderObject*);
     void calculateMaskContentRepaintRect(RepaintRectCalculation);
 
     EnumeratedArray<RepaintRectCalculation, FloatRect, RepaintRectCalculation::Accurate> m_maskContentBoundaries;

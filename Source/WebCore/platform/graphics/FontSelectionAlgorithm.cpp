@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,9 +28,9 @@
 
 namespace WebCore {
 
-FontSelectionAlgorithm::FontSelectionAlgorithm(FontSelectionRequest request, const Vector<Capabilities>& capabilities, std::optional<Capabilities> bounds)
+FontSelectionAlgorithm::FontSelectionAlgorithm(FontSelectionRequest request, Vector<Capabilities>&& capabilities, std::optional<Capabilities> bounds)
     : m_request(request)
-    , m_capabilities(capabilities)
+    , m_capabilities(WTF::move(capabilities))
 {
     ASSERT(!m_capabilities.isEmpty());
     if (bounds)
@@ -68,6 +68,26 @@ auto FontSelectionAlgorithm::styleDistance(Capabilities capabilities) const -> D
     auto slope = capabilities.slope;
     auto requestSlope = m_request.slope.value_or(normalItalicValue());
     ASSERT(slope.isValid());
+
+    // Per CSS Fonts 4 §5.2, italic and oblique are not interchangeable when choosing
+    // faces. When requesting oblique (slnt axis), italic-labeled faces are only a last
+    // resort after both oblique and normal faces. When requesting italic (ital axis),
+    // italic-labeled faces are preferred, but oblique faces are acceptable before normal.
+    // https://drafts.csswg.org/css-fonts-4/#font-style-matching
+    //
+    // We implement this by giving mismatched faces a distance penalty large enough to
+    // always lose to any matching-category face, while still allowing last-resort use
+    // when no better face exists.
+    if (m_request.slopeAxis == FontStyleAxis::slnt && capabilities.faceAxis == FontStyleAxis::ital) {
+        auto clampedSlope = std::clamp(requestSlope, slope.minimum, slope.maximum);
+        return { FontSelectionValue::maximumValue(), clampedSlope };
+    }
+
+    if (m_request.penalizeObliqueFontSelection && capabilities.faceAxis == FontStyleAxis::slnt) {
+        auto clampedSlope = std::clamp(requestSlope, slope.minimum, slope.maximum);
+        return { FontSelectionValue::maximumValue(), clampedSlope };
+    }
+
     if (slope.includes(requestSlope))
         return { FontSelectionValue(), requestSlope };
 
@@ -147,6 +167,7 @@ FontSelectionValue FontSelectionAlgorithm::bestValue(std::span<const bool> elimi
         if (!smallestDistance || distanceResult.distance < smallestDistance.value().distance)
             smallestDistance = distanceResult;
     }
+    ASSERT(smallestDistance);
     return smallestDistance.value().value;
 }
 
@@ -157,13 +178,26 @@ void FontSelectionAlgorithm::filterCapability(std::span<bool> eliminated, Distan
         eliminated[i] = eliminated[i] || !(m_capabilities[i].*inclusionRange).includes(value);
 }
 
+const Vector<bool>& FontSelectionAlgorithm::ensureEliminatedCapabilities()
+{
+    if (!m_eliminatedCapabilities) {
+        Vector<bool, 256> eliminated(FillWith { }, m_capabilities.size(), false);
+        filterCapability(eliminated.mutableSpan(), &FontSelectionAlgorithm::widthDistance, &Capabilities::width);
+        filterCapability(eliminated.mutableSpan(), &FontSelectionAlgorithm::styleDistance, &Capabilities::slope);
+        filterCapability(eliminated.mutableSpan(), &FontSelectionAlgorithm::weightDistance, &Capabilities::weight);
+        m_eliminatedCapabilities = WTF::move(eliminated);
+    }
+    return *m_eliminatedCapabilities;
+}
+
+const Vector<bool>& FontSelectionAlgorithm::eliminatedCapabilities()
+{
+    return ensureEliminatedCapabilities();
+}
+
 size_t FontSelectionAlgorithm::indexOfBestCapabilities()
 {
-    Vector<bool, 256> eliminated(m_capabilities.size(), false);
-    filterCapability(eliminated.mutableSpan(), &FontSelectionAlgorithm::widthDistance, &Capabilities::width);
-    filterCapability(eliminated.mutableSpan(), &FontSelectionAlgorithm::styleDistance, &Capabilities::slope);
-    filterCapability(eliminated.mutableSpan(), &FontSelectionAlgorithm::weightDistance, &Capabilities::weight);
-    return eliminated.find(false);
+    return ensureEliminatedCapabilities().find(false);
 }
 
 }

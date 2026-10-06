@@ -54,7 +54,7 @@ struct _WebKitDOMEventTargetIface {
 };
 
 
-WEBKIT_DEPRECATED GType     webkit_dom_event_target_get_type(void) G_GNUC_CONST;
+WEBKIT_DEPRECATED GType     webkit_dom_event_target_get_type(void);
 
 /**
  * webkit_dom_event_target_dispatch_event:
@@ -112,7 +112,7 @@ WEBKIT_DEPRECATED gboolean  webkit_dom_event_target_remove_event_listener(WebKit
  * @use_capture: A #gboolean
  *
  * Version of webkit_dom_event_target_add_event_listener() using a closure
- * instead of a callbacks for easier binding in other languages.
+ * instead of callbacks for easier binding in other languages.
  *
  * Returns: a #gboolean
  *
@@ -131,7 +131,7 @@ WEBKIT_DEPRECATED gboolean webkit_dom_event_target_add_event_listener_with_closu
  * @use_capture: A #gboolean
  *
  * Version of webkit_dom_event_target_remove_event_listener() using a closure
- * instead of a callbacks for easier binding in other languages.
+ * instead of callbacks for easier binding in other languages.
  *
  * Returns: a #gboolean
  *

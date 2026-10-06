@@ -31,7 +31,7 @@ WI.LayoutTimelineView = class LayoutTimelineView extends WI.TimelineView
 
         console.assert(timeline.type === WI.TimelineRecord.Type.Layout, timeline);
 
-        let columns = {type: {}, name: {}, initiator: {}, area: {}, width: {}, height: {}, startTime: {}, totalTime: {}};
+        let columns = {type: {}, name: {}, node: {}, initiator: {}, area: {}, width: {}, height: {}, startTime: {}, totalTime: {}};
 
         columns.name.title = WI.UIString("Type");
         columns.name.width = "15%";
@@ -52,8 +52,11 @@ WI.LayoutTimelineView = class LayoutTimelineView extends WI.TimelineView
 
         this._scopeBar = columns.type.scopeBar;
 
+        columns.node.title = WI.UIString("Node");
+        columns.node.width = "10%";
+
         columns.initiator.title = WI.UIString("Initiator");
-        columns.initiator.width = "25%";
+        columns.initiator.width = "15%";
 
         columns.area.title = WI.UIString("Area");
         columns.area.width = "8%";
@@ -220,7 +223,7 @@ WI.LayoutTimelineView = class LayoutTimelineView extends WI.TimelineView
                 const options = {
                     graphDataSource: this,
                 };
-                let childDataGridNode = null;
+                let childDataGridNode;
                 if (childRecord.type === WI.TimelineRecord.Type.Script)
                     childDataGridNode = new WI.ScriptTimelineDataGridNode(childRecord, options);
                 else {
@@ -278,8 +281,8 @@ WI.LayoutTimelineView = class LayoutTimelineView extends WI.TimelineView
 
         this._showingHighlightForRecord = record;
 
-        if (record.domNode) {
-            record.domNode.highlight();
+        if (record.domNodeOrInfo instanceof WI.DOMNode) {
+            record.domNodeOrInfo.highlight();
             this._showingHighlight = true;
             return;
         }

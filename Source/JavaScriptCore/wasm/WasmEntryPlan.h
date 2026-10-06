@@ -62,8 +62,13 @@ public:
     Ref<ModuleInformation>&& takeModuleInformation()
     {
         RELEASE_ASSERT(!failed() && !hasWork());
-        if (Options::enableWasmDebugger()) [[unlikely]]
-            m_moduleInformation->debugInfo->takeSource(WTF::move(m_source));
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
+        if (Options::enableWasmDebugger()) [[unlikely]] {
+            // Skip if already populated by the streaming path (StreamingCompiler::addBytes).
+            if (m_moduleInformation->debugInfo->source.isEmpty())
+                m_moduleInformation->debugInfo->takeSource(WTF::move(m_source));
+        }
+#endif
         return WTF::move(m_moduleInformation);
     }
 
@@ -71,12 +76,6 @@ public:
     {
         RELEASE_ASSERT(!failed() && !hasWork());
         return WTF::move(m_wasmToWasmExitStubs);
-    }
-
-    Vector<Vector<UnlinkedWasmToWasmCall>> takeWasmToWasmCallsites()
-    {
-        RELEASE_ASSERT(!failed() && !hasWork());
-        return WTF::move(m_unlinkedWasmToWasmCalls);
     }
 
     Vector<MacroAssemblerCodeRef<WasmEntryPtrTag>> takeWasmToJSExitStubs()
@@ -113,10 +112,16 @@ protected:
 
     bool parseAndValidateModule(std::span<const uint8_t>);
 
-    const char* stateString(State);
+    const char* NODELETE stateString(State);
     void moveToState(State);
     bool isComplete() const override { return m_state == State::Completed; }
     void complete() WTF_REQUIRES_LOCK(m_lock) override;
+
+    bool failIfMixedExceptionHandlingProposals() WTF_REQUIRES_LOCK(m_lock);
+    // Records a function validation error (lowest index wins) and stops assigning more work.
+    // Completion is deferred to ThreadCountHolder / completeInStreaming so concurrent
+    // workers can still report a lower-index failure.
+    void failFunctionCompilation(FunctionCodeIndex, String&& errorMessage, CompilationError = CompilationError::Default) WTF_REQUIRES_LOCK(m_lock);
 
     virtual bool prepareImpl() = 0;
     virtual void compileFunction(FunctionCodeIndex functionIndex) = 0;
@@ -143,7 +148,6 @@ protected:
     Vector<MacroAssemblerCodeRef<WasmEntryPtrTag>> m_wasmToJSExitStubs;
     UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_exportedFunctionIndices;
 
-    Vector<Vector<UnlinkedWasmToWasmCall>> m_unlinkedWasmToWasmCalls;
     StreamingParser m_streamingParser;
     State m_state;
 

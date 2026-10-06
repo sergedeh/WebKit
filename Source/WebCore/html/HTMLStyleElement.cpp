@@ -28,12 +28,12 @@
 #include "CachedResource.h"
 #include "DOMTokenList.h"
 #include "Document.h"
+#include "DocumentPage.h"
 #include "Event.h"
 #include "EventNames.h"
 #include "EventSender.h"
 #include "HTMLNames.h"
 #include "MediaQueryParser.h"
-#include "MediaQueryParserContext.h"
 #include "NodeDocument.h"
 #include "NodeName.h"
 #include "Page.h"
@@ -91,8 +91,8 @@ void HTMLStyleElement::attributeChanged(const QualifiedName& name, const AtomStr
     case AttributeNames::mediaAttr:
         m_styleSheetOwner.setMedia(newValue);
         if (RefPtr sheet = this->sheet()) {
-            sheet->setMediaQueries(MQ::MediaQueryParser::parse(newValue, protectedDocument()->cssParserContext()));
-            if (auto* scope = m_styleSheetOwner.styleScope())
+            sheet->setMediaQueries(MQ::MediaQueryParser::parse(newValue, protect(document())->cssParserContext()));
+            if (CheckedPtr scope = m_styleSheetOwner.styleScope())
                 scope->didChangeStyleSheetContents();
         } else
             m_styleSheetOwner.childrenChanged(*this);
@@ -100,7 +100,7 @@ void HTMLStyleElement::attributeChanged(const QualifiedName& name, const AtomStr
     case AttributeNames::typeAttr:
         m_styleSheetOwner.setContentType(newValue);
         m_styleSheetOwner.childrenChanged(*this);
-        if (auto* scope = m_styleSheetOwner.styleScope())
+        if (CheckedPtr scope = m_styleSheetOwner.styleScope())
             scope->didChangeStyleSheetContents();
         break;
     case AttributeNames::blockingAttr:
@@ -134,17 +134,17 @@ void HTMLStyleElement::finishParsingChildren()
     HTMLElement::finishParsingChildren();
 }
 
-Node::InsertedIntoAncestorResult HTMLStyleElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLStyleElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    auto result = HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    auto result = HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
     if (insertionType.connectedToDocument)
         m_styleSheetOwner.insertedIntoDocument(*this);
     return result;
 }
 
-void HTMLStyleElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLStyleElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
     if (removalType.disconnectedFromDocument)
         m_styleSheetOwner.removedFromDocument(*this);
 }
@@ -172,12 +172,12 @@ void HTMLStyleElement::notifyLoadedSheetAndAllCriticalSubresources(bool errorOcc
     styleLoadEventSenderSingleton().dispatchEventSoon(*this, m_loadedSheet ? eventNames().loadEvent : eventNames().errorEvent);
 }
 
-void HTMLStyleElement::addSubresourceAttributeURLs(ListHashSet<URL>& urls) const
+void HTMLStyleElement::addSubresourceAttributeURLs(OrderedHashSet<URL>& urls) const
 {
     HTMLElement::addSubresourceAttributeURLs(urls);
 
     if (RefPtr sheet = this->sheet()) {
-        sheet->protectedContents()->traverseSubresources([&] (auto& resource) {
+        protect(sheet->contents())->traverseSubresources([&] (auto& resource) {
             urls.add(resource.url());
             return false;
         });

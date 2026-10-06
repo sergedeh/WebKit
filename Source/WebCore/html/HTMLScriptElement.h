@@ -42,27 +42,28 @@ public:
 
     String text() const { return scriptContent(); }
     WEBCORE_EXPORT void setText(String&&);
-    ExceptionOr<void> setText(Variant<RefPtr<TrustedScript>, String>&&);
+    ExceptionOr<void> setText(Variant<Ref<TrustedScript>, String>&&);
 
     using Node::setTextContent;
-    ExceptionOr<void> setTextContent(std::optional<Variant<RefPtr<TrustedScript>, String>>&&);
+    ExceptionOr<void> setTextContent(std::optional<Variant<Ref<TrustedScript>, String>>&&);
 
     using HTMLElement::setInnerText;
-    ExceptionOr<void> setInnerText(Variant<RefPtr<TrustedScript>, String>&&);
+    ExceptionOr<void> setInnerText(Variant<Ref<TrustedScript>, String>&&);
 
     String src() const;
-    ExceptionOr<void> setSrc(Variant<RefPtr<TrustedScriptURL>, String>&&);
+    ExceptionOr<void> setSrc(Variant<Ref<TrustedScriptURL>, String>&&);
 
     WEBCORE_EXPORT void setAsync(bool);
-    WEBCORE_EXPORT bool async() const;
+    WEBCORE_EXPORT bool NODELETE async() const;
 
     WEBCORE_EXPORT String crossOrigin() const;
 
     String referrerPolicyForBindings() const;
     ReferrerPolicy referrerPolicy() const final;
 
-    using HTMLElement::ref;
-    using HTMLElement::deref;
+    // ActiveDOMObject
+    void ref() const final { HTMLElement::ref(); }
+    void deref() const final { HTMLElement::deref(); }
 
     static bool supports(StringView type) { return type == "classic"_s || type == "module"_s || type == "importmap"_s || type == "speculationrules"_s; }
 
@@ -75,11 +76,12 @@ private:
     HTMLScriptElement(const QualifiedName&, Document&, bool wasInsertedByParser, bool alreadyStarted);
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void didFinishInsertingNode() final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps() final;
     void childrenChanged(const ChildChange&) final;
     void finishParsingChildren() final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
+    void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
 
     void potentiallyBlockRendering() final;
     void unblockRendering() final;
@@ -87,9 +89,9 @@ private:
 
     ExceptionOr<void> setTextContent(ExceptionOr<String>);
 
-    bool isURLAttribute(const Attribute&) const final;
+    bool NODELETE isURLAttribute(const Attribute&) const final;
 
-    void addSubresourceAttributeURLs(ListHashSet<URL>&) const final;
+    void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const final;
 
     String sourceAttributeValue() const final;
     AtomString charsetAttributeValue() const final;
@@ -105,6 +107,11 @@ private:
     bool isScriptPreventedByAttributes() const final;
 
     Ref<Element> cloneElementWithoutAttributesAndChildren(Document&, CustomElementRegistry*) const final;
+
+    // EventTarget
+    void eventListenersDidChange() final;
+
+    using HTMLElement::scriptExecutionContext;
 
     const std::unique_ptr<DOMTokenList> m_blockingList;
     bool m_isRenderBlocking { false };

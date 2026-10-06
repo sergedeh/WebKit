@@ -30,6 +30,7 @@
 #include <WebCore/Timer.h>
 #include <memory>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakRef.h>
@@ -68,6 +69,10 @@ public:
     WEBCORE_EXPORT bool addMarker(Node&, DocumentMarker&&);
     void addDraggedContentMarker(const SimpleRange&);
     WEBCORE_EXPORT void addTransparentContentMarker(const SimpleRange&, WTF::UUID);
+    WEBCORE_EXPORT void addDictationStreamingOpacityMarker(const SimpleRange&, float opacity);
+    WEBCORE_EXPORT void removeAllDictationStreamingOpacityMarkers();
+
+    WEBCORE_EXPORT size_t appliedGrammarTextEffectCount() const;
 
     void copyMarkers(Node& source, OffsetRange, Node& destination);
     bool hasMarkers() const;
@@ -103,7 +108,7 @@ public:
     WEBCORE_EXPORT Vector<FloatRect> renderedRectsForMarkers(DocumentMarkerType);
 
     template<IterationDirection = IterationDirection::Forwards>
-    WEBCORE_EXPORT void forEach(const SimpleRange&, OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+    WEBCORE_EXPORT void forEach(const SimpleRange&, OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
     WEBCORE_EXPORT static std::tuple<float, float> markerYPositionAndHeightForFont(const FontCascade&);
 
@@ -120,17 +125,16 @@ private:
 
     using MarkerMap = HashMap<Ref<Node>, std::unique_ptr<Vector<RenderedDocumentMarker>>>;
 
-    bool possiblyHasMarkers(OptionSet<DocumentMarkerType>) const;
+    bool NODELETE possiblyHasMarkers(OptionSet<DocumentMarkerType>) const;
     OptionSet<DocumentMarkerType> removeMarkersFromList(MarkerMap::iterator, OptionSet<DocumentMarkerType>, NOESCAPE const Function<FilterMarkerResult(const RenderedDocumentMarker&)>& filterFunction = nullptr);
 
-    void forEachOfTypes(OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+    void forEachOfTypes(OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
-    void applyToCollapsedRangeMarker(const SimpleRange&, OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+    void applyToCollapsedRangeMarker(const SimpleRange&, OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
     void fadeAnimationTimerFired();
     void writingToolsTextSuggestionAnimationTimerFired();
 
-    Ref<Document> protectedDocument() const;
 
     MarkerMap m_markers;
     // Provide a quick way to determine whether a particular marker type is absent without going through the map.
@@ -139,18 +143,22 @@ private:
 
     Timer m_fadeAnimationTimer;
     Timer m_writingToolsTextSuggestionAnimationTimer;
+
+#if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
+    HashSet<String> m_appliedGrammarTextEffectUUIDs;
+#endif
 };
 
 
 template<>
-WEBCORE_EXPORT void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Forwards>(const SimpleRange&, OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+WEBCORE_EXPORT void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Forwards>(const SimpleRange&, OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
 template<>
-WEBCORE_EXPORT void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Backwards>(const SimpleRange&, OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+WEBCORE_EXPORT void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Backwards>(const SimpleRange&, OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
 WEBCORE_EXPORT void addMarker(const SimpleRange&, DocumentMarkerType, const DocumentMarker::Data& = { });
 void addMarker(Node&, unsigned startOffset, unsigned length, DocumentMarkerType, DocumentMarker::Data&& = { });
-void removeMarkers(const SimpleRange&, OptionSet<DocumentMarkerType> = DocumentMarker::allMarkers(), RemovePartiallyOverlappingMarker = RemovePartiallyOverlappingMarker::No);
+WEBCORE_EXPORT void removeMarkers(const SimpleRange&, OptionSet<DocumentMarkerType> = DocumentMarker::allMarkers(), RemovePartiallyOverlappingMarker = RemovePartiallyOverlappingMarker::No);
 
 WEBCORE_EXPORT SimpleRange makeSimpleRange(Node&, const DocumentMarker&);
 

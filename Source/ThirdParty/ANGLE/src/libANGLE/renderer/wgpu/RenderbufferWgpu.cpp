@@ -102,7 +102,8 @@ angle::Result RenderbufferWgpu::getAttachmentRenderTarget(const gl::Context *con
     gl::LevelIndex level(0);
 
     webgpu::TextureViewHandle textureView;
-    ANGLE_TRY(mImage->createTextureViewSingleLevel(level, 0, textureView));
+    ANGLE_TRY(mImage->createTextureViewSingleLevel(level, 0, textureView, WGPUTextureAspect_All,
+                                                   WGPUTextureFormat_Undefined));
 
     mRenderTarget.set(mImage, textureView, mImage->toWgpuLevel(level), 0,
                       mImage->toWgpuTextureFormat());
@@ -121,8 +122,7 @@ void RenderbufferWgpu::onSubjectStateChange(angle::SubjectIndex index,
                                             angle::SubjectMessage message)
 {
     ASSERT(index == kRenderbufferImageSubjectIndex &&
-           (message == angle::SubjectMessage::SubjectChanged ||
-            message == angle::SubjectMessage::InitializationComplete));
+           message == angle::SubjectMessage::SubjectChanged);
 
     // Forward the notification to the parent that the internal storage changed.
     onStateChange(message);

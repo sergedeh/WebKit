@@ -74,14 +74,14 @@ public:
     bool willRespondToMouseClickEventsWithEditability(Editability) const final;
 
     WEBCORE_EXPORT void pluginDestroyedWithPendingPDFTestCallback(RefPtr<VoidCallback>&&);
-    WEBCORE_EXPORT RefPtr<VoidCallback> takePendingPDFTestCallback();
+    WEBCORE_EXPORT RefPtr<VoidCallback> NODELETE takePendingPDFTestCallback();
 
-    RenderEmbeddedObject* renderEmbeddedObject() const;
+    RenderEmbeddedObject* NODELETE renderEmbeddedObject() const;
 
     virtual void updateWidget(CreatePlugins) = 0;
 
-    const String& serviceType() const { return m_serviceType; }
-    const String& url() const { return m_url; }
+    const String& serviceType() const LIFETIME_BOUND { return m_serviceType; }
+    const String& url() const LIFETIME_BOUND { return m_url; }
 
     bool needsWidgetUpdate() const { return m_needsWidgetUpdate; }
     void setNeedsWidgetUpdate(bool needsWidgetUpdate) { m_needsWidgetUpdate = needsWidgetUpdate; }
@@ -98,16 +98,16 @@ protected:
 
     virtual bool useFallbackContent() const { return false; }
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode& parentOfInsertedTree) override;
-    void removedFromAncestor(RemovalType, ContainerNode& oldParentOfRemovedTree) override;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode& parentOfInsertedTree) override;
+    void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree) override;
 
     void defaultEventHandler(Event&) final;
 
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) override;
 
     bool requestObject(const String& url, const String& mimeType, const Vector<AtomString>& paramNames, const Vector<AtomString>& paramValues);
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
-    bool isReplaced(const RenderStyle* = nullptr) const final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
+    bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
     void didAddUserAgentShadowRoot(ShadowRoot&) final;
 
     // This will load the plugin if necessary.
@@ -138,7 +138,7 @@ private:
     bool canLoadPlugInContent(const String& relativeURL, const String& mimeType) const;
     bool canLoadURL(const URL&) const;
 
-    RenderPtr<RenderElement> createPluginRenderer(RenderStyle&&, const RenderTreePosition&);
+    RenderPtr<RenderElement> createPluginRenderer(Style::ComputedStyle&&, const RenderTreePosition&);
     bool childShouldCreateRenderer(const Node&) const override;
     void willRecalcStyle(OptionSet<Style::Change>) final;
     void didRecalcStyle(OptionSet<Style::Change>) final;

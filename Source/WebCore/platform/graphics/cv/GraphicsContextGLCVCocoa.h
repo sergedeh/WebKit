@@ -27,9 +27,9 @@
 
 #if ENABLE(WEBGL) && ENABLE(VIDEO) && USE(AVFOUNDATION)
 
-#include <WebCore/GraphicsContextGLCV.h>
-#include <WebCore/GraphicsContextGLCocoa.h>
-#include <WebCore/ImageOrientation.h>
+#include "GraphicsContextGLCV.h"
+#include "GraphicsContextGLCocoa.h"
+#include "ImageOrientation.h"
 #include <memory>
 #include <wtf/CheckedRef.h>
 #include <wtf/TZoneMalloc.h>
@@ -83,7 +83,7 @@ private:
         FlipY unpackFlipY { FlipY::No };
         ImageOrientation orientation;
 
-        friend bool operator==(const TextureContent&, const TextureContent&) = default;
+        friend bool NODELETE operator==(const TextureContent&, const TextureContent&) = default;
     };
     using TextureContentMap = HashMap<GCGLuint, TextureContent, IntHash<GCGLuint>, WTF::UnsignedWithZeroKeyHashTraits<GCGLuint>>;
     TextureContentMap m_knownContent;

@@ -30,10 +30,10 @@
 
 #pragma once
 
-#include <WebCore/ScriptExecutionContext.h>
-#include <WebCore/ThreadableWebSocketChannel.h>
-#include <WebCore/WebSocketChannelClient.h>
-#include <WebCore/WorkerThreadableWebSocketChannel.h>
+#include "ScriptExecutionContext.h"
+#include "ThreadableWebSocketChannel.h"
+#include "WebSocketChannelClient.h"
+#include "WorkerThreadableWebSocketChannel.h"
 #include <memory>
 #include <wtf/Forward.h>
 #include <wtf/ThreadSafeWeakPtr.h>
@@ -49,12 +49,12 @@ class ThreadableWebSocketChannelClientWrapper : public ThreadSafeRefCountedAndCa
 public:
     static Ref<ThreadableWebSocketChannelClientWrapper> create(ScriptExecutionContext&, WebSocketChannelClient&);
 
-    WorkerThreadableWebSocketChannel::Peer* peer() const;
+    WorkerThreadableWebSocketChannel::Peer* NODELETE peer() const;
     void didCreateWebSocketChannel(Ref<WorkerThreadableWebSocketChannel::Peer>&&);
     void clearPeer();
 
-    bool failedWebSocketChannelCreation() const;
-    void setFailedWebSocketChannelCreation();
+    bool NODELETE failedWebSocketChannelCreation() const;
+    void NODELETE setFailedWebSocketChannelCreation();
 
     // Subprotocol and extensions will be available when didConnect() callback is invoked.
     String subprotocol() const;
@@ -67,13 +67,13 @@ public:
     void didConnect();
     void didReceiveMessage(String&& message);
     void didReceiveBinaryData(Vector<uint8_t>&&);
-    void didUpdateBufferedAmount(unsigned bufferedAmount);
+    void didUpdateBufferedAmount(uint64_t bufferedAmount);
     void didStartClosingHandshake();
-    void didClose(unsigned unhandledBufferedAmount, WebSocketChannelClient::ClosingHandshakeCompletionStatus, unsigned short code, const String& reason);
+    void didClose(uint64_t unhandledBufferedAmount, WebSocketChannelClient::ClosingHandshakeCompletionStatus, unsigned short code, const String& reason);
     void didReceiveMessageError(String&& reason);
     void didUpgradeURL();
 
-    void suspend();
+    void NODELETE suspend();
     void resume();
 
 private:

@@ -51,30 +51,28 @@ public:
 
     Storage::Record encodeAsStorageRecord() const;
     static std::unique_ptr<Entry> decodeStorageRecord(const Storage::Record&);
+    static std::optional<URL> decodeStorageRecordResponseURL(const Storage::Record&);
 
     PrivateRelayed privateRelayed() const { return m_privateRelayed; }
-    const Key& key() const { return m_key; }
+    const Key& key() const LIFETIME_BOUND { return m_key; }
     WallTime timeStamp() const { return m_timeStamp; }
-    const WebCore::ResourceResponse& response() const { return m_response; }
-    const Vector<std::pair<String, String>>& varyingRequestHeaders() const { return m_varyingRequestHeaders; }
+    const WebCore::ResourceResponse& response() const LIFETIME_BOUND { return m_response; }
+    const Vector<std::pair<String, String>>& varyingRequestHeaders() const LIFETIME_BOUND { return m_varyingRequestHeaders; }
 
     WebCore::FragmentedSharedBuffer* buffer() const;
-    RefPtr<WebCore::FragmentedSharedBuffer> protectedBuffer() const;
-    const std::optional<WebCore::ResourceRequest>& redirectRequest() const { return m_redirectRequest; }
+    const std::optional<WebCore::ResourceRequest>& redirectRequest() const LIFETIME_BOUND { return m_redirectRequest; }
 
 #if ENABLE(SHAREABLE_RESOURCE)
     std::optional<WebCore::ShareableResource::Handle> shareableResourceHandle() const;
 #endif
 
     bool needsValidation() const;
-    void setNeedsValidation(bool);
-
-    const Storage::Record& sourceStorageRecord() const { return m_sourceStorageRecord; }
+    void NODELETE setNeedsValidation(bool);
 
     void asJSON(StringBuilder&, const Storage::RecordInfo&) const;
 
     bool hasReachedPrevalentResourceAgeCap() const;
-    void capMaxAge(const Seconds);
+    void NODELETE capMaxAge(const Seconds);
 
 private:
     void initializeBufferFromStorageRecord() const;

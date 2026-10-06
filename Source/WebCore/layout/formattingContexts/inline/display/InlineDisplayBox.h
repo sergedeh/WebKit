@@ -103,6 +103,7 @@ struct Box {
     bool isInlineBox() const { return isNonRootInlineBox() || isRootInlineBox(); }
     bool isNonRootInlineBox() const { return m_type == Type::NonRootInlineBox; }
     bool isRootInlineBox() const { return m_type == Type::RootInlineBox; }
+    bool isRubyBase() const { return isNonRootInlineBox() && layoutBox().isRubyBase(); }
     bool isGenericInlineLevelBox() const { return m_type == Type::GenericInlineLevelBox; }
     bool isInlineLevelBox() const { return isAtomicInlineBox() || isLineBreakBox() || isInlineBox() || isGenericInlineLevelBox(); }
     bool isBlockLevelBox() const { return m_type == Type::BlockLevelBox; }
@@ -115,12 +116,12 @@ struct Box {
     bool hasContent() const { return m_hasContent; }
     inline bool isVisible() const;
     // Inline boxes around blocks are visible to hit testing but don't paint.
-    bool isVisibleIgnoringUsedVisibility() const { return !isFullyTruncated() && style().visibility() == Visibility::Visible; }
+    inline bool isVisibleIgnoringUsedVisibility() const; // Defined in InlineDisplayBoxInlines.h
     bool isFullyTruncated() const { return m_isFullyTruncated; } 
 
-    const FloatRect& visualRectIgnoringBlockDirection() const { return m_unflippedVisualRect; }
+    const FloatRect& visualRectIgnoringBlockDirection() const LIFETIME_BOUND { return m_unflippedVisualRect; }
     static FloatRect visibleRectIgnoringBlockDirection(const Box&, const FloatRect& visibleLineRect);
-    const FloatRect& inkOverflow() const { return m_inkOverflow; }
+    const FloatRect& inkOverflow() const LIFETIME_BOUND { return m_inkOverflow; }
 
     float top() const { return visualRectIgnoringBlockDirection().y(); }
     float bottom() const { return visualRectIgnoringBlockDirection().maxY(); }
@@ -135,7 +136,9 @@ struct Box {
     void expandVertically(float delta);
     void expandHorizontally(float delta);
 
-    void adjustInkOverflow(const FloatRect& childBorderBox) { return m_inkOverflow.uniteEvenIfEmpty(childBorderBox); }
+    void setInkOverflow(const FloatRect& inkOverflow) { m_inkOverflow = inkOverflow; }
+    FloatBoxExtent glyphOverflow() const { return { static_cast<float>(m_glyphOverflowTop), 0.f, static_cast<float>(m_glyphOverflowBottom), 0.f }; }
+    void setGlyphOverflow(uint8_t top, uint8_t bottom) { m_glyphOverflowTop = top; m_glyphOverflowBottom = bottom; }
     void setLeft(float physicalLeft);
     void setRight(float physicalRight);
     void setTop(float physicalTop);
@@ -144,8 +147,8 @@ struct Box {
     void setHasContent() { m_hasContent = true; }
     void setIsFullyTruncated() { m_isFullyTruncated = true; }
 
-    Text& text() { ASSERT(isTextOrSoftLineBreak()); return m_text; }
-    const Text& text() const { ASSERT(isTextOrSoftLineBreak()); return m_text; }
+    Text& text() LIFETIME_BOUND { ASSERT(isTextOrSoftLineBreak()); return m_text; }
+    const Text& text() const LIFETIME_BOUND { ASSERT(isTextOrSoftLineBreak()); return m_text; }
 
     struct Expansion {
         ExpansionBehavior behavior { ExpansionBehavior::defaultBehavior() };
@@ -154,8 +157,8 @@ struct Box {
     void setExpansion(Expansion);
     Expansion expansion() const { return { m_expansionBehavior, m_horizontalExpansion }; }
 
-    const Layout::Box& layoutBox() const { return m_layoutBox; }
-    const RenderStyle& style() const { return isFirstFormattedLine() ? layoutBox().firstLineStyle() : layoutBox().style(); }
+    const Layout::Box& layoutBox() const { return *m_layoutBox; }
+    const Style::ComputedStyle& style() const LIFETIME_BOUND { return isFirstFormattedLine() ? layoutBox().firstLineStyle() : layoutBox().style(); }
     WritingMode writingMode() const { return style().writingMode(); }
 
     void moveToLine(unsigned lineIndex) { m_lineIndex = lineIndex; }
@@ -165,6 +168,10 @@ struct Box {
     // (e.g. always true for atomic boxes, but inline boxes spanning over multiple lines can produce individual first/last boxes).
     bool isFirstForLayoutBox() const { return m_isFirstForLayoutBox; }
     bool isLastForLayoutBox() const { return m_isLastForLayoutBox; }
+    // Whether this box fragment of an inline box has the start/end of the inline box (e.g. an inline box split by a line break has no end on the first line).
+    bool isFirstFragment() const { return m_isFirstFragment; }
+    bool isLastFragment() const { return m_isLastFragment; }
+    void setIsFirstLastFragment(bool isFirstFragment, bool isLastFragment) { m_isFirstFragment = isFirstFragment; m_isLastFragment = isLastFragment; }
 
     void setIsFirstForLayoutBox() { m_isFirstForLayoutBox = true; }
     void setIsLastForLayoutBox() { m_isLastForLayoutBox = true; }
@@ -172,9 +179,10 @@ struct Box {
     bool isInGlyphDisplayListCache() const { return m_isInGlyphDisplayListCache; }
     void setIsInGlyphDisplayListCache() { m_isInGlyphDisplayListCache = true; }
     void removeFromGlyphDisplayListCache();
+    void detachLayoutBox() { m_layoutBox = nullptr; }
 
 private:
-    CheckedRef<const Layout::Box> m_layoutBox;
+    CheckedPtr<const Layout::Box> m_layoutBox;
     FloatRect m_unflippedVisualRect;
     FloatRect m_inkOverflow;
 
@@ -192,12 +200,17 @@ private:
     bool m_isFullyTruncated : 1 { false };
     bool m_isInGlyphDisplayListCache : 1 { false };
     bool m_isFirstFormattedLine : 1 { false };
+    bool m_isFirstFragment : 1 { false };
+    bool m_isLastFragment : 1 { false };
+    // FIXME: Move this to Box::Text when there's enough bit in there.
+    uint8_t m_glyphOverflowTop : 5 { 0 };
+    uint8_t m_glyphOverflowBottom : 3 { 0 };
 
     Text m_text;
 };
 
 inline Box::Box(size_t lineIndex, Type type, const Layout::Box& layoutBox, UBiDiLevel bidiLevel, const FloatRect& physicalRect, const FloatRect& inkOverflow, bool isFirstFormattedLine, Expansion expansion, std::optional<Text> text, bool hasContent, bool isFullyTruncated, EnumSet<PositionWithinInlineLevelBox> positionWithinInlineLevelBox)
-    : m_layoutBox(layoutBox)
+    : m_layoutBox(&layoutBox)
     , m_unflippedVisualRect(physicalRect)
     , m_inkOverflow(inkOverflow)
     , m_lineIndex(lineIndex)
@@ -210,6 +223,8 @@ inline Box::Box(size_t lineIndex, Type type, const Layout::Box& layoutBox, UBiDi
     , m_isLastForLayoutBox(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::Last))
     , m_isFullyTruncated(isFullyTruncated)
     , m_isFirstFormattedLine(isFirstFormattedLine)
+    , m_isFirstFragment(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::First))
+    , m_isLastFragment(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::Last))
     , m_text(text ? WTF::move(*text) : Text { })
 {
 }

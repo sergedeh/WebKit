@@ -49,17 +49,17 @@ void NamedNodeMap::deref()
 
 RefPtr<Attr> NamedNodeMap::getNamedItem(const AtomString& name) const
 {
-    return protectedElement()->getAttributeNode(name);
+    return protect(element())->getAttributeNode(name);
 }
 
 bool NamedNodeMap::isSupportedPropertyName(const AtomString& name) const
 {
-    return protectedElement()->hasAttribute(name);
+    return protect(element())->hasAttribute(name);
 }
 
 RefPtr<Attr> NamedNodeMap::getNamedItemNS(const AtomString& namespaceURI, const AtomString& localName) const
 {
-    return protectedElement()->getAttributeNodeNS(namespaceURI, localName);
+    return protect(element())->getAttributeNodeNS(namespaceURI, localName);
 }
 
 ExceptionOr<Ref<Attr>> NamedNodeMap::removeNamedItem(const AtomString& name)
@@ -73,19 +73,14 @@ ExceptionOr<Ref<Attr>> NamedNodeMap::removeNamedItem(const AtomString& name)
     return element->detachAttribute(index);
 }
 
-Element& NamedNodeMap::element()
-{
-    return m_element.get();
-}
-
-Ref<Element> NamedNodeMap::protectedElement() const
+Element& NamedNodeMap::element() const
 {
     return m_element.get();
 }
 
 Vector<String> NamedNodeMap::supportedPropertyNames() const
 {
-    Vector<String> names = m_element->getAttributeNames();
+    Vector<String> names = protect(m_element.get())->getAttributeNames();
     if (is<HTMLElement>(m_element.get()) && m_element->document().isHTMLDocument()) {
         names.removeAllMatching([](String& name) {
             for (auto character : StringView { name }.codeUnits()) {
@@ -111,7 +106,7 @@ ExceptionOr<Ref<Attr>> NamedNodeMap::removeNamedItemNS(const AtomString& namespa
 
 ExceptionOr<RefPtr<Attr>> NamedNodeMap::setNamedItem(Attr& attr)
 {
-    return protectedElement()->setAttributeNode(attr);
+    return protect(element())->setAttributeNode(attr);
 }
 
 RefPtr<Attr> NamedNodeMap::item(unsigned index) const
@@ -126,7 +121,7 @@ unsigned NamedNodeMap::length() const
 {
     if (!m_element->hasAttributes())
         return 0;
-    return m_element->attributeCount();
+    return protect(m_element.get())->attributeCount();
 }
 
 } // namespace WebCore

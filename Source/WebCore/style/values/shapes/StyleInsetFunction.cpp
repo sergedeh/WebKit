@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleInsetFunction.h"
 
+#include "AcceleratedEffectInsetFunction.h"
 #include "FloatRect.h"
 #include "GeometryUtilities.h"
 #include "Path.h"
@@ -38,7 +39,7 @@ namespace Style {
 
 struct RoundedInsetPathPolicy : public TinyLRUCachePolicy<FloatRoundedRect, WebCore::Path> {
 public:
-    static bool isKeyNull(const FloatRoundedRect& rect)
+    static bool NODELETE isKeyNull(const FloatRoundedRect& rect)
     {
         return rect.isEmpty();
     }
@@ -59,24 +60,38 @@ static const WebCore::Path& cachedRoundedInsetPath(const FloatRoundedRect& rect)
 
 // MARK: - Path
 
-WebCore::Path PathComputation<Inset>::operator()(const Inset& value, const FloatRect& boundingBox)
+WebCore::Path PathComputation<Inset>::operator()(const Inset& value, const FloatRect& boundingBox, ZoomFactor zoom)
 {
     auto boundingSize = boundingBox.size();
 
-    auto left = evaluate<float>(value.insets.left(), boundingSize.width(), Style::ZoomNeeded { });
-    auto top = evaluate<float>(value.insets.top(), boundingSize.height(), Style::ZoomNeeded { });
+    auto left = evaluate<float>(value.insets.left(), boundingSize.width(), zoom);
+    auto top = evaluate<float>(value.insets.top(), boundingSize.height(), zoom);
     auto rect = FloatRect {
         left + boundingBox.x(),
         top + boundingBox.y(),
-        std::max<float>(boundingSize.width() - left - evaluate<float>(value.insets.right(), boundingSize.width(), Style::ZoomNeeded { }), 0),
-        std::max<float>(boundingSize.height() - top - evaluate<float>(value.insets.bottom(), boundingSize.height(), Style::ZoomNeeded { }), 0)
+        std::max<float>(boundingSize.width() - left - evaluate<float>(value.insets.right(), boundingSize.width(), zoom), 0),
+        std::max<float>(boundingSize.height() - top - evaluate<float>(value.insets.bottom(), boundingSize.height(), zoom), 0)
     };
 
-    auto radii = evaluate<CornerRadii>(value.radii, boundingSize, Style::ZoomNeeded { });
+    auto radii = evaluate<CornerRadii>(value.radii, boundingSize, zoom);
     radii.scale(calcBorderRadiiConstraintScaleFor(rect, radii));
 
     return cachedRoundedInsetPath(FloatRoundedRect { rect, radii });
 }
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+AcceleratedEffectInsetFunction Evaluation<InsetFunction, AcceleratedEffectInsetFunction>::operator()(const InsetFunction& value, const FloatSize& containingBlockSize, ZoomFactor zoom)
+{
+    return {
+        .insets = evaluate<RectEdges<float>>(value->insets, containingBlockSize, zoom),
+        .radii = evaluate<CornerRadii>(value->radii, containingBlockSize, zoom),
+    };
+}
+
+#endif
 
 } // namespace Style
 } // namespace WebCore

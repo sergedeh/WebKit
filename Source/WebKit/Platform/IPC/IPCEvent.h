@@ -58,7 +58,7 @@ public:
         m_semaphore.signal();
     }
 
-    const Semaphore& semaphore() const { return m_semaphore; }
+    const Semaphore& semaphore() const LIFETIME_BOUND { return m_semaphore; }
 #endif
 
 private:
@@ -90,15 +90,17 @@ public:
 #if PLATFORM(COCOA)
     ~Event();
     Event(Event&& other)
-        : m_receiveRight(WTF::move(other.m_receiveRight))
+        : m_receiveRight(std::exchange(other.m_receiveRight, MACH_PORT_NULL))
+        , m_peerDied(std::exchange(other.m_peerDied, true))
     {
-        other.m_receiveRight = MACH_PORT_NULL;
     }
 
     Event& operator=(Event&& other)
     {
-        m_receiveRight = WTF::move(other.m_receiveRight);
-        other.m_receiveRight = MACH_PORT_NULL;
+        // Swap instead of overwrite: this instance may still own a receive right that needs to be
+        // deallocated, and its no-senders notification cleared, in ~Event().
+        std::swap(m_receiveRight, other.m_receiveRight);
+        std::swap(m_peerDied, other.m_peerDied);
         return *this;
     }
 
@@ -134,6 +136,7 @@ private:
 
 #if PLATFORM(COCOA)
     mach_port_t m_receiveRight;
+    bool m_peerDied { false };
 #else
     Semaphore m_semaphore;
 #endif
@@ -148,10 +151,18 @@ struct EventSignalPair {
 inline std::optional<EventSignalPair> createEventSignalPair()
 {
     Semaphore event;
+#if OS(LINUX)
+    if (!event)
+        return std::nullopt;
+#endif
 #if PLATFORM(WIN)
     Semaphore signal(Win32Handle { event.m_semaphoreHandle });
 #else
     Semaphore signal(event.m_fd.duplicate());
+#endif
+#if OS(LINUX)
+    if (!signal)
+        return std::nullopt;
 #endif
     return EventSignalPair { Event { WTF::move(event) }, Signal { WTF::move(signal) } };
 }

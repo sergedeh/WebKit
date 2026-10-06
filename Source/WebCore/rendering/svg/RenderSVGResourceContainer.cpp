@@ -21,11 +21,13 @@
 #include "config.h"
 #include "RenderSVGResourceContainer.h"
 
+#include "ContainerNodeInlines.h"
 #include "RenderLayer.h"
 #include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGModelObjectInlines.h"
 #include "RenderSVGRoot.h"
+#include "SVGElement.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGResourceElementClient.h"
 #include "SVGVisitedElementTracking.h"
@@ -37,14 +39,22 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceContainer);
 
-RenderSVGResourceContainer::RenderSVGResourceContainer(Type type, SVGElement& element, RenderStyle&& style)
+RenderSVGResourceContainer::RenderSVGResourceContainer(Type type, SVGElement& element, Style::ComputedStyle&& style)
     : RenderSVGHiddenContainer(type, element, WTF::move(style), SVGModelObjectFlag::IsResourceContainer)
     , m_id(element.getIdAttribute())
 {
     ASSERT(isRenderSVGResourceContainer());
+    ASSERT(SVGElement::isResourceContainerTagName(element.tagQName()));
 }
 
 RenderSVGResourceContainer::~RenderSVGResourceContainer() = default;
+
+void RenderSVGResourceContainer::layout()
+{
+    clearCacheBeforeLayout();
+    RenderSVGHiddenContainer::layout();
+    repaintAllClients();
+}
 
 void RenderSVGResourceContainer::willBeDestroyed()
 {
@@ -52,7 +62,7 @@ void RenderSVGResourceContainer::willBeDestroyed()
     RenderSVGHiddenContainer::willBeDestroyed();
 }
 
-void RenderSVGResourceContainer::styleDidChange(Style::Difference diff, const RenderStyle* oldStyle)
+void RenderSVGResourceContainer::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderSVGHiddenContainer::styleDidChange(diff, oldStyle);
 
@@ -64,8 +74,12 @@ void RenderSVGResourceContainer::styleDidChange(Style::Difference diff, const Re
 
 void RenderSVGResourceContainer::idChanged()
 {
+    // Clients resolved this resource under the old id and may now resolve elsewhere or to nothing.
+    // Notify them to drop any cached resolution and repaint.
+    repaintAllClients();
+
     // Remove old id, that is guaranteed to be present in cache.
-    m_id = protectedElement()->getIdAttribute();
+    m_id = element().getIdAttribute();
 
     registerResource();
 }
@@ -93,12 +107,20 @@ void RenderSVGResourceContainer::registerResource()
     if (!treeScope->isIdOfPendingSVGResource(m_id))
         return;
 
+    bool needsRepaintAllClients = false;
     auto elements = copyToVectorOf<Ref<SVGElement>>(treeScope->removePendingSVGResource(m_id));
     for (auto& element : elements) {
         ASSERT(element->hasPendingResources());
+        if (CheckedPtr clientRenderer = element->renderer()) {
+            Ref svgElement = this->element();
+            needsRepaintAllClients |= clientRenderer->addReferencedSVGResourceIfNeeded(svgElement.get(), m_id);
+        }
         treeScope->clearHasPendingSVGResourcesIfPossible(element);
         notifyResourceChanged(element.get());
     }
+    // If we were appended after the render tree was created and we had pending clients then repaint them.
+    if (needsRepaintAllClients)
+        repaintAllClients();
 }
 
 void RenderSVGResourceContainer::repaintAllClients() const

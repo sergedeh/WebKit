@@ -36,13 +36,13 @@ class Navigator;
 class NavigatorMediaCapabilities final : public Supplement<Navigator> {
     WTF_MAKE_TZONE_ALLOCATED(NavigatorMediaCapabilities);
 public:
-    NavigatorMediaCapabilities();
+    explicit NavigatorMediaCapabilities(Navigator&);
     ~NavigatorMediaCapabilities();
 
     static MediaCapabilities& mediaCapabilities(Navigator&);
     static NavigatorMediaCapabilities& from(Navigator&);
 
-    MediaCapabilities& mediaCapabilities() const;
+    MediaCapabilities& NODELETE mediaCapabilities() const;
 private:
     static ASCIILiteral supplementName() { return "NavigatorMediaCapabilities"_s; }
     bool isNavigatorMediaCapabilities() const final { return true; }

@@ -26,6 +26,7 @@
 #pragma once
 
 #include <WebCore/BackgroundFetchInformation.h>
+#include <WebCore/FetchIdentifier.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/PushSubscriptionData.h>
 #include <WebCore/ServiceWorkerClientData.h>
@@ -41,6 +42,7 @@
 
 namespace WebCore {
 
+class PendingStreamState;
 class SecurityOriginData;
 class SerializedScriptValue;
 class ServiceWorkerGlobalScope;
@@ -51,7 +53,7 @@ template<typename> class ExceptionOr;
 
 class SWContextManager {
 public:
-    WEBCORE_EXPORT static SWContextManager& singleton();
+    WEBCORE_EXPORT static SWContextManager& NODELETE singleton();
 
     class Connection : public AbstractRefCounted {
     public:
@@ -94,6 +96,9 @@ public:
 
         virtual void removeNavigationFetch(SWServerConnectionIdentifier, FetchIdentifier) = 0;
 
+        virtual void startPendingStreamUploadForwarding(PendingStreamState&) = 0;
+        virtual void cancelPendingStreamUploadForwarding(PendingStreamState&) = 0;
+
         virtual bool isWebSWContextManagerConnection() const { return false; }
 
     protected:
@@ -104,8 +109,7 @@ public:
     };
 
     WEBCORE_EXPORT void setConnection(Ref<Connection>&&);
-    WEBCORE_EXPORT Connection* connection() const;
-    RefPtr<Connection> protectedConnection() const { return m_connection; }
+    WEBCORE_EXPORT Connection* NODELETE connection() const;
 
     WEBCORE_EXPORT void registerServiceWorkerThreadForInstall(Ref<ServiceWorkerThreadProxy>&&, Function<void()>&& debuggerTasksStartedCallback = { });
     WEBCORE_EXPORT ServiceWorkerThreadProxy* serviceWorkerThreadProxy(ServiceWorkerIdentifier) const;

@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *           (C) 2006 Alexey Proskuryakov (ap@nypop.com)
  * Copyright (C) 2018 Google Inc. All rights reserved.
  *
@@ -52,7 +52,7 @@ HTMLFormElement* HTMLLegendElement::form() const
     // According to the specification, If the legend has a fieldset element as
     // its parent, then the form attribute must return the same value as the
     // form attribute on that fieldset element. Otherwise, it must return null.
-    RefPtr fieldset = dynamicDowncast<HTMLFieldSetElement>(parentNode());
+    auto* fieldset = dynamicDowncast<HTMLFieldSetElement>(parentNode());
     return fieldset ? fieldset->form() : nullptr;
 }
 
@@ -61,5 +61,5 @@ RefPtr<HTMLFormElement> HTMLLegendElement::formForBindings() const
     // FIXME: The downcast should be unnecessary, but the WPT was written before https://github.com/WICG/webcomponents/issues/1072 was resolved. Update once the WPT has been updated.
     return dynamicDowncast<HTMLFormElement>(retargetReferenceTargetForBindings(form()));
 }
-    
-} // namespace
+
+} // namespace WebCore

@@ -32,13 +32,15 @@
 
 namespace JSC {
 
+class VM;
+
 class NumberPredictionFuzzerAgent : public FuzzerAgent {
 
 public:
     NumberPredictionFuzzerAgent(VM&);
 
 protected:
-    WeakRandom m_random;
+    WeakRandom m_random WTF_GUARDED_BY_LOCK(m_lock);
     Lock m_lock;
     static Vector<SpeculatedType> bytecodeNumberTypes();
 };

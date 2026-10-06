@@ -28,7 +28,7 @@
 #include <wtf/Compiler.h>
 #include <wtf/Platform.h>
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -64,10 +64,10 @@ public:
 
     GDBPacketParser() = default;
 
-    ParseResult processByte(uint8_t byte);
+    ParseResult NODELETE processByte(uint8_t byte);
     StringView getCompletedPacket() const;
 
-    void reset();
+    void NODELETE reset();
 
     bool isIdle() const { return m_phase == ReceivePhase::Idle; }
     ErrorReason getError() const { return m_errorReason; }
@@ -112,4 +112,4 @@ private:
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

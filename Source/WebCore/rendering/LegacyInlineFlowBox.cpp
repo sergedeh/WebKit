@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003, 2004, 2005, 2006, 2007, 2008, 2009 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -23,6 +23,7 @@
 #include "CSSPropertyNames.h"
 #include "Document.h"
 #include "FontCascade.h"
+#include "FontCascadeFonts.h"
 #include "GraphicsContext.h"
 #include "HitTestResult.h"
 #include "InlineBoxPainter.h"
@@ -34,11 +35,12 @@
 #include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyle+GettersInlines.h"
+#include "RenderSVGInline.h"
 #include "RenderTableCell.h"
 #include "RenderTheme.h"
 #include "RenderView.h"
 #include "Settings.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "Text.h"
 #include "TextBoxPainter.h"
 #include <math.h>
@@ -49,7 +51,6 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyInlineFlowBox);
 
 struct SameSizeAsLegacyInlineFlowBox : public LegacyInlineBox {
-    uint32_t bitfields : 23;
     void* pointers[5];
 };
 
@@ -65,16 +66,16 @@ LegacyInlineFlowBox::~LegacyInlineFlowBox()
 void LegacyInlineFlowBox::setHasBadChildList()
 {
     assertNotDeleted();
-    if (m_hasBadChildList)
+    if (m_bitfields.hasBadChildList())
         return;
     for (auto* child = firstChild(); child; child = child->nextOnLine())
         child->setHasBadParent();
-    m_hasBadChildList = true;
+    m_bitfields.setHasBadChildList(true);
 }
 
 #endif
 
-static void setHasTextDescendantsOnAncestors(LegacyInlineFlowBox* box)
+static void NODELETE setHasTextDescendantsOnAncestors(LegacyInlineFlowBox* box)
 {
     while (box && !box->hasTextDescendants()) {
         box->setHasTextDescendants();
@@ -102,24 +103,23 @@ void LegacyInlineFlowBox::addToLine(LegacyInlineBox* child)
     child->setIsHorizontal(isHorizontal());
     if (child->isInlineTextBox()) {
         if (child->renderer().parent() == &renderer())
-            m_hasTextChildren = true;
+            m_bitfields.setHasTextChildren(true);
         setHasTextDescendantsOnAncestors(this);
     } else if (auto* blockFlow = dynamicDowncast<LegacyInlineFlowBox>(*child)) {
         if (blockFlow->hasTextDescendants())
             setHasTextDescendantsOnAncestors(this);
     }
 
-    const RenderStyle& childStyle = child->lineStyle();
+    CheckedRef childStyle = child->lineStyle();
     if (child->isInlineTextBox()) {
-        const RenderStyle* childStyle = &child->lineStyle();
         bool hasMarkers = false;
         if (auto* textBox = dynamicDowncast<LegacyInlineTextBox>(*child))
             hasMarkers = textBox->hasMarkers();
-        if (childStyle->usedLetterSpacing() < 0 || childStyle->hasTextShadow() || !childStyle->textEmphasisStyle().isNone() || childStyle->hasPositiveStrokeWidth() || hasMarkers || !childStyle->textUnderlineOffset().isAuto() || !childStyle->textDecorationThickness().isAuto() || !childStyle->textUnderlinePosition().isAuto())
+        if (childStyle->usedLetterSpacing() < 0 || !childStyle->textShadow().isNone() || !childStyle->textEmphasisStyle().isNone() || childStyle->hasPositiveStrokeWidth() || hasMarkers || !childStyle->textUnderlineOffset().isAuto() || !childStyle->textDecorationThickness().isAuto() || !childStyle->textUnderlinePosition().isAuto())
             child->clearKnownToHaveNoOverflow();
     } else if (child->boxModelObject()->hasSelfPaintingLayer())
         child->clearKnownToHaveNoOverflow();
-    else if (childStyle.hasOutlineInVisualOverflow())
+    else if (childStyle->hasOutlineInVisualOverflow())
         child->clearKnownToHaveNoOverflow();
 
     if (lineStyle().hasOutlineInVisualOverflow())
@@ -132,7 +132,7 @@ void LegacyInlineFlowBox::addToLine(LegacyInlineBox* child)
     }
 
     if (auto* renderInline = dynamicDowncast<RenderInline>(child->renderer()); renderInline && renderInline->hasSelfPaintingLayer())
-        m_hasSelfPaintInlineBox = true;
+        m_bitfields.setHasSelfPaintInlineBox(true);
 
     checkConsistency();
 }
@@ -182,7 +182,7 @@ void LegacyInlineFlowBox::deleteLine()
 
 void LegacyInlineFlowBox::removeLineBoxFromRenderObject()
 {
-    downcast<RenderInline>(renderer()).legacyLineBoxes().removeLineBox(this);
+    downcast<RenderSVGInline>(renderer()).legacyLineBoxes().removeLineBox(this);
 }
 
 void LegacyInlineFlowBox::adjustPosition(float dx, float dy)
@@ -211,7 +211,7 @@ inline void LegacyInlineFlowBox::addTextBoxVisualOverflow(LegacyInlineTextBox& t
     auto leftGlyphEdge = glyphOverflow ? glyphOverflow->left : 0_lu;
     auto rightGlyphEdge = glyphOverflow ? glyphOverflow->right : 0_lu;
 
-    auto viewportSize = textBox.renderer().frame().view() ? textBox.renderer().frame().view()->size() : IntSize();
+    auto viewportSize = textBox.renderer().frame().view() ? protect(textBox.renderer().frame())->view()->size() : IntSize();
     LayoutUnit strokeOverflow(std::ceil(lineStyle.usedStrokeWidth(viewportSize) / 2.0f));
     auto topGlyphOverflow = -strokeOverflow - topGlyphEdge;
     auto bottomGlyphOverflow = strokeOverflow + bottomGlyphEdge;
@@ -260,7 +260,7 @@ void LegacyInlineFlowBox::computeOverflow(LayoutUnit lineTop, LayoutUnit lineBot
             LayoutRect textBoxOverflow(enclosingLayoutRect(textBox.logicalFrameRect()));
             addTextBoxVisualOverflow(textBox, textBoxDataMap, textBoxOverflow);
             logicalVisualOverflow.unite(textBoxOverflow);
-        } else if (is<RenderInline>(child->renderer())) {
+        } else if (child->renderer().isInlineBox()) {
             auto& flow = downcast<LegacyInlineFlowBox>(*child);
             flow.computeOverflow(lineTop, lineBottom, textBoxDataMap);
             if (!flow.renderer().hasSelfPaintingLayer())
@@ -330,7 +330,9 @@ void LegacyInlineFlowBox::outputLineTreeAndMark(WTF::TextStream& stream, const L
 void LegacyInlineFlowBox::checkConsistency() const
 {
     assertNotDeleted();
-    ASSERT_WITH_SECURITY_IMPLICATION(!m_hasBadChildList);
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!m_bitfields.hasBadChildList());
+#endif
 #ifdef CHECK_CONSISTENCY
     const LegacyInlineBox* previousChild = nullptr;
     for (const LegacyInlineBox* child = firstChild(); child; child = child->nextOnLine()) {

@@ -48,13 +48,13 @@ WGSL_AST_UNARYOP_IMPL
 
 constexpr ASCIILiteral toASCIILiteral(UnaryOperation op)
 {
-    constexpr auto unaryOperationNames = std::to_array<ASCIILiteral>({
+    constexpr auto unaryOperationNames = WTF::toArray<ASCIILiteral>({
 #define WGSL_AST_UNARYOP(x, y) y##_s,
 WGSL_AST_UNARYOP_IMPL
 #undef WGSL_AST_UNARYOP
     });
 
-    return unaryOperationNames[WTF::enumToUnderlyingType(op)];
+    return unaryOperationNames[std::to_underlying(op)];
 }
 
 void printInternal(PrintStream&, UnaryOperation);
@@ -63,8 +63,9 @@ class UnaryExpression final : public Expression {
     WGSL_AST_BUILDER_NODE(UnaryExpression);
 public:
     NodeKind kind() const final;
-    Expression& expression() { return m_expression.get(); }
     UnaryOperation operation() const { return m_operation; }
+    Expression& expression() { return m_expression.get(); }
+    const Expression& expression() const { return m_expression.get(); }
 
 private:
     UnaryExpression(SourceSpan span, Expression::Ref&& expression, UnaryOperation operation)

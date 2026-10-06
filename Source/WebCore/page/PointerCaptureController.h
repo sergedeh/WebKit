@@ -56,7 +56,7 @@ public:
     ExceptionOr<void> setPointerCapture(Element*, PointerID);
     ExceptionOr<void> releasePointerCapture(Element*, PointerID);
     bool hasPointerCapture(Element*, PointerID);
-    void reset();
+    WEBCORE_EXPORT void reset();
 
     void pointerLockWasApplied();
     void elementWasRemoved(Element&);
@@ -73,6 +73,7 @@ public:
     void dispatchEvent(PointerEvent&, EventTarget*);
     WEBCORE_EXPORT void cancelPointer(PointerID, const IntPoint&, PointerEvent* existingCancelEvent = nullptr);
     void processPendingPointerCapture(PointerID);
+
     // Used for mouse presses that trigger contextmenu, causing
     // the matching release to be suppressed.
     WEBCORE_EXPORT void clearUnmatchedMouseDown(PointerID);

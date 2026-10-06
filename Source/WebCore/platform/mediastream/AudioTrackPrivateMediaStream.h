@@ -58,7 +58,6 @@ public:
     void deref() const final { AudioTrackPrivate::deref(); }
 
     MediaStreamTrackPrivate& streamTrack() { return m_streamTrack.get(); }
-    Ref<MediaStreamTrackPrivate> protectedStreamTrack() { return m_streamTrack; }
 
     void clear();
 
@@ -68,7 +67,7 @@ public:
     bool shouldPlay() const { return m_shouldPlay; }
 
     void setVolume(float);
-    float volume() const;
+    float NODELETE volume() const;
 
     void setMuted(bool);
     bool muted() const { return m_muted; }

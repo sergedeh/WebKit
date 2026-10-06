@@ -32,6 +32,7 @@
 
 #pragma once
 
+#include <WebCore/StyleCustomIdent.h>
 #include <WebCore/StyleGridPositionSide.h>
 #include <WebCore/StylePrimitiveNumeric.h>
 #include <WebCore/StyleValueTypes.h>
@@ -45,9 +46,9 @@ struct GridPositionExplicit {
     using Position = Integer<>;
 
     Position position { 1 };
-    CustomIdentifier name { nullAtom() };
+    CustomIdent name { nullAtom() };
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -61,12 +62,12 @@ struct GridPositionExplicit {
 
 // <grid-line-span> = [ span && [ <integer [1,∞]> || <custom-ident>  ] ]
 struct GridPositionSpan {
-    using Position = Integer<CSS::Range{1,CSS::Range::infinity}>;
+    using Position = Integer<CSS::Positive>;
 
     Position position { 1 };
-    CustomIdentifier name { nullAtom() };
+    CustomIdent name { nullAtom() };
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -82,7 +83,7 @@ struct GridPositionSpan {
 
 // <grid-line> = auto | <custom-ident> | <grid-line-explicit> | <grid-line-span>
 // https://drafts.csswg.org/css-grid/#typedef-grid-row-start-grid-line
-// FIXME: The standard calls this type "grid-line". We should consider matching it.
+// FIXME: The standard calls this type "grid-line" and the CSS equivalent type is CSS::GridLine. We should consider matching it.
 struct GridPosition {
     using Explicit = GridPositionExplicit;
     using Span = GridPositionSpan;
@@ -90,25 +91,25 @@ struct GridPosition {
     GridPosition(CSS::Keyword::Auto) { }
     WEBCORE_EXPORT GridPosition(Explicit&&);
     WEBCORE_EXPORT GridPosition(Span&&);
-    GridPosition(CustomIdentifier&&);
+    GridPosition(CustomIdent&&);
 
     bool isAuto() const { return m_type == GridPositionType::Auto; }
     bool isExplicit() const { return m_type == GridPositionType::Explicit; }
     bool isSpan() const { return m_type == GridPositionType::Span; }
     bool isNamedGridArea() const { return m_type == GridPositionType::NamedGridArea; }
 
-    WEBCORE_EXPORT int explicitPosition() const;
-    WEBCORE_EXPORT int spanPosition() const;
-    String namedGridLine() const;
+    WEBCORE_EXPORT int NODELETE explicitPosition() const;
+    WEBCORE_EXPORT int NODELETE spanPosition() const;
+    const CustomIdent& NODELETE namedGridLine() const LIFETIME_BOUND;
 
     bool shouldBeResolvedAgainstOppositePosition() const { return isAuto() || isSpan(); }
 
     // Note that grid line 1 is internally represented by the index 0, that's why the max value for
     // a position is gridMaxTracks instead of gridMaxTracks + 1.
-    static int max();
-    static int min();
+    static int NODELETE max();
+    static int NODELETE min();
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -127,10 +128,10 @@ struct GridPosition {
 
     bool operator==(const GridPosition&) const = default;
 
-    WEBCORE_EXPORT static void setMaxPositionForTesting(unsigned);
+    WEBCORE_EXPORT static void NODELETE setMaxPositionForTesting(unsigned);
 
 private:
-    friend void add(Hasher&, const GridPosition&);
+    friend void NODELETE add(Hasher&, const GridPosition&);
 
     enum class GridPositionType : uint8_t {
         Auto,
@@ -141,16 +142,13 @@ private:
 
     GridPositionType m_type { GridPositionType::Auto };
     int m_integerPosition { 1 };
-    CustomIdentifier m_namedGridLine;
+    CustomIdent m_namedGridLine;
 };
 
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<GridPosition> { auto operator()(BuilderState&, const CSSValue&) -> GridPosition; };
-
-// MARK: - Logging
-
-WTF::TextStream& operator<<(WTF::TextStream&, const GridPosition&);
+template<> struct CSSValueCreation<GridPosition> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const GridPosition&); };
 
 } // namespace Style
 } // namespace WebCore

@@ -32,17 +32,25 @@
 
 namespace WPE {
 
-void GestureDetector::handleEvent(WPEEvent* event)
+bool GestureDetector::handleEvent(WPEEvent* event)
 {
     if (m_sequenceId && *m_sequenceId != wpe_event_touch_get_sequence_id(event))
-        return;
+        return false;
+
+    auto getPosition = [&] -> std::optional<Position> {
+        double x, y;
+        if (!wpe_event_get_position(event, &x, &y))
+            return { };
+        // Return rounded positions to avoid accumulated rounding errors of deltas.
+        return Position { std::round(x), std::round(y) };
+    };
 
     switch (wpe_event_get_event_type(event)) {
     case WPE_EVENT_TOUCH_DOWN:
         reset();
-        if (double x, y; wpe_event_get_position(event, &x, &y)) {
+        if (auto position = getPosition()) {
             m_gesture = WPE_GESTURE_TAP;
-            m_position = { x, y };
+            m_position = position;
             m_sequenceId = wpe_event_touch_get_sequence_id(event);
         }
         break;
@@ -50,26 +58,30 @@ void GestureDetector::handleEvent(WPEEvent* event)
         reset();
         break;
     case WPE_EVENT_TOUCH_MOVE:
-        if (double x, y; wpe_event_get_position(event, &x, &y) && m_position) {
+        if (!m_sequenceId)
+            return false;
+        if (auto position = getPosition(); position && m_position) {
             auto* settings = wpe_display_get_settings(wpe_view_get_display(wpe_event_get_view(event)));
             auto dragActivationThresholdPx = wpe_settings_get_uint32(settings, WPE_SETTING_DRAG_THRESHOLD, nullptr);
-            if (m_gesture != WPE_GESTURE_DRAG && std::hypot(x - m_position->x, y - m_position->y) > dragActivationThresholdPx) {
+            if (m_gesture != WPE_GESTURE_DRAG && std::hypot(position->x - m_position->x, position->y - m_position->y) > dragActivationThresholdPx) {
                 m_gesture = WPE_GESTURE_DRAG;
                 m_nextDeltaReferencePosition = m_position;
                 m_dragBegin = true;
             } else if (m_gesture == WPE_GESTURE_DRAG)
                 m_dragBegin = false;
             if (m_gesture == WPE_GESTURE_DRAG) {
-                m_delta = { x - m_nextDeltaReferencePosition->x, y - m_nextDeltaReferencePosition->y };
-                m_nextDeltaReferencePosition = { x, y };
+                m_delta = { position->x - m_nextDeltaReferencePosition->x, position->y - m_nextDeltaReferencePosition->y };
+                m_nextDeltaReferencePosition = position;
             }
         } else
             reset();
         break;
     case WPE_EVENT_TOUCH_UP:
-        if (double x, y; wpe_event_get_position(event, &x, &y) && m_position) {
+        if (!m_sequenceId)
+            return false;
+        if (auto position = getPosition(); position && m_position) {
             if (m_gesture == WPE_GESTURE_DRAG)
-                m_delta = { x - m_nextDeltaReferencePosition->x, y - m_nextDeltaReferencePosition->y };
+                m_delta = { position->x - m_nextDeltaReferencePosition->x, position->y - m_nextDeltaReferencePosition->y };
         } else
             reset();
         m_sequenceId = std::nullopt; // We can accept new sequence at this point.
@@ -77,6 +89,8 @@ void GestureDetector::handleEvent(WPEEvent* event)
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
+
+    return true;
 }
 
 void GestureDetector::reset()

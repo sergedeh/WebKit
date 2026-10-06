@@ -51,8 +51,9 @@ public:
 
     // Can be called from any thread.
     AudioNode* node() const { return m_node.get(); }
-    CheckedPtr<AudioNode> checkedNode() const { return m_node.get(); }
-    BaseAudioContext& context() { return checkedNode()->context(); }
+    // Use CheckedPtr instead of protect() (which returns a RefPtr) to avoid the ref/deref side effects
+    // that would cause deep recursion during markNodeForDeletionIfNecessary() → disconnectAll() chains.
+    BaseAudioContext& context() { return CheckedPtr { node() }->context(); }
     
     // Causes our AudioNode to process if it hasn't already for this render quantum.
     // It returns the bus containing the processed audio for this output, returning inPlaceBus if in-place processing was possible.
@@ -61,19 +62,19 @@ public:
 
     // bus() will contain the rendered audio after pull() is called for each rendering time quantum.
     // Called from context's audio thread.
-    AudioBus& bus() const LIFETIME_BOUND;
+    AudioBus& NODELETE bus() const LIFETIME_BOUND;
 
     // renderingFanOutCount() is the number of AudioNodeInputs that we're connected to during rendering.
     // Unlike fanOutCount() it will not change during the course of a render quantum.
-    unsigned renderingFanOutCount() const;
+    unsigned renderingFanOutCount() const { return m_renderingFanOutCount; }
 
     // renderingParamFanOutCount() is the number of AudioParams that we're connected to during rendering.
     // Unlike paramFanOutCount() it will not change during the course of a render quantum.
-    unsigned renderingParamFanOutCount() const;
+    unsigned renderingParamFanOutCount() const { return m_renderingParamFanOutCount; }
 
     // Must be called with the context's graph lock.
     void disconnectAll();
-    void forEachInputNode(Function<void(AudioNode&)>&&) const;
+    void forEachInputNode(NOESCAPE const Function<void(AudioNode&)>&) const;
 
     void setNumberOfChannels(unsigned);
     unsigned numberOfChannels() const { return m_numberOfChannels; }
@@ -112,12 +113,12 @@ private:
     // fanOutCount() is the number of AudioNodeInputs that we're connected to.
     // This method should not be called in audio thread rendering code, instead renderingFanOutCount() should be used.
     // It must be called with the context's graph lock.
-    unsigned fanOutCount();
+    unsigned NODELETE fanOutCount();
 
     // Similar to fanOutCount(), paramFanOutCount() is the number of AudioParams that we're connected to.
     // This method should not be called in audio thread rendering code, instead renderingParamFanOutCount() should be used.
     // It must be called with the context's graph lock.
-    unsigned paramFanOutCount();
+    unsigned NODELETE paramFanOutCount();
 
     // Must be called with the context's graph lock.
     void disconnectAllInputs();
@@ -147,7 +148,6 @@ private:
 
     using InputsMap = HashMap<AudioNodeInput*, AudioConnectionRefPtr<AudioNode>>;
     InputsMap m_inputs;
-    typedef InputsMap::iterator InputsIterator;
     bool m_isEnabled { true };
 
     // For the purposes of rendering, keeps track of the number of inputs and AudioParams we're connected to.

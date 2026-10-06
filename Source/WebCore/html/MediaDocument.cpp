@@ -31,9 +31,11 @@
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "DocumentLoader.h"
+#include "DocumentPage.h"
 #include "DocumentSettingsValues.h"
 #include "DocumentView.h"
 #include "EventNames.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "HTMLBodyElement.h"
 #include "HTMLEmbedElement.h"
@@ -124,8 +126,8 @@ void MediaDocumentParser::createDocumentStructure()
     if (!frame)
         return;
 
-    frame->loader().protectedActiveDocumentLoader()->setMainResourceDataBufferingPolicy(DataBufferingPolicy::DoNotBufferData);
-    frame->loader().setOutgoingReferrer(document->completeURL(m_outgoingReferrer));
+    frame->loader().activeDocumentLoader()->setMainResourceDataBufferingPolicy(DataBufferingPolicy::DoNotBufferData);
+    frame->loader().setOutgoingReferrer(document->encodingParseURL(m_outgoingReferrer));
 }
 
 void MediaDocumentParser::appendBytes(DocumentWriter&, std::span<const uint8_t>)
@@ -153,7 +155,7 @@ Ref<DocumentParser> MediaDocument::createParser()
     return MediaDocumentParser::create(*this);
 }
 
-static inline HTMLVideoElement* descendantVideoElement(ContainerNode& node)
+static inline HTMLVideoElement* NODELETE descendantVideoElement(ContainerNode& node)
 {
     if (auto* video = dynamicDowncast<HTMLVideoElement>(node))
         return video;
@@ -183,7 +185,7 @@ void MediaDocument::replaceMediaElementTimerFired()
         if (RefPtr loader = this->loader())
             embedElement->setAttributeWithoutSynchronization(typeAttr, AtomString { loader->writer().mimeType() });
 
-        videoElement->protectedParentNode()->replaceChild(embedElement, *videoElement);
+        protect(videoElement->parentNode())->replaceChild(embedElement, *videoElement);
     }
 }
 

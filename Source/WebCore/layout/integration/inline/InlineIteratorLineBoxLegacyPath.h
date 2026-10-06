@@ -39,10 +39,6 @@ public:
         : m_rootInlineBox(rootInlineBox)
     {
     }
-    LineBoxIteratorLegacyPath(LineBoxIteratorLegacyPath&&) = default;
-    LineBoxIteratorLegacyPath(const LineBoxIteratorLegacyPath&) = default;
-    LineBoxIteratorLegacyPath& operator=(const LineBoxIteratorLegacyPath&) = default;
-    LineBoxIteratorLegacyPath& operator=(LineBoxIteratorLegacyPath&&) = default;
 
     float contentLogicalTop() const { return m_rootInlineBox->lineTop().toFloat(); }
     float contentLogicalBottom() const { return m_rootInlineBox->lineBottom().toFloat(); }
@@ -78,11 +74,9 @@ public:
 
     bool isFirstAfterPageBreak() const { return false; }
     bool hasBlockLevelBox() const { return false; }
+    bool hasContentfulInFlowBox() const { return true; }
 
-    size_t lineIndex() const
-    {
-        return formattingContextRoot().legacyRootBox() ? 1 : 0;
-    }
+    inline size_t lineIndex() const; // Defined in InlineIteratorLineBoxLegacyPathInlines.h
 
     void traverseNext()
     {

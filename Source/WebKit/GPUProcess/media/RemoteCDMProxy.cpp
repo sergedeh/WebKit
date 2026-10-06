@@ -39,22 +39,19 @@ namespace WebKit {
 
 using namespace WebCore;
 
-RefPtr<RemoteCDMProxy> RemoteCDMProxy::create(RemoteCDMFactoryProxy& factory, std::unique_ptr<WebCore::CDMPrivate>&& priv)
+Ref<RemoteCDMProxy> RemoteCDMProxy::create(RemoteCDMFactoryProxy& factory, UniqueRef<WebCore::CDMPrivate>&& priv)
 {
-    if (!priv)
-        return nullptr;
-
-    auto configuration = makeUniqueRefWithoutFastMallocCheck<RemoteCDMConfiguration, RemoteCDMConfiguration&&>({
+    UniqueRef configuration = makeUniqueRefWithoutFastMallocCheck<RemoteCDMConfiguration, RemoteCDMConfiguration&&>({
         priv->supportedInitDataTypes(),
         priv->supportedRobustnesses(),
         priv->supportsServerCertificates(),
         priv->supportsSessions()
     });
 
-    return adoptRef(new RemoteCDMProxy(factory, WTF::move(priv), WTF::move(configuration)));
+    return adoptRef(*new RemoteCDMProxy(factory, WTF::move(priv), WTF::move(configuration)));
 }
 
-RemoteCDMProxy::RemoteCDMProxy(RemoteCDMFactoryProxy& factory, std::unique_ptr<CDMPrivate>&& priv, UniqueRef<RemoteCDMConfiguration>&& configuration)
+RemoteCDMProxy::RemoteCDMProxy(RemoteCDMFactoryProxy& factory, UniqueRef<CDMPrivate>&& priv, UniqueRef<RemoteCDMConfiguration>&& configuration)
     : m_factory(factory)
     , m_private(WTF::move(priv))
     , m_configuration(WTF::move(configuration))
@@ -96,7 +93,7 @@ void RemoteCDMProxy::createInstance(CompletionHandler<void(std::optional<RemoteC
     auto identifier = RemoteCDMInstanceIdentifier::generate();
     auto instance = RemoteCDMInstanceProxy::create(*this, privateInstance.releaseNonNull(), identifier);
     RemoteCDMInstanceConfiguration configuration = instance->configuration();
-    protectedFactory()->addInstance(identifier, WTF::move(instance));
+    protect(factory())->addInstance(identifier, WTF::move(instance));
     completion(identifier, WTF::move(configuration));
 }
 
@@ -118,7 +115,7 @@ void RemoteCDMProxy::setLogIdentifier(uint64_t logIdentifier)
 
 std::optional<SharedPreferencesForWebProcess> RemoteCDMProxy::sharedPreferencesForWebProcess() const
 {
-    RefPtr factory = m_factory.get();
+    RefPtr factory { m_factory };
     if (!factory)
         return std::nullopt;
 

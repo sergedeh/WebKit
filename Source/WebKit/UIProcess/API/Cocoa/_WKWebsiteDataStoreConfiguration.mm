@@ -26,9 +26,12 @@
 #import "config.h"
 #import "_WKWebsiteDataStoreConfigurationInternal.h"
 
+#import "TimeBasedEvictionMode.h"
 #import "UnifiedOriginStorageLevel.h"
+#import <WebCore/SecurityOriginData.h>
 #import <WebCore/WebCoreObjCExtras.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/text/CString.h>
 
 static void checkURLArgument(NSURL *url)
 {
@@ -71,7 +74,7 @@ static void checkURLArgument(NSURL *url)
 
     auto uuid = WTF::UUID::fromNSUUID(identifier);
     if (!uuid || !uuid->isValid())
-        [NSException raise:NSInvalidArgumentException format:@"Identifier (%s) is invalid for data store", String([identifier UUIDString]).utf8().data()];
+        [NSException raise:NSInvalidArgumentException format:@"Identifier (%s) is invalid for data store", UTF8CString { identifier.UUIDString }.legacyCStringPointer()];
 
     API::Object::constructInWrapper<WebKit::WebsiteDataStoreConfiguration>(self, *uuid);
 
@@ -97,7 +100,7 @@ static void checkURLArgument(NSURL *url)
 {
     if (WebCoreObjCScheduleDeallocateOnMainRunLoop(_WKWebsiteDataStoreConfiguration.class, self))
         return;
-    _configuration->~WebsiteDataStoreConfiguration();
+    SUPPRESS_UNRETAINED_ARG _configuration->~WebsiteDataStoreConfiguration();
     [super dealloc];
 }
 
@@ -120,7 +123,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set _webStorageDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setLocalStorageDirectory(url.path);
+    protect(_configuration.get())->setLocalStorageDirectory(url.path);
 }
 
 - (NSURL *)_indexedDBDatabaseDirectory
@@ -137,7 +140,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set _indexedDBDatabaseDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setIndexedDBDatabaseDirectory(url.path);
+    protect(_configuration.get())->setIndexedDBDatabaseDirectory(url.path);
 }
 
 - (NSURL *)networkCacheDirectory
@@ -154,7 +157,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set networkCacheDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setNetworkCacheDirectory(url.path);
+    protect(_configuration.get())->setNetworkCacheDirectory(url.path);
 }
 
 - (NSURL *)deviceIdHashSaltsStorageDirectory
@@ -171,7 +174,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set deviceIdHashSaltsStorageDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setDeviceIdHashSaltsStorageDirectory(url.path);
+    protect(_configuration.get())->setDeviceIdHashSaltsStorageDirectory(url.path);
 }
 
 - (NSURL *)_webSQLDatabaseDirectory
@@ -188,7 +191,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set _webSQLDatabaseDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setWebSQLDatabaseDirectory(url.path);
+    protect(_configuration.get())->setWebSQLDatabaseDirectory(url.path);
 }
 
 - (NSURL *)httpProxy
@@ -198,7 +201,7 @@ static void checkURLArgument(NSURL *url)
 
 - (void)setHTTPProxy:(NSURL *)proxy
 {
-    _configuration->setHTTPProxy(proxy);
+    protect(_configuration.get())->setHTTPProxy(proxy);
 }
 
 - (NSURL *)httpsProxy
@@ -208,7 +211,7 @@ static void checkURLArgument(NSURL *url)
 
 - (void)setHTTPSProxy:(NSURL *)proxy
 {
-    _configuration->setHTTPSProxy(proxy);
+    protect(_configuration.get())->setHTTPSProxy(proxy);
 }
 
 - (NSURL *)_cookieStorageFile
@@ -228,7 +231,7 @@ static void checkURLArgument(NSURL *url)
     if ([url hasDirectoryPath])
         [NSException raise:NSInvalidArgumentException format:@"The cookie storage path must point to a file, not a directory."];
 
-    _configuration->setCookieStorageFile(url.path);
+    protect(_configuration.get())->setCookieStorageFile(url.path);
 }
 
 - (NSURL *)_resourceLoadStatisticsDirectory
@@ -245,7 +248,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set _resourceLoadStatisticsDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setResourceLoadStatisticsDirectory(url.path);
+    protect(_configuration.get())->setResourceLoadStatisticsDirectory(url.path);
 }
 
 - (NSURL *)_cacheStorageDirectory
@@ -262,7 +265,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set _cacheStorageDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setCacheStorageDirectory(url.path);
+    protect(_configuration.get())->setCacheStorageDirectory(url.path);
 }
 
 - (NSURL *)_serviceWorkerRegistrationDirectory
@@ -279,7 +282,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set _serviceWorkerRegistrationDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setServiceWorkerRegistrationDirectory(url.path);
+    protect(_configuration.get())->setServiceWorkerRegistrationDirectory(url.path);
 }
 
 - (BOOL)serviceWorkerProcessTerminationDelayEnabled
@@ -294,7 +297,7 @@ static void checkURLArgument(NSURL *url)
 
 - (void)setSourceApplicationBundleIdentifier:(NSString *)identifier
 {
-    _configuration->setSourceApplicationBundleIdentifier(identifier);
+    protect(_configuration.get())->setSourceApplicationBundleIdentifier(identifier);
 }
 
 - (NSString *)sourceApplicationBundleIdentifier
@@ -309,7 +312,7 @@ static void checkURLArgument(NSURL *url)
 
 - (void)setSourceApplicationSecondaryIdentifier:(NSString *)identifier
 {
-    _configuration->setSourceApplicationSecondaryIdentifier(identifier);
+    protect(_configuration.get())->setSourceApplicationSecondaryIdentifier(identifier);
 }
 
 - (NSURL *)applicationCacheDirectory
@@ -344,7 +347,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set mediaCacheDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setMediaCacheDirectory(url.path);
+    protect(_configuration.get())->setMediaCacheDirectory(url.path);
 }
 
 - (NSURL *)mediaKeysStorageDirectory
@@ -361,7 +364,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set mediaKeysStorageDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setMediaKeysStorageDirectory(url.path);
+    protect(_configuration.get())->setMediaKeysStorageDirectory(url.path);
 }
 
 - (NSURL *)hstsStorageDirectory
@@ -378,7 +381,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set hstsStorageDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setHSTSStorageDirectory(url.path);
+    protect(_configuration.get())->setHSTSStorageDirectory(url.path);
 }
 
 - (NSURL *)alternativeServicesStorageDirectory
@@ -395,7 +398,7 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set alternativeServicesStorageDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setAlternativeServicesDirectory(url.path);
+    protect(_configuration.get())->setAlternativeServicesDirectory(url.path);
 }
 
 - (NSURL *)generalStorageDirectory
@@ -415,10 +418,10 @@ static void checkURLArgument(NSURL *url)
         [NSException raise:NSGenericException format:@"Cannot set generalStorageDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setGeneralStorageDirectory(url.path);
+    protect(_configuration.get())->setGeneralStorageDirectory(url.path);
 }
 
-static _WKUnifiedOriginStorageLevel toWKUnifiedOriginStorageLevel(WebKit::UnifiedOriginStorageLevel level)
+static _WKUnifiedOriginStorageLevel NODELETE toWKUnifiedOriginStorageLevel(WebKit::UnifiedOriginStorageLevel level)
 {
     switch (level) {
     case WebKit::UnifiedOriginStorageLevel::None:
@@ -430,7 +433,7 @@ static _WKUnifiedOriginStorageLevel toWKUnifiedOriginStorageLevel(WebKit::Unifie
     }
 }
 
-static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedOriginStorageLevel wkLevel)
+static WebKit::UnifiedOriginStorageLevel NODELETE toUnifiedOriginStorageLevel(_WKUnifiedOriginStorageLevel wkLevel)
 {
     switch (wkLevel) {
     case _WKUnifiedOriginStorageLevelNone:
@@ -459,7 +462,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setWebPushPartitionString:(NSString *)string
 {
-    _configuration->setWebPushPartitionString(string);
+    protect(_configuration.get())->setWebPushPartitionString(string);
 }
 
 - (BOOL)deviceManagementRestrictionsEnabled
@@ -502,6 +505,100 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
     _configuration->setPerOriginStorageQuota(quota);
 }
 
+- (_WKTimeBasedEvictionMode)timeBasedEvictionMode
+{
+    switch (_configuration->timeBasedEvictionMode()) {
+    case WebKit::TimeBasedEvictionMode::Disabled:
+        return _WKTimeBasedEvictionModeDisabled;
+    case WebKit::TimeBasedEvictionMode::ServiceWorkerRegistrationsOnly:
+        return _WKTimeBasedEvictionModeServiceWorkerRegistrationsOnly;
+    case WebKit::TimeBasedEvictionMode::AllTypes:
+        return _WKTimeBasedEvictionModeAllTypes;
+    }
+}
+
+- (void)setTimeBasedEvictionMode:(_WKTimeBasedEvictionMode)mode
+{
+    switch (mode) {
+    case _WKTimeBasedEvictionModeDisabled:
+        _configuration->setTimeBasedEvictionMode(WebKit::TimeBasedEvictionMode::Disabled);
+        break;
+    case _WKTimeBasedEvictionModeServiceWorkerRegistrationsOnly:
+        _configuration->setTimeBasedEvictionMode(WebKit::TimeBasedEvictionMode::ServiceWorkerRegistrationsOnly);
+        break;
+    case _WKTimeBasedEvictionModeAllTypes:
+        _configuration->setTimeBasedEvictionMode(WebKit::TimeBasedEvictionMode::AllTypes);
+        break;
+    }
+}
+
+- (NSTimeInterval)timeBasedEvictionThreshold
+{
+    return _configuration->timeBasedEvictionThreshold().seconds();
+}
+
+- (void)setTimeBasedEvictionThreshold:(NSTimeInterval)seconds
+{
+    _configuration->setTimeBasedEvictionThreshold(Seconds(seconds));
+}
+
+- (NSNumber *)lastModificationTimeUpdateIntervalOverride
+{
+    auto interval = _configuration->lastModificationTimeUpdateIntervalOverride();
+    if (!interval)
+        return nil;
+
+    return [NSNumber numberWithDouble:interval->seconds()];
+}
+
+- (void)setLastModificationTimeUpdateIntervalOverride:(NSNumber *)seconds
+{
+    if (seconds)
+        _configuration->setLastModificationTimeUpdateIntervalOverride(Seconds([seconds doubleValue]));
+    else
+        _configuration->setLastModificationTimeUpdateIntervalOverride(std::nullopt);
+}
+
+- (NSNumber *)timeBasedEvictionIntervalOverride
+{
+    auto interval = _configuration->timeBasedEvictionIntervalOverride();
+    if (!interval)
+        return nil;
+
+    return [NSNumber numberWithDouble:interval->seconds()];
+}
+
+- (void)setTimeBasedEvictionIntervalOverride:(NSNumber *)seconds
+{
+    if (seconds)
+        _configuration->setTimeBasedEvictionIntervalOverride(Seconds([seconds doubleValue]));
+    else
+        _configuration->setTimeBasedEvictionIntervalOverride(std::nullopt);
+}
+
+- (NSArray<NSString *> *)mockPushSubscriptionOriginsForTesting
+{
+    auto& origins = _configuration->mockPushSubscriptionOriginsForTesting();
+    RetainPtr result = adoptNS([[NSMutableArray alloc] initWithCapacity:origins.size()]);
+    for (auto& origin : origins)
+        [result addObject:origin.toString().createNSString().get()];
+    return result.autorelease();
+}
+
+- (void)setMockPushSubscriptionOriginsForTesting:(NSArray<NSString *> *)originStrings
+{
+    Vector<WebCore::SecurityOriginData> origins;
+    origins.reserveInitialCapacity(originStrings.count);
+    for (NSString *originString in originStrings) {
+        auto origin = WebCore::SecurityOriginData::fromURL(URL { String { originString } });
+        if (origin.isNull() || origin.isOpaque())
+            continue;
+
+        origins.append(WTF::move(origin));
+    }
+    SUPPRESS_UNCOUNTED_ARG _configuration->setMockPushSubscriptionOriginsForTesting(WTF::move(origins));
+}
+
 - (NSNumber *)originQuotaRatio
 {
     auto ratio = _configuration->originQuotaRatio();
@@ -513,7 +610,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setOriginQuotaRatio:(NSNumber *)originQuotaRatio
 {
-    std::optional<double> ratio = std::nullopt;
+    std::optional<double> ratio;
     if (originQuotaRatio) {
         ratio = [originQuotaRatio doubleValue];
         if (*ratio < 0.0 || *ratio > 1.0)
@@ -534,7 +631,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setTotalQuotaRatio:(NSNumber *)totalQuotaRatio
 {
-    std::optional<double> ratio = std::nullopt;
+    std::optional<double> ratio;
     if (totalQuotaRatio) {
         ratio = [totalQuotaRatio doubleValue];
         if (*ratio < 0.0 || *ratio > 1.0)
@@ -573,7 +670,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setVolumeCapacityOverride:(NSNumber *)mockVolumeCapactiy
 {
-    std::optional<uint64_t> capacity = std::nullopt;
+    std::optional<uint64_t> capacity;
     if (mockVolumeCapactiy)
         capacity = [mockVolumeCapactiy unsignedLongLongValue];
 
@@ -594,7 +691,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
         [NSException raise:NSGenericException format:@"Cannot set _resourceMonitorThrottlerDirectory on a _WKWebsiteDataStoreConfiguration created with identifier"];
 
     checkURLArgument(url);
-    _configuration->setResourceMonitorThrottlerDirectory(url.path);
+    protect(_configuration.get())->setResourceMonitorThrottlerDirectory(url.path);
 }
 
 - (NSURL *)webContentRestrictionsConfigurationURL
@@ -670,7 +767,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setBoundInterfaceIdentifier:(NSString *)identifier
 {
-    _configuration->setBoundInterfaceIdentifier(identifier);
+    protect(_configuration.get())->setBoundInterfaceIdentifier(identifier);
 }
 
 - (BOOL)allowsCellularAccess
@@ -705,7 +802,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setDataConnectionServiceType:(NSString *)type
 {
-    _configuration->setDataConnectionServiceType(type);
+    protect(_configuration.get())->setDataConnectionServiceType(type);
 }
 
 - (BOOL)preventsSystemHTTPProxyAuthentication
@@ -770,7 +867,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setStandaloneApplicationURL:(NSURL *)url
 {
-    _configuration->setStandaloneApplicationURL(url);
+    protect(_configuration.get())->setStandaloneApplicationURL(url);
 }
 
 - (BOOL)enableInAppBrowserPrivacyForTesting
@@ -800,7 +897,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setPCMMachServiceName:(NSString *)name
 {
-    _configuration->setPCMMachServiceName(name);
+    protect(_configuration.get())->setPCMMachServiceName(name);
 }
 
 - (NSString *)webPushMachServiceName
@@ -810,7 +907,7 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setWebPushMachServiceName:(NSString *)name
 {
-    _configuration->setWebPushMachServiceName(name);
+    protect(_configuration.get())->setWebPushMachServiceName(name);
 }
 
 - (BOOL)allLoadsBlockedByDeviceManagementRestrictionsForTesting
@@ -858,7 +955,27 @@ static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedO
 
 - (void)setAdditionalDomainsWithUserInteractionForTesting:(NSString *)domains
 {
-    _configuration->setAdditionalDomainsWithUserInteractionForTesting(domains);
+    protect(_configuration.get())->setAdditionalDomainsWithUserInteractionForTesting(domains);
+}
+
+- (NSUInteger)overridePersistentNotificationMinimumLifetimeForTesting
+{
+    return _configuration->overridePersistentNotificationMinimumLifetimeForTesting().value_or(0);
+}
+
+- (void)setOverridePersistentNotificationMinimumLifetimeForTesting:(NSUInteger)lifetime
+{
+    _configuration->setOverridePersistentNotificationMinimumLifetimeForTesting(lifetime);
+}
+
+- (BOOL)qualifiedServerTrustDebugEnabledForTesting
+{
+    return _configuration->qualifiedServerTrustDebugEnabledForTesting();
+}
+
+- (void)setQualifiedServerTrustDebugEnabledForTesting:(BOOL)enabled
+{
+    _configuration->setQualifiedServerTrustDebugEnabledForTesting(enabled);
 }
 
 - (NSUUID *)identifier

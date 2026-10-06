@@ -1,7 +1,8 @@
 <!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
 <html>
 <head>
-<script src="../../../resources/js-test-pre.js"></script>
+<script src="../../../resources/js-test.js"></script>
+<script src="../../../resources/ui-helper.js"></script>
 <!--
   Touch tests that involve the ontouchstart, ontouchmove, ontouchend or ontouchcancel callbacks
   should be written in an asynchronous fashion so they can be run on mobile platforms like Android.
@@ -13,6 +14,7 @@
 <div id="console"></div>
 <script>
 description("Tests that the cancel touch event is sent correctly.");
+window.jsTestIsAsync = true;
 
 var touchX = 25;
 var touchY = 25;
@@ -26,21 +28,20 @@ function touchcancelHandler() {
     shouldBe("cancelEvent.pageX", touchX.toString());
     shouldBe("cancelEvent.pageY", touchY.toString());
     if (window.testRunner) {
-        testRunner.notifyDone();
-        isSuccessfullyParsed(); 
+        finishJSTest();
     }
 }
     
-if (window.testRunner)
-    window.testRunner.waitUntilDone();
 
-window.onload = function() {
+window.onload = async function() {
     if (window.eventSender) {
         document.addEventListener("touchcancel", touchcancelHandler, false);
+        await UIHelper.renderingComplete();
+
         eventSender.addTouchPoint(touchX, touchY);
-        eventSender.touchStart();
+        await eventSender.asyncTouchStart();
         eventSender.cancelTouchPoint(0);
-        eventSender.touchCancel();
+        await eventSender.asyncTouchCancel();
     } else
         debug("This test requires DumpRenderTree.");
 }

@@ -53,11 +53,11 @@ struct LinkRelAttribute {
     bool isApplicationManifest : 1 { false };
 #endif
     bool isInternalResourceLink : 1 { false };
-#if ENABLE(WEB_PAGE_SPATIAL_BACKDROP)
-    bool isSpatialBackdrop : 1 { false };
-#endif
+    bool isCompressionDictionary : 1 { false };
+    bool isTLSCertificateBinding : 1 { false };
 
     LinkRelAttribute() = default;
+    WEBCORE_EXPORT LinkRelAttribute(Document*, StringView);
     LinkRelAttribute(Document&, StringView);
 
     friend bool operator==(const LinkRelAttribute&, const LinkRelAttribute&) = default;

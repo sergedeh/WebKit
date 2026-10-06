@@ -29,7 +29,9 @@
 #include "AbortSignal.h"
 #include "ContextDestructionObserverInlines.h"
 #include "InternalObserver.h"
+#include "JSDOMConvertAny.h"
 #include "JSDOMPromiseDeferred.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "Observable.h"
 #include "ScriptExecutionContext.h"
 #include "SubscribeOptions.h"
@@ -52,7 +54,7 @@ public:
 private:
     void next(JSC::JSValue value) final
     {
-        auto* globalObject = protectedScriptExecutionContext()->globalObject();
+        auto* globalObject = protect(scriptExecutionContext())->globalObject();
         ASSERT(globalObject);
 
         Ref vm = globalObject->vm();
@@ -64,13 +66,13 @@ private:
             // abort signal and promise rejection.
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-            protectedCallback()->invokeRethrowingException(value, m_idx++);
+            protect(m_callback)->invokeRethrowingException(value, m_idx++);
 
             JSC::Exception* exception = scope.exception();
             if (exception) [[unlikely]] {
                 scope.clearException();
                 auto value = exception->value();
-                protectedPromise()->reject<IDLAny>(value);
+                protect(m_promise)->reject<IDLAny>(value);
                 Ref { m_signal }->signalAbort(value);
             }
         }
@@ -78,22 +80,19 @@ private:
 
     void error(JSC::JSValue value) final
     {
-        protectedPromise()->reject<IDLAny>(value);
+        protect(m_promise)->reject<IDLAny>(value);
     }
 
     void complete() final
     {
         InternalObserver::complete();
-        protectedPromise()->resolve();
+        protect(m_promise)->resolve();
     }
 
-    void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
+    void visitAdditionalChildrenInGCThread(JSC::AbstractSlotVisitor& visitor) const final
     {
-        m_callback->visitJSFunction(visitor);
+        m_callback->visitJSFunctionInGCThread(visitor);
     }
-
-    Ref<DeferredPromise> protectedPromise() const { return m_promise; }
-    Ref<VisitorCallback> protectedCallback() const { return m_callback; }
 
     InternalObserverForEach(ScriptExecutionContext& context, Ref<VisitorCallback>&& callback, Ref<AbortSignal>&& signal, Ref<DeferredPromise>&& promise)
         : InternalObserver(context)

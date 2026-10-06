@@ -57,7 +57,7 @@ struct _WebKitWebsiteData {
     }
 
     WebsiteDataRecord record;
-    CString displayName;
+    UTF8CString displayName;
     int referenceCount { 1 };
 };
 
@@ -79,7 +79,8 @@ static bool recordContainsSupportedDataTypes(const WebsiteDataRecord& record)
         WebsiteDataType::DeviceIdHashSalt,
         WebsiteDataType::ResourceLoadStatistics,
         WebsiteDataType::ServiceWorkerRegistrations,
-        WebsiteDataType::DOMCache
+        WebsiteDataType::DOMCache,
+        WebsiteDataType::FileSystem
     });
 }
 
@@ -112,6 +113,8 @@ static WebKitWebsiteDataTypes toWebKitWebsiteDataTypes(OptionSet<WebsiteDataType
         returnValue |= WEBKIT_WEBSITE_DATA_SERVICE_WORKER_REGISTRATIONS;
     if (types.contains(WebsiteDataType::DOMCache))
         returnValue |= WEBKIT_WEBSITE_DATA_DOM_CACHE;
+    if (types.contains(WebsiteDataType::FileSystem))
+        returnValue |= WEBKIT_WEBSITE_DATA_FILE_SYSTEM;
     return static_cast<WebKitWebsiteDataTypes>(returnValue);
 }
 
@@ -193,11 +196,11 @@ const char* webkit_website_data_get_name(WebKitWebsiteData* websiteData)
 
     if (websiteData->displayName.isNull()) {
         if (websiteData->record.displayName == "Local documents on your computer"_s)
-            websiteData->displayName = _("Local files");
+            websiteData->displayName = UTF8CString::unsafeFromUTF8(_("Local files"));
         else
             websiteData->displayName = websiteData->record.displayName.utf8();
     }
-    return websiteData->displayName.data();
+    return websiteData->displayName.legacyCStringPointer();
 }
 
 /**
@@ -227,7 +230,9 @@ WebKitWebsiteDataTypes webkit_website_data_get_types(WebKitWebsiteData* websiteD
  *
  * Gets the size of the data of types @types in a #WebKitWebsiteData.
  *
- * Note that currently the data size is only known for %WEBKIT_WEBSITE_DATA_DISK_CACHE data type
+ * Note that currently the data size is only known for the %WEBKIT_WEBSITE_DATA_DISK_CACHE,
+ * %WEBKIT_WEBSITE_DATA_LOCAL_STORAGE, %WEBKIT_WEBSITE_DATA_INDEXEDDB_DATABASES,
+ * %WEBKIT_WEBSITE_DATA_DOM_CACHE, and %WEBKIT_WEBSITE_DATA_FILE_SYSTEM data types,
  * so for all other types 0 will be returned.
  *
  * Returns: the size of @website_data for the given @types.
@@ -242,9 +247,9 @@ guint64 webkit_website_data_get_size(WebKitWebsiteData* websiteData, WebKitWebsi
         return 0;
 
     guint64 totalSize = 0;
-    for (auto type : websiteData->record.size->typeSizes.keys()) {
-        if (type & types)
-            totalSize += websiteData->record.size->typeSizes.get(type);
+    for (auto [type, size] : websiteData->record.size->typeSizes) {
+        if (toWebKitWebsiteDataTypes(static_cast<WebsiteDataType>(type)) & types)
+            totalSize += size;
     }
 
     return totalSize;

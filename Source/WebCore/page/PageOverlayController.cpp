@@ -40,7 +40,9 @@
 #include "ScrollingCoordinator.h"
 #include "Settings.h"
 #include "TiledBacking.h"
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <ranges>
 
 // FIXME: Someone needs to call didChangeSettings() if we want dynamic updates of layer border/repaint counter settings.
 
@@ -65,10 +67,10 @@ void PageOverlayController::createRootLayersIfNeeded()
     ASSERT(!m_documentOverlayRootLayer);
     ASSERT(!m_viewOverlayRootLayer);
 
-    m_documentOverlayRootLayer = GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this);
-    m_viewOverlayRootLayer = GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this);
-    protectedDocumentOverlayRootLayer()->setName(MAKE_STATIC_STRING_IMPL("Document overlay Container"));
-    protectedViewOverlayRootLayer()->setName(MAKE_STATIC_STRING_IMPL("View overlay container"));
+    lazyInitialize(m_documentOverlayRootLayer, GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this));
+    lazyInitialize(m_viewOverlayRootLayer, GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this));
+    protect(documentOverlayRootLayer())->setName(MAKE_STATIC_STRING_IMPL("Document overlay Container"));
+    protect(viewOverlayRootLayer())->setName(MAKE_STATIC_STRING_IMPL("View overlay container"));
 }
 
 void PageOverlayController::installedPageOverlaysChanged()
@@ -78,8 +80,19 @@ void PageOverlayController::installedPageOverlaysChanged()
     else
         detachViewOverlayLayers();
 
-    if (RefPtr localMainFrame = protectedPage()->localMainFrame()) {
-        if (RefPtr frameView = localMainFrame->view())
+    if (RefPtr localFrame = m_page->localMainOrRootFrame()) {
+        if (RefPtr frameView = localFrame->view())
+            frameView->setNeedsCompositingConfigurationUpdate();
+    }
+
+    // Frame-associated overlays are hosted in their own local root's compositing tree, which
+    // localMainOrRootFrame() above doesn't cover; schedule an update for each so its
+    // RenderLayerCompositor re-runs appendDocumentOverlayLayers and picks up its overlay container.
+    for (auto& overlay : m_pageOverlays) {
+        RefPtr associatedFrame = overlay->associatedFrame();
+        if (!associatedFrame)
+            continue;
+        if (RefPtr frameView = associatedFrame->view())
             frameView->setNeedsCompositingConfigurationUpdate();
     }
 
@@ -104,25 +117,45 @@ bool PageOverlayController::hasViewOverlays() const
     return false;
 }
 
-Ref<Page> PageOverlayController::protectedPage() const
+void PageOverlayController::mainFrameDidBecomeLocal()
 {
-    return m_page.get();
+    // View overlays installed while the main frame was remote could not be attached, so attach them now.
+    attachViewOverlayLayers();
 }
 
 void PageOverlayController::attachViewOverlayLayers()
 {
     if (hasViewOverlays())
-        protectedPage()->chrome().client().attachViewOverlayGraphicsLayer(protectedLayerWithViewOverlays().ptr());
+        m_page->chrome().client().attachViewOverlayGraphicsLayer(protect(layerWithViewOverlays()).ptr());
 }
 
 void PageOverlayController::detachViewOverlayLayers()
 {
-    protectedPage()->chrome().client().attachViewOverlayGraphicsLayer(nullptr);
+    m_page->chrome().client().attachViewOverlayGraphicsLayer(nullptr);
 }
 
 GraphicsLayer* PageOverlayController::documentOverlayRootLayer() const
 {
     return m_documentOverlayRootLayer.get();
+}
+
+GraphicsLayer& PageOverlayController::documentOverlayRootLayerForFrame(LocalFrame* rootFrame)
+{
+    createRootLayersIfNeeded();
+
+    // Page-level overlays (and the nullptr/main-frame path) share m_documentOverlayRootLayer.
+    // Each associated local root gets its own container: a GraphicsLayer has a single parent, so a
+    // shared one would only appear under whichever root composited last.
+    RefPtr localMainFrame = m_page->localMainFrame();
+    if (!rootFrame || rootFrame == localMainFrame.get())
+        return *m_documentOverlayRootLayer;
+
+    auto& layer = m_frameDocumentOverlayRootLayers.ensure(*rootFrame, [&] {
+        Ref newLayer = GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this);
+        newLayer->setName(MAKE_STATIC_STRING_IMPL("Document overlay Container (frame)"));
+        return newLayer;
+    }).iterator->value;
+    return layer.get();
 }
 
 GraphicsLayer* PageOverlayController::viewOverlayRootLayer() const
@@ -141,9 +174,15 @@ static void updateOverlayGeometry(PageOverlay& overlay, GraphicsLayer& graphicsL
     graphicsLayer.setSize(overlayFrame.size());
 }
 
-GraphicsLayer& PageOverlayController::layerWithDocumentOverlays()
+// Return the document-overlay root layer hosted in `rootFrame`'s compositing tree, containing only
+// the overlays scoped to it. Associated overlays go under their frame's root; unassociated ones are
+// page-level and go under the main frame's root (rootFrame == nullptr also maps there).
+GraphicsLayer& PageOverlayController::layerWithDocumentOverlaysForFrame(LocalFrame* rootFrame)
 {
     createRootLayersIfNeeded();
+
+    RefPtr localMainFrame = m_page->localMainFrame();
+    Ref rootLayer = documentOverlayRootLayerForFrame(rootFrame);
 
     bool inWindow = m_page->isInWindow();
 
@@ -152,17 +191,32 @@ GraphicsLayer& PageOverlayController::layerWithDocumentOverlays()
         if (overlay->overlayType() != PageOverlay::OverlayType::Document)
             continue;
 
+        // An associated overlay belongs to its own frame; an unassociated one is page-level.
+        RefPtr overlayFrame = overlay->associatedFrame();
+        bool belongsToThisRoot = overlayFrame ? (overlayFrame.get() == rootFrame) : (rootFrame == localMainFrame.get());
+        if (!belongsToThisRoot)
+            continue;
+
         auto& layer = overlayAndLayer.value;
         GraphicsLayer::traverse(layer.get(), [inWindow](GraphicsLayer& layer) {
             layer.setIsInWindow(inWindow);
         });
         updateOverlayGeometry(overlay, layer.get());
-        
-        if (!layer->parent())
-            protectedDocumentOverlayRootLayer()->addChild(layer.copyRef());
+
+        if (layer->parent() != rootLayer.ptr())
+            rootLayer->addChild(layer.copyRef());
     }
 
-    return *m_documentOverlayRootLayer;
+    // documentOverlayRootLayerForFrame() returns a reference into a controller-owned member, so
+    // returning it directly (rather than through the Ref local, whose get() is LIFETIME_BOUND) is
+    // both lifetime-safe and free of -Wreturn-stack-address.
+    return documentOverlayRootLayerForFrame(rootFrame);
+}
+
+void PageOverlayController::willDestroyRootFrameOverlayContainer(LocalFrame& rootFrame)
+{
+    if (auto container = m_frameDocumentOverlayRootLayers.take(rootFrame))
+        container->removeFromParent();
 }
 
 GraphicsLayer& PageOverlayController::layerWithViewOverlays()
@@ -183,15 +237,10 @@ GraphicsLayer& PageOverlayController::layerWithViewOverlays()
         updateOverlayGeometry(overlay, layer.get());
         
         if (!layer->parent())
-            protectedViewOverlayRootLayer()->addChild(layer.copyRef());
+            protect(viewOverlayRootLayer())->addChild(layer.copyRef());
     }
 
     return *m_viewOverlayRootLayer;
-}
-
-Ref<GraphicsLayer> PageOverlayController::protectedLayerWithViewOverlays()
-{
-    return layerWithViewOverlays();
 }
 
 void PageOverlayController::installPageOverlay(PageOverlay& overlay, PageOverlay::FadeMode fadeMode)
@@ -204,7 +253,7 @@ void PageOverlayController::installPageOverlay(PageOverlay& overlay, PageOverlay
     m_pageOverlays.append(overlay);
 
     auto layerType = (overlay.alwaysTileOverlayLayer() == PageOverlay::AlwaysTileOverlayLayer::Yes) ? GraphicsLayer::Type::TiledBacking : GraphicsLayer::Type::Normal;
-    Ref layer = GraphicsLayer::create(protectedPage()->chrome().client().graphicsLayerFactory(), *this, layerType);
+    Ref layer = GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this, layerType);
     layer->setAnchorPoint({ });
     layer->setBackgroundColor(overlay.backgroundColor());
     layer->setName(MAKE_STATIC_STRING_IMPL("Overlay content"));
@@ -213,19 +262,27 @@ void PageOverlayController::installPageOverlay(PageOverlay& overlay, PageOverlay
 
     switch (overlay.overlayType()) {
     case PageOverlay::OverlayType::View:
-        protectedViewOverlayRootLayer()->addChild(layer.get());
+        protect(viewOverlayRootLayer())->addChild(layer.get());
         break;
-    case PageOverlay::OverlayType::Document:
-        protectedDocumentOverlayRootLayer()->addChild(layer.get());
+    case PageOverlay::OverlayType::Document: {
+        // Parent under the root scoped to the overlay's associated frame (or the shared main-frame root).
+        RefPtr associatedFrame = overlay.associatedFrame();
+        Ref { documentOverlayRootLayerForFrame(associatedFrame.get()) }->addChild(layer.get());
         break;
+    }
     }
 
     m_overlayGraphicsLayers.set(overlay, layer.copyRef());
 
-    overlay.setPage(protectedPage().ptr());
+    overlay.setPage(protect(m_page).ptr());
 
-    if (RefPtr localMainFrame = protectedPage()->localMainFrame()) {
-        if (RefPtr frameView = localMainFrame->view())
+    // Put the hosting frame in compositing mode so its RenderLayerCompositor picks up the overlay
+    // root: the associated frame for an associated overlay, else the local main-or-root frame.
+    RefPtr hostFrame = overlay.associatedFrame();
+    if (!hostFrame)
+        hostFrame = m_page->localMainOrRootFrame();
+    if (hostFrame) {
+        if (RefPtr frameView = hostFrame->view())
             frameView->enterCompositingMode();
     }
 
@@ -265,7 +322,7 @@ void PageOverlayController::updateForceSynchronousScrollLayerPositionUpdates()
             forceSynchronousScrollLayerPositionUpdates = true;
     }
 
-    if (RefPtr scrollingCoordinator = protectedPage()->scrollingCoordinator())
+    if (RefPtr scrollingCoordinator = protect(m_page)->scrollingCoordinator())
         scrollingCoordinator->setForceSynchronousScrollLayerPositionUpdates(forceSynchronousScrollLayerPositionUpdates);
 #endif
 }
@@ -329,8 +386,8 @@ void PageOverlayController::didChangeDeviceScaleFactor()
     if (!m_initialized)
         return;
 
-    protectedDocumentOverlayRootLayer()->noteDeviceOrPageScaleFactorChangedIncludingDescendants();
-    protectedViewOverlayRootLayer()->noteDeviceOrPageScaleFactorChangedIncludingDescendants();
+    protect(documentOverlayRootLayer())->noteDeviceOrPageScaleFactorChangedIncludingDescendants();
+    protect(viewOverlayRootLayer())->noteDeviceOrPageScaleFactorChangedIncludingDescendants();
 
     for (auto overlayAndLayer : m_overlayGraphicsLayers)
         Ref { overlayAndLayer.value }->setNeedsDisplay();
@@ -338,7 +395,7 @@ void PageOverlayController::didChangeDeviceScaleFactor()
 
 void PageOverlayController::didChangeViewExposedRect()
 {
-    protectedPage()->scheduleRenderingUpdate(RenderingUpdateStep::LayerFlush);
+    protect(m_page)->scheduleRenderingUpdate(RenderingUpdateStep::LayerFlush);
 }
 
 void PageOverlayController::didScrollFrame(LocalFrame& frame)
@@ -363,8 +420,8 @@ bool PageOverlayController::handleMouseEvent(const PlatformMouseEvent& mouseEven
     if (m_pageOverlays.isEmpty())
         return false;
 
-    for (auto it = m_pageOverlays.rbegin(), end = m_pageOverlays.rend(); it != end; ++it) {
-        if (Ref { *it }->mouseEvent(mouseEvent))
+    for (Ref overlay : borrow(m_pageOverlays).get() | std::views::reverse) {
+        if (overlay->mouseEvent(mouseEvent))
             return true;
     }
 
@@ -376,8 +433,8 @@ bool PageOverlayController::copyAccessibilityAttributeStringValueForPoint(String
     if (m_pageOverlays.isEmpty())
         return false;
 
-    for (auto it = m_pageOverlays.rbegin(), end = m_pageOverlays.rend(); it != end; ++it) {
-        if (Ref { *it }->copyAccessibilityAttributeStringValueForPoint(attribute, parameter, value))
+    for (Ref overlay : borrow(m_pageOverlays).get() | std::views::reverse) {
+        if (overlay->copyAccessibilityAttributeStringValueForPoint(attribute, parameter, value))
             return true;
     }
 
@@ -389,8 +446,8 @@ bool PageOverlayController::copyAccessibilityAttributeBoolValueForPoint(String a
     if (m_pageOverlays.isEmpty())
         return false;
 
-    for (auto it = m_pageOverlays.rbegin(), end = m_pageOverlays.rend(); it != end; ++it) {
-        if (Ref { *it }->copyAccessibilityAttributeBoolValueForPoint(attribute, parameter, value))
+    for (Ref overlay : borrow(m_pageOverlays).get() | std::views::reverse) {
+        if (overlay->copyAccessibilityAttributeBoolValueForPoint(attribute, parameter, value))
             return true;
     }
 
@@ -432,7 +489,7 @@ float PageOverlayController::deviceScaleFactor() const
 
 void PageOverlayController::notifyFlushRequired(const GraphicsLayer*)
 {
-    protectedPage()->scheduleRenderingUpdate(RenderingUpdateStep::LayerFlush);
+    protect(m_page)->scheduleRenderingUpdate(RenderingUpdateStep::LayerFlush);
 }
 
 void PageOverlayController::didChangeOverlayFrame(PageOverlay& overlay)
@@ -470,17 +527,7 @@ bool PageOverlayController::shouldDumpPropertyForLayer(const GraphicsLayer* laye
 void PageOverlayController::tiledBackingUsageChanged(const GraphicsLayer* graphicsLayer, bool usingTiledBacking)
 {
     if (usingTiledBacking)
-        graphicsLayer->checkedTiledBacking()->setIsInWindow(m_page->isInWindow());
-}
-
-RefPtr<GraphicsLayer> PageOverlayController::protectedDocumentOverlayRootLayer() const
-{
-    return m_documentOverlayRootLayer;
-}
-
-RefPtr<GraphicsLayer> PageOverlayController::protectedViewOverlayRootLayer() const
-{
-    return m_viewOverlayRootLayer;
+        protect(graphicsLayer->tiledBacking())->setIsInWindow(m_page->isInWindow());
 }
 
 } // namespace WebKit

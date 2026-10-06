@@ -8,17 +8,19 @@ function(WEBKIT_CHECK_COMPILER_FLAGS _compiler _result)
         # If an equals (=) character is present in a variable name, it will
         # not be cached correctly, and the check will be retried ad nauseam.
         string(REPLACE "=" "__" _cachevar "${_compiler}_COMPILER_SUPPORTS_${_flag}")
-        if (${_compiler} STREQUAL CXX)
+        if (CMAKE_${_compiler}_COMPILER_ID STREQUAL "AppleClang")
+            set(${_cachevar} TRUE)
+        elseif (${_compiler} STREQUAL CXX)
             check_cxx_compiler_flag("${_flag}" "${_cachevar}")
         elseif (${_compiler} STREQUAL C)
             check_c_compiler_flag("${_flag}" "${_cachevar}")
         else ()
             set(${_cachevar} FALSE CACHE INTERNAL "" FORCE)
             message(WARNING "WEBKIT_CHECK_COMPILER_FLAGS: unknown compiler '${_compiler}'")
-            return()
+            return ()
         endif ()
         if (NOT ${_cachevar})
-            return()
+            return ()
         endif ()
     endforeach ()
     set(${_result} TRUE PARENT_SCOPE)
@@ -52,44 +54,74 @@ endfunction()
 
 # Prepends flags to CMAKE_C_FLAGS if supported by the C compiler. Almost all
 # flags should be prepended to allow the user to override them.
+#
+# Also mirrors the resulting flags into CMAKE_OBJC_FLAGS so that .m sources on
+# Apple ports get the same WebKit-curated flag set as their .c counterparts.
+# This is a no-op on ports where OBJC is not an enabled language.
 macro(WEBKIT_PREPEND_GLOBAL_C_FLAGS)
     WEBKIT_VAR_ADD_COMPILER_FLAGS(C PREPEND CMAKE_C_FLAGS ${ARGN})
+    WEBKIT_VAR_ADD_COMPILER_FLAGS(C PREPEND CMAKE_OBJC_FLAGS ${ARGN})
 endmacro()
 
 # Appends flags to CMAKE_C_FLAGS if supported by the C compiler. This macro
 # should be used sparingly. Only append flags if the user must not be allowed to
 # override them.
+#
+# See WEBKIT_PREPEND_GLOBAL_C_FLAGS for the OBJC mirroring rationale.
 macro(WEBKIT_APPEND_GLOBAL_C_FLAGS)
     WEBKIT_VAR_ADD_COMPILER_FLAGS(C APPEND CMAKE_C_FLAGS ${ARGN})
+    WEBKIT_VAR_ADD_COMPILER_FLAGS(C APPEND CMAKE_OBJC_FLAGS ${ARGN})
 endmacro()
 
 # Prepends flags to CMAKE_CXX_FLAGS if supported by the C++ compiler. Almost all
 # flags should be prepended to allow the user to override them.
+#
+# Also mirrors the resulting flags into CMAKE_OBJCXX_FLAGS so that .mm sources
+# on Apple ports get the same WebKit-curated flag set (warnings, -fno-rtti,
+# -fno-exceptions, etc.) as their .cpp counterparts. Without this mirroring,
+# .mm sources are compiled with default OBJCXX flags (notably *with* RTTI),
+# which produces undefined-symbol errors at link time when ObjC++ subclasses
+# reference RTTI-less C++ base classes' typeinfo. This is a no-op on ports
+# where OBJCXX is not an enabled language.
 macro(WEBKIT_PREPEND_GLOBAL_CXX_FLAGS)
     WEBKIT_VAR_ADD_COMPILER_FLAGS(CXX PREPEND CMAKE_CXX_FLAGS ${ARGN})
+    WEBKIT_VAR_ADD_COMPILER_FLAGS(CXX PREPEND CMAKE_OBJCXX_FLAGS ${ARGN})
 endmacro()
 
 # Appends flags to CMAKE_CXX_FLAGS if supported by the C++ compiler. This macro
 # should be used sparingly. Only append flags if the user must not be allowed to
 # override them.
+#
+# See WEBKIT_PREPEND_GLOBAL_CXX_FLAGS for the OBJCXX mirroring rationale.
 macro(WEBKIT_APPEND_GLOBAL_CXX_FLAGS)
     WEBKIT_VAR_ADD_COMPILER_FLAGS(CXX APPEND CMAKE_CXX_FLAGS ${ARGN})
+    WEBKIT_VAR_ADD_COMPILER_FLAGS(CXX APPEND CMAKE_OBJCXX_FLAGS ${ARGN})
 endmacro()
 
 # Prepends flags to CMAKE_C_FLAGS and CMAKE_CXX_FLAGS if supported by the C
 # or C++ compiler, respectively. Almost all flags should be prepended to allow
 # the user to override them.
+#
+# Also mirrors into CMAKE_OBJC_FLAGS / CMAKE_OBJCXX_FLAGS — see the per-language
+# macros above for rationale.
 macro(WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS)
     WEBKIT_VAR_ADD_COMPILER_FLAGS(C PREPEND CMAKE_C_FLAGS ${ARGN})
+    WEBKIT_VAR_ADD_COMPILER_FLAGS(C PREPEND CMAKE_OBJC_FLAGS ${ARGN})
     WEBKIT_VAR_ADD_COMPILER_FLAGS(CXX PREPEND CMAKE_CXX_FLAGS ${ARGN})
+    WEBKIT_VAR_ADD_COMPILER_FLAGS(CXX PREPEND CMAKE_OBJCXX_FLAGS ${ARGN})
 endmacro()
 
 # Appends flags to CMAKE_C_FLAGS and CMAKE_CXX_FLAGS if supported by the C or
 # C++ compiler, respectively. This macro should be used sparingly. Only append
 # flags if the user must not be allowed to override them.
+#
+# Also mirrors into CMAKE_OBJC_FLAGS / CMAKE_OBJCXX_FLAGS — see the per-language
+# macros above for rationale.
 macro(WEBKIT_APPEND_GLOBAL_COMPILER_FLAGS)
     WEBKIT_VAR_ADD_COMPILER_FLAGS(C APPEND CMAKE_C_FLAGS ${ARGN})
+    WEBKIT_VAR_ADD_COMPILER_FLAGS(C APPEND CMAKE_OBJC_FLAGS ${ARGN})
     WEBKIT_VAR_ADD_COMPILER_FLAGS(CXX APPEND CMAKE_CXX_FLAGS ${ARGN})
+    WEBKIT_VAR_ADD_COMPILER_FLAGS(CXX APPEND CMAKE_OBJCXX_FLAGS ${ARGN})
 endmacro()
 
 # Appends flags to COMPILE_OPTIONS of _subject if supported by the C
@@ -121,20 +153,18 @@ macro(WEBKIT_ADD_TARGET_CXX_FLAGS _target)
     WEBKIT_ADD_COMPILER_FLAGS(CXX TARGET ${_target} ${ARGN})
 endmacro()
 
+# Used by WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(), may be overriden in
+# the per-port Options${PORT}.cmake files.
+set(WEBKIT_UNSAFE_BUFFER_WARNING_FLAGS
+    -Wunsafe-buffer-usage
+    -Wunsafe-buffer-usage-in-libc-call
+)
+option(ENABLE_UNSAFE_BUFFER_USAGE_WARNING "Build with -Wunsafe-buffer-usage" OFF)
 
-option(DEVELOPER_MODE_FATAL_WARNINGS "Build with warnings as errors if DEVELOPER_MODE is also enabled" ON)
-set(DEVELOPER_MODE_CXX_FLAGS)
-if (DEVELOPER_MODE AND DEVELOPER_MODE_FATAL_WARNINGS)
-    if (MSVC)
-        set(FATAL_WARNINGS_FLAG /WX)
-    else ()
-        set(FATAL_WARNINGS_FLAG -Werror)
-    endif ()
+option(ENABLE_THREAD_SAFETY_WARNING "Build with -Wthread-safety" OFF)
 
-    check_cxx_compiler_flag(${FATAL_WARNINGS_FLAG} CXX_COMPILER_SUPPORTS_WERROR)
-    if (CXX_COMPILER_SUPPORTS_WERROR)
-        set(DEVELOPER_MODE_CXX_FLAGS ${FATAL_WARNINGS_FLAG})
-    endif ()
+if (DEVELOPER_MODE AND NOT DEFINED CMAKE_COMPILE_WARNING_AS_ERROR AND NOT CMAKE_SYSTEM_NAME MATCHES "Windows")
+    set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
 endif ()
 
 if (DEVELOPER_MODE OR ARM)
@@ -143,7 +173,7 @@ if (DEVELOPER_MODE OR ARM)
 endif ()
 
 if (COMPILER_IS_GCC_OR_CLANG)
-    if (COMPILER_IS_CLANG OR (DEVELOPER_MODE AND NOT ARM))
+    if (NOT APPLE AND (COMPILER_IS_CLANG OR (DEVELOPER_MODE AND NOT ARM)))
         # Split debug information in ".debug_types" / ".debug_info" sections - this leads
         # to a smaller overall size of the debug information, and avoids linker relocation
         # errors on e.g. aarch64 (relocation R_AARCH64_ABS32 out of range: 4312197985 is not in [-2147483648, 4294967295])
@@ -152,7 +182,18 @@ if (COMPILER_IS_GCC_OR_CLANG)
         WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-fdebug-types-section)
     endif ()
 
+    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-gsimple-template-names)
+    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-mllvm -dwarf-linkage-names=Abstract")
+
+    # FIXME: Remove once the strict-aliasing violations exposed by 315506@main are fixed.
+    # Enabling strict aliasing (the compiler default at -O2) miscompiles type-punning code
+    # in the GTK and WPE ports, causing Release-only crashes and failures. It also introduces
+    # -Wstrict-aliasing warnings when building with GCC.
+    # https://webkit.org/b/317542
     WEBKIT_APPEND_GLOBAL_COMPILER_FLAGS(-fno-strict-aliasing)
+
+    # Make signed integer overflow two's compliment rather than UB.
+    WEBKIT_APPEND_GLOBAL_COMPILER_FLAGS(-fwrapv)
 
     # clang-cl.exe impersonates cl.exe so some clang arguments like -fno-rtti are
     # represented using cl.exe's options and should not be passed as flags, so
@@ -161,7 +202,9 @@ if (COMPILER_IS_GCC_OR_CLANG)
         WEBKIT_APPEND_GLOBAL_COMPILER_FLAGS(-fno-exceptions)
         WEBKIT_APPEND_GLOBAL_CXX_FLAGS(-fno-rtti)
         WEBKIT_APPEND_GLOBAL_CXX_FLAGS(-fcoroutines)
-        WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-fasynchronous-unwind-tables)
+        if (NOT APPLE)
+            WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-fasynchronous-unwind-tables)
+        endif ()
 
         WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-tautological-compare)
 
@@ -173,30 +216,54 @@ if (COMPILER_IS_GCC_OR_CLANG)
     endif ()
 
     # Warnings to be enabled
-    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wcast-align
-                                         -Wformat-security
+    # -Wcast-align is too noisy on 32-bit, and most of these warnings come from
+    # cases (like in glib) where we already know that, despite the natural alignment
+    # of two types being different, they are always allocated correctly inside glib.
+    # Fixing this properly would burden the 64-bit ports for little gain.
+    if (NOT WTF_CPU_ARM)
+        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wcast-align)
+    endif ()
+    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wformat-security
                                          -Wmissing-format-attribute
                                          -Wpointer-arith
                                          -Wundef)
 
     # Warnings to be disabled
-    # FIXME: We should probably not be disabling -Wno-maybe-uninitialized?
     WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Qunused-arguments
-                                         -Wno-maybe-uninitialized
                                          -Wno-parentheses-equality
                                          -Wno-misleading-indentation
                                          -Wno-psabi
                                          -Wno-nullability-completeness)
 
-    # GCC < 12.0 gives false warnings for mismatched-new-delete <https://webkit.org/b/241516>
-    if ((CMAKE_CXX_COMPILER_ID MATCHES "GNU") AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "12.0.0"))
-        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-mismatched-new-delete)
-        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-uninitialized)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        # FIXME: We should probably not be disabling -Wno-maybe-uninitialized?
+        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-maybe-uninitialized)
+    endif ()
+
+    # FIXME: Remove once Clang 18 does no longer need to be supported for the GTK and WPE ports
+    if ((CMAKE_CXX_COMPILER_ID STREQUAL Clang) AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19))
+        WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-frelaxed-template-template-args)
+        # libstdc++'s <expected> is guarded behind __cpp_concepts >= 202002, even though
+        # Clang 18 is C++23 compliant. <https://webkit.org/b/311435>
+        add_compile_options(
+            $<$<COMPILE_LANGUAGE:CXX>:-D__cpp_concepts=202002>
+            $<$<COMPILE_LANGUAGE:CXX>:-Wno-builtin-macro-redefined>
+        )
     endif ()
 
     # GCC gives false warnings for subobject-linkage <https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105595>
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
         WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-subobject-linkage)
+    endif ()
+
+    # Older GCC versions sometimes miscompile switches with that flag on.
+    # Observed in testMoveConditionallyFloatingPointSameArg (testmasm), turn it
+    # off throughout to avoid hard-to-diagnose bugs.
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+      # This and later versions don't seem to exhibit the issue.
+      if (${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "14.0.1")
+        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-fno-unswitch-loops)
+      endif ()
     endif ()
 
     WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wno-noexcept-type)
@@ -212,7 +279,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
         WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wno-nonnull)
 
         # https://bugs.webkit.org/show_bug.cgi?id=240596
-        WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wno-stringop-overflow)
+        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-stringop-overflow)
 
         # This triggers warnings in wtf/Packed.h, a header that is included in many places. It does not
         # respect ignore warning pragmas and we cannot easily suppress it for all affected files.
@@ -222,6 +289,15 @@ if (COMPILER_IS_GCC_OR_CLANG)
         # -Wodr trips over our bindings integrity feature when LTO is enabled.
         # https://bugs.webkit.org/show_bug.cgi?id=229867
         WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wno-odr)
+
+        # GCC does not preserve #pragma GCC diagnostic state across precompiled
+        # header boundaries (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=64117).
+        # StdLibExtras.h uses a file-level pragma to suppress this warning but
+        # with PCH enabled the pragma is lost when the PCH is loaded.
+        WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wno-invalid-offsetof)
+
+        # Ditto for SentinelLinkedList.h.
+        WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wno-dangling-pointer)
 
         # Match Clang's behavor and exit after emitting 20 errors.
         # https://bugs.webkit.org/show_bug.cgi?id=244621
@@ -246,6 +322,9 @@ if (COMPILER_IS_GCC_OR_CLANG)
 
     # FIXME: https://bugs.webkit.org/show_bug.cgi?id=299689
     WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-character-conversion)
+
+    # -Wunused-template seems to be outright broken with Clang 23.1. There are way too many false positives.
+    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-unused-template)
 endif ()
 
 if (COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)
@@ -265,15 +344,18 @@ string(TOLOWER ${CMAKE_HOST_SYSTEM_PROCESSOR} LOWERCASE_CMAKE_HOST_SYSTEM_PROCES
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" AND NOT "${LOWERCASE_CMAKE_HOST_SYSTEM_PROCESSOR}" MATCHES "x86_64")
     # To avoid out of memory when building with debug option in 32bit system.
     # See https://bugs.webkit.org/show_bug.cgi?id=77327
-    set(CMAKE_SHARED_LINKER_FLAGS_DEBUG "-Wl,--no-keep-memory ${CMAKE_SHARED_LINKER_FLAGS_DEBUG}")
+    add_link_options("$<$<CONFIG:Debug>:LINKER:--no-keep-memory>")
 endif ()
 
 if (LTO_MODE AND COMPILER_IS_CLANG AND NOT MSVC)
     set(CMAKE_C_FLAGS "-flto=${LTO_MODE} ${CMAKE_C_FLAGS}")
     set(CMAKE_CXX_FLAGS "-flto=${LTO_MODE} ${CMAKE_CXX_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "-flto=${LTO_MODE} ${CMAKE_EXE_LINKER_FLAGS}")
-    set(CMAKE_SHARED_LINKER_FLAGS "-flto=${LTO_MODE} ${CMAKE_SHARED_LINKER_FLAGS}")
-    set(CMAKE_MODULE_LINKER_FLAGS "-flto=${LTO_MODE} ${CMAKE_MODULE_LINKER_FLAGS}")
+    # Mirror to OBJC/OBJCXX for Apple ports — see compiler-flag macro comments.
+    set(CMAKE_OBJC_FLAGS "-flto=${LTO_MODE} ${CMAKE_OBJC_FLAGS}")
+    set(CMAKE_OBJCXX_FLAGS "-flto=${LTO_MODE} ${CMAKE_OBJCXX_FLAGS}")
+    # FIXME: consider passing LTO for Swift (it has never been toggled in Xcode
+    # either).
+    add_link_options("$<$<NOT:$<LINK_LANGUAGE:Swift>>:-flto=${LTO_MODE}>")
 elseif (LTO_MODE AND COMPILER_IS_CLANG AND MSVC AND NOT DEVELOPER_MODE)
     set(CMAKE_C_FLAGS "-flto=${LTO_MODE} ${CMAKE_C_FLAGS}")
     set(CMAKE_CXX_FLAGS "-flto=${LTO_MODE} ${CMAKE_CXX_FLAGS}")
@@ -281,6 +363,21 @@ elseif (LTO_MODE AND COMPILER_IS_CLANG AND MSVC AND NOT DEVELOPER_MODE)
     set(CMAKE_SHARED_LINKER_FLAGS "/opt:lldlto=2 ${CMAKE_SHARED_LINKER_FLAGS}")
     set(CMAKE_MODULE_LINKER_FLAGS "/opt:lldlto=2 ${CMAKE_MODULE_LINKER_FLAGS}")
 endif ()
+
+# PRESERVE_MOST is only profitable under LTO: without it, hot/cold splitting gives the extracted
+# cold region the default calling convention, so the preserve_most parent saves X9-X15 on its hot
+# path. See rdar://183555125.
+if (LTO_MODE AND COMPILER_IS_CLANG)
+    webkit_add_compile_definitions(HAVE_PRESERVE_MOST=1)
+endif ()
+
+if (COMPILER_IS_CLANG)
+    foreach (_lang C CXX OBJC OBJCXX)
+        set(CMAKE_${_lang}_COMPILE_OPTIONS_INSTANTIATE_TEMPLATES_PCH -fpch-instantiate-templates)
+    endforeach ()
+endif ()
+
+option(USE_PCH_CODEGEN "Emit the inline functions a prefix header defines once into a per-target PCH object file" ON)
 
 if (COMPILER_IS_GCC_OR_CLANG)
     # Careful: this needs to be above where ENABLED_COMPILER_SANITIZERS is set.
@@ -291,64 +388,65 @@ if (COMPILER_IS_GCC_OR_CLANG)
         if (MSVC AND WTF_CPU_X86_64)
             find_library(CLANG_ASAN_LIBRARY clang_rt.asan_dynamic_runtime_thunk-x86_64 ${CLANG_LIB_PATH})
             find_library(CLANG_ASAN_RT_LIBRARY clang_rt.asan_dynamic-x86_64 PATHS ${CLANG_LIB_PATH})
-            set(SANITIZER_LINK_FLAGS "\"${CLANG_ASAN_LIBRARY}\" \"${CLANG_ASAN_RT_LIBRARY}\"")
+            add_link_options(${CLANG_ASAN_LIBRARY} ${CLANG_ASAN_RT_LIBRARY})
         else ()
-            set(SANITIZER_LINK_FLAGS "-lpthread")
+            add_link_options(-lpthread)
         endif ()
 
+        set(_ld_sanitize "$<IF:$<LINK_LANGUAGE:Swift>,-sanitize,-fsanitize>")
+        set(_cc_sanitize "$<IF:$<COMPILE_LANGUAGE:Swift>,-sanitize,-fsanitize>")
         foreach (SANITIZER ${ENABLE_SANITIZERS})
             if (${SANITIZER} MATCHES "address")
                 WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fno-omit-frame-pointer -fno-optimize-sibling-calls")
-                set(SANITIZER_COMPILER_FLAGS "-fsanitize=address ${SANITIZER_COMPILER_FLAGS}")
-                set(SANITIZER_LINK_FLAGS "-fsanitize=address ${SANITIZER_LINK_FLAGS}")
-
+                add_compile_options("${_cc_sanitize}=address")
+                add_link_options("${_ld_sanitize}=address")
+                list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=address")
+                # C++ compilers already predefine __SANITIZE_ADDRESS__ under
+                # -fsanitize=address; define it explicitly so it also reaches
+                # Swift's clang importer.
+                # FIXME: Consider passing -sanitize=address to swift.
+                webkit_add_compile_definitions(__SANITIZE_ADDRESS__)
             elseif (${SANITIZER} MATCHES "undefined")
                 # Please keep these options synchronized with Tools/sanitizer/ubsan.xcconfig
                 WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fno-omit-frame-pointer -fno-delete-null-pointer-checks -fno-optimize-sibling-calls")
-                # -fsanitize=vptr is disabled because incompatible with -fno-rtti
-                set(SANITIZER_COMPILER_FLAGS "-fsanitize=undefined -fno-sanitize=vptr ${SANITIZER_COMPILER_FLAGS}")
-                set(SANITIZER_LINK_FLAGS "-fsanitize=undefined ${SANITIZER_LINK_FLAGS}")
+                # -fsanitize=vptr is disabled because incompatible with -fno-rtti.
+                # swiftc rejects -fno-sanitize=, so that one is C-family only.
+                add_compile_options("${_cc_sanitize}=undefined"
+                                    "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-sanitize=vptr>")
+                add_link_options("${_ld_sanitize}=undefined")
+                list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=undefined")
 
             elseif (${SANITIZER} MATCHES "thread" AND NOT MSVC)
-                set(SANITIZER_COMPILER_FLAGS "-fsanitize=thread ${SANITIZER_COMPILER_FLAGS}")
-                set(SANITIZER_LINK_FLAGS "-fsanitize=thread ${SANITIZER_LINK_FLAGS}")
+                add_compile_options("${_cc_sanitize}=thread")
+                add_link_options("${_ld_sanitize}=thread")
+                list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=thread")
+                webkit_add_compile_definitions(__SANITIZE_THREAD__)
 
             elseif (${SANITIZER} MATCHES "memory" AND COMPILER_IS_CLANG AND NOT MSVC)
-                set(SANITIZER_COMPILER_FLAGS "-fsanitize=memory ${SANITIZER_COMPILER_FLAGS}")
-                set(SANITIZER_LINK_FLAGS "-fsanitize=memory ${SANITIZER_LINK_FLAGS}")
+                add_compile_options("${_cc_sanitize}=memory")
+                add_link_options("${_ld_sanitize}=memory")
+                list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=memory")
 
             elseif (${SANITIZER} MATCHES "leak" AND NOT MSVC)
-                set(SANITIZER_COMPILER_FLAGS "-fsanitize=leak ${SANITIZER_COMPILER_FLAGS}")
-                set(SANITIZER_LINK_FLAGS "-fsanitize=leak ${SANITIZER_LINK_FLAGS}")
+                add_compile_options("${_cc_sanitize}=leak")
+                add_link_options("${_ld_sanitize}=leak")
+                list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=leak")
 
             else ()
                 message(FATAL_ERROR "Unsupported sanitizer: ${SANITIZER}")
             endif ()
         endforeach ()
-
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${SANITIZER_COMPILER_FLAGS}")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SANITIZER_COMPILER_FLAGS}")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${SANITIZER_LINK_FLAGS}")
-        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${SANITIZER_LINK_FLAGS}")
-        set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${SANITIZER_LINK_FLAGS}")
+        unset(_ld_sanitize)
+        unset(_cc_sanitize)
     endif ()
 endif ()
 
-if (NOT MSVC)
-    string(REGEX MATCHALL "-fsanitize=[^ ]*" ENABLED_COMPILER_SANITIZERS ${CMAKE_CXX_FLAGS})
-endif ()
-
 if (UNIX AND NOT APPLE AND NOT ENABLED_COMPILER_SANITIZERS)
-    set(CMAKE_SHARED_LINKER_FLAGS "-Wl,--no-undefined ${CMAKE_SHARED_LINKER_FLAGS}")
+    # Shared/module libraries only.
+    add_link_options(
+        "$<$<OR:$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>>:LINKER:--no-undefined>")
 endif ()
 
-if (MSVC)
-    set(CODE_GENERATOR_PREPROCESSOR "\"${CMAKE_CXX_COMPILER}\" /nologo /EP /TP")
-elseif (COMPILER_IS_QCC)
-    set(CODE_GENERATOR_PREPROCESSOR "\"${CMAKE_CXX_COMPILER}\" -E -Wp,-P -x c++")
-else ()
-    set(CODE_GENERATOR_PREPROCESSOR "\"${CMAKE_CXX_COMPILER}\" -E -P -x c++")
-endif ()
 
 # Ensure that the default include system directories are added to the list of CMake implicit includes.
 # This workarounds an issue that happens when using GCC 6 and using system includes (-isystem).
@@ -374,8 +472,8 @@ if (COMPILER_IS_GCC_OR_CLANG)
    set(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES} ${SYSTEM_INCLUDE_DIRS})
 endif ()
 
-if (COMPILER_IS_GCC_OR_CLANG)
-    set(ATOMIC_TEST_SOURCE "
+if (COMPILER_IS_GCC_OR_CLANG AND NOT APPLE)
+    set(ATOMIC_TEST_SOURCE [=[
 #include <atomic>
 #include <optional>
 #include <stdbool.h>
@@ -401,6 +499,13 @@ if (COMPILER_IS_GCC_OR_CLANG)
 
 #define CPU(_FEATURE) (defined CPU_##_FEATURE && CPU_##_FEATURE)
 
+#if COMPILER(CLANG)
+#pragma clang optimize off
+#endif
+
+#if COMPILER(GCC)
+#pragma GCC optimize("O0")
+#endif
 
 #if COMPILER(GCC_COMPATIBLE)
 /* __LP64__ is not defined on 64bit Windows since it uses LLP64. Using __SIZEOF_POINTER__ is simpler. */
@@ -443,8 +548,9 @@ static inline bool compare_and_swap_uint64_weak(uint64_t* ptr, uint64_t old_valu
 #endif
 }
 
+std::atomic<std::optional<double>> d;
+
 int main() {
-    std::atomic<std::optional<double>> d;
     d = 0.0;
     bool y = false;
     bool expected = true;
@@ -462,19 +568,22 @@ int main() {
                   l) ? 0 : 1;
     return static_cast<int>(result + d.load().value());
 }
-    ")
+    ]=])
+    cmake_push_check_state(RESET)
+    set(CMAKE_REQUIRED_FLAGS "--std=c++17")
     check_cxx_source_compiles("${ATOMIC_TEST_SOURCE}" ATOMICS_ARE_BUILTIN)
     if (NOT ATOMICS_ARE_BUILTIN)
         set(CMAKE_REQUIRED_LIBRARIES atomic)
         check_cxx_source_compiles("${ATOMIC_TEST_SOURCE}" ATOMICS_REQUIRE_LIBATOMIC)
-        unset(CMAKE_REQUIRED_LIBRARIES)
     endif ()
+    cmake_pop_check_state()
 
     # <filesystem> vs <experimental/filesystem>
     set(FILESYSTEM_TEST_SOURCE "
         #include <filesystem>
         int main() { std::filesystem::path p1(\"\"); std::filesystem::status(p1); }
     ")
+    cmake_push_check_state(RESET)
     set(CMAKE_REQUIRED_FLAGS "--std=c++2b")
     check_cxx_source_compiles("${FILESYSTEM_TEST_SOURCE}" STD_FILESYSTEM_IS_AVAILABLE)
     if (NOT STD_FILESYSTEM_IS_AVAILABLE)
@@ -487,12 +596,11 @@ int main() {
         ")
         set(CMAKE_REQUIRED_LIBRARIES stdc++fs)
         check_cxx_source_compiles("${EXPERIMENTAL_FILESYSTEM_TEST_SOURCE}" STD_EXPERIMENTAL_FILESYSTEM_IS_AVAILABLE)
-        unset(CMAKE_REQUIRED_LIBRARIES)
     endif ()
-    unset(CMAKE_REQUIRED_FLAGS)
+    cmake_pop_check_state()
 endif ()
 
-if (NOT WTF_PLATFORM_COCOA)
+if (NOT APPLE)
   set(FLOAT16_TEST_SOURCE "
 int main() {
   _Float16 f;
@@ -518,9 +626,10 @@ if (WTF_CPU_ARM)
         set(CLANG_EXTRA_ARM_ARGS " -mthumb")
     endif ()
 
+    cmake_push_check_state(RESET)
     set(CMAKE_REQUIRED_FLAGS "${CLANG_EXTRA_ARM_ARGS}")
     CHECK_CXX_SOURCE_COMPILES("${ARM_THUMB2_TEST_SOURCE}" ARM_THUMB2_DETECTED)
-    unset(CMAKE_REQUIRED_FLAGS)
+    cmake_pop_check_state()
 
     if (ARM_THUMB2_DETECTED AND NOT (${CMAKE_SYSTEM_NAME} STREQUAL "Darwin"))
         string(APPEND CMAKE_C_FLAGS " ${CLANG_EXTRA_ARM_ARGS}")
@@ -535,6 +644,3 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND WTF_CPU_MIPS)
     # (see comment #28 in the link above).
     WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-mno-lxc1-sxc1)
 endif ()
-
-# FIXME: Enable pre-compiled headers for all ports <https://webkit.org/b/139438>
-set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)

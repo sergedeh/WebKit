@@ -14,7 +14,6 @@ function checkEquals(input, expected) {
     });
 }
 
-// Keywords get serialized as keywords 
 checkEquals("circle(at left bottom)", "circle(at left bottom)");
 checkEquals("circle(at bottom left)", "circle(at left bottom)");
 checkEquals("circle(at right calc(10% + 5px))",
@@ -57,17 +56,15 @@ checkEquals("ellipse(closest-side farthest-side at 50% 50%)",
 checkEquals("ellipse(closest-side 10% at 50% 50%)",
             "ellipse(closest-side 10% at 50% 50%)");
 
-// Keywords and offsets are both serialized for 4 component position
+  // Preserve 4-value positions as-is.
 checkEquals("circle(at right 5px bottom 10px)",
             "circle(at right 5px bottom 10px)");
 checkEquals("ellipse(at right 5px bottom 10px)",
             "ellipse(at right 5px bottom 10px)");
 
-// Don't convert zero lengths to 0%
 checkEquals("circle(at right 5% top 0px)", "circle(at right 5% top 0px)");
 checkEquals("ellipse(at right 5% top 0px)", "ellipse(at right 5% top 0px)");
 
-// Maintain calcs
 checkEquals("circle(at right calc(10% + 5px) bottom calc(10% + 5px))",
             "circle(at right calc(10% + 5px) bottom calc(10% + 5px))");
 checkEquals("ellipse(at right calc(10% + 5px) bottom calc(10% + 5px))",

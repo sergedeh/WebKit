@@ -49,11 +49,11 @@ CharacterData::~CharacterData()
     willBeDeletedFrom(Ref<Document> { document() });
 }
 
-static bool canUseSetDataOptimization(const CharacterData& node)
+static bool NODELETE canUseSetDataOptimization(const CharacterData& node)
 {
-    Ref document = node.document();
-    return !document->hasListenerType(Document::ListenerType::DOMCharacterDataModified) && !document->hasMutationObserversOfType(MutationObserverOptionType::CharacterData)
-        && !document->hasListenerType(Document::ListenerType::DOMSubtreeModified) && !is<HTMLStyleElement>(node.parentNode());
+    auto& document = node.document();
+    return !document.hasListenerType(Document::ListenerType::DOMCharacterDataModified) && !document.hasMutationObserversOfType(MutationObserverOptionType::CharacterData)
+        && !document.hasListenerType(Document::ListenerType::DOMSubtreeModified) && !is<HTMLStyleElement>(node.parentNode());
 }
 
 void CharacterData::setData(const String& data)
@@ -65,7 +65,7 @@ void CharacterData::setData(const String& data)
         Ref document = this->document();
         document->textRemoved(*this, 0, oldLength);
         if (RefPtr frame = document->frame())
-            frame->checkedSelection()->textWasReplaced(*this, 0, oldLength, oldLength);
+            protect(frame->selection())->textWasReplaced(*this, 0, oldLength, oldLength);
         return;
     }
 
@@ -81,10 +81,18 @@ ExceptionOr<String> CharacterData::substringData(unsigned offset, unsigned count
     return m_data.substring(offset, count);
 }
 
-static ContainerNode::ChildChange makeChildChange(CharacterData& characterData, ContainerNode::ChildChange::Source source)
+static ContainerNode::ChildChange::Type NODELETE textChildChangeType(unsigned oldLength, bool toEmpty)
+{
+    if (oldLength && !toEmpty)
+        return ContainerNode::ChildChange::Type::TextChanged;
+    return toEmpty ? ContainerNode::ChildChange::Type::TextRemoved : ContainerNode::ChildChange::Type::TextInserted;
+}
+
+static ContainerNode::ChildChange NODELETE makeChildChange(CharacterData& characterData, bool toEmpty, ContainerNode::ChildChange::Source source)
 {
     return {
-        ContainerNode::ChildChange::Type::TextChanged,
+        textChildChangeType(characterData.length(), toEmpty),
+        nullptr,
         nullptr,
         ElementTraversal::previousSibling(characterData),
         ElementTraversal::nextSibling(characterData),
@@ -93,27 +101,32 @@ static ContainerNode::ChildChange makeChildChange(CharacterData& characterData, 
     };
 }
 
-void CharacterData::parserAppendData(StringView string)
+void CharacterData::parserAppendData(StringView string, StringBuilder& buffer)
 {
-    auto childChange = makeChildChange(*this, ContainerNode::ChildChange::Source::Parser);
+    auto childChange = makeChildChange(*this, false, ContainerNode::ChildChange::Source::Parser);
     std::optional<Style::ChildChangeInvalidation> styleInvalidation;
     if (RefPtr parent = parentNode())
         styleInvalidation.emplace(*parent, childChange);
 
-    String oldData = m_data;
-    m_data = makeString(m_data, string);
+    unsigned oldLength = length();
+
+    if (buffer.isEmpty() && !m_data.isEmpty())
+        buffer.append(m_data);
+
+    buffer.append(string);
+    m_data = buffer.toStringPreserveCapacity();
 
     clearStateFlag(StateFlag::ContainsOnlyASCIIWhitespaceIsValid);
 
     ASSERT(!renderer() || is<Text>(*this));
     if (auto text = dynamicDowncast<Text>(*this))
-        text->updateRendererAfterContentChange(oldData.length(), 0);
+        text->updateRendererAfterContentChange(oldLength, 0);
 
     notifyParentAfterChange(childChange);
 
     auto mutationRecipients = MutationObserverInterestGroup::createForCharacterDataMutation(*this);
     if (mutationRecipients) [[unlikely]]
-        mutationRecipients->enqueueMutationRecord(MutationRecord::createCharacterData(*this, oldData));
+        mutationRecipients->enqueueMutationRecord(MutationRecord::createCharacterData(*this, m_data.left(oldLength)));
 }
 
 void CharacterData::appendData(const String& data)
@@ -179,14 +192,15 @@ void CharacterData::setDataWithoutUpdate(const String& data)
 
 void CharacterData::setDataAndUpdate(const String& newData, unsigned offsetOfReplacedData, unsigned oldLength, unsigned newLength, UpdateLiveRanges shouldUpdateLiveRanges)
 {
-    auto childChange = makeChildChange(*this, ContainerNode::ChildChange::Source::API);
+    auto childChange = makeChildChange(*this, !newData.length(), ContainerNode::ChildChange::Source::API);
 
-    String oldData = WTF::move(m_data);
+    String oldData;
     {
         std::optional<Style::ChildChangeInvalidation> styleInvalidation;
         if (RefPtr parent = parentNode())
             styleInvalidation.emplace(*parent, childChange);
 
+        oldData = WTF::move(m_data);
         m_data = newData;
     }
 
@@ -205,7 +219,7 @@ void CharacterData::setDataAndUpdate(const String& newData, unsigned offsetOfRep
         processingIntruction->checkStyleSheet();
 
     if (RefPtr frame = document->frame())
-        frame->checkedSelection()->textWasReplaced(*this, offsetOfReplacedData, oldLength, newLength);
+        protect(frame->selection())->textWasReplaced(*this, offsetOfReplacedData, oldLength, newLength);
 
     notifyParentAfterChange(childChange);
 
@@ -234,7 +248,7 @@ void CharacterData::dispatchModifiedEvent(const String& oldData)
         dispatchSubtreeModifiedEvent();
     }
 
-    InspectorInstrumentation::characterDataModified(protectedDocument(), *this);
+    InspectorInstrumentation::characterDataModified(protect(document()), *this);
 }
 
 bool CharacterData::containsOnlyASCIIWhitespace() const

@@ -23,17 +23,17 @@
 
 #if HAVE_DIGITAL_CREDENTIALS_UI
 
-internal import IdentityDocumentServices
-internal import IdentityDocumentServicesUI
+import IdentityDocumentServices
+import IdentityDocumentServicesUI
 import os
 
-#if canImport(UIKit)
+#if WTF_PLATFORM_IOS_FAMILY
 import UIKit
 #else
 import AppKit
 #endif
 
-#if canImport(UIKit)
+#if WTF_PLATFORM_IOS_FAMILY
 private typealias IdentityDocumentPresentationAnchor = UIWindow
 #else
 private typealias IdentityDocumentPresentationAnchor = NSWindow
@@ -50,7 +50,13 @@ extension WKIdentityDocumentPresentmentController {
 
         private let controller: IdentityDocumentWebPresentmentController
 
-        private var performRequestTask: Task<IdentityDocumentWebPresentmentResponse, Error>?
+        private var performRequestTask: Task<any IdentityDocumentWebPresentmentResponse, any Error>?
+
+        // Single-use: one request per instance, so isCancelled is terminal and never reset.
+        // hasStartedRequest makes reuse fail loudly rather than silently reject as cancelled.
+        private var isCancelled = false
+
+        private var hasStartedRequest = false
 
         weak var delegate: (any WKIdentityDocumentPresentmentDelegate)?
 
@@ -61,6 +67,17 @@ extension WKIdentityDocumentPresentmentController {
         }
 
         func perform(request: WKIdentityDocumentPresentmentRequest) async throws -> WKIdentityDocumentPresentmentResponse {
+            if isCancelled {
+                Self.logger.debug("IdentityDocumentPresentmentController perform called after cancellation; not presenting")
+                throw WKIdentityDocumentPresentmentError(.cancelled)
+            }
+
+            if hasStartedRequest {
+                assertionFailure("IdentityDocumentPresentmentController perform called more than once on a single-use controller")
+                throw WKIdentityDocumentPresentmentError(.requestInProgress)
+            }
+            hasStartedRequest = true
+
             do {
                 Self.logger.debug("IdentityDocumentPresentmentController performRequest called with request \(String(describing: request))")
                 let convertedRequests = request.mobileDocumentRequests.map(ISO18013MobileDocumentRequest.init(_:))
@@ -68,14 +85,16 @@ extension WKIdentityDocumentPresentmentController {
                 Self.logger.debug("IdentityDocumentPresentmentController build converted request \(String(describing: convertedRequests))")
 
                 let task = Task {
-                    return try await controller.performRequests(convertedRequests, origin: request.origin)
+                    try await controller.performRequests(convertedRequests, origin: request.origin)
                 }
 
                 performRequestTask = task
                 let response = try await task.value
 
                 guard let response = response as? ISO18013MobileDocumentResponse else {
-                    Self.logger.error("IdentityDocumentPresentmentController unexpectedly received a response that is not of type ISO18013MobileDocumentResponse")
+                    Self.logger.error(
+                        "IdentityDocumentPresentmentController unexpectedly received a response that is not of type ISO18013MobileDocumentResponse"
+                    )
                     throw WKIdentityDocumentPresentmentError(.invalidRequest)
                 }
 
@@ -97,12 +116,15 @@ extension WKIdentityDocumentPresentmentController {
                 default:
                     throw WKIdentityDocumentPresentmentError(.unknown, userInfo: userInfo)
                 }
+            } catch is CancellationError {
+                throw WKIdentityDocumentPresentmentError(.cancelled)
             } catch {
                 throw WKIdentityDocumentPresentmentError(.unknown)
             }
         }
 
         func cancelRequest() {
+            isCancelled = true
             performRequestTask?.cancel()
         }
     }
@@ -110,12 +132,18 @@ extension WKIdentityDocumentPresentmentController {
 
 // MARK: WKIdentityDocumentPresentmentController.Base  IdentityDocumentPresentmentControllerPresentationContextProviding & IdentityDocumentWebPresentmentControllerDelegate
 
-extension WKIdentityDocumentPresentmentController.Base: IdentityDocumentPresentmentControllerPresentationContextProviding, IdentityDocumentWebPresentmentControllerDelegate {
-    func presentationAnchorForPresentmentController(_ presentmentController: any IdentityDocumentPresentmentControlling) -> IdentityDocumentPresentationAnchor? {
+extension WKIdentityDocumentPresentmentController.Base: IdentityDocumentPresentmentControllerPresentationContextProviding,
+    IdentityDocumentWebPresentmentControllerDelegate
+{
+    func presentationAnchorForPresentmentController(
+        _ presentmentController: any IdentityDocumentPresentmentControlling
+    ) -> IdentityDocumentPresentationAnchor? {
         delegate?.presentationAnchor()
     }
 
-    func rawRequestsForWebPresentmentController(_ webPresentmentController: IdentityDocumentWebPresentmentController) async -> [IdentityDocumentWebPresentmentRawRequest] {
+    func rawRequestsForWebPresentmentController(
+        _ webPresentmentController: IdentityDocumentWebPresentmentController
+    ) async -> [IdentityDocumentWebPresentmentRawRequest] {
         guard let rawRequests = await delegate?.fetchRawRequests() else {
             Self.logger.error("IdentityDocumentPresentmentController delegate is not implemented, sending no raw requests")
             return []
@@ -136,8 +164,11 @@ extension WKIdentityDocumentPresentmentController.Base: IdentityDocumentPresentm
 
 // MARK: WKIdentityDocumentPresentmentController
 
-@objc @implementation extension WKIdentityDocumentPresentmentController {
-    @nonobjc private let base = Base()
+@objc
+@implementation
+extension WKIdentityDocumentPresentmentController {
+    @nonobjc
+    private let base = Base()
 
     weak var delegate: (any WKIdentityDocumentPresentmentDelegate)? {
         get { base.delegate }

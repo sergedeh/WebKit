@@ -39,18 +39,15 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-template HTMLNameCollection<WindowNameCollection, CollectionTraversalType::Descendants>::~HTMLNameCollection();
-template HTMLNameCollection<DocumentNameCollection, CollectionTraversalType::Descendants>::~HTMLNameCollection();
+template HTMLNameCollection<WindowNameCollection>::~HTMLNameCollection();
+template HTMLNameCollection<DocumentNameCollection>::~HTMLNameCollection();
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WindowNameCollection);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DocumentNameCollection);
 
 bool WindowNameCollection::elementMatchesIfNameAttributeMatch(const Element& element)
 {
-    return is<HTMLEmbedElement>(element)
-        || is<HTMLFormElement>(element)
-        || is<HTMLImageElement>(element)
-        || is<HTMLObjectElement>(element);
+    return isAnyOf<HTMLEmbedElement, HTMLFormElement, HTMLImageElement, HTMLObjectElement>(element);
 }
 
 bool WindowNameCollection::elementMatches(const Element& element, const AtomString& name)
@@ -60,34 +57,29 @@ bool WindowNameCollection::elementMatches(const Element& element, const AtomStri
         || element.getIdAttribute() == name;
 }
 
-static inline bool isObjectElementForDocumentNameCollection(const Element& element)
-{
-    auto* objectElement = dynamicDowncast<HTMLObjectElement>(element);
-    return objectElement && objectElement->isExposed();
-}
-
 bool DocumentNameCollection::elementMatchesIfIdAttributeMatch(const Element& element)
 {
     // FIXME: We need to fix HTMLImageElement to update the hash map for us when the name attribute is removed.
-    return isObjectElementForDocumentNameCollection(element)
+    return is<HTMLObjectElement>(element)
         || (is<HTMLImageElement>(element) && element.hasName() && !element.getNameAttribute().isEmpty());
 }
 
 bool DocumentNameCollection::elementMatchesIfNameAttributeMatch(const Element& element)
 {
-    return isObjectElementForDocumentNameCollection(element)
-        || is<HTMLEmbedElement>(element)
-        || is<HTMLFormElement>(element)
-        || is<HTMLIFrameElement>(element)
-        || is<HTMLImageElement>(element);
+    return isAnyOf<HTMLEmbedElement, HTMLFormElement, HTMLIFrameElement, HTMLImageElement, HTMLObjectElement>(element);
 }
 
 bool DocumentNameCollection::elementMatches(const Element& element, const AtomString& name)
 {
-    // Find images, forms, applets, embeds, objects and iframes by name, applets and object by id, and images by id
-    // but only if they have a name attribute (this very strange rule matches IE).
-    return (elementMatchesIfNameAttributeMatch(element) && element.getNameAttribute() == name)
-        || (elementMatchesIfIdAttributeMatch(element) && element.getIdAttribute() == name);
+    // https://html.spec.whatwg.org/multipage/dom.html#dom-document-nameditem
+    if (is<HTMLObjectElement>(element))
+        return element.getNameAttribute() == name || element.getIdAttribute() == name;
+
+    if (is<HTMLImageElement>(element)) {
+        const auto& nameValue = element.getNameAttribute();
+        return nameValue == name || (element.getIdAttribute() == name && !nameValue.isEmpty());
+    }
+    return isAnyOf<HTMLEmbedElement, HTMLFormElement, HTMLIFrameElement>(element) && element.getNameAttribute() == name;
 }
 
 }

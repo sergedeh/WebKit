@@ -37,7 +37,7 @@ namespace WebCore {
 
 static Seconds timestampResolution { 5_s };
 
-typedef HashMap<RegistrableDomain, unsigned, RegistrableDomain::RegistrableDomainHash, HashTraits<RegistrableDomain>, HashTraits<unsigned>>::KeyValuePairType ResourceLoadStatisticsValue;
+using ResourceLoadStatisticsValue = HashMap<RegistrableDomain, unsigned, RegistrableDomain::RegistrableDomainHash, HashTraits<RegistrableDomain>, HashTraits<unsigned>>::KeyValuePairType;
 
 static void encodeHashSet(KeyedEncoder& encoder, const String& label,  const String& key, const HashSet<RegistrableDomain>& hashSet)
 {
@@ -489,13 +489,6 @@ String ResourceLoadStatistics::toString() const
 #endif
 
     return builder.toString();
-}
-
-template <typename T>
-static void mergeHashCountedSet(HashCountedSet<T>& to, const HashCountedSet<T>& from)
-{
-    for (auto& entry : from)
-        to.add(entry.key, entry.value);
 }
 
 template <typename T>

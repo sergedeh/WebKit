@@ -17,7 +17,7 @@ module pal [system] {
     explicit module Core {
         umbrella "."
 
-        requires cplusplus
+        requires cplusplus23
 
         explicit module * {
             export *
@@ -28,3 +28,5 @@ module pal [system] {
 
     export *
 }
+
+// (v8) This comment ensures an incremental build causes this module to rebuild (rdar://170129992)

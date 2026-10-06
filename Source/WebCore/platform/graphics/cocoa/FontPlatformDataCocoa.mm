@@ -26,12 +26,10 @@
 
 #import "FontCacheCoreText.h"
 #import "SharedBuffer.h"
-#import <pal/spi/cf/CoreTextSPI.h>
 #import <wtf/Hasher.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <CoreText/CoreText.h>
-#import <pal/spi/cg/CoreGraphicsSPI.h>
 #endif
 
 namespace WebCore {
@@ -39,7 +37,7 @@ namespace WebCore {
 unsigned FontPlatformData::hash() const
 {
     // FIXME: Hashing a CFHash is unfortunate here.
-    return computeHash(CFHash(m_font.get()), m_widthVariant, m_isHashTableDeletedValue, m_textRenderingMode, m_orientation, m_orientation, m_syntheticBold, m_syntheticOblique);
+    return computeHash(CFHash(m_font.get()), m_isHashTableDeletedValue, m_metadata.widthVariant, m_metadata.textRenderingMode, m_metadata.orientation, m_metadata.isSyntheticBold, m_metadata.isSyntheticOblique, m_metadata.metricsOverrides);
 }
 
 bool FontPlatformData::platformIsEqual(const FontPlatformData& other) const
@@ -56,13 +54,13 @@ RefPtr<SharedBuffer> FontPlatformData::platformOpenTypeTable(uint32_t) const
 
 Vector<FontPlatformData::FontVariationAxis> FontPlatformData::variationAxes(ShouldLocalizeAxisNames shouldLocalizeAxisNames) const
 {
-    auto platformFont = ctFont();
+    RetainPtr platformFont = ctFont();
     if (!platformFont)
         return { };
     
-    return WTF::map(defaultVariationValues(platformFont, shouldLocalizeAxisNames), [](auto&& entry) {
+    return WTF::map(defaultVariationValues(platformFont.get(), shouldLocalizeAxisNames), [](auto&& entry) {
         auto& [tag, values] = entry;
-        return FontPlatformData::FontVariationAxis { values.axisName, String(tag), values.defaultValue, values.minimumValue, values.maximumValue };
+        return FontPlatformData::FontVariationAxis { values.axisName, String::fromLatin1(tag), values.defaultValue, values.minimumValue, values.maximumValue };
     });
 }
 

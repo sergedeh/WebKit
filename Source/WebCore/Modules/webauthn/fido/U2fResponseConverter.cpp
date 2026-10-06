@@ -91,10 +91,10 @@ static Vector<uint8_t> createAttestedCredentialDataFromU2fRegisterResponse(const
     if (credentialId.isEmpty())
         return { };
 
-    return buildAttestedCredentialData(Vector<uint8_t>(aaguidLength, 0), credentialId, publicKey);
+    return buildAttestedCredentialData(Vector<uint8_t>(FillWith { }, aaguidLength, 0), credentialId, publicKey);
 }
 
-static size_t parseX509Length(const Vector<uint8_t>& u2fData, size_t offset)
+static size_t NODELETE parseX509Length(const Vector<uint8_t>& u2fData, size_t offset)
 {
     if (u2fData.size() <= offset || u2fData[offset] != SequenceMark)
         return 0;
@@ -169,7 +169,7 @@ RefPtr<AuthenticatorAttestationResponse> readU2fRegisterResponse(const String& r
 
 RefPtr<AuthenticatorAssertionResponse> readU2fSignResponse(const String& rpId, const WebCore::BufferSource& keyHandle, const Vector<uint8_t>& u2fData, AuthenticatorAttachment attachment)
 {
-    if (!keyHandle.length() || u2fData.size() <= signatureIndex)
+    if (!keyHandle.byteLength() || u2fData.size() <= signatureIndex)
         return nullptr;
 
     // 1 byte flags, 4 bytes counter

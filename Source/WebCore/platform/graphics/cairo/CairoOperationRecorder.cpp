@@ -353,7 +353,7 @@ void OperationRecorder::fillRoundedRect(const FloatRoundedRect& roundedRect, con
             Cairo::State::setCompositeOperation(platformContext, arg<2>(), arg<3>());
 
             auto& rect = arg<0>();
-            if (rect.isRounded())
+            if (rect.hasNonZeroRadii())
                 Cairo::fillRoundedRect(platformContext, rect, arg<1>(), arg<4>());
             else
                 Cairo::fillRect(platformContext, rect.rect(), arg<1>(), arg<4>());
@@ -616,7 +616,7 @@ void OperationRecorder::drawFilteredImageBuffer(ImageBuffer* srcImage, const Flo
     append(createCommand<DrawFilteredImageBuffer>(nativeImage->platformImage(), FloatRect(result->absoluteImageRect()), FloatRect({ } , imageBuffer->logicalSize()), filter.filterScale(), ImagePaintingOptions(state.imageInterpolationQuality()), state.alpha(), Cairo::ShadowState(state)));
 }
 
-void OperationRecorder::drawNativeImage(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void OperationRecorder::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
 {
     struct DrawNativeImage final : PaintingOperation, OperationData<RefPtr<cairo_surface_t>, FloatRect, FloatRect, ImagePaintingOptions, float, Cairo::ShadowState> {
         virtual ~DrawNativeImage() = default;
@@ -633,10 +633,10 @@ void OperationRecorder::drawNativeImage(NativeImage& nativeImage, const FloatRec
     };
 
     auto& state = this->state();
-    append(createCommand<DrawNativeImage>(nativeImage.platformImage(), destRect, srcRect, ImagePaintingOptions(options, state.imageInterpolationQuality()), state.alpha(), Cairo::ShadowState(state)));
+    append(createCommand<DrawNativeImage>(nativeImage.platformImage(), destRect, srcRect, ImagePaintingOptions(options, imageInterpolationQualityForOptions(options)), state.alpha(), Cairo::ShadowState(state)));
 }
 
-void OperationRecorder::drawPattern(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void OperationRecorder::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
 {
     struct DrawPattern final : PaintingOperation, OperationData<RefPtr<cairo_surface_t>, IntSize, FloatRect, FloatRect, AffineTransform, FloatPoint, FloatSize, ImagePaintingOptions> {
         virtual ~DrawPattern() = default;
@@ -762,7 +762,7 @@ void OperationRecorder::drawEllipse(const FloatRect& rect)
     append(createCommand<DrawEllipse>(rect, state.fillBrush().color(), state.strokeStyle(), state.strokeBrush().color(), state.strokeThickness()));
 }
 
-void OperationRecorder::drawFocusRing(const Path& path, float outlineWidth, const Color& color)
+void OperationRecorder::drawFocusRing(const Path& path, float outlineWidth, const Color& color, float)
 {
 #if USE(THEME_ADWAITA)
     Adwaita::paintFocus(*this, path, color);
@@ -786,7 +786,7 @@ void OperationRecorder::drawFocusRing(const Path& path, float outlineWidth, cons
 #endif
 }
 
-void OperationRecorder::drawFocusRing(const Vector<FloatRect>& rects, float outlineOffset, float outlineWidth, const Color& color)
+void OperationRecorder::drawFocusRing(const Vector<FloatRect>& rects, float outlineWidth, const Color& color, float)
 {
 #if USE(THEME_ADWAITA)
     Adwaita::paintFocus(*this, rects, color);
@@ -808,7 +808,6 @@ void OperationRecorder::drawFocusRing(const Vector<FloatRect>& rects, float outl
 
     append(createCommand<DrawFocusRing>(rects, outlineWidth, color));
 #endif
-    UNUSED_PARAM(outlineOffset);
 }
 
 void OperationRecorder::save(GraphicsContextState::Purpose purpose)
@@ -1182,10 +1181,10 @@ void OperationRecorder::append(std::unique_ptr<PaintingOperation>&& command)
 }
 
 #if ENABLE(VIDEO)
-void OperationRecorder::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ImageOrientation orientation, bool shouldDiscardAlpha)
+void OperationRecorder::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
 {
     // FIXME: Not implemented.
-    GraphicsContext::drawVideoFrame(frame, destination, orientation, shouldDiscardAlpha);
+    GraphicsContext::drawVideoFrame(frame, destination, shouldDiscardAlpha, options);
 }
 #endif
 

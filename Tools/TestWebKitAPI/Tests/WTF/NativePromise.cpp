@@ -33,8 +33,8 @@
 #include "config.h"
 #include <wtf/NativePromise.h>
 
-#include "Test.h"
-#include "Utilities.h"
+#include "Helpers/Test.h"
+#include "Helpers/Utilities.h"
 #include <wtf/Atomics.h>
 #include <wtf/Lock.h>
 #include <wtf/Locker.h>
@@ -497,14 +497,14 @@ TEST(NativePromise, AsyncResolve)
     AutoWorkQueue awq;
     auto queue = awq.queue();
     queue->dispatch([queue] {
-        auto producer = adoptRef(new RefCountedProducer());
+        RefPtr producer = adoptRef(new RefCountedProducer());
         auto promise = producer->promise();
 
         // Kick off three racing tasks, and make sure we get the one that finishes
         // earliest.
-        auto delayedSettleTask1 = adoptRef(new DelayedSettle(queue, producer, TestPromise::Result(32), 10));
-        auto delayedSettleTask2 = adoptRef(new DelayedSettle(queue, producer, TestPromise::Result(42), 5));
-        auto delayedSettleTask3 = adoptRef(new DelayedSettle(queue, producer, TestPromise::Error(32.0), 7));
+        Ref delayedSettleTask1 = adoptRef(*new DelayedSettle(queue, producer, TestPromise::Result(32), 10));
+        Ref delayedSettleTask2 = adoptRef(*new DelayedSettle(queue, producer, TestPromise::Result(42), 5));
+        Ref delayedSettleTask3 = adoptRef(*new DelayedSettle(queue, producer, TestPromise::Error(32.0), 7));
 
         delayedSettleTask1->dispatch();
         delayedSettleTask2->dispatch();
@@ -539,10 +539,10 @@ TEST(NativePromise, CompletionPromises)
                 },
                 doFailAndReject())->then(queue,
                     [queue](int val) {
-                        auto producer = adoptRef(new RefCountedProducer());
+                        RefPtr producer = adoptRef(new RefCountedProducer());
                         auto p = producer->promise();
 
-                        auto resolver = adoptRef(new DelayedSettle(queue, producer, TestPromise::Result(val - 8), 10));
+                        Ref resolver = adoptRef(*new DelayedSettle(queue, producer, TestPromise::Result(val - 8), 10));
                         resolver->dispatch();
                         return p;
                     },
@@ -677,7 +677,7 @@ TEST(NativePromise, InvokeAsyncWithExpected)
 {
     runInCurrentRunLoopUntilDone([](auto& runLoop, bool& done) {
         auto asyncMethodWithExpected = [] {
-            return Expected<int, long> { 1 };
+            return std::expected<int, long> { 1 };
         };
 
         invokeAsync(runLoop, WTF::move(asyncMethodWithExpected))->whenSettled(runLoop, [&](auto&& result) {
@@ -979,7 +979,7 @@ TEST(NativePromise, MoveOnlyType)
     MyPromise::createAndResolve(makeUniqueWithoutFastMallocCheck<int>(87))->whenSettled(queue,
         [queue](MyPromise::Result&& val) {
             EXPECT_TRUE(val.has_value());
-            EXPECT_EQ(87, *(val.value()));
+            EXPECT_EQ(87, *(*val));
         });
 
     MyPromise::createAndReject(makeUniqueWithoutFastMallocCheck<int>(87))->whenSettled(queue,
@@ -1169,8 +1169,8 @@ TEST(NativePromise, NonExclusiveWithCrossThreadCopy)
         AutoWorkQueue awq;
         auto queue = awq.queue();
         // If you replace PromiseOption::WithCrossThreadCopy with PromiseOption::WithoutCrossThreadCopy, this test will crash due to the AtomString being deleted on the target queue.
-        using MyPromise = NativePromise<Expected<String, AtomString>, bool, PromiseOption::NonExclusive | PromiseOption::WithCrossThreadCopy>;
-        static_assert(CrossThreadCopier<Expected<String, AtomString>>::IsNeeded);
+        using MyPromise = NativePromise<std::expected<String, AtomString>, bool, PromiseOption::NonExclusive | PromiseOption::WithCrossThreadCopy>;
+        static_assert(CrossThreadCopier<std::expected<String, AtomString>>::IsNeeded);
         MyPromise::Producer producer;
         Ref<MyPromise> promise = producer;
         promise->whenSettled(queue, [&resolution] (const MyPromise::Result& val) {
@@ -1223,7 +1223,7 @@ TEST(NativePromise, WithCrossThreadCopyType)
 
 TEST(NativePromise, ExpectedWithString)
 {
-    using MyPromise = NativePromise<Expected<String, String>, int>;
+    using MyPromise = NativePromise<std::expected<String, String>, int>;
 
     AutoWorkQueue awq;
     auto queue = awq.queue();
@@ -1245,7 +1245,7 @@ TEST(NativePromise, ExpectedWithString)
             EXPECT_TRUE(val.value().value().isSafeToSendToAnotherThread());
         });
 
-    Expected<String, String> error = Unexpected<String>("error"_s);
+    std::expected<String, String> error = std::unexpected<String>("error"_s);
     MyPromise::createAndResolve(WTF::move(error))->whenSettled(queue,
         [queue](MyPromise::Result&& val) {
             EXPECT_TRUE(val.has_value());
@@ -1371,14 +1371,14 @@ TEST(NativePromise, ImplicitConversionWithForwardPreviousReturn)
 TEST(NativePromise, ChainTo)
 {
     using VectorPromise = NativePromise<Ref<RefCountedFixedVector<int>>, bool, PromiseOption::Default | PromiseOption::NonExclusive>;
-    auto resultVector = RefCountedFixedVector<int>::createFromVector(Vector<int>(5, 42));
+    auto resultVector = RefCountedFixedVector<int>::createFromVector(Vector<int>(FillWith { }, 5, 42));
     runInCurrentRunLoop([&, producer1 = VectorPromise::Producer(), producer2 = VectorPromise::Producer()](auto& runLoop) mutable {
         auto promise = VectorPromise::createAndResolve(resultVector);
         producer1->then(runLoop,
-            [&](const auto& resolveValue) { EXPECT_EQ(resolveValue.get(), RefCountedFixedVector<int>::createFromVector(Vector<int>(5, 42)).get()); },
+            [&](const auto& resolveValue) { EXPECT_EQ(resolveValue.get(), RefCountedFixedVector<int>::createFromVector(Vector<int>(FillWith { }, 5, 42)).get()); },
             doFail());
         producer2->then(runLoop,
-            [&](const auto& resolveValue) { EXPECT_EQ(resolveValue.get(), RefCountedFixedVector<int>::createFromVector(Vector<int>(5, 42)).get()); },
+            [&](const auto& resolveValue) { EXPECT_EQ(resolveValue.get(), RefCountedFixedVector<int>::createFromVector(Vector<int>(FillWith { }, 5, 42)).get()); },
             doFail());
 
         // As promise1 is already resolved, it will automatically resolve/reject producer1 and producer2 with its resolved/reject value.
@@ -1388,7 +1388,7 @@ TEST(NativePromise, ChainTo)
 
     runInCurrentRunLoop([&, producer1 = VectorPromise::Producer(), producer2 = VectorPromise::Producer()](auto& runLoop) mutable {
         producer2->then(runLoop,
-            [&](const auto& resolveValue) { EXPECT_EQ(resolveValue.get(), RefCountedFixedVector<int>::createFromVector(Vector<int>(5, 42)).get()); },
+            [&](const auto& resolveValue) { EXPECT_EQ(resolveValue.get(), RefCountedFixedVector<int>::createFromVector(Vector<int>(FillWith { }, 5, 42)).get()); },
             doFail());
 
         // When producer1 is resolved, it will automatically settle producer2 with the resolved/reject value.
@@ -1399,7 +1399,7 @@ TEST(NativePromise, ChainTo)
     runInCurrentRunLoop([&, producer1 = VectorPromise::Producer()](auto& runLoop) mutable {
         auto promise = VectorPromise::createAndResolve(resultVector);
         producer1->then(runLoop,
-            [&](auto&& resolveValue) { EXPECT_EQ(resolveValue.get(), RefCountedFixedVector<int>::createFromVector(Vector<int>(5, 42)).get()); },
+            [&](auto&& resolveValue) { EXPECT_EQ(resolveValue.get(), RefCountedFixedVector<int>::createFromVector(Vector<int>(FillWith { }, 5, 42)).get()); },
             doFail());
 
         // As promise1 is already resolved, it will automatically resolve/reject producer1 with its resolved/reject value.
@@ -1411,12 +1411,12 @@ TEST(NativePromise, ChainToNonMovable)
 {
     using VectorPromise = NativePromise<std::unique_ptr<Vector<int>>, bool, PromiseOption::Default | PromiseOption::NonExclusive>;
     runInCurrentRunLoop([&, producer1 = VectorPromise::Producer(), producer2 = VectorPromise::Producer()](auto& runLoop) mutable {
-        auto promise = VectorPromise::createAndResolve(makeUnique<Vector<int>>(5, 42));
+        auto promise = VectorPromise::createAndResolve(makeUnique<Vector<int>>(FillWith { }, 5, 42));
         producer1->then(runLoop,
-            [&](const auto& resolveValue) { EXPECT_EQ(*resolveValue, Vector<int>(5, 42)); },
+            [&](const auto& resolveValue) { EXPECT_EQ(*resolveValue, Vector<int>(FillWith { }, 5, 42)); },
             doFail());
         producer2->then(runLoop,
-            [&](const auto& resolveValue) { EXPECT_EQ(*resolveValue, Vector<int>(5, 42)); },
+            [&](const auto& resolveValue) { EXPECT_EQ(*resolveValue, Vector<int>(FillWith { }, 5, 42)); },
             doFail());
 
         // As promise1 is already resolved, it will automatically resolve/reject producer1 and producer2 with its resolved/reject value.
@@ -1426,18 +1426,18 @@ TEST(NativePromise, ChainToNonMovable)
 
     runInCurrentRunLoop([&, producer1 = VectorPromise::Producer(), producer2 = VectorPromise::Producer()](auto& runLoop) mutable {
         producer2->then(runLoop,
-            [&](const auto& resolveValue) { EXPECT_EQ(*resolveValue, Vector<int>(5, 42)); },
+            [&](const auto& resolveValue) { EXPECT_EQ(*resolveValue, Vector<int>(FillWith { }, 5, 42)); },
             doFail());
 
         // When producer1 is resolved, it will automatically settle producer2 with the resolved/reject value.
         producer1->chainTo(WTF::move(producer2));
-        VectorPromise::createAndResolve(makeUnique<Vector<int>>(5, 42))->chainTo(WTF::move(producer1));
+        VectorPromise::createAndResolve(makeUnique<Vector<int>>(FillWith { }, 5, 42))->chainTo(WTF::move(producer1));
     });
 
     runInCurrentRunLoop([&, producer1 = VectorPromise::Producer()](auto& runLoop) mutable {
-        auto promise = VectorPromise::createAndResolve(makeUnique<Vector<int>>(5, 42));
+        auto promise = VectorPromise::createAndResolve(makeUnique<Vector<int>>(FillWith { }, 5, 42));
         producer1->then(runLoop,
-            [&](auto&& resolveValue) { EXPECT_EQ(*resolveValue, Vector<int>(5, 42)); },
+            [&](auto&& resolveValue) { EXPECT_EQ(*resolveValue, Vector<int>(FillWith { }, 5, 42)); },
             doFail());
 
         // As promise1 is already resolved, it will automatically resolve/reject producer1 with its resolved/reject value.
@@ -1665,7 +1665,7 @@ TEST(NativePromise, MismatchChainToVoidPromise)
 TEST(NativePromise, CreateSettledPromise)
 {
     runInCurrentRunLoopUntilDone([](auto& runLoop, bool& done) {
-        using MyExpected = Expected<int, long>;
+        using MyExpected = std::expected<int, long>;
         createSettledPromise(MyExpected { makeUnexpected<long>(1) })->whenSettled(runLoop, [](auto&& result) {
             EXPECT_TRUE(!result);
             EXPECT_EQ(result.error(), 1L);
@@ -1855,7 +1855,7 @@ private:
             // Note that you can resolve a NativePromise on any threads. Unlike with a CompletionHandler it is not the responsibility of the producer to resolve the promise
             // on a particular thread.
             // The consumer specifies the thread on which it wants to be called back.
-            producer.resolve(std::make_pair<Vector<uint8_t>, String>(std::span { image }, std::span<const char> { mimeType }));
+            producer.resolve(std::make_pair<Vector<uint8_t>, String>(std::span { image }, String::fromLatin1(std::span<const char> { mimeType })));
         }));
 
         // Return the promise which the producer will resolve at a later stage.

@@ -35,12 +35,13 @@
 #include <JavaScriptCore/Breakpoint.h>
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
 #include <JavaScriptCore/InspectorDebuggerAgent.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/JSONValues.h>
 #include <wtf/RefPtr.h>
-#include <wtf/RobinHoodHashMap.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace Inspector {
@@ -50,14 +51,18 @@ class InjectedScriptManager;
 namespace WebCore {
 
 class Event;
+class LocalFrame;
 class RegisteredEventListener;
 class ResourceRequest;
 class ScriptExecutionContext;
 
-class InspectorDOMDebuggerAgent : public InspectorAgentBase, public Inspector::DOMDebuggerBackendDispatcherHandler, public Inspector::InspectorDebuggerAgent::Listener {
+class InspectorDOMDebuggerAgent : public InspectorAgentBase, public Inspector::DOMDebuggerBackendDispatcherHandler, public Inspector::InspectorDebuggerAgent::Listener, public CanMakeCheckedPtr<InspectorDOMDebuggerAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorDOMDebuggerAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorDOMDebuggerAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorDOMDebuggerAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     ~InspectorDOMDebuggerAgent() override;
 
     // InspectorAgentBase
@@ -78,29 +83,38 @@ public:
 
     // InspectorInstrumentation
     virtual void mainFrameNavigated();
-    void willSendXMLHttpRequest(const String& url);
-    void willFetch(const String& url);
+    void willSendXMLHttpRequest(Inspector::InspectorDebuggerAgent*, const String& url);
+    void willFetch(Inspector::InspectorDebuggerAgent*, const String& url);
     void willHandleEvent(ScriptExecutionContext&, Event&, const RegisteredEventListener&);
     void didHandleEvent(ScriptExecutionContext&, Event&, const RegisteredEventListener&);
-    void willFireTimer(bool oneShot);
-    void didFireTimer(bool oneShot);
-    void willFireAnimationFrame();
-    void didFireAnimationFrame();
-    void willSendRequest(ResourceRequest&);
-    void willSendRequestOfType(ResourceRequest&);
+    void willFireTimer(Inspector::InspectorDebuggerAgent*, bool oneShot);
+    void didFireTimer(Inspector::InspectorDebuggerAgent*, bool oneShot);
+    void willFireAnimationFrame(Inspector::InspectorDebuggerAgent*);
+    void didFireAnimationFrame(Inspector::InspectorDebuggerAgent*);
+    void willSendRequest(Inspector::InspectorDebuggerAgent*, ResourceRequest&);
+    void willSendRequestOfType(Inspector::InspectorDebuggerAgent*, ResourceRequest&);
 
 protected:
     InspectorDOMDebuggerAgent(WebAgentContext&, Inspector::InspectorDebuggerAgent*);
     virtual void enable();
     virtual void disable();
 
-    Inspector::InspectorDebuggerAgent* m_debuggerAgent { nullptr };
+    CheckedPtr<Inspector::InspectorDebuggerAgent> m_debuggerAgent;
+
+    // The debugger agent whose JSC::Debugger is actually attached to the frame the hook is running in,
+    // which under site isolation is not `m_debuggerAgent`. See PageDebugger::attachDebugger.
+    Inspector::InspectorDebuggerAgent* pausingDebuggerAgent(ScriptExecutionContext&) const;
+    Inspector::InspectorDebuggerAgent* pausingDebuggerAgentForFrame(RefPtr<LocalFrame>&&) const;
+
+    // The manager `evaluateOnCallFrame` reads when paused; `$event` must be written here, not to this
+    // agent's own manager.
+    Inspector::InjectedScriptManager& injectedScriptManagerForContext(ScriptExecutionContext&) const;
 
 private:
-    void breakOnURLIfNeeded(const String&);
+    void breakOnURLIfNeeded(Inspector::InspectorDebuggerAgent*, const String&);
 
     const Ref<Inspector::DOMDebuggerBackendDispatcher> m_backendDispatcher;
-    Inspector::InjectedScriptManager& m_injectedScriptManager;
+    const CheckedRef<Inspector::InjectedScriptManager> m_injectedScriptManager;
 
     struct EventBreakpoint {
         String eventName;
@@ -131,8 +145,22 @@ private:
     RefPtr<JSC::Breakpoint> m_pauseOnAllTimeoutsBreakpoint;
     RefPtr<JSC::Breakpoint> m_pauseOnAllAnimationFramesBreakpoint;
 
-    MemoryCompactRobinHoodHashMap<String, Ref<JSC::Breakpoint>> m_urlTextBreakpoints;
-    MemoryCompactRobinHoodHashMap<String, Ref<JSC::Breakpoint>> m_urlRegexBreakpoints;
+    struct URLBreakpoint {
+        String url;
+        bool isRegex { false };
+
+        // This is only used for the breakpoint configuration (i.e. it's irrelevant when comparing).
+        Ref<JSC::Breakpoint> specialBreakpoint;
+
+        // Cached so the searcher isn't recompiled for every request while the breakpoint exists.
+        Inspector::ContentSearchUtilities::Searcher searcher;
+
+        inline bool operator==(const URLBreakpoint& other) const
+        {
+            return url == other.url && isRegex == other.isRegex;
+        }
+    };
+    Vector<URLBreakpoint> m_urlBreakpoints;
     RefPtr<JSC::Breakpoint> m_pauseOnAllURLsBreakpoint;
 };
 

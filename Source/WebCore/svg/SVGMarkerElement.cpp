@@ -29,6 +29,7 @@
 #include "NodeDocument.h"
 #include "NodeName.h"
 #include "RenderSVGResourceMarker.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGNames.h"
 #include "SVGParsingError.h"
 #include "Settings.h"
@@ -39,7 +40,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGMarkerElement);
 
 inline SVGMarkerElement::SVGMarkerElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGElement(tagName, document, PropertyRegistry::singleton())
     , SVGFitToViewBox(this)
 {
     // Spec: If the markerWidth/markerHeight attribute is not specified, the effect is as if a value of "3" were specified.
@@ -71,17 +72,16 @@ void SVGMarkerElement::attributeChanged(const QualifiedName& name, const AtomStr
 {
     auto parseError = SVGParsingError::None;
     switch (name.nodeName()) {
-    case AttributeNames::markerUnitsAttr: {
-        auto propertyValue = SVGPropertyTraits<SVGMarkerUnitsType>::fromString(*this, newValue);
-        if (propertyValue != SVGMarkerUnitsType::Unknown)
-            Ref { m_markerUnits }->setBaseValInternal<SVGMarkerUnitsType>(propertyValue);
-        return;
-    }
+    case AttributeNames::markerUnitsAttr:
+        protect(m_markerUnits)->parseBaseVal<SVGMarkerUnitsType>(*this, newValue);
+        break;
     case AttributeNames::orientAttr: {
+        // orient drives two properties, so it cannot use parseBaseVal().
+        // https://w3c.github.io/svgwg/svg2-draft/types.html#InvalidValues
         auto pair = SVGPropertyTraits<std::pair<SVGAngleValue, SVGMarkerOrientType>>::fromString(*this, newValue);
-        Ref { m_orientAngle }->setBaseValInternal(pair.first);
-        Ref { m_orientType }->setBaseValInternal(pair.second);
-        return;
+        protect(m_orientAngle)->setBaseValInternal(pair.first);
+        protect(m_orientType)->setBaseValInternal(pair.second == SVGMarkerOrientUnknown ? SVGMarkerOrientAngle : pair.second);
+        break;
     }
     case AttributeNames::refXAttr:
         Ref { m_refX }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError));
@@ -165,7 +165,7 @@ void SVGMarkerElement::setOrientToAuto()
 
 void SVGMarkerElement::setOrientToAngle(const SVGAngle& angle)
 {
-    Ref { m_orientAngle }->baseVal()->newValueSpecifiedUnits(angle.unitType(), angle.valueInSpecifiedUnits());
+    protect(protect(m_orientAngle)->baseVal())->newValueSpecifiedUnits(angle.unitType(), angle.valueInSpecifiedUnits());
     invalidateMarkerResource();
 }
 
@@ -175,7 +175,7 @@ void SVGMarkerElement::setOrientToAutoStartReverse()
     invalidateMarkerResource();
 }
 
-RenderPtr<RenderElement> SVGMarkerElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGMarkerElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGResourceMarker>(*this, WTF::move(style));

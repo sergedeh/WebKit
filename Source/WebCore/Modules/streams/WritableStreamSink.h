@@ -26,26 +26,46 @@
 
 #pragma once
 
-#include <WebCore/JSDOMPromiseDeferred.h>
-#include <WebCore/ScriptExecutionContext.h>
+#include <WebCore/ExceptionOr.h>
+#include <WebCore/JSDOMPromiseDeferredForward.h>
+#include <wtf/Function.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
 class JSValue;
+class JSGlobalObject;
 }
 
 namespace WebCore {
 
+class AbortSignal;
+class JSDOMGlobalObject;
+class ScriptExecutionContext;
 template<typename> class ExceptionOr;
+
+class WritableStreamDefaultController;
 
 class WritableStreamSink : public RefCounted<WritableStreamSink> {
 public:
-    virtual ~WritableStreamSink() = default;
+    virtual ~WritableStreamSink();
 
+    virtual void start(std::unique_ptr<WritableStreamDefaultController>&&);
     virtual void write(ScriptExecutionContext&, JSC::JSValue, DOMPromiseDeferred<void>&&) = 0;
-    virtual void close() = 0;
-    virtual void abort(JSC::JSValue) = 0;
+    virtual void close(JSDOMGlobalObject&, DOMPromiseDeferred<void>&&) = 0;
+    virtual void abort(JSDOMGlobalObject&, JSC::JSValue, DOMPromiseDeferred<void>&&);
+
+    void errorIfNeeded(JSC::JSGlobalObject&, JSC::JSValue);
+
+protected:
+    WritableStreamSink();
+
+    // The AbortSignal owned by the associated WritableStreamDefaultController, if any.
+    // Fired synchronously when the stream is aborted, before the abort algorithm runs.
+    RefPtr<AbortSignal> abortSignal() const;
+
+private:
+    std::unique_ptr<WritableStreamDefaultController> m_controller;
 };
 
 class SimpleWritableStreamSink : public WritableStreamSink {
@@ -57,20 +77,9 @@ private:
     explicit SimpleWritableStreamSink(WriteCallback&&);
 
     void write(ScriptExecutionContext&, JSC::JSValue, DOMPromiseDeferred<void>&&) final;
-    void close() final { }
-    void abort(JSC::JSValue) final { }
+    void close(JSDOMGlobalObject&, DOMPromiseDeferred<void>&&) final;
 
     WriteCallback m_writeCallback;
 };
-
-inline SimpleWritableStreamSink::SimpleWritableStreamSink(WriteCallback&& writeCallback)
-    : m_writeCallback(WTF::move(writeCallback))
-{
-}
-
-inline void SimpleWritableStreamSink::write(ScriptExecutionContext& context, JSC::JSValue value, DOMPromiseDeferred<void>&& promise)
-{
-    promise.settle(m_writeCallback(context, value));
-}
 
 } // namespace WebCore

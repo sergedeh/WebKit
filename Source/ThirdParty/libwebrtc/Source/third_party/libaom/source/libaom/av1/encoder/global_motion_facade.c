@@ -94,7 +94,7 @@ static inline void compute_global_motion_for_ref_frame(
   int gm_erroradv_tr_level = cpi->sf.gm_sf.gm_erroradv_tr_level;
   bool mem_alloc_failed = false;
 
-  assert(gm_erroradv_tr_level < 2);
+  assert(gm_erroradv_tr_level < 3);
   // Select the best model based on fractional error reduction.
   // By initializing this to erroradv_tr, the same logic which is used to
   // select the best model will automatically filter out any model which
@@ -314,6 +314,7 @@ static inline void update_valid_ref_frames_for_gm(
 
     if (ref_buf[frame]->y_crop_width == cpi->source->y_crop_width &&
         ref_buf[frame]->y_crop_height == cpi->source->y_crop_height &&
+        ref_buf[frame]->y_stride == cpi->source->y_stride &&
         do_gm_search_logic(&cpi->sf, frame) && !prune_ref_frames &&
         ref_pyr_lvl <= pyr_lvl && !cur_frame_gm_disabled) {
       assert(ref_buf[frame] != NULL);

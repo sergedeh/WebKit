@@ -35,14 +35,19 @@ WebDataListSuggestionsDropdown::WebDataListSuggestionsDropdown(WebPageProxy& pag
 {
 }
 
-WebDataListSuggestionsDropdown::~WebDataListSuggestionsDropdown()
+WebDataListSuggestionsDropdown::~WebDataListSuggestionsDropdown() = default;
+
+void WebDataListSuggestionsDropdown::show(WebCore::DataListSuggestionInformation&& information)
 {
+    m_targetFrameID = information.rootFrameID;
+    platformShow(WTF::move(information));
 }
 
 void WebDataListSuggestionsDropdown::close()
 {
-    if (auto page = std::exchange(m_page, nullptr))
-        page->didCloseSuggestions();
+    auto targetFrameID = std::exchange(m_targetFrameID, std::nullopt);
+    if (RefPtr page = std::exchange(m_page, nullptr))
+        page->didCloseSuggestions(targetFrameID);
 }
 
 } // namespace WebKit

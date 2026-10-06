@@ -27,7 +27,10 @@
 #include "ReadableStream.h"
 
 #include "ContextDestructionObserverInlines.h"
+#include "DOMAsyncIterator.h"
 #include "InternalWritableStreamWriter.h"
+#include "JSDOMConvertBufferSource.h"
+#include "JSDOMConvertNullable.h"
 #include "JSDOMPromise.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSReadableStream.h"
@@ -38,6 +41,8 @@
 #include "JSStreamPipeOptions.h"
 #include "JSUnderlyingSource.h"
 #include "JSWritableStream.h"
+#include "MessageChannel.h"
+#include "MessagePort.h"
 #include "QueuingStrategy.h"
 #include "ReadableByteStreamController.h"
 #include "ReadableStreamBYOBReader.h"
@@ -46,8 +51,10 @@
 #include "Settings.h"
 #include "StreamPipeToUtilities.h"
 #include "StreamTeeUtilities.h"
+#include "StreamTransferUtilities.h"
 #include "WebCoreOpaqueRootInlines.h"
 #include "WritableStream.h"
+#include <JavaScriptCore/IteratorOperations.h>
 #include <wtf/Compiler.h>
 
 namespace WebCore {
@@ -124,49 +131,126 @@ ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSDOMGlobalObject& globa
         }
     }
 
-    return createFromJSValues(globalObject, underlyingSource, strategy);
+    return createFromJSValues(globalObject, underlyingSource, strategy, { });
 }
 
-ExceptionOr<Ref<ReadableStream>> ReadableStream::createFromJSValues(JSC::JSGlobalObject& globalObject, JSC::JSValue underlyingSource, JSC::JSValue strategy)
+ExceptionOr<Ref<ReadableStream>> ReadableStream::createFromJSValues(JSC::JSGlobalObject& globalObject, JSC::JSValue underlyingSource, JSC::JSValue strategy, std::optional<double> highWaterMark)
 {
-    auto& jsDOMGlobalObject = *JSC::jsCast<JSDOMGlobalObject*>(&globalObject);
+    auto& jsDOMGlobalObject = downcast<JSDOMGlobalObject>(globalObject);
     RefPtr protectedContext { jsDOMGlobalObject.scriptExecutionContext() };
-    auto result = InternalReadableStream::createFromUnderlyingSource(jsDOMGlobalObject, underlyingSource, strategy);
+    auto result = InternalReadableStream::createFromUnderlyingSource(jsDOMGlobalObject, underlyingSource, strategy, highWaterMark);
     if (result.hasException())
         return result.releaseException();
 
-    return adoptRef(*new ReadableStream(jsDOMGlobalObject.protectedScriptExecutionContext().get(), result.releaseReturnValue()));
+    Ref readableStream = adoptRef(*new ReadableStream(protect(jsDOMGlobalObject.scriptExecutionContext()).get(), result.releaseReturnValue()));
+    readableStream->suspendIfNeeded();
+
+    return { WTF::move(readableStream) };
 }
 
 ExceptionOr<Ref<ReadableStream>> ReadableStream::createFromByteUnderlyingSource(JSDOMGlobalObject& globalObject, JSC::JSValue underlyingSource, UnderlyingSource&& underlyingSourceDict, double highWaterMark)
 {
-    Ref readableStream = adoptRef(*new ReadableStream(globalObject.protectedScriptExecutionContext().get()));
+    Ref readableStream = adoptRef(*new ReadableStream(protect(globalObject.scriptExecutionContext()).get()));
+    readableStream->suspendIfNeeded();
 
     auto exception = readableStream->setupReadableByteStreamControllerFromUnderlyingSource(globalObject, underlyingSource, WTF::move(underlyingSourceDict), highWaterMark);
     if (exception.hasException())
         return exception.releaseException();
 
-    return readableStream;
+    return { WTF::move(readableStream) };
 }
 
-ExceptionOr<Ref<InternalReadableStream>> ReadableStream::createInternalReadableStream(JSDOMGlobalObject& globalObject, Ref<ReadableStreamSource>&& source)
+ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSDOMGlobalObject& globalObject, Ref<ReadableStreamSource>&& source, std::optional<double> highWaterMark)
 {
-    return InternalReadableStream::createFromUnderlyingSource(globalObject, toJSNewlyCreated(&globalObject, &globalObject, WTF::move(source)), JSC::jsUndefined());
-}
-
-ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSDOMGlobalObject& globalObject, Ref<ReadableStreamSource>&& source)
-{
-    return createFromJSValues(globalObject, toJSNewlyCreated(&globalObject, &globalObject, WTF::move(source)), JSC::jsUndefined());
+    return createFromJSValues(globalObject, toJSNewlyCreated(&globalObject, &globalObject, WTF::move(source)), JSC::jsUndefined(), highWaterMark);
 }
 
 Ref<ReadableStream> ReadableStream::create(Ref<InternalReadableStream>&& internalReadableStream)
 {
     auto* globalObject = internalReadableStream->globalObject();
-    return adoptRef(*new ReadableStream(globalObject->protectedScriptExecutionContext().get(), WTF::move(internalReadableStream)));
+    Ref readableStream = adoptRef(*new ReadableStream(protect(globalObject->scriptExecutionContext()).get(), WTF::move(internalReadableStream)));
+    readableStream->suspendIfNeeded();
+
+    return { WTF::move(readableStream) };
+}
+
+class AsyncIteratorSource : public ReadableStreamSource, public RefCountedAndCanMakeWeakPtr<AsyncIteratorSource> {
+public:
+    static Ref<AsyncIteratorSource> create(Ref<DOMAsyncIterator>&& iterator) { return adoptRef(*new AsyncIteratorSource(WTF::move(iterator))); }
+
+    void NODELETE ref() const { return RefCounted::ref(); }
+    void deref() const { return RefCounted::deref(); }
+
+private:
+    explicit AsyncIteratorSource(Ref<DOMAsyncIterator>&& iterator)
+        : m_iterator(WTF::move(iterator))
+    {
+    }
+
+    void NODELETE setActive() final { }
+    void NODELETE setInactive() final { }
+
+    void doStart() final { startFinished(); }
+
+    void doPull() final
+    {
+        m_iterator->callNext([weakThis = WeakPtr { *this }](auto* globalObject, bool isOK, auto value) {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis || !globalObject || protectedThis->m_isCancelled)
+                return;
+
+            if (!isOK) {
+                protectedThis->error(*globalObject, value ? value : JSC::jsUndefined());
+                return;
+            }
+
+            if (!value.getObject()) {
+                protectedThis->error(Exception { ExceptionCode::TypeError, "next result is not an object"_s });
+                return;
+            }
+
+            if (JSC::iteratorCompleteExported(globalObject, value))
+                protectedThis->controller().close();
+            else
+                protectedThis->controller().enqueue(JSC::iteratorValue(globalObject, value));
+
+            protectedThis->pullFinished();
+        });
+    }
+
+    void doCancel(JSC::JSValue reason) final
+    {
+        m_isCancelled = true;
+        m_iterator->callReturn(reason, [weakThis = WeakPtr { *this }](auto* globalObject, bool isOK, auto value) {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis || !globalObject)
+                return;
+            if (!isOK) {
+                protectedThis->cancelFinishedWithError(value ? value : JSC::jsUndefined());
+                return;
+            }
+            if (value && !value.getObject()) {
+                protectedThis->cancelFinished(Exception { ExceptionCode::TypeError, "return result is not an object"_s });
+                return;
+            }
+            protectedThis->cancelFinished();
+        });
+    }
+
+    const Ref<DOMAsyncIterator> m_iterator;
+    bool m_isCancelled { false };
+};
+
+ExceptionOr<Ref<ReadableStream>> ReadableStream::from(JSDOMGlobalObject& globalObject, JSC::JSValue iterable)
+{
+    auto iteratorOrException = DOMAsyncIterator::create(globalObject, iterable);
+    if (iteratorOrException.hasException())
+        return iteratorOrException.releaseException();
+    return ReadableStream::create(globalObject, AsyncIteratorSource::create(iteratorOrException.releaseReturnValue()), 0);
 }
 
 ReadableStream::ReadableStream(ScriptExecutionContext* context, RefPtr<InternalReadableStream>&& internalReadableStream, RefPtr<DependencyToVisit>&& dependencyToVisit, IsSourceReachableFromOpaqueRoot isSourceReachableFromOpaqueRoot)
-    : ContextDestructionObserver(context)
+    : ActiveDOMObject(context)
     , m_isSourceReachableFromOpaqueRoot(isSourceReachableFromOpaqueRoot == IsSourceReachableFromOpaqueRoot::Yes)
     , m_internalReadableStream(WTF::move(internalReadableStream))
     , m_dependencyToVisit(WTF::move(dependencyToVisit))
@@ -177,6 +261,14 @@ ReadableStream::~ReadableStream()
 {
     if (RefPtr sourceTeedStream = m_sourceTeedStream.get())
         sourceTeedStream->teedBranchIsDestroyed(*this);
+}
+
+void ReadableStream::stop()
+{
+    if (m_dependencyToVisit)
+        m_dependencyToVisit->stop();
+    if (m_controller)
+        m_controller->stop();
 }
 
 // https://streams.spec.whatwg.org/#rs-cancel
@@ -199,7 +291,7 @@ ExceptionOr<ReadableStreamReader> ReadableStream::getReader(JSDOMGlobalObject& c
         if (readerOrException.hasException())
             return readerOrException.releaseException();
 
-        return ReadableStreamReader { RefPtr { readerOrException.releaseReturnValue() } };
+        return ReadableStreamReader { readerOrException.releaseReturnValue() };
     }
 
     ASSERT(*options.mode == ReaderMode::Byob);
@@ -213,7 +305,7 @@ ExceptionOr<ReadableStreamReader> ReadableStream::getReader(JSDOMGlobalObject& c
     if (readerOrException.hasException())
         return readerOrException.releaseException();
 
-    return ReadableStreamReader { RefPtr { readerOrException.releaseReturnValue() } };
+    return ReadableStreamReader { readerOrException.releaseReturnValue() };
 }
 
 // https://streams.spec.whatwg.org/#rs-tee
@@ -263,7 +355,7 @@ void ReadableStream::cancel(Exception&& exception)
     }
 
     RefPtr context = scriptExecutionContext();
-    auto* globalObject = context ? JSC::jsCast<JSDOMGlobalObject*>(context->globalObject()): nullptr;
+    auto* globalObject = context ? downcast<JSDOMGlobalObject>(context->globalObject()): nullptr;
     if (!globalObject)
         return;
 
@@ -305,7 +397,9 @@ ReadableStreamDefaultReader* ReadableStream::defaultReader()
 // https://streams.spec.whatwg.org/#abstract-opdef-createreadablebytestream
 Ref<ReadableStream> ReadableStream::createReadableByteStream(JSDOMGlobalObject& globalObject, ReadableByteStreamController::PullAlgorithm&& pullAlgorithm, ReadableByteStreamController::CancelAlgorithm&& cancelAlgorithm, ByteStreamOptions&& options)
 {
-    Ref readableStream = adoptRef(*new ReadableStream(globalObject.protectedScriptExecutionContext().get(), { }, WTF::move(options.dependencyToVisit), options.isSourceReachableFromOpaqueRoot));
+    Ref readableStream = adoptRef(*new ReadableStream(protect(globalObject.scriptExecutionContext()).get(), { }, WTF::move(options.dependencyToVisit), options.isSourceReachableFromOpaqueRoot));
+    readableStream->suspendIfNeeded();
+
     readableStream->setupReadableByteStreamController(globalObject, WTF::move(pullAlgorithm), WTF::move(cancelAlgorithm), options.highwaterMark, options.startSynchronously);
     return readableStream;
 }
@@ -374,7 +468,7 @@ ExceptionOr<void> ReadableStream::setupReadableByteStreamControllerFromUnderlyin
 
     // https://streams.spec.whatwg.org/#set-up-readable-byte-stream-controller
     ASSERT(!m_controller);
-    lazyInitialize(m_controller, std::unique_ptr<ReadableByteStreamController>(new ReadableByteStreamController(*this, underlyingSource, WTF::move(underlyingSourceDict.pull), WTF::move(underlyingSourceDict.cancel), highWaterMark, underlyingSourceDict.autoAllocateChunkSize.value_or(0))));
+    lazyInitialize(m_controller, std::unique_ptr<ReadableByteStreamController>(new ReadableByteStreamController(globalObject, *this, underlyingSource, WTF::move(underlyingSourceDict.pull), WTF::move(underlyingSourceDict.cancel), highWaterMark, underlyingSourceDict.autoAllocateChunkSize.value_or(0))));
 
     return m_controller->start(globalObject, underlyingSourceDict.start.get());
 }
@@ -432,12 +526,12 @@ Ref<DOMPromise> ReadableStream::cancel(JSDOMGlobalObject& globalObject, JSC::JSV
 
     if (RefPtr internalStream = m_internalReadableStream) {
         auto result = internalStream->cancel(globalObject, reason);
-        if (!result) {
-            deferred->reject(Exception { ExceptionCode::ExistingExceptionError });
+        if (result.hasException()) {
+            deferred->reject(result.releaseException());
             return promise;
         }
 
-        auto* jsPromise = jsCast<JSC::JSPromise*>(result);
+        auto* jsPromise = dynamicDowncast<JSC::JSPromise>(result.releaseReturnValue());
         if (!jsPromise)
             return promise;
 
@@ -482,7 +576,7 @@ Ref<DOMPromise> ReadableStream::cancel(JSDOMGlobalObject& globalObject, JSC::JSV
 size_t ReadableStream::getNumReadIntoRequests() const
 {
     ASSERT(m_byobReader);
-    RefPtr byobReader = m_byobReader.get();
+    auto* byobReader = m_byobReader.get();
     return byobReader->readIntoRequestsSize();
 }
 
@@ -490,7 +584,7 @@ size_t ReadableStream::getNumReadIntoRequests() const
 size_t ReadableStream::getNumReadRequests() const
 {
     ASSERT(m_defaultReader);
-    RefPtr defaultReader = m_defaultReader.get();
+    auto* defaultReader = m_defaultReader.get();
     return defaultReader->getNumReadRequests();
 }
 
@@ -510,22 +604,6 @@ void ReadableStream::addReadRequest(Ref<ReadableStreamReadRequest>&& readRequest
     return defaultReader->addReadRequest(WTF::move(readRequest));
 }
 
-// https://streams.spec.whatwg.org/#readable-stream-pipe-to
-static void pipeToInternal(JSDOMGlobalObject& globalObject, ReadableStream& source, WritableStream& destination, StreamPipeOptions&& options, RefPtr<DeferredPromise>&& promise)
-{
-    auto readerOrException = ReadableStreamDefaultReader::create(globalObject, source);
-    if (readerOrException.hasException())
-        return;
-
-    auto writerOrException = acquireWritableStreamDefaultWriter(globalObject, destination);
-    if (writerOrException.hasException())
-        return;
-
-    source.markAsDisturbed();
-
-    readableStreamPipeTo(globalObject, source, destination, readerOrException.releaseReturnValue(), writerOrException.releaseReturnValue(), WTF::move(options), WTF::move(promise));
-}
-
 // https://streams.spec.whatwg.org/#rs-pipe-to
 void ReadableStream::pipeTo(JSDOMGlobalObject& globalObject, WritableStream& destination, StreamPipeOptions&& options, Ref<DeferredPromise>&& promise)
 {
@@ -539,7 +617,7 @@ void ReadableStream::pipeTo(JSDOMGlobalObject& globalObject, WritableStream& des
         return;
     }
 
-    pipeToInternal(globalObject, *this, destination, WTF::move(options), WTF::move(promise));
+    readableStreamPipeTo(globalObject, *this, destination, WTF::move(options), WTF::move(promise));
 }
 
 // https://streams.spec.whatwg.org/#rs-pipe-through
@@ -551,7 +629,7 @@ ExceptionOr<Ref<ReadableStream>> ReadableStream::pipeThrough(JSDOMGlobalObject& 
     SUPPRESS_UNCOUNTED_ARG if (transform.writable->locked())
         return Exception { ExceptionCode::TypeError, "transform writable is locked"_s };
 
-    pipeToInternal(globalObject, *this, WTF::move(transform.writable), WTF::move(options), nullptr);
+    readableStreamPipeTo(globalObject, *this, WTF::move(transform.writable), WTF::move(options), nullptr);
 
     return WTF::move(transform.readable);
 }
@@ -564,7 +642,7 @@ JSC::JSValue ReadableStream::storedError(JSDOMGlobalObject& globalObject) const
     return m_controller->storedError();
 }
 
-void ReadableStream::visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor, VisitTeedChildren visitTeedChildren)
+void ReadableStream::visitAdditionalChildrenInGCThread(JSC::AbstractSlotVisitor& visitor, VisitTeedChildren visitTeedChildren)
 {
     {
         Locker lock(m_gcLock);
@@ -581,10 +659,8 @@ void ReadableStream::visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor, 
     if (m_dependencyToVisit)
         m_dependencyToVisit->visit(visitor);
 
-    if (m_controller) {
-        m_controller->underlyingSourceConcurrently().visit(visitor);
-        m_controller->storedErrorConcurrently().visit(visitor);
-    }
+    if (m_controller)
+        m_controller->visitDirectChildrenInGCThread(visitor);
 }
 
 void ReadableStream::setTeedBranches(ReadableStream& branch0, ReadableStream& branch1)
@@ -614,7 +690,7 @@ void ReadableStream::teedBranchIsDestroyed(ReadableStream& teedBranch)
 JSDOMGlobalObject* ReadableStream::globalObject()
 {
     RefPtr context = scriptExecutionContext();
-    return context ? JSC::jsCast<JSDOMGlobalObject*>(context->globalObject()) : nullptr;
+    return context ? downcast<JSDOMGlobalObject>(context->globalObject()) : nullptr;
 }
 
 bool ReadableStream::isPulling() const
@@ -703,7 +779,7 @@ Ref<DOMPromise> ReadableStream::Iterator::next(JSDOMGlobalObject& globalObject)
     return promise;
 }
 
-bool ReadableStream::Iterator::isFinished() const
+SUPPRESS_NODELETE bool ReadableStream::Iterator::isFinished() const
 {
     return !m_reader->stream();
 }
@@ -730,20 +806,59 @@ Ref<DOMPromise> ReadableStream::Iterator::returnSteps(JSDOMGlobalObject& globalO
 // https://streams.spec.whatwg.org/#rs-asynciterator
 ExceptionOr<Ref<ReadableStream::Iterator>> ReadableStream::createIterator(ScriptExecutionContext* context, std::optional<IteratorOptions>&& options)
 {
-    auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(context->globalObject());
-    auto readerOrException = ReadableStreamDefaultReader::create(globalObject, *this);
+    auto* globalObject = context ? downcast<JSDOMGlobalObject>(context->globalObject()) : nullptr;
+    if (!globalObject)
+        return Exception { ExceptionCode::InvalidStateError, "Context is detached"_s };
+
+    auto readerOrException = ReadableStreamDefaultReader::create(*globalObject, *this);
     if (readerOrException.hasException())
         return readerOrException.releaseException();
 
     return Iterator::create(readerOrException.releaseReturnValue(), options.value_or(IteratorOptions { }).preventCancel);
 }
 
-template<typename Visitor>
-void JSReadableStream::visitAdditionalChildren(Visitor& visitor)
+// https://streams.spec.whatwg.org/#rs-transfer
+bool ReadableStream::canTransfer() const
 {
-    SUPPRESS_UNCOUNTED_ARG wrapped().visitAdditionalChildren(visitor, ReadableStream::VisitTeedChildren::Yes);
+    RefPtr context = scriptExecutionContext();
+    return context && context->settingsValues().readableStreamTransferEnabled && !isLocked();
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSReadableStream);
+ExceptionOr<DetachedReadableStream> ReadableStream::runTransferSteps(JSDOMGlobalObject& globalObject)
+{
+    ASSERT(!isLocked());
+
+    RefPtr context = globalObject.scriptExecutionContext();
+    Ref channel = MessageChannel::create(*context);
+    Ref port1 = channel->port1();
+    Ref port2 = channel->port2();
+
+    auto result = setupCrossRealmTransformWritable(globalObject, port1.get());
+    if (result.hasException()) {
+        port2->close();
+        return result.releaseException();
+    }
+    Ref writable = result.releaseReturnValue();
+
+    if (auto exception = readableStreamPipeTo(globalObject, *this, writable.get(), { }, nullptr)) {
+        port2->close();
+        return WTF::move(*exception);
+    }
+
+    return DetachedReadableStream { WTF::move(port2) };
+}
+
+ExceptionOr<Ref<ReadableStream>> ReadableStream::runTransferReceivingSteps(JSDOMGlobalObject& globalObject, DetachedReadableStream&& detachedReadableStream)
+{
+    return setupCrossRealmTransformReadable(globalObject, detachedReadableStream.readableStreamPort.get());
+}
+
+template<typename Visitor>
+void JSReadableStream::visitAdditionalChildrenInGCThread(Visitor& visitor)
+{
+    SUPPRESS_UNCOUNTED_ARG wrapped().visitAdditionalChildrenInGCThread(visitor, ReadableStream::VisitTeedChildren::Yes);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSReadableStream);
 
 } // namespace WebCore

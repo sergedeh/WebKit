@@ -27,6 +27,7 @@
 
 #include "GPUIntegralTypes.h"
 #include "WebGPUExtent3D.h"
+#include <wtf/Forward.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -41,12 +42,16 @@ struct GPUExtent3DDict {
         };
     }
 
+    Ref<JSON::Object> toJSON() const;
+
     GPUIntegerCoordinate width { 0 };
-    GPUIntegerCoordinate height { 0 };
-    GPUIntegerCoordinate depthOrArrayLayers { 0 };
+    GPUIntegerCoordinate height { 1 };
+    GPUIntegerCoordinate depthOrArrayLayers { 1 };
 };
 
 using GPUExtent3D = Variant<Vector<GPUIntegerCoordinate>, GPUExtent3DDict>;
+
+Ref<JSON::Value> toJSON(const GPUExtent3D&);
 
 inline WebGPU::Extent3D convertToBacking(const GPUExtent3D& extent3D)
 {

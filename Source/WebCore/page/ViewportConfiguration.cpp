@@ -41,7 +41,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ViewportConfiguration);
 
-static inline bool viewportArgumentValueIsValid(float value)
+static inline bool NODELETE viewportArgumentValueIsValid(float value)
 {
     return value > 0;
 }
@@ -57,7 +57,7 @@ static inline void adjustViewportArgumentsToAvoidExcessiveZooming(ViewportArgume
     arguments.width = zoomedWidthFromArguments / arguments.zoom;
 }
 
-static inline void ignoreViewportArgumentsToAvoidEnlargedView(ViewportArguments& arguments, FloatSize viewLayoutSize)
+static inline void NODELETE ignoreViewportArgumentsToAvoidEnlargedView(ViewportArguments& arguments, FloatSize viewLayoutSize)
 {
     if (!viewportArgumentValueIsValid(arguments.width))
         return;
@@ -67,7 +67,6 @@ static inline void ignoreViewportArgumentsToAvoidEnlargedView(ViewportArguments&
 }
 
 constexpr double defaultDesktopViewportWidth = 980;
-constexpr double minimumShrinkToFitWidthWhenPreferringHorizontalScrolling = 820;
 
 #if ASSERT_ENABLED
 static bool constraintsAreAllRelative(const ViewportConfiguration::Parameters& configuration)
@@ -76,7 +75,7 @@ static bool constraintsAreAllRelative(const ViewportConfiguration::Parameters& c
 }
 #endif // ASSERT_ENABLED
 
-static constexpr float platformDeviceWidthOverride()
+static constexpr float NODELETE platformDeviceWidthOverride()
 {
 #if PLATFORM(WATCHOS)
     return 320;
@@ -85,7 +84,7 @@ static constexpr float platformDeviceWidthOverride()
 #endif
 }
 
-static constexpr double platformMinimumScaleForWebpage()
+static constexpr double NODELETE platformMinimumScaleForWebpage()
 {
 #if PLATFORM(WATCHOS)
     return 0.1;
@@ -94,7 +93,7 @@ static constexpr double platformMinimumScaleForWebpage()
 #endif
 }
 
-static constexpr bool shouldOverrideShrinkToFitArgument()
+static constexpr bool NODELETE shouldOverrideShrinkToFitArgument()
 {
 #if PLATFORM(WATCHOS)
     return true;
@@ -103,7 +102,7 @@ static constexpr bool shouldOverrideShrinkToFitArgument()
 #endif
 }
 
-static bool needsUpdateAfterChangingDisabledAdaptations(const OptionSet<DisabledAdaptations>& oldDisabledAdaptations, const OptionSet<DisabledAdaptations>& newDisabledAdaptations)
+static bool NODELETE needsUpdateAfterChangingDisabledAdaptations(const OptionSet<DisabledAdaptations>& oldDisabledAdaptations, const OptionSet<DisabledAdaptations>& newDisabledAdaptations)
 {
     if (oldDisabledAdaptations == newDisabledAdaptations)
         return false;
@@ -452,7 +451,7 @@ ViewportConfiguration::Parameters ViewportConfiguration::webpageParameters()
     return parameters;
 }
 
-ViewportConfiguration::Parameters ViewportConfiguration::textDocumentParameters()
+SUPPRESS_NODELETE ViewportConfiguration::Parameters ViewportConfiguration::textDocumentParameters()
 {
     Parameters parameters;
 
@@ -512,7 +511,7 @@ static inline bool applyViewportArgument(double& value, float viewportArgumentVa
     return false;
 }
 
-static inline bool booleanViewportArgumentIsSet(float value)
+static inline bool NODELETE booleanViewportArgumentIsSet(float value)
 {
     return !value || value == 1;
 }
@@ -788,7 +787,7 @@ String ViewportConfiguration::description() const
 
 void ViewportConfiguration::dump() const
 {
-    WTFLogAlways("%s", description().utf8().data());
+    SAFE_WTFLOGALWAYS("%s", description().utf8());
 }
 
 #endif

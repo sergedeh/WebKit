@@ -24,47 +24,55 @@
 
 #pragma once
 
-#include <WebCore/CSSCalcTree.h>
+#include <WebCore/CSSCalcRandomSharing.h>
+#include <WebCore/StyleCustomIdent.h>
 #include <optional>
 #include <wtf/HashFunctions.h>
 #include <wtf/HashTraits.h>
 #include <wtf/Hasher.h>
-#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 namespace CSSCalc {
 
+// Resolved caching identity for a <random-key>. `element-scoped` is NOT part of this key; it selects
+// which map (per-element vs document) the key is looked up in. The dashed-ident (`name`) and the
+// property-scope descriptor combine, because `random(--foo property-scoped, ...)` specifies both.
 struct RandomCachingKey {
-    using Identifier = Variant<
-        Random::SharingOptions::Auto,
-        AtomString,
+    struct Key {
+        std::optional<Style::CustomIdent> name;
+        std::optional<Variant<RandomSharingKey::PropertyScoped, RandomSharingKey::PropertyIndexScoped>> propertyScoped;
+
+        bool operator==(const Key&) const = default;
+    };
+    using Value = Variant<
+        Key,
         WTF::HashTableDeletedValueType,
         WTF::HashTableEmptyValueType
     >;
-    Identifier identifier;
+    Value value;
 
-    RandomCachingKey(Variant<Random::SharingOptions::Auto, AtomString>&& identifier)
-        : identifier { WTF::switchOn(WTF::move(identifier), [](auto&& alternative) { return Identifier { WTF::move(alternative) }; }) }
+    RandomCachingKey(const Key& key)
+        : value { key }
     {
     }
 
-    RandomCachingKey(const Variant<Random::SharingOptions::Auto, AtomString>& identifier)
-        : identifier { WTF::switchOn(identifier, [](const auto& alternative) { return Identifier { alternative }; }) }
+    RandomCachingKey(Key&& key)
+        : value { WTF::move(key) }
     {
     }
 
     explicit RandomCachingKey(WTF::HashTableDeletedValueType)
-        : identifier { WTF::HashTableDeletedValue }
+        : value { WTF::HashTableDeletedValue }
     {
     }
 
     explicit RandomCachingKey(WTF::HashTableEmptyValueType)
-        : identifier { WTF::HashTableEmptyValue }
+        : value { WTF::HashTableEmptyValue }
     {
     }
 
-    bool isHashTableDeletedValue() const { return std::holds_alternative<WTF::HashTableDeletedValueType>(identifier); }
-    bool isHashTableEmptyValue() const { return std::holds_alternative<WTF::HashTableEmptyValueType>(identifier); }
+    bool isHashTableDeletedValue() const { return std::holds_alternative<WTF::HashTableDeletedValueType>(value); }
+    bool isHashTableEmptyValue() const { return std::holds_alternative<WTF::HashTableEmptyValueType>(value); }
 
     bool operator==(const RandomCachingKey&) const = default;
 };
@@ -78,14 +86,25 @@ struct CSSCalcRandomCachingKeyHash {
     static unsigned hash(const WebCore::CSSCalc::RandomCachingKey& key)
     {
         Hasher hasher;
-        add(hasher, key.identifier.index());
-        WTF::switchOn(key.identifier,
-            [&](const WebCore::CSSCalc::Random::SharingOptions::Auto& autoValue) {
-                add(hasher, autoValue.property);
-                add(hasher, autoValue.index);
-            },
-            [&](const AtomString& string) {
-                add(hasher, string);
+        add(hasher, key.value.index());
+        WTF::switchOn(key.value,
+            [&](const WebCore::CSSCalc::RandomCachingKey::Key& resolved) {
+                add(hasher, resolved.name.has_value());
+                if (resolved.name)
+                    add(hasher, *resolved.name);
+                add(hasher, resolved.propertyScoped.has_value());
+                if (resolved.propertyScoped) {
+                    add(hasher, resolved.propertyScoped->index());
+                    WTF::switchOn(*resolved.propertyScoped,
+                        [&](const WebCore::CSSCalc::RandomSharingKey::PropertyScoped& scoped) {
+                            add(hasher, scoped.property);
+                        },
+                        [&](const WebCore::CSSCalc::RandomSharingKey::PropertyIndexScoped& scoped) {
+                            add(hasher, scoped.property);
+                            add(hasher, scoped.index);
+                        }
+                    );
+                }
             },
             [](const WTF::HashTableDeletedValueType&) {
                 RELEASE_ASSERT_NOT_REACHED();

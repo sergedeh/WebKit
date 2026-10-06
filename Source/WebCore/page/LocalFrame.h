@@ -29,10 +29,9 @@
 
 #include <WebCore/DOMPasteAccess.h>
 #include <WebCore/Frame.h>
+#include <WebCore/HitTestRequest.h>
 #include <WebCore/ScrollbarMode.h>
-#include <wtf/CheckedRef.h>
 #include <wtf/HashSet.h>
-#include <wtf/Platform.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/WeakRef.h>
 
@@ -51,9 +50,13 @@ typedef struct HBITMAP__* HBITMAP;
 typedef const struct OpaqueJSContext* JSContextRef;
 typedef const struct OpaqueJSValue* JSValueRef;
 
-namespace JSC { namespace Yarr {
+namespace JSC {
+class Debugger;
+
+namespace Yarr {
 class RegularExpression;
-} }
+}
+} // namespace JSC
 
 namespace WTF {
 class TextStream;
@@ -77,6 +80,7 @@ class FrameInspectorController;
 class FrameLoader;
 class FrameSelection;
 class HTMLFrameOwnerElement;
+class HTMLIFrameElement;
 class HTMLTableCellElement;
 class HitTestResult;
 class ImageBuffer;
@@ -107,7 +111,6 @@ struct ViewportArguments;
 enum class ReferrerPolicy : uint8_t;
 enum class SandboxFlag : uint16_t;
 enum class UserScriptInjectionTime : bool;
-enum class WindowProxyProperty : uint8_t;
 
 using SandboxFlags = OptionSet<SandboxFlag>;
 using IntDegrees = int32_t;
@@ -126,15 +129,18 @@ enum {
 };
 
 enum OverflowScrollAction { DoNotPerformOverflowScroll, PerformOverflowScroll };
-using NodeQualifier = Function<Node* (const HitTestResult&, Node* terminationNode, IntRect* nodeBounds)>;
+#endif
+
+#if PLATFORM(COCOA)
+using NodeQualifier = Function<RefPtr<Node> (const HitTestResult&, Node* terminationNode, IntRect* nodeBounds)>;
 #endif
 
 class LocalFrame final : public Frame {
 public:
     using ClientCreator = CompletionHandler<UniqueRef<LocalFrameLoaderClient>(LocalFrame&, FrameLoader&)>;
-    WEBCORE_EXPORT static Ref<LocalFrame> createMainFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, Frame* opener, Ref<FrameTreeSyncData>&&);
+    WEBCORE_EXPORT static Ref<LocalFrame> createMainFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, Frame* opener, Ref<FrameTreeSyncData>&&, float pageZoomFactor = 1, float textZoomFactor = 1);
     WEBCORE_EXPORT static Ref<LocalFrame> createSubframe(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, HTMLFrameOwnerElement&, Ref<FrameTreeSyncData>&&);
-    WEBCORE_EXPORT static Ref<LocalFrame> createProvisionalSubframe(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, ScrollbarMode, Frame& parent, Ref<FrameTreeSyncData>&&);
+    WEBCORE_EXPORT static Ref<LocalFrame> createProvisionalSubframe(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, ScrollbarMode, Frame& parent, Ref<FrameTreeSyncData>&&, float pageZoomFactor, float textZoomFactor);
 
     WEBCORE_EXPORT void init();
 #if PLATFORM(IOS_FAMILY)
@@ -146,8 +152,7 @@ public:
 
     WEBCORE_EXPORT ~LocalFrame();
 
-    WEBCORE_EXPORT LocalDOMWindow* window() const;
-    WEBCORE_EXPORT RefPtr<LocalDOMWindow> protectedWindow() const;
+    WEBCORE_EXPORT LocalDOMWindow* NODELETE window() const;
 
     void addDestructionObserver(FrameDestructionObserver&);
     void removeDestructionObserver(FrameDestructionObserver&);
@@ -155,38 +160,31 @@ public:
     WEBCORE_EXPORT void willDetachPage();
 
     inline Document* document() const; // Defined in LocalFrameInlines.h
-    inline RefPtr<Document> protectedDocument() const; // Defined in LocalFrameInlines.h
     inline LocalFrameView* view() const; // Defined in DocumentView.h
-    inline RefPtr<LocalFrameView> protectedView() const; // Defined in DocumentView.h.
-    WEBCORE_EXPORT RefPtr<const LocalFrame> localMainFrame() const;
-    WEBCORE_EXPORT RefPtr<LocalFrame> localMainFrame();
+    WEBCORE_EXPORT RefPtr<const LocalFrame> NODELETE localMainFrame() const;
+    WEBCORE_EXPORT RefPtr<LocalFrame> NODELETE localMainFrame();
 
-    inline Editor& editor(); // Defined in LocalFrameInlines.h
-    inline const Editor& editor() const; // Defined in LocalFrameInlines.h
-    inline Ref<Editor> protectedEditor(); // Defined in LocalFrameInlines.h
-    inline Ref<const Editor> protectedEditor() const; // Defined in LocalFrameInlines.h
+    inline Editor& editor() LIFETIME_BOUND; // Defined in LocalFrameInlines.h
+    inline const Editor& editor() const LIFETIME_BOUND; // Defined in LocalFrameInlines.h
 
     EventHandler& eventHandler() { return m_eventHandler; }
     const EventHandler& eventHandler() const { return m_eventHandler; }
 
-    const FrameLoader& loader() const { return m_loader.get(); }
-    FrameLoader& loader() { return m_loader.get(); }
+    const FrameLoader& loader() const LIFETIME_BOUND { return m_loader.get(); }
+    FrameLoader& loader() LIFETIME_BOUND { return m_loader.get(); }
 
     inline FrameSelection& selection(); // Defined in LocalFrameInlines.h
     inline const FrameSelection& selection() const; // Defined in LocalFrameInlines.h
-    CheckedRef<FrameSelection> checkedSelection() const; // Defined in LocalFrameInlines.h
     ScriptController& script() { return m_script; }
     const ScriptController& script() const { return m_script; }
-    WEBCORE_EXPORT CheckedRef<ScriptController> checkedScript();
-    WEBCORE_EXPORT CheckedRef<const ScriptController> checkedScript() const;
     void resetScript();
+    FrameView* NODELETE virtualView() const final;
 
     bool isRootFrame() const final { return m_rootFrame.get() == this; }
     const LocalFrame& rootFrame() const { return *m_rootFrame; }
     LocalFrame& rootFrame() { return *m_rootFrame; }
 
-    WEBCORE_EXPORT RenderView* contentRenderer() const; // Root of the render tree for the document contained in this frame.
-    WEBCORE_EXPORT CheckedPtr<RenderView> checkedContentRenderer() const;
+    WEBCORE_EXPORT RenderView* NODELETE contentRenderer() const; // Root of the render tree for the document contained in this frame.
 
     bool documentIsBeingReplaced() const { return m_documentIsBeingReplaced; }
 
@@ -195,7 +193,7 @@ public:
 
     bool requestDOMPasteAccess(DOMPasteAccessCategory = DOMPasteAccessCategory::General);
 
-    String debugDescription() const;
+    String debugDescription() const override;
 
     WEBCORE_EXPORT static LocalFrame* fromJSContext(JSContextRef);
     WEBCORE_EXPORT static LocalFrame* contentFrameFromWindowOrFrameElement(JSContextRef, JSValueRef);
@@ -204,16 +202,16 @@ public:
 
     WEBCORE_EXPORT void injectUserScripts(UserScriptInjectionTime);
     WEBCORE_EXPORT void injectUserScriptImmediately(DOMWrapperWorld&, const UserScript&);
-    UserContentProvider* userContentProvider();
+    UserContentProvider* NODELETE userContentProvider();
     const UserContentProvider* userContentProvider() const;
-    WEBCORE_EXPORT bool hasUserContentProvider(const UserContentProvider&);
+    WEBCORE_EXPORT bool NODELETE hasUserContentProvider(const UserContentProvider&);
 
     WEBCORE_EXPORT String trackedRepaintRectsAsText() const;
 
-    WEBCORE_EXPORT static LocalFrame* frameForWidget(const Widget&);
+    WEBCORE_EXPORT static LocalFrame* NODELETE frameForWidget(const Widget&);
 
     WEBCORE_EXPORT void setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize, NotifyUIProcess = NotifyUIProcess::Yes) final;
-    bool shouldUsePrintingLayout() const;
+    bool NODELETE shouldUsePrintingLayout() const;
     WEBCORE_EXPORT FloatSize resizePageRectsKeepingRatio(const FloatSize& originalSize, const FloatSize& expectedSize);
 
     void setDocument(RefPtr<Document>&&);
@@ -227,25 +225,40 @@ public:
     float pageZoomFactor() const { return m_pageZoomFactor; }
     float textZoomFactor() const { return m_textZoomFactor; }
 
-    float usedZoomForChild(const Frame&) const final;
+    float frameScaleFactorForChild(const Frame&) const final;
 
     void deviceOrPageScaleFactorChanged();
 
 #if ENABLE(DATA_DETECTION)
-    DataDetectionResultsStorage* dataDetectionResultsIfExists() const { return m_dataDetectionResults.get(); }
-    WEBCORE_EXPORT DataDetectionResultsStorage& dataDetectionResults();
+    DataDetectionResultsStorage* dataDetectionResultsIfExists() const LIFETIME_BOUND { return m_dataDetectionResults.get(); }
+    WEBCORE_EXPORT DataDetectionResultsStorage& dataDetectionResults() LIFETIME_BOUND;
 #endif
 
+#if PLATFORM(COCOA)
+    RefPtr<Node> betterApproximateNode(const IntPoint& testPoint, const NodeQualifier&, Node* best, Node* failedNode, IntPoint& bestPoint, IntRect& bestRect, const IntRect& testRect);
+
+    WEBCORE_EXPORT RefPtr<Node> nodeRespondingToInteraction(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation);
+
+    enum class ShouldApproximate : bool { No, Yes };
+    enum class ShouldFindRootEditableElement : bool { No, Yes };
+    RefPtr<Node> qualifyingNodeAtViewportLocation(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation, const NodeQualifier&, ShouldApproximate, ShouldFindRootEditableElement = ShouldFindRootEditableElement::Yes);
+    bool hitTestResultAtViewportLocation(const FloatPoint& viewportLocation, HitTestResult&, IntPoint& center);
+
+    WEBCORE_EXPORT RefPtr<Node> nodeRespondingToClickEvents(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation, SecurityOrigin* = nullptr);
+    WEBCORE_EXPORT RefPtr<Node> nodeRespondingToDoubleClickEvent(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation);
+
+    static bool nodeWillRespondToMouseEvents(Node&);
+
+    WEBCORE_EXPORT RefPtr<LocalDOMWindow> windowWithDoubleClickEventListener() const;
+#endif // PLATFORM(COCOA)
+
 #if PLATFORM(IOS_FAMILY)
-    const ViewportArguments& viewportArguments() const;
+    const ViewportArguments& viewportArguments() const LIFETIME_BOUND;
     WEBCORE_EXPORT void setViewportArguments(const ViewportArguments&);
 
     WEBCORE_EXPORT Node* deepestNodeAtLocation(const FloatPoint& viewportLocation);
-    WEBCORE_EXPORT Node* nodeRespondingToClickEvents(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation, SecurityOrigin* = nullptr);
-    WEBCORE_EXPORT Node* nodeRespondingToDoubleClickEvent(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation);
-    WEBCORE_EXPORT Node* nodeRespondingToInteraction(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation);
-    WEBCORE_EXPORT Node* nodeRespondingToScrollWheelEvents(const FloatPoint& viewportLocation);
-    WEBCORE_EXPORT Node* approximateNodeAtViewportLocationLegacy(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation);
+    WEBCORE_EXPORT RefPtr<Node> nodeRespondingToScrollWheelEvents(const FloatPoint& viewportLocation);
+    WEBCORE_EXPORT RefPtr<Node> approximateNodeAtViewportLocationLegacy(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation);
 
     WEBCORE_EXPORT NSArray *wordsInCurrentParagraph() const;
     WEBCORE_EXPORT CGRect renderRectForPoint(CGPoint, bool* isReplaced, float* fontSize) const;
@@ -276,6 +289,7 @@ public:
     WEBCORE_EXPORT String displayStringModifiedByEncoding(const String&) const;
 
     WEBCORE_EXPORT VisiblePosition visiblePositionForPoint(const IntPoint& framePoint) const;
+    HitTestResult hitTestResultAtPoint(IntPoint, OptionSet<HitTestRequest::Type>);
     Document* documentAtPoint(const IntPoint& windowPoint);
     WEBCORE_EXPORT std::optional<SimpleRange> rangeForPoint(const IntPoint& framePoint);
 
@@ -315,15 +329,12 @@ public:
     WEBCORE_EXPORT FloatSize screenSize() const;
     void setOverrideScreenSize(FloatSize&&);
 
-    void selfOnlyRef();
+    void NODELETE selfOnlyRef();
     void selfOnlyDeref();
 
     void documentURLOrOriginDidChange();
+    bool dispatchLoadEventToRemoteParent();
     void dispatchLoadEventToParent();
-
-#if ENABLE(WINDOW_PROXY_PROPERTY_ACCESS_NOTIFICATION)
-    void didAccessWindowProxyPropertyViaOpener(WindowProxyProperty);
-#endif
 
     void storageAccessExceptionReceivedForDomain(const RegistrableDomain&);
     bool requestSkipUserActivationCheckForStorageAccess(const RegistrableDomain&);
@@ -332,13 +343,15 @@ public:
     String customUserAgentAsSiteSpecificQuirks() const final;
     String customNavigatorPlatform() const final;
     OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections() const final;
+    bool allowPrivacyProxy() const final;
     AutoplayPolicy autoplayPolicy() const final;
+    ColorSchemePreference colorSchemePreference() const final;
 
-    WEBCORE_EXPORT SandboxFlags effectiveSandboxFlags() const;
+    WEBCORE_EXPORT SandboxFlags NODELETE effectiveSandboxFlags() const;
     SandboxFlags sandboxFlagsFromSandboxAttributeNotCSP() { return m_sandboxFlags; }
     WEBCORE_EXPORT void updateSandboxFlags(SandboxFlags, NotifyUIProcess) final;
 
-    WEBCORE_EXPORT ReferrerPolicy effectiveReferrerPolicy() const;
+    WEBCORE_EXPORT ReferrerPolicy NODELETE effectiveReferrerPolicy() const;
     WEBCORE_EXPORT void updateReferrerPolicy(ReferrerPolicy) final;
 
     ScrollbarMode scrollingMode() const { return m_scrollingMode; }
@@ -346,19 +359,23 @@ public:
     WEBCORE_EXPORT void reportMixedContentViolation(bool blocked, const URL& target) const final;
     WEBCORE_EXPORT void setScrollingMode(ScrollbarMode);
     WEBCORE_EXPORT void showMemoryMonitorError();
+    WEBCORE_EXPORT static void applyMemoryMonitorErrorToIFrameElement(HTMLIFrameElement&);
 
 #if ENABLE(CONTENT_EXTENSIONS)
     WEBCORE_EXPORT void showResourceMonitoringError();
     WEBCORE_EXPORT void reportResourceMonitoringWarning();
+    WEBCORE_EXPORT static void applyResourceMonitorErrorToIFrameElement(HTMLIFrameElement&);
 #endif
 
     bool frameCanCreatePaymentSession() const final;
 
     FrameInspectorController& inspectorController() { return m_inspectorController.get(); }
     const FrameInspectorController& inspectorController() const { return m_inspectorController.get(); }
-    WEBCORE_EXPORT Ref<FrameInspectorController> protectedInspectorController() const;
     FrameConsoleClient& console() { return m_consoleClient.get(); }
     const FrameConsoleClient& console() const { return m_consoleClient.get(); }
+
+    // The debugger to attach to this frame's global objects.
+    JSC::Debugger* debugger() const LIFETIME_BOUND;
 
 protected:
     void frameWasDisconnectedFromOwner() const final;
@@ -366,7 +383,7 @@ protected:
 private:
     friend class NavigationDisabler;
 
-    LocalFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, std::optional<ScrollbarMode>, HTMLFrameOwnerElement*, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&&, AddToFrameTree = AddToFrameTree::Yes);
+    LocalFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, std::optional<ScrollbarMode>, HTMLFrameOwnerElement*, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&&, float pageZoomFactor, float textZoomFactor, AddToFrameTree = AddToFrameTree::Yes);
 
     void dropChildren();
 
@@ -379,12 +396,11 @@ private:
     std::optional<DocumentSecurityPolicy> frameDocumentSecurityPolicy() const final;
     String frameURLProtocol() const final;
 
-    FrameView* virtualView() const final;
     void disconnectView() final;
-    DOMWindow* virtualWindow() const final;
+    DOMWindow* NODELETE virtualWindow() const final;
     void reinitializeDocumentSecurityContext() final;
-    FrameLoaderClient& loaderClient() final;
-    void documentURLForConsoleLog(CompletionHandler<void(const URL&)>&&) final;
+    FrameLoaderClient& NODELETE loaderClient() LIFETIME_BOUND final;
+    URL urlForConsoleLog() const final;
 
     WeakHashSet<FrameDestructionObserver> m_destructionObservers;
 
@@ -396,16 +412,9 @@ private:
     UniqueRef<ScriptController> m_script;
 
 #if ENABLE(DATA_DETECTION)
-    std::unique_ptr<DataDetectionResultsStorage> m_dataDetectionResults;
+    const std::unique_ptr<DataDetectionResultsStorage> m_dataDetectionResults;
 #endif
 #if PLATFORM(IOS_FAMILY)
-    void betterApproximateNode(const IntPoint& testPoint, const NodeQualifier&, Node*& best, Node* failedNode, IntPoint& bestPoint, IntRect& bestRect, const IntRect& testRect);
-    bool hitTestResultAtViewportLocation(const FloatPoint& viewportLocation, HitTestResult&, IntPoint& center);
-
-    enum class ShouldApproximate : bool { No, Yes };
-    enum class ShouldFindRootEditableElement : bool { No, Yes };
-    Node* qualifyingNodeAtViewportLocation(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation, const NodeQualifier&, ShouldApproximate, ShouldFindRootEditableElement = ShouldFindRootEditableElement::Yes);
-
     void setTimersPausedInternal(bool);
 
     const UniqueRef<ViewportArguments> m_viewportArguments;
@@ -424,17 +433,13 @@ private:
     unsigned m_selfOnlyRefCount { 0 };
     bool m_hasHadUserInteraction { false };
 
-#if ENABLE(WINDOW_PROXY_PROPERTY_ACCESS_NOTIFICATION)
-    OptionSet<WindowProxyProperty> m_accessedWindowProxyPropertiesViaOpener;
-#endif
-
     std::unique_ptr<OverrideScreenSize> m_overrideScreenSize;
 
     const WeakPtr<LocalFrame> m_rootFrame;
     SandboxFlags m_sandboxFlags;
     ReferrerPolicy m_parentFrameOrOpenerReferrerPolicy;
     const UniqueRef<EventHandler> m_eventHandler;
-    std::unique_ptr<HashSet<RegistrableDomain>> m_storageAccessExceptionDomains;
+    const std::unique_ptr<HashSet<RegistrableDomain>> m_storageAccessExceptionDomains;
 
     const UniqueRef<FrameInspectorController> m_inspectorController;
     const UniqueRef<FrameConsoleClient> m_consoleClient;

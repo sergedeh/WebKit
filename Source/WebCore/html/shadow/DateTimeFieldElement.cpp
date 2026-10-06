@@ -35,9 +35,10 @@
 #include "LocalizedStrings.h"
 #include "NodeDocument.h"
 #include "PlatformLocale.h"
-#include "RenderStyle+SettersInlines.h"
+#include "PlatformRenderTheme.h"
 #include "RenderTheme.h"
 #include "ResolvedStyle.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "StyleResolver.h"
 #include "Text.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -52,12 +53,12 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(DateTimeFieldElement);
 DateTimeFieldElementFieldOwner::~DateTimeFieldElementFieldOwner() = default;
 
 DateTimeFieldElement::DateTimeFieldElement(Document& document, DateTimeFieldElementFieldOwner& fieldOwner)
-    : HTMLDivElement(divTag, document, TypeFlag::HasCustomStyleResolveCallbacks)
+    : HTMLDivElement(document, TypeFlag::HasCustomStyleResolveCallbacks)
     , m_fieldOwner(fieldOwner)
 {
 }
 
-std::optional<Style::UnadjustedStyle> DateTimeFieldElement::resolveCustomStyle(const Style::ResolutionContext& resolutionContext, const RenderStyle* shadowHostStyle)
+std::optional<Style::UnadjustedStyle> DateTimeFieldElement::resolveCustomStyle(const Style::ResolutionContext& resolutionContext, const Style::ComputedStyle* shadowHostStyle)
 {
     auto elementStyle = resolveStyle(resolutionContext);
 
@@ -110,13 +111,14 @@ void DateTimeFieldElement::defaultKeyboardEventHandler(KeyboardEvent& keyboardEv
     auto stepUpKeyIdentifier = isHorizontal ? "Up"_s : "Right"_s;
     auto stepDownKeyIdentifier = isHorizontal ? "Down"_s : "Left"_s;
 
-    if (key == previousKeyIdentifier && m_fieldOwner && m_fieldOwner->focusOnPreviousField(*this)) {
+    RefPtr fieldOwner = m_fieldOwner;
+    if (key == previousKeyIdentifier && fieldOwner && fieldOwner->focusOnPreviousField(*this)) {
         keyboardEvent.setDefaultHandled();
         return;
     }
 
     if ((key == nextKeyIdentifier || code == "Comma"_s || code == "Minus"_s || code == "Period"_s || code == "Slash"_s || code == "Semicolon"_s)
-        && m_fieldOwner && m_fieldOwner->focusOnNextField(*this)) {
+        && fieldOwner && fieldOwner->focusOnNextField(*this)) {
         keyboardEvent.setDefaultHandled();
         return;
     }
@@ -146,19 +148,20 @@ void DateTimeFieldElement::defaultKeyboardEventHandler(KeyboardEvent& keyboardEv
 
 bool DateTimeFieldElement::isFieldOwnerDisabled() const
 {
-    return m_fieldOwner && m_fieldOwner->isFieldOwnerDisabled();
+    RefPtr fieldOwner = m_fieldOwner;
+    return fieldOwner && fieldOwner->isFieldOwnerDisabled();
 }
 
 bool DateTimeFieldElement::isFieldOwnerReadOnly() const
 {
-    return m_fieldOwner && m_fieldOwner->isFieldOwnerReadOnly();
+    RefPtr fieldOwner = m_fieldOwner;
+    return fieldOwner && fieldOwner->isFieldOwnerReadOnly();
 }
 
 bool DateTimeFieldElement::isFieldOwnerHorizontal() const
 {
-    if (m_fieldOwner)
-        return m_fieldOwner->isFieldOwnerHorizontal();
-    return true;
+    RefPtr fieldOwner = m_fieldOwner;
+    return !fieldOwner || fieldOwner->isFieldOwnerHorizontal();
 }
 
 bool DateTimeFieldElement::isFocusable() const
@@ -170,18 +173,19 @@ bool DateTimeFieldElement::isFocusable() const
 
 void DateTimeFieldElement::handleBlurEvent(Event& event)
 {
-    if (m_fieldOwner)
-        m_fieldOwner->didBlurFromField(event);
+    if (RefPtr fieldOwner = m_fieldOwner)
+        fieldOwner->didBlurFromField(event);
 }
 
 Locale& DateTimeFieldElement::localeForOwner() const
 {
-    return protectedDocument()->getCachedLocale(localeIdentifier());
+    return protect(document())->getCachedLocale(localeIdentifier());
 }
 
 AtomString DateTimeFieldElement::localeIdentifier() const
 {
-    return m_fieldOwner ? m_fieldOwner->localeIdentifier() : nullAtom();
+    RefPtr fieldOwner = m_fieldOwner;
+    return fieldOwner ? fieldOwner->localeIdentifier() : nullAtom();
 }
 
 String DateTimeFieldElement::visibleValue() const
@@ -194,15 +198,23 @@ String DateTimeFieldElement::visibleValue() const
 void DateTimeFieldElement::updateVisibleValue(EventBehavior eventBehavior)
 {
     if (!firstChild())
-        appendChild(Text::create(protectedDocument().get(), String { emptyString() }));
+        appendChild(Text::create(protect(document()).get(), String { emptyString() }));
 
     Ref textNode = downcast<Text>(*firstChild());
     String newVisibleValue = visibleValue();
     if (textNode->wholeText() != newVisibleValue)
         textNode->replaceWholeText(newVisibleValue);
 
-    if (eventBehavior == DispatchInputAndChangeEvents && m_fieldOwner)
-        m_fieldOwner->fieldValueChanged();
+    auto hasValue = this->hasValue();
+    if (m_hadValueAtLastValueUpdate != hasValue) {
+        m_hadValueAtLastValueUpdate = hasValue;
+        invalidateStyle();
+    }
+
+    if (eventBehavior == DispatchInputAndChangeEvents) {
+        if (RefPtr fieldOwner = m_fieldOwner)
+            fieldOwner->fieldValueChanged();
+    }
 }
 
 bool DateTimeFieldElement::supportsFocus() const
@@ -212,13 +224,14 @@ bool DateTimeFieldElement::supportsFocus() const
 
 bool DateTimeFieldElement::transferredFocusToPicker() const
 {
-    return m_fieldOwner && m_fieldOwner->didFieldOwnerTransferFocusToPicker();
+    RefPtr fieldOwner = m_fieldOwner;
+    return fieldOwner && fieldOwner->didFieldOwnerTransferFocusToPicker();
 }
 
 void DateTimeFieldElement::didSuppressBlurDueToPickerFocusTransfer()
 {
-    if (m_fieldOwner)
-        m_fieldOwner->didSuppressBlurDueToPickerFocusTransfer();
+    if (RefPtr fieldOwner = m_fieldOwner)
+        fieldOwner->didSuppressBlurDueToPickerFocusTransfer();
 }
 
 } // namespace WebCore

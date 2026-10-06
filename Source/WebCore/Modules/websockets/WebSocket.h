@@ -37,6 +37,7 @@
 #include <wtf/CheckedRef.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/URL.h>
 
 namespace JSC {
@@ -47,6 +48,7 @@ class ArrayBufferView;
 namespace WebCore {
 
 class Blob;
+class SecurityOrigin;
 class ThreadableWebSocketChannel;
 template<typename> class ExceptionOr;
 
@@ -66,8 +68,8 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    static HashSet<CheckedPtr<WebSocket>>& allActiveWebSockets() WTF_REQUIRES_LOCK(s_allActiveWebSocketsLock);
-    static Lock& allActiveWebSocketsLock() WTF_RETURNS_LOCK(s_allActiveWebSocketsLock);
+    static HashSet<CheckedPtr<WebSocket>>& NODELETE allActiveWebSockets() WTF_REQUIRES_LOCK(s_allActiveWebSocketsLock);
+    static Lock& NODELETE allActiveWebSocketsLock() WTF_RETURNS_LOCK(s_allActiveWebSocketsLock);
 
     enum State {
         CONNECTING = 0,
@@ -87,21 +89,20 @@ public:
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
 
-    RefPtr<ThreadableWebSocketChannel> channel() const;
+    RefPtr<ThreadableWebSocketChannel> NODELETE channel() const;
 
-    const URL& url() const;
-    State readyState() const;
-    unsigned bufferedAmount() const;
+    const URL& NODELETE url() const;
+    State NODELETE readyState() const;
+    uint64_t NODELETE bufferedAmount() const;
 
-    String protocol() const;
-    String extensions() const;
+    String NODELETE protocol() const;
+    String NODELETE extensions() const;
 
     enum class BinaryType : bool { Blob, Arraybuffer };
     BinaryType binaryType() const { return m_binaryType; }
-    void setBinaryType(BinaryType);
+    void NODELETE setBinaryType(BinaryType);
 
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
 
 private:
     explicit WebSocket(ScriptExecutionContext&);
@@ -124,12 +125,12 @@ private:
     void didReceiveMessage(String&& message) final;
     void didReceiveBinaryData(Vector<uint8_t>&&) final;
     void didReceiveMessageError(String&& reason) final;
-    void didUpdateBufferedAmount(unsigned bufferedAmount) final;
+    void NODELETE didUpdateBufferedAmount(uint64_t bufferedAmount) final;
     void didStartClosingHandshake() final;
-    void didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompletionStatus, unsigned short code, const String& reason) final;
+    void didClose(uint64_t unhandledBufferedAmount, ClosingHandshakeCompletionStatus, unsigned short code, const String& reason) final;
     void didUpgradeURL() final;
 
-    size_t getFramingOverhead(size_t payloadSize);
+    size_t NODELETE getFramingOverhead(size_t payloadSize);
 
     void failAsynchronously();
 
@@ -139,8 +140,8 @@ private:
     State m_state { CONNECTING };
     URL m_url;
     const RefPtr<SecurityOrigin> m_origin;
-    unsigned m_bufferedAmount { 0 };
-    unsigned m_bufferedAmountAfterClose { 0 };
+    uint64_t m_bufferedAmount { 0 };
+    uint64_t m_bufferedAmountAfterClose { 0 };
     BinaryType m_binaryType { BinaryType::Blob };
     String m_subprotocol;
     String m_extensions;

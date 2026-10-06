@@ -154,8 +154,7 @@ public:
 
     constexpr bool hasExactlyOneBitSet() const
     {
-        auto storage = m_storage;
-        return storage && !(storage & (storage - 1));
+        return std::has_single_bit(m_storage);
     }
 
     constexpr std::optional<E> toSingleValue() const
@@ -194,8 +193,8 @@ public:
     static constexpr ptrdiff_t storageMemoryOffset() { return OBJECT_OFFSETOF(EnumSet, m_storage); }
 
 private:
-    constexpr bool get(E e) const { return m_storage & (static_cast<StorageType>(1) << enumToUnderlyingType(e)); }
-    constexpr void set(E e) { m_storage |= (static_cast<StorageType>(1) << enumToUnderlyingType(e)); }
+    constexpr bool get(E e) const { return m_storage & (static_cast<StorageType>(1) << std::to_underlying(e)); }
+    constexpr void set(E e) { m_storage |= (static_cast<StorageType>(1) << std::to_underlying(e)); }
 
     enum InitializationTag { FromRawValue };
     constexpr EnumSet(StorageType rawValue, InitializationTag)

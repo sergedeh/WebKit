@@ -40,8 +40,8 @@
 #include "ServiceWorkerRegistration.h"
 #include "ServiceWorkerRegistrationOptions.h"
 #include "WorkerType.h"
+#include <wtf/CurrentThread.h>
 #include <wtf/Forward.h>
-#include <wtf/Threading.h>
 
 namespace WebCore {
 
@@ -73,7 +73,7 @@ public:
     ReadyPromise& ready();
 
     using RegistrationOptions = ServiceWorkerRegistrationOptions;
-    void addRegistration(Variant<RefPtr<TrustedScriptURL>, String>&&, const RegistrationOptions&, Ref<DeferredPromise>&&);
+    void addRegistration(Variant<Ref<TrustedScriptURL>, String>&&, const RegistrationOptions&, Ref<DeferredPromise>&&);
     void unregisterRegistration(ServiceWorkerRegistrationIdentifier, DOMPromiseDeferred<IDLBoolean>&&);
     void updateRegistration(const URL& scopeURL, const URL& scriptURL, WorkerType, Ref<DeferredPromise>&&);
 
@@ -100,7 +100,7 @@ public:
     void getNotifications(const URL&, const String&, DOMPromiseDeferred<IDLSequence<IDLInterface<Notification>>>&&);
 #endif
 
-    ServiceWorkerJob* job(ServiceWorkerJobIdentifier);
+    ServiceWorkerJob* NODELETE job(ServiceWorkerJobIdentifier);
 
     void startMessages();
 
@@ -124,7 +124,8 @@ public:
 private:
     ServiceWorkerContainer(ScriptExecutionContext*, NavigatorBase&);
 
-    bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions& = { }) final;
+    bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
+    using EventTarget::addEventListener;
 
     void scheduleJob(Ref<ServiceWorkerJob>&&);
 
@@ -143,10 +144,8 @@ private:
     ScriptExecutionContext* context() final { return scriptExecutionContext(); }
 
     SWClientConnection& ensureSWClientConnection();
-    Ref<SWClientConnection> ensureProtectedSWClientConnection();
 
     ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::ServiceWorkerContainer; }
     void refEventTarget() final;
     void derefEventTarget() final;
@@ -172,7 +171,7 @@ private:
     HashMap<ServiceWorkerRegistrationIdentifier, WeakRef<ServiceWorkerRegistration, WeakPtrImplWithEventTargetData>> m_registrations;
 
 #if ASSERT_ENABLED
-    const Ref<Thread> m_creationThread { Thread::currentSingleton() };
+    const uint32_t m_creationThreadID { currentThreadID() };
 #endif
 
     uint64_t m_lastOngoingSettledRegistrationIdentifier { 0 };

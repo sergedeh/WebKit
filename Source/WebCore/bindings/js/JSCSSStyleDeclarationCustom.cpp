@@ -52,9 +52,10 @@ using namespace JSC;
 WebCoreOpaqueRoot root(CSSStyleDeclaration* style)
 {
     ASSERT(style);
-    if (auto* parentRule = style->parentRule())
+    // Cannot ref on the GC thread.
+    if (SUPPRESS_UNCOUNTED_LOCAL auto* parentRule = style->parentRule())
         return root(parentRule);
-    if (auto* styleSheet = style->parentStyleSheet())
+    if (SUPPRESS_UNCOUNTED_LOCAL auto* styleSheet = style->parentStyleSheet())
         return root(styleSheet);
     if (SUPPRESS_UNCHECKED_LOCAL auto* parentElement = style->parentElement())
         return root(parentElement);
@@ -62,11 +63,11 @@ WebCoreOpaqueRoot root(CSSStyleDeclaration* style)
 }
 
 template<typename Visitor>
-void JSCSSStyleDeclaration::visitAdditionalChildren(Visitor& visitor)
+void JSCSSStyleDeclaration::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     addWebCoreOpaqueRoot(visitor, wrapped());
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSCSSStyleDeclaration);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSCSSStyleDeclaration);
 
 } // namespace WebCore

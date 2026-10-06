@@ -29,8 +29,11 @@
 #include "CSSImageSetOptionValue.h"
 #include "CSSImageValue.h"
 #include "CSSPrimitiveValue.h"
+#include "DeprecatedCSSOMValueList.h"
 #include "StyleBuilderState.h"
 #include "StyleImageSet.h"
+#include "StylePrimitiveNumericTypes+Conversions.h"
+#include "StyleString.h"
 #include <numeric>
 #include <wtf/text/StringBuilder.h>
 
@@ -42,7 +45,7 @@ Ref<CSSImageSetValue> CSSImageSetValue::create(CSSValueListBuilder builder)
 }
 
 CSSImageSetValue::CSSImageSetValue(CSSValueListBuilder builder)
-    : CSSValueContainingVector(ClassType::ImageSet, CommaSeparator, WTF::move(builder))
+    : CSSValueContainingVector(ClassType::ImageSet, ValueSeparator::Comma, WTF::move(builder))
 {
 }
 
@@ -54,19 +57,28 @@ String CSSImageSetValue::customCSSText(const CSS::SerializationContext& context)
         if (i > 0)
             result.append(", "_s);
         ASSERT(is<CSSImageSetOptionValue>(item(i)));
-        result.append(item(i)->cssText(context));
+        result.append(protect(item(i))->cssText(context));
     }
     result.append(')');
     return result.toString();
 }
 
-RefPtr<StyleImage> CSSImageSetValue::createStyleImage(const Style::BuilderState& state) const
+Ref<DeprecatedCSSOMValue> CSSImageSetValue::customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration& owner) const
+{
+    return DeprecatedCSSOMValueList::create(*this, owner);
+}
+
+RefPtr<Style::Image> CSSImageSetValue::createStyleImage(const Style::BuilderState& state) const
 {
     size_t length = this->length();
 
-    Vector<ImageWithScale> images(length, [&](size_t i) {
+    Vector<Style::ImageWithScale> images(length, [&](size_t i) {
         RefPtr<const CSSImageSetOptionValue> option = downcast<CSSImageSetOptionValue>(item(i));
-        return ImageWithScale { state.createStyleImage(option->image()), option->protectedResolution()->resolveAsResolution<float>(state.cssToLengthConversionData()), option->type() };
+        return Style::ImageWithScale {
+            .image = state.createStyleImage(option->image()),
+            .scaleFactor = Style::toStyle(option->resolution(), state),
+            .mimeType = Style::toStyle(option->type(), state),
+        };
     });
 
     // Sort the images so that they are stored in order from lowest resolution to highest.
@@ -75,10 +87,10 @@ RefPtr<StyleImage> CSSImageSetValue::createStyleImage(const Style::BuilderState&
     std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
 
     std::stable_sort(sortedIndices.begin(), sortedIndices.end(), [&images](size_t lhs, size_t rhs) {
-        return images[lhs].scaleFactor < images[rhs].scaleFactor;
+        return images[lhs].scaleFactor.value < images[rhs].scaleFactor.value;
     });
 
-    return StyleImageSet::create(WTF::move(images), WTF::move(sortedIndices));
+    return Style::ImageSet::create(WTF::move(images), WTF::move(sortedIndices));
 }
 
 } // namespace WebCore

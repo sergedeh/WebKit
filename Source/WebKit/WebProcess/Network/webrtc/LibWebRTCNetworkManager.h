@@ -45,10 +45,12 @@ public:
     void ref() const final { ThreadSafeRefCounted::ref(); }
     void deref() const final { ThreadSafeRefCounted::deref(); }
 
-    void setEnumeratingAllNetworkInterfacesEnabled(bool);
-    void setEnumeratingVisibleNetworkInterfacesEnabled(bool);
+    void NODELETE setEnumeratingAllNetworkInterfacesEnabled(bool);
+    void NODELETE setEnumeratingVisibleNetworkInterfacesEnabled(bool);
 
     static void signalUsedInterface(WebCore::ScriptExecutionContextIdentifier, String&&);
+
+    bool useMDNSCandidates() const { return m_useMDNSCandidates; }
 
 private:
     explicit LibWebRTCNetworkManager(WebCore::ScriptExecutionContextIdentifier);

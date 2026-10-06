@@ -70,7 +70,7 @@ HashMap<String, RTCNetwork> NetworkRTCMonitor::gatherNetworkMap()
     if (error)
         return { };
 
-    std::unique_ptr<struct ifaddrs> toBeFreed(interfaces);
+    std::unique_ptr<struct ifaddrs, decltype(freeifaddrs)*> toBeFreed(interfaces, freeifaddrs);
 
     HashMap<String, RTCNetwork> networkMap;
     for (auto* iterator = interfaces; iterator != nullptr; iterator = iterator->ifa_next) {
@@ -99,7 +99,7 @@ HashMap<String, RTCNetwork> NetworkRTCMonitor::gatherNetworkMap()
 
         networkMap.ensure(networkKey, [&] {
             auto interfaceType = NetworkRTCSharedMonitor::singleton().adapterTypeFromInterfaceName(iterator->ifa_name);
-            return RTCNetwork { name, networkKey.utf8().span(), address->second, prefixLength, interfaceType, 0, 0, true, false, scopeID, { } };
+            return RTCNetwork { String::fromLatin1(name), String { networkKey }, address->second, prefixLength, interfaceType, 0, 0, true, false, scopeID, { } };
         }).iterator->value.ips.append(address->first);
     }
 
@@ -271,7 +271,7 @@ void NetworkRTCMonitor::stopUpdating()
 void NetworkRTCMonitor::onNetworksChanged(const Vector<RTCNetwork>& networkList, const RTCNetwork::IPAddress& ipv4, const RTCNetwork::IPAddress& ipv6)
 {
     RTC_RELEASE_LOG("onNetworksChanged sent");
-    m_rtcProvider->protectedConnection()->send(Messages::WebRTCMonitor::NetworksChanged(networkList, ipv4, ipv6), 0);
+    protect(m_rtcProvider->connection())->send(Messages::WebRTCMonitor::NetworksChanged(networkList, ipv4, ipv6), 0);
 }
 
 

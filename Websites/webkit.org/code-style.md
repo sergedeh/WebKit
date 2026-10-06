@@ -1029,7 +1029,8 @@ for (Vector<RefPtr<FrameView> >::iterator it = frameViews.begin(); it != end; ++
 
 ```cpp
 [this] { return m_member; }
-[this]() mutable { return doWork(WTF::move(m_object)); }
+[this] mutable { return doWork(WTF::move(m_object)); }
+[this] -> const String& { return m_member; }
 ```
 
 ###### Wrong:
@@ -1037,6 +1038,8 @@ for (Vector<RefPtr<FrameView> >::iterator it = frameViews.begin(); it != end; ++
 ```cpp
 [this]() { return m_member; }
 []() { return static_cast<unsigned>(-1); }
+[this]() mutable { return doWork(WTF::move(m_object)); }
+[this] () -> const String& { return m_member; }
 ```
 
 [](#function-return-arrow) Only use the arrow for function return types if it allows you to omit redundant information.
@@ -1621,6 +1624,41 @@ class Student : public Person {
 public:
     virtual String description() { ... }; // This is incorrect because it uses the "virtual" keyword to indicate that the method is overridden.
 }
+```
+
+### Smart Pointer Variable Types
+
+[](#auto-with-adopt) When declaring a local variable that is initialized with an `adopt` method, the variable's type should be declared explicitly as the smart pointer type and not declared using `auto`.
+
+###### Right:
+
+```cpp
+RetainPtr nsDictionary = adoptNS([NSMutableDictionary new]);
+
+RetainPtr cfDictionary = adoptCF(CFDictionaryCreateMutable(
+    kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+		
+Ref origin1 = adoptRef(*new SecurityOrigin);
+
+RefPtr origin2 = adoptRef(new SecurityOrigin);
+
+OSObjectPtr synchronousFileLoadingGroup = adoptOSObject(dispatch_group_create());
+
+```
+
+###### Wrong:
+
+```cpp
+auto nsDictionary = adoptNS([NSMutableDictionary new]);
+
+auto cfDictionary = adoptCF(CFDictionaryCreateMutable(
+    kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+		
+auto origin1 = adoptRef(*new SecurityOrigin);
+
+auto origin2 = adoptRef(new SecurityOrigin);
+
+auto synchronousFileLoadingGroup = adoptOSObject(dispatch_group_create());
 ```
 
 ### Python

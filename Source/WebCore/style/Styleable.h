@@ -30,16 +30,19 @@
 #include <WebCore/PseudoElementIdentifier.h>
 #include <WebCore/RenderStyleConstants.h>
 #include <WebCore/WebAnimationTypes.h>
+#include <wtf/HashSet.h>
+#include <wtf/HashTraits.h>
+#include <wtf/text/AtomStringHash.h>
 
 namespace WebCore {
 
 class Element;
 class KeyframeEffectStack;
 class RenderElement;
-class RenderStyle;
 class WebAnimation;
 
 namespace Style {
+class ComputedStyle;
 template<typename> struct CoordinatedValueList;
 struct Animation;
 using Animations = CoordinatedValueList<Animation>;
@@ -66,9 +69,8 @@ struct Styleable {
     }
 
     RenderElement* renderer() const;
-    Ref<Element> protectedElement() const { return element; }
 
-    std::unique_ptr<RenderStyle> computeAnimatedStyle() const;
+    std::unique_ptr<Style::ComputedStyle> computeAnimatedStyle() const;
 
     // If possible, compute the visual extent of any transform animation using the given rect,
     // returning the result in the rect. Return false if there is some transform animation but
@@ -79,9 +81,10 @@ struct Styleable {
 
     bool isRunningAcceleratedAnimationOfProperty(CSSPropertyID) const;
     bool isRunningAcceleratedTransformRelatedAnimation() const;
+    bool isRunningOrAboutToRunAcceleratedTransformRelatedAnimation() const;
     bool hasRunningAcceleratedAnimations() const;
 
-    bool capturedInViewTransition() const;
+    bool NODELETE capturedInViewTransition() const;
     void setCapturedInViewTransition(AtomString);
 
     KeyframeEffectStack* keyframeEffectStack() const
@@ -99,7 +102,7 @@ struct Styleable {
         return element.hasKeyframeEffects(pseudoElementIdentifier);
     }
 
-    OptionSet<AnimationImpact> applyKeyframeEffects(RenderStyle& targetStyle, HashSet<AnimatableCSSProperty>& affectedProperties, const RenderStyle* previousLastStyleChangeEventStyle, const Style::ResolutionContext&) const;
+    OptionSet<AnimationImpact> applyKeyframeEffects(Style::ComputedStyle& targetStyle, HashSet<AnimatableCSSProperty>& affectedProperties, const Style::ComputedStyle* previousLastStyleChangeEventStyle, const Style::ResolutionContext&) const;
 
     const AnimationCollection* animations() const
     {
@@ -119,6 +122,11 @@ struct Styleable {
     bool hasRunningTransitions() const
     {
         return element.hasRunningTransitions(pseudoElementIdentifier);
+    }
+
+    const AnimatableCSSPropertyToTransitionMap* runningTransitionsByProperty() const
+    {
+        return element.runningTransitionsByProperty(pseudoElementIdentifier);
     }
 
     AnimationCollection& ensureAnimations() const
@@ -146,12 +154,12 @@ struct Styleable {
         element.setAnimationsCreatedByMarkup(pseudoElementIdentifier, WTF::move(collection));
     }
 
-    const RenderStyle* lastStyleChangeEventStyle() const
+    const Style::ComputedStyle* lastStyleChangeEventStyle() const
     {
         return element.lastStyleChangeEventStyle(pseudoElementIdentifier);
     }
 
-    void setLastStyleChangeEventStyle(std::unique_ptr<const RenderStyle>&& style) const
+    void setLastStyleChangeEventStyle(std::unique_ptr<const Style::ComputedStyle>&& style) const
     {
         element.setLastStyleChangeEventStyle(pseudoElementIdentifier, WTF::move(style));
     }
@@ -172,6 +180,7 @@ struct Styleable {
     }
 
     void queryContainerDidChange() const;
+    bool viewportSizeDidChange() const;
 
     bool animationListContainsNewlyValidAnimation(const Style::Animations&) const;
 
@@ -186,15 +195,24 @@ struct Styleable {
 
     void removeStyleOriginatedAnimationFromListsForOwningElement(WebAnimation&) const;
 
-    void updateCSSAnimations(const RenderStyle* currentStyle, const RenderStyle& afterChangeStyle, const Style::ResolutionContext&, WeakStyleOriginatedAnimations&, Style::IsInDisplayNoneTree) const;
-    void updateCSSTransitions(const RenderStyle& currentStyle, const RenderStyle& newStyle, WeakStyleOriginatedAnimations&) const;
-    void updateCSSScrollTimelines(const RenderStyle* currentStyle, const RenderStyle& afterChangeStyle) const;
-    void updateCSSViewTimelines(const RenderStyle* currentStyle, const RenderStyle& afterChangeStyle) const;
+    void updateCSSAnimations(const Style::ComputedStyle* currentStyle, const Style::ComputedStyle& afterChangeStyle, const Style::ResolutionContext&, WeakStyleOriginatedAnimations&, Style::IsInDisplayNoneTree) const;
+    void updateCSSTransitions(const Style::ComputedStyle& currentStyle, const Style::ComputedStyle& newStyle, WeakStyleOriginatedAnimations&) const;
+    void updateCSSScrollTimelines(const Style::ComputedStyle* currentStyle, const Style::ComputedStyle& afterChangeStyle) const;
+    void updateCSSViewTimelines(const Style::ComputedStyle* currentStyle, const Style::ComputedStyle& afterChangeStyle) const;
 };
 
 class WeakStyleable {
 public:
     WeakStyleable() = default;
+
+    WeakStyleable(WTF::HashTableDeletedValueType) : m_element(WTF::HashTableDeletedValue) { }
+    bool isHashTableDeletedValue() const { return m_element.isHashTableDeletedValue(); }
+
+    WeakStyleable(WTF::HashTableEmptyValueType) : m_element(WTF::HashTableEmptyValue) { }
+    bool isHashTableEmptyValue() const { return m_element.isHashTableEmptyValue(); }
+
+    // WeakPtr is not safe to compare.
+    static constexpr bool isSafeToCompareToHashTableEmptyOrDeletedValue = false;
 
     explicit operator bool() const { return !!m_element; }
 
@@ -220,7 +238,7 @@ public:
         return Styleable(*m_element, m_pseudoElementIdentifier);
     }
 
-    WeakPtr<Element, WeakPtrImplWithEventTargetData> element() const { return m_element; }
+    const WeakPtr<Element, WeakPtrImplWithEventTargetData>& element() const LIFETIME_BOUND { return m_element; }
     std::optional<Style::PseudoElementIdentifier> pseudoElementIdentifier() const { return m_pseudoElementIdentifier; }
 
 private:
@@ -228,7 +246,28 @@ private:
     std::optional<Style::PseudoElementIdentifier> m_pseudoElementIdentifier;
 };
 
+// This lets HasherBasedHash define a DefaultHash<WeakStyleable> for us.
+inline void add(Hasher& hasher, const WeakStyleable& weakStyleable)
+{
+    add(hasher, weakStyleable.element());
+    add(hasher, weakStyleable.pseudoElementIdentifier());
+}
+
 WTF::TextStream& operator<<(WTF::TextStream&, const Styleable&);
 WTF::TextStream& operator<<(WTF::TextStream&, const WeakStyleable&);
 
 } // namespace WebCore
+
+namespace WTF {
+
+template<> struct HashTraits<WebCore::WeakStyleable> : SimpleClassHashTraits<WebCore::WeakStyleable> {
+    static const bool emptyValueIsZero = false;
+    static constexpr bool hasIsEmptyValueFunction = true;
+    static WebCore::WeakStyleable emptyValue() { return { WTF::HashTableEmptyValue }; }
+    static bool isEmptyValue(const WebCore::WeakStyleable& value) { return value.isHashTableEmptyValue(); }
+
+    static constexpr bool hasIsWeakNullValueFunction = true;
+    static bool isWeakNullValue(const WebCore::WeakStyleable& value) { return !value; }
+};
+
+} // namespace WTF

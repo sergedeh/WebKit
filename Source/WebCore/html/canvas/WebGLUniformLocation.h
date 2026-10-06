@@ -36,10 +36,10 @@ namespace WebCore {
 class WebGLUniformLocation final : public RefCounted<WebGLUniformLocation> {
 public:
     static Ref<WebGLUniformLocation> create(WebGLProgram&, GCGLint location);
-    RefPtr<WebGLProgram> program() const;
-    GCGLint location() const;
-    std::optional<GCGLenum> type() const;
-    void setType(GCGLenum);
+    RefPtr<WebGLProgram> NODELETE program() const;
+    GCGLint NODELETE location() const;
+    std::optional<GCGLenum> NODELETE type() const;
+    void NODELETE setType(GCGLenum);
 
 private:
     WebGLUniformLocation(WebGLProgram&, GCGLint location);

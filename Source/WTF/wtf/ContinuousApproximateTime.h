@@ -40,6 +40,10 @@ class ContinuousApproximateTime final : public GenericTimeMixin<ContinuousApprox
 public:
     static constexpr ClockType clockType = ClockType::ContinuousApproximate;
 
+    // Declared here, not inherited: Swift's C++ interop importer mishandles
+    // an `operator bool` inherited from a template base (rdar://181622867).
+    explicit constexpr operator bool() const { return !!m_value; }
+
     // This is the epoch. So, x.secondsSinceEpoch() should be the same as x - ContinuousApproximateTime().
     constexpr ContinuousApproximateTime() = default;
 
@@ -51,9 +55,6 @@ public:
 #endif
 
     WTF_EXPORT_PRIVATE static ContinuousApproximateTime now();
-
-    WTF_EXPORT_PRIVATE WallTime approximateWallTime() const;
-    WTF_EXPORT_PRIVATE MonotonicTime approximateMonotonicTime() const;
 
     WTF_EXPORT_PRIVATE void dump(PrintStream&) const;
 

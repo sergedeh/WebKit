@@ -61,7 +61,7 @@ WebAudioBufferList::WebAudioBufferList(const CAAudioStreamDescription& format, s
 
 WebAudioBufferList::~WebAudioBufferList() = default;
 
-static inline std::optional<std::pair<size_t, size_t>> computeBufferSizes(uint32_t numberOfInterleavedChannels, uint32_t bytesPerFrame, uint32_t numberOfChannelStreams, size_t sampleCount)
+static inline std::optional<std::pair<size_t, size_t>> NODELETE computeBufferSizes(uint32_t numberOfInterleavedChannels, uint32_t bytesPerFrame, uint32_t numberOfChannelStreams, size_t sampleCount)
 {
     size_t totalSampleCount;
     bool result = WTF::safeMultiply(sampleCount, numberOfInterleavedChannels, totalSampleCount);
@@ -176,7 +176,7 @@ void WebAudioBufferList::reset()
     memcpySpan(span(*m_list), span(*m_canonicalList));
 }
 
-IteratorRange<AudioBuffer*> WebAudioBufferList::buffers() const
+IteratorRange<::AudioBuffer*> WebAudioBufferList::buffers() const
 {
     auto buffers = span(*m_list);
     return WTF::makeIteratorRange(std::to_address(buffers.begin()), std::to_address(buffers.end()));
@@ -187,7 +187,7 @@ uint32_t WebAudioBufferList::bufferCount() const
     return m_list->mNumberBuffers;
 }
 
-AudioBuffer* WebAudioBufferList::buffer(uint32_t index) const
+::AudioBuffer* WebAudioBufferList::buffer(uint32_t index) const
 {
     auto buffers = span(*m_list);
     ASSERT(index < buffers.size());

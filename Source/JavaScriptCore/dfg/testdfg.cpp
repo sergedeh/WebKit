@@ -30,14 +30,13 @@
 #include "DFGAbstractValue.h"
 #include "InitializeThreading.h"
 #include <wtf/DataLog.h>
-#include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 // We don't have a NO_RETURN_DUE_TO_EXIT, nor should we. That's ridiculous.
-static bool hiddenTruthBecauseNoReturnIsStupid() { return true; }
+static bool NODELETE hiddenTruthBecauseNoReturnIsStupid() { return true; }
 
 static void usage()
 {

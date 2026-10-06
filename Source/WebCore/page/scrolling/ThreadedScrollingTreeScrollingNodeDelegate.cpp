@@ -30,6 +30,7 @@
 
 #include "ScrollExtents.h"
 #include "ScrollingStateScrollingNode.h"
+#include "ScrollingThread.h"
 #include "ScrollingTree.h"
 #include "ScrollingTreeFrameScrollingNode.h"
 #include "ScrollingTreeScrollingNode.h"
@@ -84,7 +85,7 @@ bool ThreadedScrollingTreeScrollingNodeDelegate::startAnimatedScrollToPosition(F
     return m_scrollController.startAnimatedScrollToDestination(currentOffset, destinationOffset);
 }
 
-void ThreadedScrollingTreeScrollingNodeDelegate::stopAnimatedScroll()
+void ThreadedScrollingTreeScrollingNodeDelegate::stopAnimatedScroll(EnumSet<AnimatedScrollType>)
 {
     m_scrollController.stopAnimatedScroll();
 }
@@ -101,6 +102,16 @@ std::unique_ptr<ScrollingEffectsControllerTimer> ThreadedScrollingTreeScrollingN
         Locker locker { scrollingNode->scrollingTree()->treeLock() };
         function();
     });
+}
+
+void ThreadedScrollingTreeScrollingNodeDelegate::destroyTimer(std::unique_ptr<ScrollingEffectsControllerTimer> timer)
+{
+    // Snap timers are created against the scrolling thread's run loop (see createTimer), so they must
+    // be destroyed there to avoid racing CFRunLoopTimerInvalidate() against an in-flight callback when
+    // the node is torn down on the main thread (e.g. from commitTreeState()). The timer's callback
+    // holds a Ref to the scrolling node, so the node and this delegate stay alive until the timer is
+    // gone, keeping a late-firing callback safe.
+    ScrollingThread::dispatch([timer = WTF::move(timer)] { });
 }
 
 void ThreadedScrollingTreeScrollingNodeDelegate::startAnimationCallback(ScrollingEffectsController&)
@@ -184,9 +195,16 @@ void ThreadedScrollingTreeScrollingNodeDelegate::didStopScrollSnapAnimation()
 ScrollExtents ThreadedScrollingTreeScrollingNodeDelegate::scrollExtents() const
 {
     Ref scrollingNode = this->scrollingNode();
+    // scrollableAreaSize() is the frame view's visibleSize(), which has the delegated page scale divided out
+    // of it. Put it back to get the snapport the snap offsets were computed in.
+    auto snapportSize = scrollingNode->scrollableAreaSize();
+    if (RefPtr frameNode = dynamicDowncast<ScrollingTreeFrameScrollingNode>(scrollingNode.get()))
+        snapportSize.scale(frameNode->delegatedPageScaleFactor());
+
     return {
         scrollingNode->totalContentsSize(),
-        scrollingNode->scrollableAreaSize()
+        scrollingNode->scrollableAreaSize(),
+        snapportSize
     };
 }
 

@@ -46,11 +46,6 @@ ScrollView* Widget::parent() const
     return m_parent.get();
 }
 
-RefPtr<ScrollView> Widget::protectedParent() const
-{
-    return m_parent.get();
-}
-
 void Widget::setParent(ScrollView* view)
 {
     ASSERT(!view || !m_parent);
@@ -74,7 +69,7 @@ FrameView* Widget::root() const
 void Widget::removeFromParent()
 {
     if (parent())
-        parent()->removeChild(*this);
+        protect(parent())->removeChild(*this);
 }
 
 void Widget::setCursor(const Cursor& cursor)

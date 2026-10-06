@@ -38,6 +38,7 @@ OBJC_CLASS NSURLSessionDataTask;
 OBJC_CLASS NSMutableURLRequest;
 
 namespace WebCore {
+class PendingStreamState;
 class RegistrableDomain;
 class SharedBuffer;
 enum class AdvancedPrivacyProtections : uint16_t;
@@ -78,7 +79,7 @@ public:
     void setPendingDownloadLocation(const String&, SandboxExtension::Handle&&, bool /*allowOverwrite*/) override;
     String suggestedFilename() const override;
 
-    WebCore::NetworkLoadMetrics& networkLoadMetrics() { return m_networkLoadMetrics; }
+    WebCore::NetworkLoadMetrics& networkLoadMetrics() LIFETIME_BOUND { return m_networkLoadMetrics; }
 
     std::optional<WebCore::FrameIdentifier> frameID() const final { return m_frameID; }
     std::optional<WebCore::PageIdentifier> pageID() const final { return m_pageID; }
@@ -86,13 +87,12 @@ public:
 
     bool isInitiatedByDedicatedWorker() const final { return m_isInitiatedByDedicatedWorker; }
 
+    bool navigationLosesFrameSpecificStorageAccess() const final { return m_navigationLosesFrameSpecificStorageAccess; }
+
     String description() const override;
 
-    void setH2PingCallback(const URL&, CompletionHandler<void(Expected<WTF::Seconds, WebCore::ResourceError>&&)>&&) override;
+    void setH2PingCallback(const URL&, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&&) override;
     void setPriority(WebCore::ResourceLoadPriority) override;
-#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    void setEmulatedConditions(const std::optional<int64_t>& bytesPerSecondLimit) override;
-#endif
 
     void checkTAO(const WebCore::ResourceResponse&);
 
@@ -109,16 +109,19 @@ private:
 
     void setTimingAllowFailedFlag() final;
 
+    void installPendingStreamProbe(WebCore::PendingStreamState&);
+
     WeakPtr<SessionWrapper> m_sessionWrapper;
     RefPtr<SandboxExtension> m_sandboxExtension;
-    RetainPtr<NSURLSessionDataTask> m_task;
+    const RetainPtr<NSURLSessionDataTask> m_task;
     WebCore::NetworkLoadMetrics m_networkLoadMetrics;
     Markable<WebCore::FrameIdentifier> m_frameID;
     Markable<WebCore::PageIdentifier> m_pageID;
     Markable<WebPageProxyIdentifier> m_webPageProxyID;
 
     bool m_isForMainResourceNavigationForAnyFrame { false };
-    RefPtr<WebCore::SecurityOrigin> m_sourceOrigin;
+    bool m_navigationLosesFrameSpecificStorageAccess { false };
+    const RefPtr<WebCore::SecurityOrigin> m_sourceOrigin;
     uint64_t m_requiredCookiesVersion { 0 };
 };
 

@@ -43,7 +43,7 @@ ApplePayButtonCocoa::ApplePayButtonCocoa(ApplePayButtonPart& owningPart)
 {
 }
 
-static PKPaymentButtonType toPKPaymentButtonType(ApplePayButtonType type)
+static PKPaymentButtonType NODELETE toPKPaymentButtonType(ApplePayButtonType type)
 {
     switch (type) {
     case ApplePayButtonType::Plain:
@@ -81,7 +81,7 @@ static PKPaymentButtonType toPKPaymentButtonType(ApplePayButtonType type)
     }
 }
 
-static PKPaymentButtonStyle toPKPaymentButtonStyle(ApplePayButtonStyle style)
+static PKPaymentButtonStyle NODELETE toPKPaymentButtonStyle(ApplePayButtonStyle style)
 {
     switch (style) {
     case ApplePayButtonStyle::White:
@@ -109,9 +109,13 @@ void ApplePayButtonCocoa::draw(GraphicsContext& context, const FloatRoundedRect&
 
     auto logicalRect = borderRect.rect();
     Ref applePayButtonPart = owningApplePayButtonPart();
-    
+
+    RetainPtr cgContext = context.platformContext();
+
+    // Currently requires the identity matrix <rdar://187966773>.
+    CGContextSetTextMatrix(cgContext.get(), CGAffineTransformIdentity);
     PKDrawApplePayButtonWithCornerRadius(
-        RetainPtr { context.platformContext() }.get(),
+        cgContext.get(),
         CGRectMake(logicalRect.x(), -logicalRect.maxY(), logicalRect.width(), logicalRect.height()),
         1.0,
         largestCornerRadius,

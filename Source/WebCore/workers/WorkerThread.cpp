@@ -29,6 +29,8 @@
 
 #include "AdvancedPrivacyProtections.h"
 #include "IDBConnectionProxy.h"
+#include "JSDOMExceptionHandling.h"
+#include "JSDOMGlobalObject.h"
 #include "ScriptSourceCode.h"
 #include "SecurityOrigin.h"
 #include "SocketProvider.h"
@@ -74,7 +76,9 @@ WorkerParameters WorkerParameters::isolatedCopy() const
         crossThreadCopy(serviceWorkerData),
         clientIdentifier,
         advancedPrivacyProtections,
-        noiseInjectionHashSalt
+        noiseInjectionHashSalt,
+        agentClusterID.isolatedCopy(),
+        networkLoadPolicy.isolatedCopy()
     };
 }
 
@@ -160,14 +164,26 @@ void WorkerThread::evaluateScriptIfNecessary(String& exceptionMessage)
     if (m_startupData->params.workerType == WorkerType::Classic) {
         ScriptSourceCode sourceCode(m_startupData->sourceCode, URL(m_startupData->params.scriptURL));
         sourceProvider = downcast<ScriptBufferSourceProvider>(sourceCode.provider());
-        globalScope->script()->evaluate(sourceCode, &exceptionMessage);
+
+        NakedPtr<JSC::Exception> uncaughtException;
+        auto parseResult = protect(globalScope->script())->evaluate(sourceCode, uncaughtException, &exceptionMessage);
+        if (uncaughtException && !globalScope->vm().isTerminationException(uncaughtException)) {
+            // Per the spec, if the script has a parse error, fire a simple Event at
+            // the Worker object rather than an ErrorEvent.
+            if (globalScope->settingsValues().workerParseErrorReportingEnabled && parseResult == WorkerOrWorkletScriptController::ParseResult::Failed)
+                globalScope->reportErrorToWorkerObject(exceptionMessage);
+            else {
+                JSC::JSLockHolder lock(globalScope->vm());
+                reportException(protect(globalScope->script())->globalScopeWrapper(), uncaughtException);
+            }
+        }
         finishedEvaluatingScript();
     } else {
         auto parameters = ModuleFetchParameters::create(JSC::ScriptFetchParameters::Type::JavaScript, emptyString(), /* isTopLevelModule */ true);
         auto scriptFetcher = WorkerScriptFetcher::create(WTF::move(parameters), globalScope->credentials(), globalScope->destination(), globalScope->referrerPolicy());
         ScriptSourceCode sourceCode(m_startupData->sourceCode, URL(m_startupData->params.scriptURL), { }, { }, JSC::SourceProviderSourceType::Module, scriptFetcher.copyRef());
         sourceProvider = downcast<ScriptBufferSourceProvider>(sourceCode.provider());
-        bool success = globalScope->script()->loadModuleSynchronously(scriptFetcher.get(), sourceCode);
+        bool success = protect(globalScope->script())->loadModuleSynchronously(scriptFetcher.get(), sourceCode);
         if (success) {
             if (auto error = scriptFetcher->error()) {
                 if (std::optional<LoadableScript::ConsoleMessage> message = error->consoleMessage)
@@ -176,7 +192,7 @@ void WorkerThread::evaluateScriptIfNecessary(String& exceptionMessage)
                     exceptionMessage = "Importing a module script failed."_s;
                 globalScope->reportErrorToWorkerObject(exceptionMessage);
             } else if (!scriptFetcher->wasCanceled()) {
-                globalScope->script()->linkAndEvaluateModule(scriptFetcher.get(), sourceCode, &exceptionMessage);
+                protect(globalScope->script())->linkAndEvaluateModule(scriptFetcher.get(), sourceCode, &exceptionMessage);
                 finishedEvaluatingScript();
             }
         }

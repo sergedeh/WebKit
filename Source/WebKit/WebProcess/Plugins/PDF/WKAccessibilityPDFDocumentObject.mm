@@ -145,8 +145,8 @@
 - (BOOL)accessibilityScroll:(UIAccessibilityScrollDirection)direction
 {
     if (RefPtr plugin = _pdfPlugin.get()) {
-        if (auto coreObject = plugin->accessibilityCoreObject())
-            [coreObject->protectedWrapper() accessibilityScroll:direction];
+        if (RefPtr coreObject = plugin->accessibilityCoreObject())
+            [protect(coreObject->wrapper()) accessibilityScroll:direction];
     }
     return YES;
 }
@@ -163,9 +163,9 @@
     if (RefPtr plugin = _pdfPlugin.get()) {
         if (RefPtr activeAnnotation = plugin->activeAnnotation()) {
             if (CheckedPtr existingCache = plugin->axObjectCache()) {
-                if (RefPtr object = existingCache->exportedGetOrCreate(activeAnnotation->protectedElement().get())) {
+                if (RefPtr object = existingCache->exportedGetOrCreate(protect(activeAnnotation->element()))) {
                 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-                    return [object->protectedWrapper() accessibilityAttributeValue:@"_AXAssociatedPluginParent"];
+                    return [protect(object->wrapper()) accessibilityAttributeValue:@"_AXAssociatedPluginParent"];
                 ALLOW_DEPRECATED_DECLARATIONS_END
                 }
             }
@@ -225,7 +225,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         callOnMainRunLoopAndWait([protectedSelf] {
             if (CheckedPtr axObjectCache = protectedSelf->_pdfPlugin.get()->axObjectCache()) {
                 if (RefPtr pluginAxObject = axObjectCache->exportedGetOrCreate(RefPtr { protectedSelf->_pluginElement.get() }.get()))
-                    protectedSelf->_parent = pluginAxObject->protectedWrapper().get();
+                    protectedSelf->_parent = protect(pluginAxObject->wrapper()).get();
             }
         });
     }
@@ -325,7 +325,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
             return;
 
         if (CheckedPtr axObjectCache = protectedSelf->_pdfPlugin.get()->axObjectCache()) {
-            if (RefPtr annotationElementAxObject = axObjectCache->exportedGetOrCreate(activeAnnotation->protectedElement().get()))
+            if (RefPtr annotationElementAxObject = axObjectCache->exportedGetOrCreate(protect(activeAnnotation->element())))
                 wrapper = annotationElementAxObject->wrapper();
         }
     });

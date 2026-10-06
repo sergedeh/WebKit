@@ -28,7 +28,7 @@
 
 #if USE(SKIA)
 #include "FontCache.h"
-#include "FontCascade.h"
+#include "FontCascadeInlines.h"
 #include "FontPlatformData.h"
 #include "NotImplemented.h"
 #include "SkiaHarfBuzzFontCache.h"
@@ -42,7 +42,7 @@ namespace WebCore {
 
 Ref<SkiaHarfBuzzFont> SkiaHarfBuzzFont::getOrCreate(SkTypeface& typeface)
 {
-    return FontCache::forCurrentThread()->harfBuzzFontCache().font(typeface);
+    return FontCache::forCurrentThread().harfBuzzFontCache().font(typeface);
 }
 
 static hb_font_funcs_t* harfBuzzFontFunctions()
@@ -126,6 +126,7 @@ static HbUniquePtr<hb_face_t> createHarfBuzzFace(SkTypeface& typeface)
 
 SkiaHarfBuzzFont::SkiaHarfBuzzFont(SkTypeface& typeface)
     : m_uniqueID(typeface.uniqueID())
+    , m_isColorBitmapFont(FontPlatformData::skiaTypefaceHasAnySupportedColorTable(typeface))
 {
     auto hbFace = createHarfBuzzFace(typeface);
     HbUniquePtr<hb_font_t> hbFont(hb_font_create(hbFace.get()));
@@ -143,7 +144,7 @@ SkiaHarfBuzzFont::SkiaHarfBuzzFont(SkTypeface& typeface)
 
 SkiaHarfBuzzFont::~SkiaHarfBuzzFont()
 {
-    FontCache::forCurrentThread()->harfBuzzFontCache().remove(m_uniqueID);
+    FontCache::forCurrentThread().harfBuzzFontCache().remove(m_uniqueID);
 }
 
 static inline hb_position_t skScalarToHarfBuzzPosition(SkScalar value)

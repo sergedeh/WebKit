@@ -36,7 +36,7 @@
 namespace JSC { namespace B3 { namespace Air {
 
 template<typename Thing, typename Functor>
-void Inst::forEach(const Functor& functor)
+void Inst::forEach(NOESCAPE const Functor& functor)
 {
     forEachArg(
         [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
@@ -44,20 +44,20 @@ void Inst::forEach(const Functor& functor)
         });
 }
 
-inline RegisterSetBuilder Inst::extraClobberedRegs()
+inline RegisterSet Inst::extraClobberedRegs()
 {
     ASSERT(kind.opcode == Patch);
-    return args[0].special()->extraClobberedRegs(*this);
+    return args()[0].special()->extraClobberedRegs(*this);
 }
 
-inline RegisterSetBuilder Inst::extraEarlyClobberedRegs()
+inline RegisterSet Inst::extraEarlyClobberedRegs()
 {
     ASSERT(kind.opcode == Patch);
-    return args[0].special()->extraEarlyClobberedRegs(*this);
+    return args()[0].special()->extraEarlyClobberedRegs(*this);
 }
 
 template<typename Thing, typename Functor>
-inline void Inst::forEachUse(Inst* prevInst, Inst* nextInst, const Functor& functor)
+inline void Inst::forEachUse(Inst* prevInst, Inst* nextInst, NOESCAPE const Functor& functor)
 {
     if (prevInst) {
         prevInst->forEach<Thing>(
@@ -77,7 +77,7 @@ inline void Inst::forEachUse(Inst* prevInst, Inst* nextInst, const Functor& func
 }
 
 template<typename Thing, typename Functor>
-inline void Inst::forEachDef(Inst* prevInst, Inst* nextInst, const Functor& functor)
+inline void Inst::forEachDef(Inst* prevInst, Inst* nextInst, NOESCAPE const Functor& functor)
 {
     if (prevInst) {
         prevInst->forEach<Thing>(
@@ -98,7 +98,7 @@ inline void Inst::forEachDef(Inst* prevInst, Inst* nextInst, const Functor& func
 
 template<typename Thing, typename Functor>
 inline void Inst::forEachDefWithExtraClobberedRegs(
-    Inst* prevInst, Inst* nextInst, const Functor& functor)
+    Inst* prevInst, Inst* nextInst, NOESCAPE const Functor& functor)
 {
     forEachDef<Thing>(prevInst, nextInst, [&functor] (Thing thing, Arg::Role role, Bank b,  Width w) {
         functor(thing, role, b, w, PreservesNothing);
@@ -122,20 +122,20 @@ inline void Inst::forEachDefWithExtraClobberedRegs(
     }
 }
 
-inline void Inst::reportUsedRegisters(const RegisterSetBuilder& usedRegisters)
+inline void Inst::reportUsedRegisters(const RegisterSet& usedRegisters)
 {
     ASSERT(kind.opcode == Patch);
-    args[0].special()->reportUsedRegisters(*this, usedRegisters);
+    args()[0].special()->reportUsedRegisters(*this, usedRegisters);
 }
 
 inline bool Inst::admitsStack(Arg& arg)
 {
-    return admitsStack(&arg - &args[0]);
+    return admitsStack(&arg - &args()[0]);
 }
 
 inline bool Inst::admitsExtendedOffsetAddr(Arg& arg)
 {
-    return admitsExtendedOffsetAddr(&arg - &args[0]);
+    return admitsExtendedOffsetAddr(&arg - &args()[0]);
 }
 
 inline std::optional<unsigned> Inst::shouldTryAliasingDef()
@@ -160,7 +160,7 @@ inline std::optional<unsigned> Inst::shouldTryAliasingDef()
     case OrDouble:
     case XorDouble:
     case XorFloat:
-        if (args.size() == 3)
+        if (args().size() == 3)
             return 2;
         break;
     case AddDouble:
@@ -169,12 +169,12 @@ inline std::optional<unsigned> Inst::shouldTryAliasingDef()
     case MulFloat:
         if (isX86_64_AVX())
             return std::nullopt;
-        if (args.size() == 3)
+        if (args().size() == 3)
             return 2;
         break;
     case BranchAdd32:
     case BranchAdd64:
-        if (args.size() == 4)
+        if (args().size() == 4)
             return 3;
         break;
     case MoveConditionally32:
@@ -189,7 +189,7 @@ inline std::optional<unsigned> Inst::shouldTryAliasingDef()
     case MoveDoubleConditionallyTest64:
     case MoveDoubleConditionallyDouble:
     case MoveDoubleConditionallyFloat:
-        if (args.size() == 6)
+        if (args().size() == 6)
             return 5;
         break;
         break;
@@ -204,7 +204,7 @@ inline std::optional<unsigned> Inst::shouldTryAliasingDef()
 inline bool isAddZeroExtend64Valid(const Inst& inst)
 {
 #if CPU(ARM64)
-    return inst.args[1] != Tmp(ARM64Registers::sp);
+    return inst.args()[1] != Tmp(ARM64Registers::sp);
 #else
     UNUSED_PARAM(inst);
     return true;
@@ -214,7 +214,7 @@ inline bool isAddZeroExtend64Valid(const Inst& inst)
 inline bool isAddSignExtend64Valid(const Inst& inst)
 {
 #if CPU(ARM64)
-    return inst.args[1] != Tmp(ARM64Registers::sp);
+    return inst.args()[1] != Tmp(ARM64Registers::sp);
 #else
     UNUSED_PARAM(inst);
     return true;
@@ -224,7 +224,7 @@ inline bool isAddSignExtend64Valid(const Inst& inst)
 inline bool isShiftValid(const Inst& inst)
 {
 #if CPU(X86_64)
-    return inst.args[0] == Tmp(X86Registers::ecx);
+    return inst.args()[0] == Tmp(X86Registers::ecx);
 #else
     UNUSED_PARAM(inst);
     return true;
@@ -284,8 +284,8 @@ inline bool isRotateLeft64Valid(const Inst& inst)
 inline bool isX86DivHelperValid(const Inst& inst)
 {
 #if CPU(X86_64)
-    return inst.args[0] == Tmp(X86Registers::eax)
-        && inst.args[1] == Tmp(X86Registers::edx);
+    return inst.args()[0] == Tmp(X86Registers::eax)
+        && inst.args()[1] == Tmp(X86Registers::edx);
 #else
     UNUSED_PARAM(inst);
     return false;
@@ -325,8 +325,8 @@ inline bool isX86UDiv64Valid(const Inst& inst)
 inline bool isX86MulHighHelperValid(const Inst& inst)
 {
 #if CPU(X86_64)
-    return inst.args[1] == Tmp(X86Registers::eax)
-        && inst.args[2] == Tmp(X86Registers::edx);
+    return inst.args()[1] == Tmp(X86Registers::eax)
+        && inst.args()[2] == Tmp(X86Registers::edx);
 #else
     UNUSED_PARAM(inst);
     return false;
@@ -356,11 +356,11 @@ inline bool isX86UMulHigh64Valid(const Inst& inst)
 inline bool isAtomicStrongCASValid(const Inst& inst)
 {
 #if CPU(X86_64)
-    switch (inst.args.size()) {
+    switch (inst.args().size()) {
     case 3:
-        return inst.args[0] == Tmp(X86Registers::eax);
+        return inst.args()[0] == Tmp(X86Registers::eax);
     case 5:
-        return inst.args[1] == Tmp(X86Registers::eax);
+        return inst.args()[1] == Tmp(X86Registers::eax);
     default:
         return false;
     }
@@ -373,7 +373,7 @@ inline bool isAtomicStrongCASValid(const Inst& inst)
 inline bool isBranchAtomicStrongCASValid(const Inst& inst)
 {
 #if CPU(X86_64)
-    return inst.args[1] == Tmp(X86Registers::eax);
+    return inst.args()[1] == Tmp(X86Registers::eax);
 #else // CPU(X86_64)
     UNUSED_PARAM(inst);
     return false;
@@ -423,7 +423,7 @@ inline bool isBranchAtomicStrongCAS64Valid(const Inst& inst)
 inline bool isVectorSwizzle2Valid(const Inst& inst)
 {
 #if CPU(ARM64)
-    return inst.args[1].fpr() == inst.args[0].fpr() + 1;
+    return inst.args()[1].fpr() == inst.args()[0].fpr() + 1;
 #else
     UNUSED_PARAM(inst);
     return false;

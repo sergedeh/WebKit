@@ -39,7 +39,6 @@ class RenderSelectionGeometryBase {
 public:
     explicit RenderSelectionGeometryBase(RenderObject& renderer);
     const RenderLayerModelObject* repaintContainer() const { return m_repaintContainer; }
-    CheckedPtr<const RenderLayerModelObject> checkedRepaintContainer() const { return m_repaintContainer; }
     RenderObject::HighlightState state() const { return m_state; }
 
 protected:
@@ -59,7 +58,7 @@ public:
     RenderSelectionGeometry(RenderObject& renderer, bool clipToVisibleContent);
 
     void repaint();
-    const Vector<FloatQuad>& collectedSelectionQuads() const { return m_collectedSelectionQuads; }
+    const Vector<FloatQuad>& collectedSelectionQuads() const LIFETIME_BOUND { return m_collectedSelectionQuads; }
     LayoutRect rect() const { return m_rect; }
 
 private:

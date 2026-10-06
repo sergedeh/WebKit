@@ -29,11 +29,13 @@
 #include "AlternativeTextController.h"
 #include "Document.h"
 #include "DocumentMarkerController.h"
+#include "DocumentMarkers.h"
 #include "FrameDestructionObserverInlines.h"
 #include "FrameSelection.h"
 #include "InsertParagraphSeparatorCommand.h"
 #include "InsertTextCommand.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "NodeDocument.h"
 #include "Text.h"
 
@@ -48,9 +50,9 @@ public:
     void operator()(size_t lineOffset, size_t lineLength, bool isLastLine) const
     {
         if (lineLength > 0)
-            Ref { m_dictationCommand.get() }->insertTextRunWithoutNewlines(lineOffset, lineLength);
+            protect(m_dictationCommand.get())->insertTextRunWithoutNewlines(lineOffset, lineLength);
         if (!isLastLine)
-            Ref { m_dictationCommand.get() }->insertParagraphSeparator();
+            protect(m_dictationCommand.get())->insertParagraphSeparator();
     }
 private:
     WeakRef<DictationCommand> m_dictationCommand;
@@ -66,11 +68,11 @@ public:
     void addMarkersToTextNode(Text& textNode, unsigned offsetOfInsertion, const String& textToBeInserted) override
     {
         Ref document = textNode.document();
-        auto& markerController = document->markers();
+        CheckedRef markerController = document->markers();
         for (auto& alternative : m_alternatives) {
             DocumentMarker::DictationData data { alternative.context, textToBeInserted.substring(alternative.range.location, alternative.range.length) };
-            markerController.addMarker(textNode, alternative.range.location + offsetOfInsertion, alternative.range.length, DocumentMarkerType::DictationAlternatives, WTF::move(data));
-            markerController.addMarker(textNode, alternative.range.location + offsetOfInsertion, alternative.range.length, DocumentMarkerType::SpellCheckingExemption);
+            markerController->addMarker(textNode, alternative.range.location + offsetOfInsertion, alternative.range.length, DocumentMarkerType::DictationAlternatives, WTF::move(data));
+            markerController->addMarker(textNode, alternative.range.location + offsetOfInsertion, alternative.range.length, DocumentMarkerType::SpellCheckingExemption);
         }
     }
 

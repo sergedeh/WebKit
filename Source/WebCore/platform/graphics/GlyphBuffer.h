@@ -37,15 +37,19 @@
 #include <limits>
 #include <wtf/CheckedRef.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
 static const constexpr GlyphBufferGlyph deletedGlyph = 0xFFFF;
+static constexpr unsigned glyphBufferInlineCapacity = 64;
 
 class Font;
 
 class GlyphBuffer {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(GlyphBuffer);
 public:
     bool isEmpty() const { return m_fonts.isEmpty(); }
     unsigned size() const { return m_fonts.size(); }
@@ -59,12 +63,12 @@ public:
         m_offsetsInString.clear();
     }
 
-    std::span<const Font*> fonts(size_t from = 0, size_t count = std::dynamic_extent) LIFETIME_BOUND { return m_fonts.mutableSpan().subspan(from, count); }
+    std::span<SingleThreadWeakPtr<const Font>> fonts(size_t from = 0, size_t count = std::dynamic_extent) LIFETIME_BOUND { return m_fonts.mutableSpan().subspan(from, count); }
     std::span<GlyphBufferGlyph> glyphs(size_t from = 0, size_t count = std::dynamic_extent) LIFETIME_BOUND { return m_glyphs.mutableSpan().subspan(from, count); }
     std::span<GlyphBufferAdvance> advances(size_t from = 0, size_t count = std::dynamic_extent) LIFETIME_BOUND { return m_advances.mutableSpan().subspan(from, count); }
     std::span<GlyphBufferOrigin> origins(size_t from = 0, size_t count = std::dynamic_extent) LIFETIME_BOUND { return m_origins.mutableSpan().subspan(from, count); }
     std::span<GlyphBufferStringOffset> offsetsInString(size_t from = 0, size_t count = std::dynamic_extent) LIFETIME_BOUND { return m_offsetsInString.mutableSpan().subspan(from, count); }
-    std::span<const Font* const> fonts(size_t from = 0, size_t count = std::dynamic_extent) const LIFETIME_BOUND { return m_fonts.subspan(from, count); }
+    std::span<const SingleThreadWeakPtr<const Font>> fonts(size_t from = 0, size_t count = std::dynamic_extent) const LIFETIME_BOUND { return m_fonts.subspan(from, count); }
     std::span<const GlyphBufferGlyph> glyphs(size_t from = 0, size_t count = std::dynamic_extent) const LIFETIME_BOUND { return m_glyphs.subspan(from, count); }
     std::span<const GlyphBufferAdvance> advances(size_t from = 0, size_t count = std::dynamic_extent) const LIFETIME_BOUND { return m_advances.subspan(from, count); }
     std::span<const GlyphBufferOrigin> origins(size_t from = 0, size_t count = std::dynamic_extent) const LIFETIME_BOUND { return m_origins.subspan(from, count); }
@@ -76,7 +80,6 @@ public:
         return *m_fonts[index];
     }
 
-    Ref<const Font> protectedFontAt(size_t index) const { return fontAt(index); }
 
     GlyphBufferGlyph glyphAt(size_t index) const { return m_glyphs[index]; }
     GlyphBufferAdvance& advanceAt(size_t index) LIFETIME_BOUND { return m_advances[index]; }
@@ -154,18 +157,19 @@ public:
             swap(i, end);
     }
 
-    void expandLastAdvance(float width)
-    {
-        ASSERT(!isEmpty());
-        GlyphBufferAdvance& lastAdvance = m_advances.last();
-        setWidth(lastAdvance, WebCore::width(lastAdvance) + width);
-    }
-
     void expandAdvance(unsigned index, float width)
     {
         ASSERT(index < size());
         auto& lastAdvance = m_advances[index];
         setWidth(lastAdvance, WebCore::width(lastAdvance) + width);
+    }
+
+    void expandAdvance(unsigned index, GlyphBufferAdvance additionalAdvance)
+    {
+        ASSERT(index < size());
+        auto& advance = m_advances[index];
+        setWidth(advance, width(advance) + width(additionalAdvance));
+        setHeight(advance, height(advance) + height(additionalAdvance));
     }
 
     void expandAdvanceToLogicalRight(unsigned index, float width)
@@ -176,14 +180,6 @@ public:
         }
         setWidth(m_advances[index], WebCore::width(m_advances[index]) + width);
         setX(m_origins[index], x(m_origins[index]) + width);
-    }
-
-    void expandLastAdvance(GlyphBufferAdvance expansion)
-    {
-        ASSERT(!isEmpty());
-        GlyphBufferAdvance& lastAdvance = m_advances.last();
-        setWidth(lastAdvance, width(lastAdvance) + width(expansion));
-        setHeight(lastAdvance, height(lastAdvance) + height(expansion));
     }
 
     void shrink(unsigned truncationPoint)
@@ -261,11 +257,11 @@ private:
         std::swap(m_offsetsInString[index1], m_offsetsInString[index2]);
     }
 
-    Vector<const Font*, 1024> m_fonts;
-    Vector<GlyphBufferGlyph, 1024> m_glyphs;
-    Vector<GlyphBufferAdvance, 1024> m_advances;
-    Vector<GlyphBufferOrigin, 1024> m_origins;
-    Vector<GlyphBufferStringOffset, 1024> m_offsetsInString;
+    Vector<SingleThreadWeakPtr<const Font>, glyphBufferInlineCapacity> m_fonts;
+    Vector<GlyphBufferGlyph, glyphBufferInlineCapacity> m_glyphs;
+    Vector<GlyphBufferAdvance, glyphBufferInlineCapacity> m_advances;
+    Vector<GlyphBufferOrigin, glyphBufferInlineCapacity> m_origins;
+    Vector<GlyphBufferStringOffset, glyphBufferInlineCapacity> m_offsetsInString;
     GlyphBufferAdvance m_initialAdvance { makeGlyphBufferAdvance() };
 };
 

@@ -67,17 +67,17 @@ private:
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().protectedStreamClientConnection()->send(WTF::move(message), backing());
+        return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
     template<typename T>
     [[nodiscard]] IPC::Connection::SendSyncResult<T> sendSync(T&& message)
     {
-        return root().protectedStreamClientConnection()->sendSync(WTF::move(message), backing());
+        return protect(root().streamClientConnection())->sendSync(std::forward<T>(message), backing());
     }
     template<typename T, typename C>
     [[nodiscard]] std::optional<IPC::StreamClientConnection::AsyncReplyID> sendWithAsyncReply(T&& message, C&& completionHandler)
     {
-        return root().protectedStreamClientConnection()->sendWithAsyncReply(WTF::move(message), completionHandler, backing());
+        return protect(root().streamClientConnection())->sendWithAsyncReply(std::forward<T>(message), std::forward<C>(completionHandler), backing());
     }
 
     void mapAsync(WebCore::WebGPU::MapModeFlags, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> sizeForMap, CompletionHandler<void(bool)>&&) final;
@@ -87,6 +87,7 @@ private:
     void copyFrom(std::span<const uint8_t>, size_t offset) final;
 
     void destroy() final;
+    void generateAValidationError() final;
 
     void setLabelInternal(const String&) final;
 

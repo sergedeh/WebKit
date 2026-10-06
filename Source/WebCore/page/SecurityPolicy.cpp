@@ -50,7 +50,7 @@ using OriginAccessAllowlist = Vector<OriginAccessEntry>;
 using OriginAccessMap = HashMap<SecurityOriginData, std::unique_ptr<OriginAccessAllowlist>>;
 
 static Lock originAccessMapLock;
-static OriginAccessMap& originAccessMap() WTF_REQUIRES_LOCK(originAccessMapLock)
+static OriginAccessMap& NODELETE originAccessMap() WTF_REQUIRES_LOCK(originAccessMapLock)
 {
     ASSERT(originAccessMapLock.isHeld());
     static NeverDestroyed<OriginAccessMap> originAccessMap;
@@ -178,6 +178,7 @@ bool SecurityPolicy::shouldInheritSecurityOriginFromOwner(const URL& url)
 bool SecurityPolicy::isBaseURLSchemeAllowed(const URL& url)
 {
     // See <https://github.com/whatwg/html/issues/2249>.
+    ASSERT(url.isValid());
     return !url.protocolIsData() && !url.protocolIsJavaScript();
 }
 

@@ -46,7 +46,7 @@ public:
         InlineBoxEnd,
         Float,
         Block,
-        Opaque
+        OutOfFlow
     };
     InlineItem(const Box& layoutBox, Type, UBiDiLevel = UBIDI_DEFAULT_LTR);
 
@@ -54,8 +54,8 @@ public:
     static constexpr UBiDiLevel opaqueBidiLevel = 0xff;
     UBiDiLevel bidiLevel() const { return m_bidiLevel; }
     const Box& layoutBox() const { return m_layoutBox.get(); }
-    const RenderStyle& style() const { return layoutBox().style(); }
-    const RenderStyle& firstLineStyle() const { return layoutBox().firstLineStyle(); }
+    const Style::ComputedStyle& style() const { return layoutBox().style(); }
+    const Style::ComputedStyle& firstLineStyle() const { return layoutBox().firstLineStyle(); }
 
     bool isText() const { return type() == Type::Text; }
     bool isAtomicInlineBox() const { return type() == Type::AtomicInlineBox; }
@@ -67,7 +67,7 @@ public:
     bool isInlineBoxStart() const { return type() == Type::InlineBoxStart; }
     bool isInlineBoxEnd() const { return type() == Type::InlineBoxEnd; }
     bool isInlineBoxStartOrEnd() const { return isInlineBoxStart() || isInlineBoxEnd(); }
-    bool isOpaque() const { return type() == Type::Opaque; }
+    bool isOutOfFlow() const { return type() == Type::OutOfFlow; }
     bool isBlock() const { return type() == Type::Block; }
 
 private:

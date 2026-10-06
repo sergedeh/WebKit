@@ -57,7 +57,7 @@ public:
 
     Ref<PlatformCAAnimation> copy() const override;
 
-    PlatformAnimationRef platformAnimation() const;
+    PlatformAnimationRef NODELETE platformAnimation() const;
     
     String keyPath() const override;
     
@@ -131,7 +131,7 @@ private:
     PlatformCAAnimationCocoa(AnimationType, const String& keyPath);
     PlatformCAAnimationCocoa(PlatformAnimationRef);
 
-    RetainPtr<CAAnimation> m_animation;
+    const RetainPtr<CAAnimation> m_animation;
 };
 
 } // namespace WebCore

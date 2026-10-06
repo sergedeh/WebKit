@@ -43,7 +43,6 @@ public:
     ~WasmStructFieldValue() override;
 
     Ref<const Wasm::RTT> rtt() const { return m_rtt; }
-    const Wasm::StructType* structType() const { return m_structType; }
     Wasm::StructFieldCount fieldIndex() const { return m_fieldIndex; }
     uint64_t fieldHeapKey() const { return m_fieldHeapKey; }
 
@@ -53,18 +52,16 @@ public:
 
 protected:
     template<typename... Arguments>
-    WasmStructFieldValue(CheckedOpcodeTag tag, Kind kind, Type type, NumChildren numChildren, Origin origin, Ref<const Wasm::RTT> rtt, const Wasm::StructType* structType, Wasm::StructFieldCount fieldIndex, uint64_t fieldHeapKey, Mutability mutability, Arguments... arguments)
+    WasmStructFieldValue(CheckedOpcodeTag tag, Kind kind, Type type, NumChildren numChildren, Origin origin, Ref<const Wasm::RTT> rtt, Wasm::StructFieldCount fieldIndex, uint64_t fieldHeapKey, Mutability mutability, Arguments... arguments)
         : Value(tag, kind, type, numChildren, origin, arguments...)
         , m_rtt(WTF::move(rtt))
-        , m_structType(structType)
         , m_fieldIndex(fieldIndex)
         , m_fieldHeapKey(fieldHeapKey)
         , m_mutability(mutability)
     {
     }
 
-    Ref<const Wasm::RTT> m_rtt;
-    SUPPRESS_UNCOUNTED_MEMBER const Wasm::StructType* m_structType;
+    const Ref<const Wasm::RTT> m_rtt;
     Wasm::StructFieldCount m_fieldIndex;
     uint64_t m_fieldHeapKey;
     HeapRange m_range { HeapRange::top() };

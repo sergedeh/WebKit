@@ -26,24 +26,17 @@
 #include "config.h"
 #include "WebModelPlayerProvider.h"
 
+#include "WebModelPlayer.h"
 #include "WebPage.h"
 #include "WebProcess.h"
-#include <WebCore/DDModelPlayer.h>
 #include <WebCore/ModelPlayer.h>
 #include <WebCore/Page.h>
 #include <WebCore/Settings.h>
 #include <wtf/TZoneMallocInlines.h>
 
-#if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
-#include "ARKitInlinePreviewModelPlayerMac.h"
-#endif
-
-#if ENABLE(ARKIT_INLINE_PREVIEW_IOS)
-#include "ARKitInlinePreviewModelPlayerIOS.h"
-#endif
-
-#if HAVE(SCENEKIT)
-#include <WebCore/SceneKitModelPlayer.h>
+#if PLATFORM(COCOA)
+#include <sys/sysctl.h>
+#include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -69,29 +62,32 @@ WebModelPlayerProvider::~WebModelPlayerProvider() = default;
 
 // MARK: - WebCore::ModelPlayerProvider overrides.
 
+bool WebModelPlayerProvider::isAvailable() const
+{
+#if PLATFORM(COCOA)
+    return !isInBaseSystem();
+#else
+    return true;
+#endif
+}
+
 RefPtr<WebCore::ModelPlayer> WebModelPlayerProvider::createModelPlayer(WebCore::ModelPlayerClient& client)
 {
     Ref page = m_page.get();
-    UNUSED_PARAM(page);
+#if PLATFORM(COCOA)
+    if (!isAvailable()) {
+        UNUSED_PARAM(client);
+        return nullptr;
+    }
+#endif
 #if ENABLE(MODEL_PROCESS)
     if (page->corePage() && page->corePage()->settings().modelProcessEnabled())
         return WebProcess::singleton().modelProcessModelPlayerManager().createModelProcessModelPlayer(page, client);
-#endif
-#if ENABLE(GPU_PROCESS_MODEL)
+#elif ENABLE(GPU_PROCESS_MODEL)
     if (page->corePage() && page->corePage()->settings().modelElementEnabled())
-        return WebCore::DDModelPlayer::create(*page->corePage(), client);
-#endif
-
-#if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
-    if (page->useARKitForModel())
-        return ARKitInlinePreviewModelPlayerMac::create(page, client);
-#endif
-#if HAVE(SCENEKIT)
-    if (page->useSceneKitForModel())
-        return WebCore::SceneKitModelPlayer::create(client);
-#endif
-#if ENABLE(ARKIT_INLINE_PREVIEW_IOS)
-    return ARKitInlinePreviewModelPlayerIOS::create(page, client);
+        return WebModelPlayer::create(*page->corePage(), client);
+#else
+    UNUSED_PARAM(page);
 #endif
 
     UNUSED_PARAM(client);
@@ -104,6 +100,9 @@ void WebModelPlayerProvider::deleteModelPlayer(WebCore::ModelPlayer& modelPlayer
     Ref page = m_page.get();
     if (page->corePage() && page->corePage()->settings().modelProcessEnabled())
         WebProcess::singleton().modelProcessModelPlayerManager().deleteModelProcessModelPlayer(modelPlayer);
+#elif ENABLE(GPU_PROCESS_MODEL)
+    if (RefPtr webModelPlayer = dynamicDowncast<WebModelPlayer>(modelPlayer))
+        webModelPlayer->releaseModelResources();
 #else
     UNUSED_PARAM(modelPlayer);
 #endif

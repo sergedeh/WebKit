@@ -25,30 +25,38 @@
 
 #pragma once
 
-#include <WebCore/GridTypeAliases.h>
-#include <WebCore/LayoutUnit.h>
+#include "AxisConstraint.h"
+#include "GridItemSizingFunctions.h"
+#include "GridTypeAliases.h"
+#include "LayoutUnit.h"
+#include "PlacedGridItem.h"
+#include <wtf/Function.h>
+#include <wtf/Range.h>
 
 namespace WebCore {
+
+class StyleContentAlignmentData;
 
 namespace Layout {
 
 class IntegrationUtils;
 
-class TrackSizingAlgorithm {
-public:
-    static TrackSizes sizeTracks(const PlacedGridItems&, const PlacedGridItemSpanList&, const TrackSizingFunctionsList&, std::optional<LayoutUnit> availableSpace, const IntegrationUtils&);
-
-private:
-
-    static UnsizedTracks initializeTrackSizes(const TrackSizingFunctionsList&);
-
-    // Flex track infrastructure
-    static FlexTracks collectFlexTracks(const UnsizedTracks&);
-    static bool hasFlexTracks(const UnsizedTracks&);
-    static double flexFactorSum(const FlexTracks&);
-    static std::optional<LayoutUnit> leftoverSpace(std::optional<LayoutUnit> availableSpace, const UnsizedTracks&);
+struct TrackSizingItem {
+    const PlacedGridItem& gridItem;
+    const ComputedSizes computedSizes;
+    const LayoutUnit borderAndPadding;
+    const WTF::Range<size_t> spannedLines;
+    const LayoutUnit oppositeAxisConstraint;
 };
 
-} // namespace WebCore
+class TrackSizingAlgorithm {
+public:
+    static TrackSizes sizeTracks(const TrackSizingItemList&, const TrackSizingFunctionsList&,
+        const AxisConstraint&, const GridItemSizingFunctions&,
+        LayoutUnit gapSize, const StyleContentAlignmentData& usedContentAlignment);
+
+};
+
 } // namespace Layout
+} // namespace WebCore
 

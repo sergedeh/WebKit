@@ -36,6 +36,7 @@
 #import "WKRemoteObjectCoder.h"
 #import "WKSharedAPICast.h"
 #import "WebPage.h"
+#import "WebPageProxy.h"
 #import "WebRemoteObjectRegistry.h"
 #import "_WKRemoteObjectInterface.h"
 #import <objc/runtime.h>
@@ -132,7 +133,7 @@ struct PendingReply {
     _remoteObjectRegistry = nullptr;
 }
 
-static uint64_t generateReplyIdentifier()
+static uint64_t NODELETE generateReplyIdentifier()
 {
     static uint64_t identifier;
 
@@ -186,9 +187,9 @@ static uint64_t generateReplyIdentifier()
     remoteObjectRegistry->sendInvocation(WebKit::RemoteObjectInvocation(interface.identifier, [encoder rootObjectDictionary], WTF::move(replyInfo)));
 }
 
-- (WebKit::RemoteObjectRegistry&)remoteObjectRegistry
+- (WebKit::RemoteObjectRegistry*)remoteObjectRegistry
 {
-    return *_remoteObjectRegistry;
+    return _remoteObjectRegistry.get();
 }
 
 static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUInteger blockIndex)
@@ -247,7 +248,7 @@ static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUIntege
             return;
         }
 
-        RetainPtr<NSString> wireBlockSignature = [NSMethodSignature signatureWithObjCTypes:replyInfo->blockSignature.utf8().data()]._typeString;
+        RetainPtr<NSString> wireBlockSignature = [NSMethodSignature signatureWithObjCTypes:replyInfo->blockSignature.utf8().legacyCStringPointer()]._typeString;
         RetainPtr<NSString> expectedBlockSignature = replyBlockSignature(retainPtr([interface protocol]).get(), invocation.get().selector, i);
 
         if (!expectedBlockSignature) {
@@ -283,7 +284,7 @@ static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUIntege
                 remoteObjectRegistry->sendUnusedReply(m_replyID);
             }
 
-            void didCallReplyBlock() { m_didCallReplyBlock = true; }
+            void NODELETE didCallReplyBlock() { m_didCallReplyBlock = true; }
 
         private:
             ReplyBlockCallChecker(_WKRemoteObjectRegistry *registry, uint64_t replyID)
@@ -292,7 +293,7 @@ static NSString *replyBlockSignature(Protocol *protocol, SEL selector, NSUIntege
             {
             }
 
-            RetainPtr<_WKRemoteObjectRegistry> m_remoteObjectRegistry;
+            const RetainPtr<_WKRemoteObjectRegistry> m_remoteObjectRegistry;
             uint64_t m_replyID = 0;
             bool m_didCallReplyBlock = false;
         };

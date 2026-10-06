@@ -28,14 +28,13 @@
 #include "GPUBuffer.h"
 #include "GPUImageDataLayout.h"
 #include "WebGPUImageCopyBuffer.h"
-#include <wtf/RefPtr.h>
+#include <wtf/Ref.h>
 
 namespace WebCore {
 
 struct GPUImageCopyBuffer : public GPUImageDataLayout {
     WebGPU::ImageCopyBuffer convertToBacking() const
     {
-        ASSERT(buffer);
         return {
             {
                 offset,
@@ -46,7 +45,9 @@ struct GPUImageCopyBuffer : public GPUImageDataLayout {
         };
     }
 
-    WeakPtr<GPUBuffer> buffer;
+    Ref<JSON::Object> toJSON() const;
+
+    Ref<GPUBuffer> buffer;
 };
 
 }

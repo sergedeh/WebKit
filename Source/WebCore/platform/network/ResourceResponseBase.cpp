@@ -31,6 +31,7 @@
 #include "DataURLDecoder.h"
 #include "HTTPHeaderNames.h"
 #include "HTTPParsers.h"
+#include "HTTPStatusCodes.h"
 #include "IPAddressSpace.h"
 #include "MIMETypeRegistry.h"
 #include "ParsedContentRange.h"
@@ -57,9 +58,7 @@ bool isScriptAllowedByNosniff(const ResourceResponse& response)
     return MIMETypeRegistry::isSupportedJavaScriptMIMEType(mimeType);
 }
 
-ResourceResponseBase::ResourceResponseBase()
-{
-}
+ResourceResponseBase::ResourceResponseBase() = default;
 
 ResourceResponseBase::ResourceResponseBase(URL&& url, String&& mimeType, long long expectedLength, String&& textEncodingName)
     : m_url(WTF::move(url))
@@ -85,13 +84,13 @@ ResourceResponseBase::ResourceResponseBase(std::optional<ResourceResponseData>&&
     , m_isNull(!data)
     , m_usedLegacyTLS(data ? data->usedLegacyTLS : UsedLegacyTLS::No)
     , m_wasPrivateRelayed(data ? data->wasPrivateRelayed : WasPrivateRelayed::No)
-    , m_proxyName(data ? data->proxyName : String { })
+    , m_proxyName(data ? WTF::move(data->proxyName) : String { })
     , m_isRedirected(data ? data->isRedirected : false)
     , m_isRangeRequested(data ? data->isRangeRequested : false)
     , m_tainting(data ? data->tainting : Tainting::Basic)
     , m_source(data ? data->source : Source::Unknown)
     , m_type(data ? data->type : Type::Default)
-    , m_ipAddressSpace(data ? data->ipAddressSpace : IPAddressSpace::Public)
+    , m_ipAddressSpace(data ? data->ipAddressSpace : IPAddressSpace::Unknown)
 {
 }
 
@@ -367,8 +366,7 @@ bool ResourceResponseBase::isNosniff() const
 
 bool ResourceResponseBase::isSuccessful() const
 {
-    int code = httpStatusCode();
-    return code >= 200 && code < 300;
+    return isHttpOkStatus(httpStatusCode());
 }
 
 int ResourceResponseBase::httpStatusCode() const
@@ -390,7 +388,7 @@ void ResourceResponseBase::setHTTPStatusCode(int statusCode)
 
 bool ResourceResponseBase::isRedirection() const
 {
-    return isRedirectionStatusCode(m_httpStatusCode);
+    return isHttpRedirectStatus(m_httpStatusCode);
 }
 
 const String& ResourceResponseBase::httpStatusText() const
@@ -420,12 +418,12 @@ void ResourceResponseBase::setHTTPVersion(String&& versionText)
 {
     lazyInit(AllFields);
     
-    m_httpVersion = versionText;
+    m_httpVersion = WTF::move(versionText);
     
     // FIXME: Should invalidate or update platform response if present.
 }
 
-static bool isSafeRedirectionResponseHeader(HTTPHeaderName name)
+static bool NODELETE isSafeRedirectionResponseHeader(HTTPHeaderName name)
 {
     // WebCore needs to keep location and cache related headers as it does caching.
     // We also keep CORS/ReferrerPolicy headers until CORS checks/Referrer computation are done in NetworkProcess.
@@ -438,7 +436,6 @@ static bool isSafeRedirectionResponseHeader(HTTPHeaderName name)
         || name == HTTPHeaderName::LastModified
         || name == HTTPHeaderName::Age
         || name == HTTPHeaderName::Pragma
-        || name == HTTPHeaderName::ReferrerPolicy
         || name == HTTPHeaderName::Refresh
         || name == HTTPHeaderName::Vary
         || name == HTTPHeaderName::CrossOriginOpenerPolicy
@@ -455,7 +452,7 @@ static bool isSafeRedirectionResponseHeader(HTTPHeaderName name)
         || name == HTTPHeaderName::TimingAllowOrigin;
 }
 
-static bool isSafeCrossOriginResponseHeader(HTTPHeaderName name)
+static bool NODELETE isSafeCrossOriginResponseHeader(HTTPHeaderName name)
 {
     // All known response headers used in WebProcesses.
     return name == HTTPHeaderName::AcceptRanges
@@ -672,6 +669,13 @@ void ResourceResponseBase::addUncommonHTTPHeaderField(const String& name, const 
     m_httpHeaderFields.addUncommonHeader(name, value);
 }
 
+void ResourceResponseBase::removeHTTPHeaderField(HTTPHeaderName name)
+{
+    lazyInit(AllFields);
+    updateHeaderParsedState(name);
+    m_httpHeaderFields.remove(name);
+}
+
 const HTTPHeaderMap& ResourceResponseBase::httpHeaderFields() const
 {
     lazyInit(AllFields);
@@ -701,6 +705,13 @@ bool ResourceResponseBase::cacheControlContainsNoStore() const
     if (!m_haveParsedCacheControlHeader)
         parseCacheControlDirectives();
     return m_cacheControlDirectives.noStore;
+}
+
+bool ResourceResponseBase::cacheControlContainsPublic() const
+{
+    if (!m_haveParsedCacheControlHeader)
+        parseCacheControlDirectives();
+    return m_cacheControlDirectives.isPublic;
 }
 
 bool ResourceResponseBase::cacheControlContainsMustRevalidate() const
@@ -917,7 +928,7 @@ std::optional<ResourceResponseData> ResourceResponseBase::getResponseData() cons
         m_wasPrivateRelayed,
         String { m_proxyName },
         m_isRangeRequested,
-        m_certificateInfo,
+        std::optional<CertificateInfo> { m_certificateInfo },
         m_ipAddressSpace
     } };
 }
@@ -945,6 +956,7 @@ void Coder<WebCore::ResourceResponseData>::encodeForPersistence(Encoder& encoder
     encoder << data.wasPrivateRelayed;
     encoder << data.proxyName;
     encoder << data.isRangeRequested;
+    encoder << data.ipAddressSpace;
 }
 
 std::optional<WebCore::ResourceResponseData> Coder<WebCore::ResourceResponseData>::decodeForPersistence(Decoder& decoder)
@@ -1034,6 +1046,11 @@ std::optional<WebCore::ResourceResponseData> Coder<WebCore::ResourceResponseData
     if (!isRangeRequested)
         return std::nullopt;
 
+    std::optional<WebCore::IPAddressSpace> ipAddressSpace;
+    decoder >> ipAddressSpace;
+    if (!ipAddressSpace)
+        return std::nullopt;
+
     return WebCore::ResourceResponseData {
         WTF::move(*url),
         WTF::move(*mimeType),
@@ -1053,7 +1070,7 @@ std::optional<WebCore::ResourceResponseData> Coder<WebCore::ResourceResponseData
         WTF::move(*proxyName),
         *isRangeRequested,
         WTF::move(*certificateInfo),
-        WebCore::IPAddressSpace::Public
+        *ipAddressSpace
     };
 }
 

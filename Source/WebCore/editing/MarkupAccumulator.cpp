@@ -115,10 +115,10 @@ static constexpr std::array<uint8_t, maximumEscapedentityCharacter + 1> entityMa
     EntitySubstitutionIndex::Nbsp // noBreakSpace.
 };
 
-static bool elementCannotHaveEndTag(const Node& node)
+static bool NODELETE elementCannotHaveEndTag(const Node& node)
 {
     using namespace ElementNames;
-    RefPtr element = dynamicDowncast<Element>(node);
+    auto* element = dynamicDowncast<Element>(node);
     if (!element)
         return false;
 
@@ -156,7 +156,7 @@ static bool elementCannotHaveEndTag(const Node& node)
 // 2. Elements w/ children never self-close because they use a separate end tag.
 // 3. HTML elements which do not have a "forbidden" end tag will close with a separate end tag.
 // 4. Other elements self-close.
-static bool shouldSelfClose(const Element& element, SerializationSyntax syntax)
+static bool NODELETE shouldSelfClose(const Element& element, SerializationSyntax syntax)
 {
     if (syntax != SerializationSyntax::XML)
         return false;
@@ -358,7 +358,7 @@ void MarkupAccumulator::serializeNodesWithNamespaces(Node& targetNode, Serialize
 
 std::pair<String, MarkupAccumulator::IsCreatedByURLReplacement> MarkupAccumulator::resolveURLIfNeeded(const Element& element, const String& urlString) const
 {
-    if (RefPtr link = dynamicDowncast<HTMLLinkElement>(element); link && m_serializationContext) {
+    if (auto* link = dynamicDowncast<HTMLLinkElement>(element); link && m_serializationContext) {
         if (RefPtr cssStyleSheet = link->sheet()) {
             auto replacementURLString = m_serializationContext->replacementURLStringsForCSSStyleSheet.get(*cssStyleSheet);
             if (!replacementURLString.isEmpty())
@@ -405,35 +405,25 @@ void MarkupAccumulator::startAppendingNode(const Node& node, Namespaces* namespa
             m_markup.append("<meta charset=\"UTF-8\"><!-- Encoding specified by WebKit -->"_s);
 
     } else if (RefPtr shadowRoot = suitableShadowRoot(node)) {
-        m_markup.append("<template shadowrootmode=\""_s);
-        switch (shadowRoot->mode()) {
-        case ShadowRootMode::Open:
-            m_markup.append("open"_s);
-            break;
-        case ShadowRootMode::Closed:
-            m_markup.append("closed"_s);
-            break;
-        case ShadowRootMode::UserAgent:
-            ASSERT_NOT_REACHED();
-            break;
-        }
-        m_markup.append('"');
+        m_markup.append("<template shadowrootmode=\""_s, serializeShadowRootMode(shadowRoot->mode()), '"');
         if (shadowRoot->delegatesFocus())
             m_markup.append(" shadowrootdelegatesfocus=\"\""_s);
         if (shadowRoot->serializable())
             m_markup.append(" shadowrootserializable=\"\""_s);
+        if (shadowRoot->slotAssignmentMode() == SlotAssignmentMode::Manual)
+            m_markup.append(" shadowrootslotassignment=\"manual\""_s);
         if (shadowRoot->isClonable())
             m_markup.append(" shadowrootclonable=\"\""_s);
         bool shouldAppendRegistryAttribute = [&] {
-            Ref document = shadowRoot->document();
-            if (document->usesNullCustomElementRegistry() && shadowRoot->usesNullCustomElementRegistry())
+            auto& document = shadowRoot->document();
+            if (document.usesNullCustomElementRegistry() && shadowRoot->usesNullCustomElementRegistry())
                 return false;
 
-            RefPtr documentRegistry = document->customElementRegistry();
-            RefPtr shadowRegistry = shadowRoot->customElementRegistry();
-            bool documentHasGlobalRegistry = (documentRegistry && !documentRegistry->isScoped()) || document->window();
+            auto* documentRegistry = document.customElementRegistry();
+            auto* shadowRegistry = shadowRoot->customElementRegistry();
+            bool documentHasGlobalRegistry = (documentRegistry && !documentRegistry->isScoped()) || document.window();
             bool shadowHasGlobalRegistry = (shadowRegistry && !shadowRegistry->isScoped())
-                || (!shadowRegistry && !shadowRoot->usesNullCustomElementRegistry() && document->window());
+                || (!shadowRegistry && !shadowRoot->usesNullCustomElementRegistry() && document.window());
             return !(documentHasGlobalRegistry && shadowHasGlobalRegistry);
         }();
         if (shouldAppendRegistryAttribute)
@@ -448,9 +438,17 @@ void MarkupAccumulator::startAppendingNode(const Node& node, Namespaces* namespa
 
 void MarkupAccumulator::appendEndTag(StringBuilder& result, const Element& element)
 {
+    AtomString resolvedQualifiedName;
+    if (!m_resolvedElementQualifiedNameStack.isEmpty() && m_resolvedElementQualifiedNameStack.last().first.ptr() == &element)
+        resolvedQualifiedName = m_resolvedElementQualifiedNameStack.takeLast().second;
+
     if (shouldSelfClose(element, m_serializationSyntax) || (!element.hasChildNodes() && elementCannotHaveEndTag(element)))
         return;
-    result.append("</"_s, element.tagQName().toString(), '>');
+
+    if (!resolvedQualifiedName.isNull())
+        result.append("</"_s, resolvedQualifiedName, '>');
+    else
+        result.append("</"_s, element.tagQName().toString(), '>');
 }
 
 StringBuilder MarkupAccumulator::takeMarkup()
@@ -511,9 +509,12 @@ void MarkupAccumulator::appendNamespace(StringBuilder& result, const AtomString&
 {
     namespaces.checkConsistency();
     if (namespaceURI.isEmpty()) {
-        // http://www.whatwg.org/specs/web-apps/current-work/multipage/the-xhtml-syntax.html#xml-fragment-serialization-algorithm
-        if (allowEmptyDefaultNS && namespaces.get(emptyAtom().impl()))
-            result.append(' ', xmlnsAtom(), "=\"\""_s);
+        // https://html.spec.whatwg.org/multipage/xhtml.html#xml-fragment-serialisation-algorithm
+        if (allowEmptyDefaultNS) {
+            RefPtr currentDefaultNamespace = namespaces.get(emptyAtom().impl());
+            if (currentDefaultNamespace && !currentDefaultNamespace->isEmpty())
+                result.append(' ', xmlnsAtom(), "=\"\""_s);
+        }
         return;
     }
 
@@ -541,7 +542,7 @@ void MarkupAccumulator::appendNamespace(StringBuilder& result, const AtomString&
 static inline bool isScriptEnabled(Node& node)
 {
     RefPtr frame = node.document().frame();
-    return frame && frame->script().canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript);
+    return frame && protect(frame->script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript);
 }
 
 OptionSet<EntityMask> MarkupAccumulator::entityMaskForText(const Text& text) const
@@ -610,7 +611,7 @@ static void appendDocumentType(StringBuilder& result, const DocumentType& docume
     );
 }
 
-static bool isURLAttributeForElement(const Element& element, const Attribute& attribute)
+static bool NODELETE isURLAttributeForElement(const Element& element, const Attribute& attribute)
 {
     return element.isURLAttribute(attribute) || element.isHTMLContentAttribute(attribute);
 }
@@ -675,8 +676,24 @@ void MarkupAccumulator::appendOpenTag(StringBuilder& result, const Element& elem
         // a default namespace declaration to make this namespace well-formed. However, http://www.w3.org/TR/xml-names11/#xmlReserved states
         // "The prefix xml MUST NOT be declared as the default namespace.", so use the xml prefix explicitly.
         if (element.namespaceURI() == XMLNames::xmlNamespaceURI) {
-            result.append(xmlAtom());
-            result.append(':');
+            auto qualifiedName = makeAtomString(xmlAtom(), ':', element.localName());
+            result.append(qualifiedName);
+            m_resolvedElementQualifiedNameStack.append({ element, WTF::move(qualifiedName) });
+            return;
+        } else if (!element.namespaceURI().isEmpty() && !element.hasAttribute(xmlnsAtom())) {
+            // If the element doesn't carry its own default namespace declaration,
+            // look for an existing prefix mapped to this namespace URI in an ancestor
+            // and use it instead of emitting a new default namespace declaration.
+            AtomString inheritedDefaultNS = namespaces->get(emptyAtom().impl());
+            if (inheritedDefaultNS.isNull() || inheritedDefaultNS != element.namespaceURI()) {
+                AtomString existingPrefix = namespaces->get(element.namespaceURI().impl());
+                if (!existingPrefix.isEmpty()) {
+                    auto qualifiedName = makeAtomString(existingPrefix, ':', element.localName());
+                    result.append(qualifiedName);
+                    m_resolvedElementQualifiedNameStack.append({ element, WTF::move(qualifiedName) });
+                    return;
+                }
+            }
         }
     }
     result.append(element.tagQName().toString());
@@ -755,7 +772,7 @@ LocalFrame* MarkupAccumulator::frameForAttributeReplacement(const Element& eleme
     if (inXMLFragmentSerialization())
         return nullptr;
 
-    RefPtr frameElement = dynamicDowncast<HTMLFrameElementBase>(element);
+    auto* frameElement = dynamicDowncast<HTMLFrameElementBase>(element);
     if (!frameElement)
         return nullptr;
 
@@ -842,38 +859,38 @@ void MarkupAccumulator::appendNonElementNode(StringBuilder& result, const Node& 
         namespaces->checkConsistency();
 
     switch (node.nodeType()) {
-    case Node::TEXT_NODE:
+    case NodeType::Text:
         appendText(result, uncheckedDowncast<Text>(node));
         break;
-    case Node::COMMENT_NODE:
+    case NodeType::Comment:
         // FIXME: Comment content is not escaped, but that may be OK because XMLSerializer (and possibly other callers) should raise an exception if it includes "-->".
         result.append("<!--"_s, uncheckedDowncast<Comment>(node).data(), "-->"_s);
         break;
-    case Node::DOCUMENT_NODE:
+    case NodeType::Document:
         appendXMLDeclaration(result, uncheckedDowncast<Document>(node));
         break;
-    case Node::DOCUMENT_FRAGMENT_NODE:
+    case NodeType::DocumentFragment:
         break;
-    case Node::DOCUMENT_TYPE_NODE:
+    case NodeType::DocumentType:
         appendDocumentType(result, uncheckedDowncast<DocumentType>(node));
         break;
-    case Node::PROCESSING_INSTRUCTION_NODE: {
+    case NodeType::ProcessingInstruction: {
         auto& instruction = uncheckedDowncast<ProcessingInstruction>(node);
         // FIXME: PI data is not escaped, but XMLSerializer (and possibly other callers) this should raise an exception if it includes "?>".
         result.append("<?"_s, instruction.target(), ' ', instruction.data(), "?>"_s);
         break;
     }
-    case Node::ELEMENT_NODE:
+    case NodeType::Element:
         ASSERT_NOT_REACHED();
         break;
-    case Node::CDATA_SECTION_NODE:
+    case NodeType::CDATASection:
         if (inXMLFragmentSerialization()) {
             // FIXME: CDATA content is not escaped, but XMLSerializer (and possibly other callers) should raise an exception if it includes "]]>".
             result.append("<![CDATA["_s, uncheckedDowncast<CDATASection>(node).data(), "]]>"_s);
         } else
             appendText(result, uncheckedDowncast<Text>(node));
         break;
-    case Node::ATTRIBUTE_NODE:
+    case NodeType::Attribute:
         appendAttributeValue(result, uncheckedDowncast<Attr>(node).value());
         break;
     }
@@ -908,7 +925,9 @@ static bool isElementExcludedByRule(const MarkupExclusionRule& rule, const Eleme
 
 bool MarkupAccumulator::shouldExcludeElement(const Element& element)
 {
-    return std::ranges::any_of(m_exclusionRules, std::bind(isElementExcludedByRule, std::placeholders::_1, std::ref(element)));
+    return m_exclusionRules.containsIf([&](auto& rule) {
+        return isElementExcludedByRule(rule, element);
+    });
 }
 
 SerializationSyntax MarkupAccumulator::serializationSyntax(Document& document)

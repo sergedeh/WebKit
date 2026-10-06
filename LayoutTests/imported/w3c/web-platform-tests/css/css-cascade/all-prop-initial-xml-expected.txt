@@ -21,6 +21,7 @@ PASS animation-range-end
 PASS animation-range-start
 PASS animation-timeline
 PASS animation-timing-function
+PASS animation-trigger
 PASS appearance
 PASS aspect-ratio
 PASS backdrop-filter
@@ -36,6 +37,7 @@ PASS background-position-y
 PASS background-repeat
 PASS background-size
 PASS baseline-shift
+PASS baseline-source
 PASS block-ellipsis
 PASS block-size
 PASS block-step-align
@@ -140,15 +142,16 @@ PASS fill
 PASS fill-opacity
 PASS fill-rule
 PASS filter
+PASS fit-tolerance
 PASS flex-basis
 PASS flex-direction
 PASS flex-grow
+PASS flex-line-count
 PASS flex-shrink
 PASS flex-wrap
 PASS float
 PASS flood-color
 PASS flood-opacity
-PASS flow-tolerance
 PASS font-family
 PASS font-feature-settings
 PASS font-kerning
@@ -170,7 +173,6 @@ PASS font-variant-position
 PASS font-variation-settings
 PASS font-weight
 PASS font-width
-PASS glyph-orientation-horizontal
 PASS glyph-orientation-vertical
 PASS grid-auto-columns
 PASS grid-auto-flow
@@ -185,6 +187,7 @@ PASS grid-template-rows
 PASS hanging-punctuation
 PASS height
 PASS hyphenate-character
+PASS hyphenate-limit-lines
 PASS hyphens
 PASS image-orientation
 PASS image-rendering
@@ -194,6 +197,7 @@ PASS inset-block-end
 PASS inset-block-start
 PASS inset-inline-end
 PASS inset-inline-start
+PASS interpolate-size
 PASS isolation
 PASS justify-content
 PASS justify-items
@@ -203,6 +207,7 @@ PASS letter-spacing
 PASS lighting-color
 PASS line-break
 PASS line-height
+PASS link-parameters
 PASS list-style-image
 PASS list-style-position
 PASS list-style-type
@@ -246,6 +251,7 @@ PASS min-width
 PASS mix-blend-mode
 PASS object-fit
 PASS object-position
+PASS object-view-box
 PASS offset-anchor
 PASS offset-distance
 PASS offset-path
@@ -260,6 +266,7 @@ PASS outline-style
 PASS outline-width
 PASS overflow-anchor
 PASS overflow-block
+PASS overflow-clip-margin
 PASS overflow-inline
 PASS overflow-wrap
 PASS overflow-x
@@ -299,6 +306,7 @@ PASS ruby-position
 PASS rx
 PASS ry
 PASS scale
+PASS scroll-axis-lock
 PASS scroll-behavior
 PASS scroll-margin-block-end
 PASS scroll-margin-block-start
@@ -350,6 +358,7 @@ PASS text-box-edge
 PASS text-box-trim
 PASS text-combine-upright
 PASS text-decoration-color
+PASS text-decoration-inset
 PASS text-decoration-line
 PASS text-decoration-skip-ink
 PASS text-decoration-style
@@ -371,6 +380,12 @@ PASS text-underline-position
 PASS text-wrap-mode
 PASS text-wrap-style
 PASS timeline-scope
+PASS timeline-trigger-activation-range-end
+PASS timeline-trigger-activation-range-start
+PASS timeline-trigger-active-range-end
+PASS timeline-trigger-active-range-start
+PASS timeline-trigger-name
+PASS timeline-trigger-source
 PASS top
 PASS touch-action
 PASS transform
@@ -383,7 +398,9 @@ PASS transition-duration
 PASS transition-property
 PASS transition-timing-function
 PASS translate
+PASS trigger-scope
 PASS unicode-bidi
+PASS user-select
 PASS vector-effect
 PASS vertical-align
 PASS view-timeline-axis
@@ -393,11 +410,13 @@ PASS view-transition-class
 PASS view-transition-name
 PASS visibility
 PASS white-space-collapse
+PASS white-space-trim
 PASS widows
 PASS width
 PASS will-change
 PASS word-break
 PASS word-spacing
+PASS wrap-inside
 PASS writing-mode
 PASS x
 PASS y
@@ -423,11 +442,9 @@ PASS -webkit-cursor-visibility
 PASS -webkit-font-smoothing
 PASS -webkit-hyphenate-limit-after
 PASS -webkit-hyphenate-limit-before
-PASS -webkit-hyphenate-limit-lines
 PASS -webkit-initial-letter
 PASS -webkit-line-align
 PASS -webkit-line-box-contain
-PASS -webkit-line-clamp
 PASS -webkit-line-grid
 PASS -webkit-line-snap
 PASS -webkit-locale

@@ -48,7 +48,6 @@
 #import <wtf/RunLoop.h>
 #import <wtf/RuntimeApplicationChecks.h>
 
-using namespace WebCore;
 
 static NSString * const WebResourceDataKey =              @"WebResourceData";
 static NSString * const WebResourceFrameNameKey =         @"WebResourceFrameName";
@@ -59,9 +58,9 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
 
 @interface WebResourcePrivate : NSObject {
 @public
-    RefPtr<ArchiveResource> coreResource;
+    RefPtr<WebCore::ArchiveResource> coreResource;
 }
-- (instancetype)initWithCoreResource:(Ref<ArchiveResource>&&)coreResource;
+- (instancetype)initWithCoreResource:(Ref<WebCore::ArchiveResource>&&)coreResource;
 @end
 
 @implementation WebResourcePrivate
@@ -77,7 +76,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
     return self;
 }
 
-- (instancetype)initWithCoreResource:(Ref<ArchiveResource>&&)passedResource
+- (instancetype)initWithCoreResource:(Ref<WebCore::ArchiveResource>&&)passedResource
 {
     self = [super init];
     if (!self)
@@ -150,7 +149,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
         return nil;
     }
 
-    auto coreResource = ArchiveResource::create(SharedBuffer::create(data.get()), url.get(), mimeType.get(), textEncoding.get(), frameName.get(), response.get());
+    auto coreResource = WebCore::ArchiveResource::create(WebCore::SharedBuffer::create(data.get()), url.get(), mimeType.get(), textEncoding.get(), frameName.get(), response.get());
     if (!coreResource) {
         [self release];
         return nil;
@@ -162,7 +161,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
 
 - (void)encodeWithCoder:(NSCoder *)encoder
 {
-    auto* resource = _private->coreResource.get();
+    RefPtr resource = _private->coreResource;
 
     RetainPtr<NSData> data;
     RetainPtr<NSURL> url;
@@ -172,7 +171,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
     RetainPtr<NSURLResponse> response;
 
     if (resource) {
-        data = resource->data().makeContiguous()->createNSData();
+        data = protect(resource->data())->makeContiguous()->createNSData();
         url = resource->url().createNSURL();
         mimeType = resource->mimeType().createNSString();
         textEncoding = resource->textEncoding().createNSString();
@@ -189,7 +188,8 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
 
 - (void)dealloc
 {
-    [_private release];
+    // Retaining the member just to release it would be pointless.
+    SUPPRESS_UNRETAINED_ARG [_private release];
     [super dealloc];
 }
 
@@ -204,7 +204,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
 
     if (!_private->coreResource)
         return nil;
-    return _private->coreResource->data().makeContiguous()->createNSData().autorelease();
+    return protect(protect(_private->coreResource)->data())->makeContiguous()->createNSData().autorelease();
 }
 
 - (NSURL *)URL
@@ -252,7 +252,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
 
 @implementation WebResource (WebResourceInternal)
 
-- (id)_initWithCoreResource:(Ref<ArchiveResource>&&)coreResource
+- (id)_initWithCoreResource:(Ref<WebCore::ArchiveResource>&&)coreResource
 {
     self = [super init];
     if (!self)
@@ -301,7 +301,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
         return nil;
     }
 
-    auto coreResource = ArchiveResource::create(SharedBuffer::create(copyData ? adoptNS([data copy]).get() : data), URL, MIMEType, textEncodingName, frameName, response);
+    auto coreResource = WebCore::ArchiveResource::create(WebCore::SharedBuffer::create(copyData ? adoptNS([data copy]).get() : data), URL, MIMEType, textEncodingName, frameName, response);
     if (!coreResource) {
         [self release];
         return nil;
@@ -365,7 +365,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
     if (!encoding.isValid())
         encoding = PAL::WindowsLatin1Encoding();
     
-    RefPtr coreData = _private->coreResource ? &_private->coreResource->data() : nullptr;
+    RefPtr coreData = _private->coreResource ? &protect(_private->coreResource)->data() : nullptr;
     if (!coreData)
         return @"";
     return encoding.decode(coreData->makeContiguous()->span()).createNSString().autorelease();

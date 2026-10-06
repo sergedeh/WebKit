@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,6 +33,8 @@ namespace CSSCalc {
 static auto copy(const Random::Sharing&) -> Random::Sharing;
 static auto copy(const CSSValueID&) -> CSSValueID;
 static auto copy(const CSS::Keyword::None&) -> CSS::Keyword::None;
+static auto copy(const CalcMix::Item&) -> CalcMix::Item;
+static auto copy(const Vector<CalcMix::Item>&) -> Vector<CalcMix::Item>;
 static auto copy(const std::optional<Child>& root) -> std::optional<Child>;
 static auto copy(const ChildOrNone&) -> ChildOrNone;
 static auto copy(const Children&) -> Children;
@@ -49,14 +51,24 @@ Random::Sharing copy(const Random::Sharing& root)
     return root;
 }
 
-CSSValueID copy(const CSSValueID& root)
+CSSValueID NODELETE copy(const CSSValueID& root)
 {
     return root;
 }
 
-CSS::Keyword::None copy(const CSS::Keyword::None& root)
+CSS::Keyword::None NODELETE copy(const CSS::Keyword::None& root)
 {
     return root;
+}
+
+CalcMix::Item copy(const CalcMix::Item& root)
+{
+    return { .value = copy(root.value), .weight = root.weight };
+}
+
+Vector<CalcMix::Item> copy(const Vector<CalcMix::Item>& root)
+{
+    return WTF::map(root, [&](const auto& item) { return copy(item); });
 }
 
 std::optional<Child> copy(const std::optional<Child>& root)
@@ -81,7 +93,7 @@ Child copy(const Child& root)
     return WTF::switchOn(root, [&](const auto& root) { return copy(root); });
 }
 
-template<Leaf Op> Child copy(const Op& root)
+template<Leaf Op> Child NODELETE copy(const Op& root)
 {
     return { root };
 }

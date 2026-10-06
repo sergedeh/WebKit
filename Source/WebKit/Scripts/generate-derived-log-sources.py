@@ -11,7 +11,7 @@ def generate_messages_file(log_messages, log_messages_receiver_input_file, strea
     with open(log_messages_receiver_input_file, 'w') as file:
         file.write("#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)\n")
         file.write("[\n")
-        file.write("    DispatchedFrom=WebContent,\n")
+        file.write("    DispatchedFrom=WebContent|Model,\n")
         file.write("    DispatchedTo=UI,\n")
         file.write("    ExceptionForEnabledBy\n")
         file.write("]\n")
@@ -19,11 +19,11 @@ def generate_messages_file(log_messages, log_messages_receiver_input_file, strea
         if streaming_ipc:
             file.write("Stream ")
         file.write("{\n")
-        file.write("    LogOnBehalfOfWebContent(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<const uint8_t> logString, uint8_t logType)\n")
+        file.write("    LogOnBehalfOfWebContent(std::span<const char8_t> logChannel, std::span<const char8_t> logCategory, std::span<const char8_t> logString, uint8_t logType)\n")
         for log_message in log_messages:
             message_name = log_message[0]
             parameters = log_message[2]
-            arguments_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_TYPE | log_declarations_module.PARAMETER_LIST_INCLUDE_NAME)
+            arguments_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_TYPE | log_declarations_module.PARAMETER_LIST_INCLUDE_NAME, log_declarations_module.STRING_AS_OWNED)
             file.write("    " + message_name + "(" + arguments_string + ")\n")
         file.write("}\n")
         file.write("#endif\n")
@@ -38,10 +38,10 @@ def generate_log_client_declarations_file(log_messages, log_client_declarations_
         for log_message in log_messages:
             function_name = log_message[0]
             parameters = log_message[2]
-            arguments_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_TYPE | log_declarations_module.PARAMETER_LIST_INCLUDE_NAME | log_declarations_module.PARAMETER_LIST_MODIFY_CSTRING)
+            arguments_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_TYPE | log_declarations_module.PARAMETER_LIST_INCLUDE_NAME)
             file.write("    void " + function_name + "(" + arguments_string + ")\n")
             file.write("    {\n")
-            parameters_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_NAME)
+            parameters_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_NAME, log_declarations_module.STRING_AS_SENT)
             file.write("        send(Messages::LogStream::" + function_name + "(" + parameters_string + "));\n")
             file.write("    }\n")
         file.close()
@@ -55,7 +55,7 @@ def generate_message_receiver_declarations_file(log_messages, log_messages_recei
             function_name = log_message[0]
             function_name = function_name[0].lower() + function_name[1:]
             parameters = log_message[2]
-            arguments_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_TYPE | log_declarations_module.PARAMETER_LIST_INCLUDE_NAME | log_declarations_module.PARAMETER_LIST_MODIFY_CSTRING)
+            arguments_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_TYPE | log_declarations_module.PARAMETER_LIST_INCLUDE_NAME, log_declarations_module.STRING_AS_RECEIVED)
             file.write("    void " + function_name + "(" + arguments_string + ");\n")
         file.close()
 
@@ -83,7 +83,7 @@ def generate_message_receiver_implementations_file(log_messages, log_messages_re
 
             file.write("void LogStream::" + function_name + "(")
 
-            file.write(log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_TYPE | log_declarations_module.PARAMETER_LIST_INCLUDE_NAME | log_declarations_module.PARAMETER_LIST_MODIFY_CSTRING))
+            file.write(log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_TYPE | log_declarations_module.PARAMETER_LIST_INCLUDE_NAME, log_declarations_module.STRING_AS_RECEIVED))
 
             file.write(")\n")
             file.write("{\n")
@@ -92,18 +92,19 @@ def generate_message_receiver_implementations_file(log_messages, log_messages_re
                 file.write("    globalLogCountForTesting++;\n")
 
             if category == "Default":
-                file.write("    auto osLogPointer = OS_LOG_DEFAULT;\n")
+                file.write("    OSObjectPtr osLog = OS_LOG_DEFAULT;\n")
             else:
-                file.write("    auto osLog = adoptOSObject(os_log_create(\"com.apple.WebKit\", \"" + category + "\"));\n")
-                file.write("    auto osLogPointer = osLog.get();\n")
+                file.write("    OSObjectPtr osLog = adoptOSObject(os_log_create(\"com.apple.WebKit\", \"" + category + "\"));\n")
 
-            file.write("    os_log_with_type(osLogPointer, " + os_log_type + ", \"WebContent[%d]: \"" + format_string)
+            file.write("WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN\n")
+            file.write("    os_log_with_type(osLog.get(), " + os_log_type + ", \"WebContent[%d]: \"" + format_string)
             file.write(", static_cast<uint32_t>(m_pid)")
-            arguments_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_NAME | log_declarations_module.PARAMETER_LIST_MODIFY_CSTRING)
+            arguments_string = log_declarations_module.get_arguments_string(parameters, log_declarations_module.PARAMETER_LIST_INCLUDE_NAME, log_declarations_module.STRING_AS_RECEIVED)
             if arguments_string:
                 file.write(", ")
             file.write(arguments_string)
             file.write(");\n")
+            file.write("WTF_ALLOW_UNSAFE_BUFFER_USAGE_END\n")
             file.write("}\n\n")
         file.close()
 

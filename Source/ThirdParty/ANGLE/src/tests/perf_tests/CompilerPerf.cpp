@@ -194,7 +194,6 @@ bool IsPlatformAvailable(const CompilerParameters &param)
     switch (param.output)
     {
         case SH_HLSL_4_1_OUTPUT:
-        case SH_HLSL_3_0_OUTPUT:
         {
             angle::PoolAllocator allocator;
             InitializePoolIndex();
@@ -275,7 +274,6 @@ void CompilerPerfTest::SetUp()
 
     mTranslator = sh::ConstructCompiler(GL_FRAGMENT_SHADER, SH_WEBGL2_SPEC, params.output);
     sh::InitBuiltInResources(&mResources);
-    mResources.FragmentPrecisionHigh = true;
     if (!mTranslator->Init(mResources))
     {
         SafeDelete(mTranslator);
@@ -307,7 +305,7 @@ void CompilerPerfTest::step()
 
 #if !defined(NDEBUG)
     // Make sure that compilation succeeds and print the info log if it doesn't in debug mode.
-    if (!mTranslator->compile(shaderStrings, 1, compileOptions))
+    if (!mTranslator->compile(shaderStrings, compileOptions))
     {
         std::cout << "Compiling perf test shader failed with log:\n"
                   << mTranslator->getInfoSink().info.c_str();
@@ -316,7 +314,7 @@ void CompilerPerfTest::step()
 
     for (unsigned int iteration = 0; iteration < kNumIterationsPerStep; ++iteration)
     {
-        mTranslator->compile(shaderStrings, 1, compileOptions);
+        mTranslator->compile(shaderStrings, compileOptions);
     }
 }
 

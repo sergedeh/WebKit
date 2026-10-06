@@ -46,7 +46,7 @@ WebExtensionAPIEvent& WebExtensionAPIDevToolsExtensionPanel::onShown()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/devtools/panels/ExtensionPanel
 
     if (!m_onShown)
-        m_onShown = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsExtensionPanelOnShown);
+        lazyInitialize(m_onShown, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsExtensionPanelOnShown));
 
     return *m_onShown;
 }
@@ -56,7 +56,7 @@ WebExtensionAPIEvent& WebExtensionAPIDevToolsExtensionPanel::onHidden()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/devtools/panels/ExtensionPanel
 
     if (!m_onHidden)
-        m_onHidden = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsExtensionPanelOnHidden);
+        lazyInitialize(m_onHidden, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsExtensionPanelOnHidden));
 
     return *m_onHidden;
 }
@@ -74,7 +74,10 @@ void WebExtensionContextProxy::dispatchDevToolsExtensionPanelShownEvent(Inspecto
         if (!extensionPanel)
             return;
 
-        for (auto& listener : extensionPanel->onShown().listeners()) {
+        // Copy the listeners since call() can trigger a mutation of the listeners.
+        auto listenersCopy = extensionPanel->onShown().listeners();
+
+        for (RefPtr listener : listenersCopy) {
             auto globalContext = listener->globalContext();
             listener->call(toWindowObject(globalContext, *frame));
         }

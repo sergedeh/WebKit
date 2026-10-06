@@ -27,6 +27,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include <limits>
 #include "Error.h"
 #include "JSArrayBuffer.h"
 #include "JSArrayBufferViewInlines.h"
@@ -35,6 +36,7 @@
 #include "JSSourceCode.h"
 #include "JSWebAssemblyException.h"
 #include "JSWebAssemblyRuntimeError.h"
+#include "WasmAddressType.h"
 #include "WasmFormat.h"
 #include "WasmTypeDefinition.h"
 #include "WebAssemblyFunction.h"
@@ -69,19 +71,60 @@ ALWAYS_INLINE uint32_t toNonWrappingUint32(JSGlobalObject* globalObject, JSValue
     return { };
 }
 
+ALWAYS_INLINE uint64_t toNonWrappingUint64(JSGlobalObject* globalObject, JSValue value, ErrorType errorType = ErrorType::TypeError)
+{
+    VM& vm = getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue bigInt = value.toBigInt(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, { });
+
+    auto lo = JSBigInt::compare(bigInt, static_cast<uint64_t>(0));
+    auto high = JSBigInt::compare(bigInt, std::numeric_limits<uint64_t>::max());
+    bool validRange = lo != JSBigInt::ComparisonResult::LessThan && high != JSBigInt::ComparisonResult::GreaterThan;
+    if (validRange && bigInt)
+        RELEASE_AND_RETURN(throwScope, bigInt.toBigUInt64(globalObject));
+
+    constexpr auto message = "Expect an integer argument in the range: [0, 2^64 - 1]"_s;
+    if (errorType == ErrorType::RangeError)
+        throwRangeError(globalObject, throwScope, message);
+    else
+        throwTypeError(globalObject, throwScope, message);
+    return { };
+}
+
+ALWAYS_INLINE uint64_t addressValueToUint64(JSGlobalObject* globalObject, JSValue value, Wasm::AddressType addressType, ErrorType errorType = ErrorType::TypeError)
+{
+    if (addressType.is64Bit())
+        return toNonWrappingUint64(globalObject, value, errorType);
+    return static_cast<uint64_t>(toNonWrappingUint32(globalObject, value, errorType));
+}
+
+ALWAYS_INLINE JSValue addressValueFromUint64(JSGlobalObject* globalObject, uint64_t value, Wasm::AddressType addressType)
+{
+    if (addressType.is64Bit())
+        return JSBigInt::createFrom(globalObject, value);
+    return jsNumber(static_cast<double>(value));
+}
+
+ALWAYS_INLINE JSString* addressTypeString(VM& vm, Wasm::AddressType addressType)
+{
+    return addressType.is64Bit() ? jsNontrivialString(vm, "i64"_s) : jsNontrivialString(vm, "i32"_s);
+}
+
 ALWAYS_INLINE std::span<const uint8_t> getWasmBufferFromValue(JSGlobalObject* globalObject, JSValue value, const SourceProviderBufferGuard&)
 {
     VM& vm = getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* source = jsDynamicCast<JSSourceCode*>(value)) {
+    if (auto* source = dynamicDowncast<JSSourceCode>(value)) {
         auto* provider = static_cast<BaseWebAssemblySourceProvider*>(source->sourceCode().provider());
         return { provider->data(), provider->size() };
     }
 
     // If the given bytes argument is not a BufferSource, a TypeError exception is thrown.
-    JSArrayBuffer* arrayBuffer = value.getObject() ? jsDynamicCast<JSArrayBuffer*>(value.getObject()) : nullptr;
-    JSArrayBufferView* arrayBufferView = value.getObject() ? jsDynamicCast<JSArrayBufferView*>(value.getObject()) : nullptr;
+    JSArrayBuffer* arrayBuffer = value.getObject() ? dynamicDowncast<JSArrayBuffer>(value.getObject()) : nullptr;
+    JSArrayBufferView* arrayBufferView = value.getObject() ? dynamicDowncast<JSArrayBufferView>(value.getObject()) : nullptr;
     if (!(arrayBuffer || arrayBufferView)) {
         throwException(globalObject, throwScope, createTypeError(globalObject,
             "first argument must be an ArrayBufferView or an ArrayBuffer"_s, defaultSourceAppender, runtimeTypeForValue(value)));
@@ -94,7 +137,7 @@ ALWAYS_INLINE std::span<const uint8_t> getWasmBufferFromValue(JSGlobalObject* gl
             RETURN_IF_EXCEPTION(throwScope, { });
         } else {
             IdempotentArrayBufferByteLengthGetter<std::memory_order_relaxed> getter;
-            if (!jsCast<JSDataView*>(arrayBufferView)->viewByteLength(getter)) [[unlikely]] {
+            if (!uncheckedDowncast<JSDataView>(arrayBufferView)->viewByteLength(getter)) [[unlikely]] {
                 throwTypeError(globalObject, throwScope, typedArrayBufferHasBeenDetachedErrorMessage);
                 return { };
             }
@@ -114,7 +157,7 @@ ALWAYS_INLINE Vector<uint8_t> createSourceBufferFromValue(VM& vm, JSGlobalObject
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     BaseWebAssemblySourceProvider* provider = nullptr;
-    if (auto* source = jsDynamicCast<JSSourceCode*>(value))
+    if (auto* source = dynamicDowncast<JSSourceCode>(value))
         provider = static_cast<BaseWebAssemblySourceProvider*>(source->sourceCode().provider());
     SourceProviderBufferGuard bufferGuard(provider);
 
@@ -133,12 +176,12 @@ ALWAYS_INLINE Vector<uint8_t> createSourceBufferFromValue(VM& vm, JSGlobalObject
 ALWAYS_INLINE bool isWebAssemblyHostFunction(JSObject* object, WebAssemblyFunction*& wasmFunction, WebAssemblyWrapperFunction*& wasmWrapperFunction)
 {
     if (object->inherits<WebAssemblyFunction>()) {
-        wasmFunction = jsCast<WebAssemblyFunction*>(object);
+        wasmFunction = uncheckedDowncast<WebAssemblyFunction>(object);
         wasmWrapperFunction = nullptr;
         return true;
     }
     if (object->inherits<WebAssemblyWrapperFunction>()) {
-        wasmWrapperFunction = jsCast<WebAssemblyWrapperFunction*>(object);
+        wasmWrapperFunction = uncheckedDowncast<WebAssemblyWrapperFunction>(object);
         wasmFunction = nullptr;
         return true;
     }
@@ -149,7 +192,7 @@ ALWAYS_INLINE bool isWebAssemblyHostFunction(JSValue value, WebAssemblyFunction*
 {
     if (!value.isObject())
         return false;
-    return isWebAssemblyHostFunction(jsCast<JSObject*>(value), wasmFunction, wasmWrapperFunction);
+    return isWebAssemblyHostFunction(uncheckedDowncast<JSObject>(value), wasmFunction, wasmWrapperFunction);
 }
 
 ALWAYS_INLINE bool isWebAssemblyHostFunction(JSValue object)
@@ -169,7 +212,7 @@ ALWAYS_INLINE JSValue defaultValueForReferenceType(const Wasm::Type type)
 
 ALWAYS_INLINE JSValue toJSValue(JSGlobalObject* globalObject, const Wasm::Type type, uint64_t bits)
 {
-    switch (type.kind) {
+    switch (type.kind()) {
     case Wasm::TypeKind::Void:
         return jsUndefined();
     case Wasm::TypeKind::I32:
@@ -197,7 +240,7 @@ ALWAYS_INLINE uint64_t toWebAssemblyValue(JSGlobalObject* globalObject, const Wa
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    switch (type.kind) {
+    switch (type.kind()) {
     case Wasm::TypeKind::I32:
         RELEASE_AND_RETURN(scope, value.toInt32(globalObject));
     case Wasm::TypeKind::I64:
@@ -219,7 +262,7 @@ ALWAYS_INLINE uint64_t toWebAssemblyValue(JSGlobalObject* globalObject, const Wa
             if (type.isNullable() && value.isNull())
                 break;
 
-            auto* wasmFunction = jsDynamicCast<WebAssemblyFunctionBase*>(value);
+            auto* wasmFunction = dynamicDowncast<WebAssemblyFunctionBase>(value);
             if (!wasmFunction)
                 return throwVMTypeError(globalObject, scope, "Argument value did not match the reference type"_s);
 
@@ -229,7 +272,7 @@ ALWAYS_INLINE uint64_t toWebAssemblyValue(JSGlobalObject* globalObject, const Wa
             RELEASE_ASSERT_NOT_REACHED();
         else {
             value = Wasm::internalizeExternref(value);
-            if (!Wasm::TypeInformation::isReferenceValueAssignable(value, type.isNullable(), type.index)) {
+            if (!Wasm::TypeInformation::isReferenceValueAssignable(value, type.isNullable(), type.index())) {
                 // FIXME: provide a better error message here
                 // https://bugs.webkit.org/show_bug.cgi?id=247746
                 return throwVMTypeError(globalObject, scope, "Argument value did not match the reference type"_s);

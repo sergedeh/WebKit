@@ -74,19 +74,20 @@ ImageDrawResult GraphicsContext::drawMultiRepresentationHEIC(Image& image, const
     if (!multiRepresentationHEIC)
         return ImageDrawResult::DidNothing;
 
-    RefPtr imageBuffer = createScaledImageBuffer(destination.size(), scaleFactor(), DestinationColorSpace::SRGB(), RenderingMode::Unaccelerated, RenderingMethod::Local);
+    RefPtr imageBuffer = createScaledImageBuffer(destination.size(), scaleFactor(), ColorSpace::SRGB(), RenderingMode::Unaccelerated, RenderingMethod::Local);
     if (!imageBuffer)
         return ImageDrawResult::DidNothing;
 
-    CGContextRef cgContext = imageBuffer->context().platformContext();
+    RetainPtr cgContext = imageBuffer->context().platformContext();
 
     CGContextScaleCTM(cgContext, 1, -1);
     CGContextTranslateCTM(cgContext, 0, -destination.height());
 
     // FIXME (rdar://123044459): This needs to account for vertical writing modes.
+    CGContextSetTextMatrix(cgContext, CGAffineTransformIdentity);
     CGContextSetTextPosition(cgContext, 0, font.metricsForMultiRepresentationHEIC().descent);
 
-    CTFontDrawImageFromAdaptiveImageProviderAtPoint(font.ctFont(), multiRepresentationHEIC.get(), CGContextGetTextPosition(cgContext), cgContext);
+    CTFontDrawImageFromAdaptiveImageProviderAtPoint(protect(font.ctFont()), multiRepresentationHEIC.get(), CGContextGetTextPosition(cgContext), cgContext);
 
     auto orientation = options.orientation();
     if (orientation == ImageOrientation::Orientation::FromImage)
@@ -99,7 +100,7 @@ ImageDrawResult GraphicsContext::drawMultiRepresentationHEIC(Image& image, const
 
 #endif
 
-void GraphicsContextCG::drawFocusRing(const Path& path, float, const Color& color)
+void GraphicsContextCG::drawFocusRing(const Path& path, float, const Color& color, float zoomFactor)
 {
     if (path.isEmpty())
         return;
@@ -117,6 +118,13 @@ void GraphicsContextCG::drawFocusRing(const Path& path, float, const Color& colo
     focusRingStyle.bounds = CGRectZero;
 #endif
 
+    // zoomFactor covers CSS zoom / page zoom (Cmd+/-). ctmScale covers page scale (pinch-to-zoom), canvas transforms, etc.
+    RetainPtr platformContext = this->platformContext();
+    auto ctmScale = singularValue(getUserToBaseCTM(platformContext), SingularValueSelection::Largest);
+    if (ctmScale <= 0)
+        ctmScale = 1.0f;
+    focusRingStyle.radius *= zoomFactor * ctmScale;
+
     // We want to respect the CGContext clipping and also not overpaint any
     // existing focus ring. The way to do this is set accumulate to
     // -1. According to CoreGraphics, the reasoning for this behavior has been
@@ -124,34 +132,21 @@ void GraphicsContextCG::drawFocusRing(const Path& path, float, const Color& colo
     focusRingStyle.accumulate = -1;
     auto style = adoptCF(CGStyleCreateFocusRingWithColor(&focusRingStyle, cachedCGColor(color).get()));
 
-    CGContextRef platformContext = this->platformContext();
-
     CGContextStateSaver stateSaver(platformContext);
 
     CGContextSetStyle(platformContext, style.get());
     CGContextBeginPath(platformContext);
-    CGContextAddPath(platformContext, path.platformPath());
+    CGContextAddPath(platformContext, protect(path.platformPath()));
 
     CGContextFillPath(platformContext);
 }
 
-void GraphicsContextCG::drawFocusRing(const Vector<FloatRect>& rects, float outlineOffset, float outlineWidth, const Color& color)
+void GraphicsContextCG::drawFocusRing(const Vector<FloatRect>& rects, float outlineWidth, const Color& color, float zoomFactor)
 {
     Path path;
-    for (const auto& rect : rects) {
-        auto r = rect;
-        r.inflate(-outlineOffset);
-        path.addRect(r);
-    }
-    drawFocusRing(path, outlineWidth, color);
-}
-
-static inline void setPatternPhaseInUserSpace(CGContextRef context, CGPoint phasePoint)
-{
-    CGAffineTransform userToBase = getUserToBaseCTM(context);
-    CGPoint phase = CGPointApplyAffineTransform(phasePoint, userToBase);
-
-    CGContextSetPatternPhase(context, CGSizeMake(phase.x, phase.y));
+    for (const auto& rect : rects)
+        path.addRect(rect);
+    drawFocusRing(path, outlineWidth, color, zoomFactor);
 }
 
 static inline void drawDotsForDocumentMarker(CGContextRef context, const FloatRect& rect, DocumentMarkerLineStyle style)
@@ -213,11 +208,11 @@ void GraphicsContextCG::drawDotsForDocumentMarker(const FloatRect& rect, Documen
 {
 #if HAVE(AUTOCORRECTION_ENHANCEMENTS)
     if (style.mode == DocumentMarkerLineStyleMode::AutocorrectionReplacement) {
-        drawRoundedRectForDocumentMarker(this->platformContext(), rect, style);
+        drawRoundedRectForDocumentMarker(protect(this->platformContext()), rect, style);
         return;
     }
 #endif
-    WebCore::drawDotsForDocumentMarker(this->platformContext(), rect, style);
+    WebCore::drawDotsForDocumentMarker(protect(this->platformContext()), rect, style);
 }
 
 } // namespace WebCore

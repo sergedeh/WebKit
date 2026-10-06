@@ -122,7 +122,7 @@ private:
         if (!(point < node->data().low()))
             return smallestNodeGreaterThanFrom(point, node->right());
 
-        if (auto left = smallestNodeGreaterThanFrom(point, node->right()))
+        if (auto left = smallestNodeGreaterThanFrom(point, node->left()))
             return left;
 
         return node;
@@ -166,7 +166,7 @@ private:
             TextStream stream;
             stream << "localMaxValue=" << localMaxValue << "and data =" << node->data();
             LOG_ERROR("PODIntervalTree verification failed at node 0x%p: %s",
-                node, stream.release().utf8().data());
+                node, stream.release().utf8());
             return false;
         }
         if (currentMaxValue)
@@ -196,8 +196,8 @@ public:
     {
     }
 
-    const T& lowValue() const { return m_interval.low(); }
-    const T& highValue() const { return m_interval.high(); }
+    const T& lowValue() const LIFETIME_BOUND { return m_interval.low(); }
+    const T& highValue() const LIFETIME_BOUND { return m_interval.high(); }
     void collectIfNeeded(const IntervalType& data) const
     {
         if (data.overlaps(m_interval))

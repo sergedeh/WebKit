@@ -145,6 +145,17 @@ WI.CodeMirrorCompletionController = class CodeMirrorCompletionController extends
         return this._suggestionsView.isHandlingClickEvent();
     }
 
+    textWithCurrentCompletion()
+    {
+        let text = this._codeMirror.getValue();
+        if (!this._hasPendingCompletion() || !this._currentCompletion)
+            return text;
+
+        let startIndex = this._codeMirror.indexFromPos({line: this._lineNumber, ch: this._startOffset});
+        let endIndex = this._codeMirror.indexFromPos({line: this._lineNumber, ch: this._endOffset});
+        return text.substring(0, startIndex) + this._currentReplacementText + text.substring(endIndex);
+    }
+
     commitCurrentCompletion()
     {
         this._removeCompletionHint(true, true);
@@ -316,6 +327,8 @@ WI.CodeMirrorCompletionController = class CodeMirrorCompletionController extends
         this._codeMirror.operation(update.bind(this));
 
         delete this._ignoreChange;
+
+        this._delegate?.completionControllerCompletionApplied?.(this);
     }
 
     _commitCompletionHint()
@@ -648,9 +661,8 @@ WI.CodeMirrorCompletionController = class CodeMirrorCompletionController extends
 
         var matchingWords = [];
 
-        var prefix = this._prefix;
+        let prefix = this._prefix;
         let prefixLowerCase = prefix.toLowerCase();
-        let caseSensitiveMatching = WI.settings.experimentalShowCaseSensitiveAutocomplete.value;
 
         var localState = mainToken.state.localState ? mainToken.state.localState : mainToken.state;
 
@@ -692,8 +704,7 @@ WI.CodeMirrorCompletionController = class CodeMirrorCompletionController extends
                 if (declaringVariable && !allowedKeywordsWhenDeclaringVariable.has(keyword))
                     continue;
 
-                let startsWithPrefix = caseSensitiveMatching ? keyword.startsWith(prefix) : keyword.toLowerCase().startsWith(prefixLowerCase);
-                if (!startsWithPrefix)
+                if (!keyword.toLowerCase().startsWith(prefixLowerCase))
                     continue;
 
                 matchingWords.push(keyword);
@@ -712,8 +723,7 @@ WI.CodeMirrorCompletionController = class CodeMirrorCompletionController extends
                     if (matchingWords.includes(variable.name))
                         continue;
 
-                    let startsWithPrefix = caseSensitiveMatching ? variable.name.startsWith(prefix) : variable.name.toLowerCase().startsWith(prefixLowerCase);
-                    if (!startsWithPrefix)
+                    if (!variable.name.toLowerCase().startsWith(prefixLowerCase))
                         continue;
 
                     matchingWords.push(variable.name);

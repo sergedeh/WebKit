@@ -29,10 +29,10 @@
 #include "ElementInlines.h"
 #include "HTMLFrameOwnerElement.h"
 #include "Logging.h"
-#include "NodeInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "SVGElement.h"
+#include "StyleZoomPrimitivesInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -76,15 +76,16 @@ auto ResizeObservation::computeObservedSizes() const -> std::optional<BoxSizes>
         }
     }
 
-    auto* box = m_target->renderBox();
-    if (box) {
-        if (box->isSkippedContent())
-            return std::nullopt;
-        return { {
-            adjustLayoutSizeForAbsoluteZoom(box->contentBoxSize(), *box),
-            adjustLayoutSizeForAbsoluteZoom(box->contentBoxLogicalSize(), *box),
-            adjustLayoutSizeForAbsoluteZoom(box->borderBoxLogicalSize(), *box)
-        } };
+    if (RefPtr target = m_target) {
+        if (CheckedPtr box = target->renderBox()) {
+            if (box->isSkippedContent())
+                return std::nullopt;
+            return { {
+                Style::unapplyingZoom<LayoutSize>(box->contentBoxSize(), *box),
+                Style::unapplyingZoom<LayoutSize>(box->contentBoxLogicalSize(), *box),
+                Style::unapplyingZoom<LayoutSize>(box->logicalSize(), *box)
+            } };
+        }
     }
 
     return BoxSizes { };
@@ -92,11 +93,8 @@ auto ResizeObservation::computeObservedSizes() const -> std::optional<BoxSizes>
 
 LayoutPoint ResizeObservation::computeTargetLocation() const
 {
-    if (!m_target)
-        return { };
-
-    if (!m_target->isSVGElement()) {
-        if (auto box = m_target->renderBox())
+    if (RefPtr target = m_target; target && !target->isSVGElement()) {
+        if (CheckedPtr box = target->renderBox())
             return LayoutPoint(box->paddingLeft(), box->paddingTop());
     }
 
@@ -121,11 +119,6 @@ FloatSize ResizeObservation::contentBoxSize() const
 FloatSize ResizeObservation::snappedContentBoxSize() const
 {
     return m_lastObservationSizes.contentBoxLogicalSize; // FIXME: Need to pixel snap.
-}
-
-RefPtr<Element> ResizeObservation::protectedTarget() const
-{
-    return m_target.get();
 }
 
 std::optional<ResizeObservation::BoxSizes> ResizeObservation::elementSizeChanged() const
@@ -156,8 +149,8 @@ std::optional<ResizeObservation::BoxSizes> ResizeObservation::elementSizeChanged
 size_t ResizeObservation::targetElementDepth() const
 {
     unsigned depth = 0;
-    for (RefPtr ownerElement = m_target.get(); ownerElement; ownerElement = ownerElement->document().ownerElement()) {
-        for (RefPtr parent = ownerElement; parent; parent = parent->parentElementInComposedTree())
+    for (auto* ownerElement = m_target.get(); ownerElement; ownerElement = ownerElement->document().ownerElement()) {
+        for (auto* parent = ownerElement; parent; parent = parent->parentElementInComposedTree())
             ++depth;
     }
 
@@ -168,7 +161,7 @@ TextStream& operator<<(TextStream& ts, const ResizeObservation& observation)
 {
     ts.dumpProperty("target"_s, ValueOrNull(observation.target()));
 
-    if (auto* box = observation.target()->renderBox())
+    if (CheckedPtr box = observation.target()->renderBox())
         ts.dumpProperty("target box"_s, box);
 
     ts.dumpProperty("border box"_s, observation.borderBoxSize());

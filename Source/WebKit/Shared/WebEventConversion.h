@@ -48,6 +48,7 @@ class WebWheelEvent;
 class WebKeyboardEvent;
 enum class WebEventType : uint32_t;
 enum class WebMouseEventButton : int8_t;
+enum class WebEventInputSource : uint8_t;
 
 #if ENABLE(TOUCH_EVENTS)
 class WebTouchEvent;
@@ -59,7 +60,7 @@ class WebGestureEvent;
 #endif
 
 WebCore::PlatformMouseEvent platform(const WebMouseEvent&);
-WebCore::PlatformWheelEvent platform(const WebWheelEvent&);
+WebCore::PlatformWheelEvent NODELETE platform(const WebWheelEvent&);
 WebCore::PlatformKeyboardEvent platform(const WebKeyboardEvent&);
 
 #if ENABLE(TOUCH_EVENTS)
@@ -73,14 +74,17 @@ WebCore::PlatformTouchPoint platform(const WebTouchPoint&);
 WebCore::PlatformGestureEvent platform(const WebGestureEvent&);
 #endif
 
-WebCore::MouseButton platform(WebMouseEventButton);
-WebMouseEventButton kit(WebCore::MouseButton);
+WebCore::MouseEventInputSource NODELETE platform(WebEventInputSource);
+WebEventInputSource NODELETE kit(WebCore::MouseEventInputSource);
 
-WebCore::PlatformEvent::Type platform(WebEventType);
-WebEventType kit(WebCore::PlatformEvent::Type);
+WebCore::MouseButton platform(WebMouseEventButton);
+WebMouseEventButton NODELETE kit(WebCore::MouseButton);
+
+WebCore::PlatformEvent::Type NODELETE platform(WebEventType);
+WebEventType NODELETE kit(WebCore::PlatformEvent::Type);
 
 OptionSet<WebCore::PlatformEvent::Modifier> platform(OptionSet<WebEventModifier>);
-OptionSet<WebKit::WebEventModifier> kit(OptionSet<WebCore::PlatformEvent::Modifier>);
+OptionSet<WebKit::WebEventModifier> NODELETE kit(OptionSet<WebCore::PlatformEvent::Modifier>);
 
 #if PLATFORM(GTK) || PLATFORM(WPE) || USE(LIBWPE)
 MonotonicTime monotonicTimeForEventTimeInMilliseconds(uint64_t);

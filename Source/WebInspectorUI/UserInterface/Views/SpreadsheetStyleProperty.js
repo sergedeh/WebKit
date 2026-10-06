@@ -82,6 +82,20 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
         }
     }
 
+    // Static
+
+    static calculateDuplicateProperties(enabledProperties)
+    {
+        let duplicateProperties = new Set;
+        let lastPropertyForName = new Map;
+        for (let property of enabledProperties) {
+            if (lastPropertyForName.has(property.name))
+                duplicateProperties.add(lastPropertyForName.get(property.name));
+            lastPropertyForName.set(property.name, property);
+        }
+        return duplicateProperties;
+    }
+
     // Public
 
     get element() { return this._element; }
@@ -262,21 +276,8 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
         this.updateStatus();
     }
 
-    updateStatus()
+    updateStatus({duplicateProperties} = {})
     {
-        let duplicatePropertyExistsBelow = (cssProperty) => {
-            let propertyFound = false;
-
-            for (let property of this._property.ownerStyle.enabledProperties) {
-                if (property === cssProperty)
-                    propertyFound = true;
-                else if (property.name === cssProperty.name && propertyFound)
-                    return true;
-            }
-
-            return false;
-        };
-
         let classNames = [WI.SpreadsheetStyleProperty.StyleClassName];
         let elementTitle = "";
 
@@ -298,7 +299,9 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
             }
 
             classNames.push("overridden");
-            if (duplicatePropertyExistsBelow(this._property)) {
+
+            duplicateProperties ||= WI.SpreadsheetStyleProperty.calculateDuplicateProperties(this._property.ownerStyle.enabledProperties);
+            if (duplicateProperties.has(this._property)) {
                 classNames.push("has-warning");
                 elementTitle = WI.UIString("Duplicate property");
             }
@@ -322,6 +325,9 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
                 classNames.push("invalid-value");
                 elementTitle = WI.UIString("Unsupported property value");
             }
+        } else if (this._property.name === "flow-tolerance") {
+            classNames.push("has-warning", "deprecated-name");
+            elementTitle = WI.UIString("\u0022%s\u0022 is deprecated. Use \u0022%s\u0022 instead.").format("flow-tolerance", "fit-tolerance");
         }
 
         if (!this._property.enabled)
@@ -454,8 +460,7 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
 
         if (changed) {
             let target = WI.assumingMainTarget();
-            if (target.hasCommand("DOM.markUndoableState"))
-                target.DOMAgent.markUndoableState();
+            WI.domUndoCoordinator.markUndoableState(target);
         }
     }
 
@@ -488,6 +493,37 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
     inlineSwatchGetColorVariables(inlineSwatch)
     {
         return this._property.ownerStyle.nodeStyles.computedStyle.variablesForType(WI.CSSStyleDeclaration.VariablesGroupType.Colors);
+    }
+
+    inlineSwatchGetContrastInfo(inlineSwatch)
+    {
+        let propertyName = this._property.name.toLowerCase();
+        let isTextColorProperty = propertyName === "color" || propertyName === "-webkit-text-fill-color" || propertyName === "-webkit-text-stroke-color";
+        let isBackgroundColor = propertyName === "background-color" || propertyName === "background";
+
+        if (!isTextColorProperty && !isBackgroundColor)
+            return null;
+
+        let computedStyle = this._property.ownerStyle.nodeStyles?.computedStyle;
+        if (!computedStyle)
+            return null;
+
+        let contrastPropertyName = isTextColorProperty ? "background-color" : "color";
+        let contrastColor = WI.Color.fromString(computedStyle.propertyForName(contrastPropertyName)?.value ?? "");
+        if (!contrastColor)
+            return null;
+
+        if (contrastColor.alpha < 1)
+            contrastColor = contrastColor.blendOverBackground(WI.Color.fromString("white"));
+
+        let fontSizeInPt = parseFloat(computedStyle.propertyForName("font-size")?.value) * 0.75;
+        let isLargeText = fontSizeInPt >= 18;
+        if (!isLargeText && fontSizeInPt >= 14) {
+            let fontWeight = parseInt(computedStyle.propertyForName("font-weight")?.value);
+            isLargeText = fontWeight >= 700;
+        }
+
+        return {contrastColor, isLargeText, isBackgroundColor};
     }
 
     // Private
@@ -1033,7 +1069,7 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
 
     _resolveVariables(cssText)
     {
-        return cssText.replace(/var\(--[^\)]+\)/g, (match) => this._property.ownerStyle.nodeStyles.computedStyle.resolveVariableValue(match) || match);
+        return cssText.replace(/var\(--[^)]+\)/g, (match) => this._property.ownerStyle.nodeStyles.computedStyle.resolveVariableValue(match) || match);
     }
 
     _handleNameChange()

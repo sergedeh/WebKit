@@ -41,27 +41,27 @@ public:
 
     virtual ~HTMLFormControlElement();
 
-    bool isValidatedFormListedElement() const final { return true; }
-    bool isFormListedElement() const final { return true; }
+    bool NODELETE isValidatedFormListedElement() const final { return true; }
+    bool NODELETE isFormListedElement() const final { return true; }
 
     bool matchesValidPseudoClass() const override { return ValidatedFormListedElement::matchesValidPseudoClass(); }
     bool matchesInvalidPseudoClass() const override { return ValidatedFormListedElement::matchesInvalidPseudoClass(); }
     bool matchesUserValidPseudoClass() const override { return ValidatedFormListedElement::matchesUserValidPseudoClass(); }
     bool matchesUserInvalidPseudoClass() const override { return ValidatedFormListedElement::matchesUserInvalidPseudoClass(); }
 
-    bool isDisabledFormControl() const override { return isDisabled(); }
+    bool NODELETE isDisabledFormControl() const override { return isDisabled(); }
     bool supportsFocus() const override { return !isDisabled(); }
 
     WEBCORE_EXPORT String formEnctype() const;
     WEBCORE_EXPORT String formMethod() const;
-    bool formNoValidate() const;
+    bool NODELETE formNoValidate() const;
     WEBCORE_EXPORT String formAction() const;
 
     bool formControlValueMatchesRenderer() const { return m_valueMatchesRenderer; }
     void setFormControlValueMatchesRenderer(bool b) { m_valueMatchesRenderer = b; }
 
     bool wasChangedSinceLastFormControlChangeEvent() const { return m_wasChangedSinceLastFormControlChangeEvent; }
-    void setChangedSinceLastFormControlChangeEvent(bool);
+    void NODELETE setChangedSinceLastFormControlChangeEvent(bool);
     bool wasCreatedByTaintedScript() const { return m_wasCreatedByTaintedScript; }
 
     virtual void dispatchFormControlChangeEvent();
@@ -90,7 +90,7 @@ public:
 
     WEBCORE_EXPORT String autocomplete() const;
 
-    AutofillMantle autofillMantle() const;
+    AutofillMantle NODELETE autofillMantle() const;
 
     WEBCORE_EXPORT AutofillData autofillData() const;
 
@@ -107,17 +107,16 @@ public:
     using Node::deref;
 
 protected:
-    HTMLFormControlElement(const QualifiedName& tagName, Document&, HTMLFormElement*);
+    HTMLFormControlElement(const QualifiedName& tagName, Document&);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) override;
-    void didFinishInsertingNode() override;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) override;
+    void postConnectionSteps() override;
     void didAttachRenderers() override;
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) override;
-    void removedFromAncestor(RemovalType, ContainerNode&) override;
+    void removingSteps(RemovalType, ContainerNode&) override;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
 
     void disabledStateChanged() override;
-    void readOnlyStateChanged() override;
     virtual void requiredStateChanged();
 
     bool isMouseFocusable() const override;
@@ -139,9 +138,9 @@ private:
     HTMLElement& asHTMLElement() final { return *this; }
     const HTMLFormControlElement& asHTMLElement() const final { return *this; }
 
-    FormAssociatedElement* asFormAssociatedElement() final { return this; }
-    FormListedElement* asFormListedElement() final { return this; }
-    ValidatedFormListedElement* asValidatedFormListedElement() final { return this; }
+    FormAssociatedElement* NODELETE asFormAssociatedElement() final { return this; }
+    FormListedElement* NODELETE asFormListedElement() final { return this; }
+    ValidatedFormListedElement* NODELETE asValidatedFormListedElement() final { return this; }
 
     unsigned m_isRequired : 1;
     unsigned m_valueMatchesRenderer : 1;

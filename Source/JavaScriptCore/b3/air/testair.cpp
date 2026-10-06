@@ -46,6 +46,7 @@
 #include <wtf/DataLog.h>
 #include <wtf/Lock.h>
 #include <wtf/NumberOfCores.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdMap.h>
 #include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
@@ -54,7 +55,7 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 // We don't have a NO_RETURN_DUE_TO_EXIT, nor should we. That's ridiculous.
-static bool hiddenTruthBecauseNoReturnIsStupid() { return true; }
+static bool NODELETE hiddenTruthBecauseNoReturnIsStupid() { return true; }
 
 static void usage()
 {
@@ -162,11 +163,22 @@ void loadDoubleConstant(BasicBlock* block, double value, Tmp tmp, Tmp scratch)
     loadConstantImpl<double>(block, value, MoveDouble, tmp, scratch);
 }
 
+// Air::Inst has a fixed, non-growable argument buffer, so a Shuffle's (src, dst, width) triples must
+// be accumulated up front and passed to the constructor rather than appended to a live Inst.
+template<size_t inlineCapacity>
+void addShufflePair(Vector<Arg, inlineCapacity>& args, Arg src, Arg dst, Arg width)
+{
+    args.append(src);
+    args.append(dst);
+    args.append(width);
+}
+
 void testShuffleSimpleSwap()
 {
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -202,6 +214,7 @@ void testShuffleSimpleShift()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -239,6 +252,7 @@ void testShuffleLongShift()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -291,6 +305,7 @@ void testShuffleLongShiftBackwards()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -343,6 +358,7 @@ void testShuffleSimpleRotate()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -379,6 +395,7 @@ void testShuffleSimpleBroadcast()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -415,6 +432,7 @@ void testShuffleBroadcastAllRegs()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     const Vector<Reg>& regs = code.regsInPriorityOrder(GP);
 
     BasicBlock* root = code.addBlock();
@@ -424,17 +442,18 @@ void testShuffleBroadcastAllRegs()
         if (reg != Reg(GPRInfo::regT0))
             loadConstant(root, count++, Tmp(reg));
     }
-    Inst& shuffle = root->append(Shuffle, nullptr);
+    Vector<Arg, 8> shuffleArgs;
     for (Reg reg : regs) {
         if (reg != Reg(GPRInfo::regT0))
-            shuffle.append(Tmp(GPRInfo::regT0), Tmp(reg), Arg::widthArg(Width32));
+            addShufflePair(shuffleArgs, Tmp(GPRInfo::regT0), Tmp(reg), Arg::widthArg(Width32));
     }
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     StackSlot* slot = code.addStackSlot(sizeof(int32_t) * regs.size(), StackSlotKind::Locked);
     for (unsigned i = 0; i < regs.size(); ++i)
         root->append(Move32, nullptr, Tmp(regs[i]), Arg::stack(slot, static_cast<int32_t>(i * sizeof(int32_t))));
 
-    Vector<int32_t> things(regs.size(), 666);
+    Vector<int32_t> things(FillWith { }, regs.size(), 666);
     Tmp base = code.newTmp(GP);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), base);
     for (unsigned i = 0; i < regs.size(); ++i) {
@@ -456,6 +475,7 @@ void testShuffleTreeShift()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -508,6 +528,7 @@ void testShuffleTreeShiftBackward()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -563,6 +584,7 @@ void testShuffleTreeShiftOtherBackward()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -615,6 +637,7 @@ void testShuffleMultipleShifts()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -658,6 +681,7 @@ void testShuffleRotateWithFringe()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -703,6 +727,7 @@ void testShuffleRotateWithFringeInWeirdOrder()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -748,6 +773,7 @@ void testShuffleRotateWithLongFringe()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -793,6 +819,7 @@ void testShuffleMultipleRotates()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -838,6 +865,7 @@ void testShuffleShiftAndRotate()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -882,6 +910,7 @@ void testRotateFringeClobber()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
 
     int32_t things[8];
@@ -921,7 +950,7 @@ void testRotateFringeClobber()
     memset(things, 0, sizeof(things));
 
     // Make sure no scratches are available.
-    for (auto reg : RegisterSetBuilder::allGPRs()) {
+    for (auto reg : RegisterSet::allGPRs()) {
         if (reg == GPRInfo::regT0
             || reg == GPRInfo::regT1
             || reg == GPRInfo::regT2
@@ -932,7 +961,7 @@ void testRotateFringeClobber()
             || reg == GPRInfo::regT7
             || reg == GPRInfo::regCS0)
             continue;
-        if (RegisterSetBuilder::specialRegisters().contains(reg, IgnoreVectors))
+        if (RegisterSet::specialRegisters().contains(reg, IgnoreVectors))
             continue;
         code.pinRegister(reg);
     }
@@ -954,20 +983,22 @@ void testShuffleShiftAllRegs()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     const Vector<Reg>& regs = code.regsInPriorityOrder(GP);
 
     BasicBlock* root = code.addBlock();
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, 35 + i, Tmp(regs[i]));
-    Inst& shuffle = root->append(Shuffle, nullptr);
+    Vector<Arg, 8> shuffleArgs;
     for (unsigned i = 1; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     StackSlot* slot = code.addStackSlot(sizeof(int32_t) * regs.size(), StackSlotKind::Locked);
     for (unsigned i = 0; i < regs.size(); ++i)
         root->append(Move32, nullptr, Tmp(regs[i]), Arg::stack(slot, static_cast<int32_t>(i * sizeof(int32_t))));
 
-    Vector<int32_t> things(regs.size(), 666);
+    Vector<int32_t> things(FillWith { }, regs.size(), 666);
     Tmp base = code.newTmp(GP);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), base);
     for (unsigned i = 0; i < regs.size(); ++i) {
@@ -990,21 +1021,23 @@ void testShuffleRotateAllRegs()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     const Vector<Reg>& regs = code.regsInPriorityOrder(GP);
 
     BasicBlock* root = code.addBlock();
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, 35 + i, Tmp(regs[i]));
-    Inst& shuffle = root->append(Shuffle, nullptr);
+    Vector<Arg, 8> shuffleArgs;
     for (unsigned i = 1; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
-    shuffle.append(Tmp(regs.last()), Tmp(regs[0]), Arg::widthArg(Width32));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs, Tmp(regs.last()), Tmp(regs[0]), Arg::widthArg(Width32));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     StackSlot* slot = code.addStackSlot(sizeof(int32_t) * regs.size(), StackSlotKind::Locked);
     for (unsigned i = 0; i < regs.size(); ++i)
         root->append(Move32, nullptr, Tmp(regs[i]), Arg::stack(slot, static_cast<int32_t>(i * sizeof(int32_t))));
 
-    Vector<int32_t> things(regs.size(), 666);
+    Vector<int32_t> things(FillWith { }, regs.size(), 666);
     Tmp base = code.newTmp(GP);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), base);
     for (unsigned i = 0; i < regs.size(); ++i) {
@@ -1022,13 +1055,13 @@ void testShuffleRotateAllRegs()
         CHECK(things[i] == 35 + static_cast<int32_t>(i) - 1);
 }
 
-#if USE(JSVALUE64)
 
 void testShuffleSimpleSwap64()
 {
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 10000000000000000ll, Tmp(GPRInfo::regT0));
     loadConstant(root, 20000000000000000ll, Tmp(GPRInfo::regT1));
@@ -1064,6 +1097,7 @@ void testShuffleSimpleShift64()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 10000000000000000ll, Tmp(GPRInfo::regT0));
     loadConstant(root, 20000000000000000ll, Tmp(GPRInfo::regT1));
@@ -1102,6 +1136,7 @@ void testShuffleSwapMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 10000000000000000ll, Tmp(GPRInfo::regT0));
     loadConstant(root, 20000000000000000ll, Tmp(GPRInfo::regT1));
@@ -1137,6 +1172,7 @@ void testShuffleShiftMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 10000000000000000ll, Tmp(GPRInfo::regT0));
     loadConstant(root, 20000000000000000ll, Tmp(GPRInfo::regT1));
@@ -1170,13 +1206,13 @@ void testShuffleShiftMixedWidth()
     CHECK(things[4] == static_cast<uint32_t>(40000000000000000ll));
 }
 
-#endif
 
 void testShuffleShiftMemory()
 {
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int32_t memory[2];
     memory[0] = 35;
     memory[1] = 36;
@@ -1214,6 +1250,7 @@ void testShuffleShiftMemoryLong()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int32_t memory[2];
     memory[0] = 35;
     memory[1] = 36;
@@ -1262,6 +1299,7 @@ void testShuffleShiftMemoryAllRegs()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int32_t memory[2];
     memory[0] = 35;
     memory[1] = 36;
@@ -1273,22 +1311,22 @@ void testShuffleShiftMemoryAllRegs()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, i + 1, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int32_t))),
-        Arg::widthArg(Width32),
-        
+        Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int32_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int32_t))), Arg::widthArg(Width32),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int32_t))), Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int32_t))), Tmp(regs[1]),
         Arg::widthArg(Width32));
 
     for (unsigned i = 2; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
-    Vector<int32_t> things(regs.size(), 666);
+    Vector<int32_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
     for (unsigned i = 0; i < regs.size(); ++i) {
         root->append(
@@ -1307,13 +1345,13 @@ void testShuffleShiftMemoryAllRegs()
     CHECK(memory[1] == 35);
 }
 
-#if USE(JSVALUE64)
 
 void testShuffleShiftMemoryAllRegs64()
 {
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1325,22 +1363,22 @@ void testShuffleShiftMemoryAllRegs64()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, (i + 1) * 1000000000000ll, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::widthArg(Width64),
-        
+        Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Tmp(regs[1]),
         Arg::widthArg(Width64));
 
     for (unsigned i = 2; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
-    Vector<int64_t> things(regs.size(), 666);
+    Vector<int64_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
     for (unsigned i = 0; i < regs.size(); ++i) {
         root->append(
@@ -1359,7 +1397,7 @@ void testShuffleShiftMemoryAllRegs64()
     CHECK(memory[1] == 35000000000000ll);
 }
 
-int64_t combineHiLo(int64_t high, int64_t low)
+int64_t NODELETE combineHiLo(int64_t high, int64_t low)
 {
     union {
         int64_t value;
@@ -1375,6 +1413,7 @@ void testShuffleShiftMemoryAllRegsMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1386,25 +1425,25 @@ void testShuffleShiftMemoryAllRegsMixedWidth()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, (i + 1) * 1000000000000ll, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::widthArg(Width32),
-        
+        Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Tmp(regs[1]),
         Arg::widthArg(Width32));
 
     for (unsigned i = 2; i < regs.size(); ++i) {
-        shuffle.append(
+        addShufflePair(shuffleArgs,
             Tmp(regs[i - 1]), Tmp(regs[i]),
             (i & 1) ? Arg::widthArg(Width32) : Arg::widthArg(Width64));
     }
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
-    Vector<int64_t> things(regs.size(), 666);
+    Vector<int64_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
     for (unsigned i = 0; i < regs.size(); ++i) {
         root->append(
@@ -1425,13 +1464,13 @@ void testShuffleShiftMemoryAllRegsMixedWidth()
     CHECK(memory[1] == 35000000000000ll);
 }
 
-#endif
 
 void testShuffleRotateMemory()
 {
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int32_t memory[2];
     memory[0] = 35;
     memory[1] = 36;
@@ -1472,13 +1511,13 @@ void testShuffleRotateMemory()
     CHECK(memory[1] == 35);
 }
 
-#if USE(JSVALUE64)
 
 void testShuffleRotateMemory64()
 {
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1524,6 +1563,7 @@ void testShuffleRotateMemoryMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1569,6 +1609,7 @@ void testShuffleRotateMemoryAllRegs64()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1580,24 +1621,23 @@ void testShuffleRotateMemoryAllRegs64()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, (i + 1) * 1000000000000ll, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::widthArg(Width64),
-        
+        Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Tmp(regs[1]),
-        Arg::widthArg(Width64),
-
-        regs.last(), regs[0], Arg::widthArg(Width64));
+        Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs, regs.last(), regs[0], Arg::widthArg(Width64));
 
     for (unsigned i = 2; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
-    Vector<int64_t> things(regs.size(), 666);
+    Vector<int64_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
     for (unsigned i = 0; i < regs.size(); ++i) {
         root->append(
@@ -1621,6 +1661,7 @@ void testShuffleRotateMemoryAllRegsMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1632,24 +1673,23 @@ void testShuffleRotateMemoryAllRegsMixedWidth()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, (i + 1) * 1000000000000ll, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::widthArg(Width32),
-        
+        Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Tmp(regs[1]),
-        Arg::widthArg(Width32),
-
-        regs.last(), regs[0], Arg::widthArg(Width32));
+        Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs, regs.last(), regs[0], Arg::widthArg(Width32));
 
     for (unsigned i = 2; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
-    Vector<int64_t> things(regs.size(), 666);
+    Vector<int64_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
     for (unsigned i = 0; i < regs.size(); ++i) {
         root->append(
@@ -1668,13 +1708,13 @@ void testShuffleRotateMemoryAllRegsMixedWidth()
     CHECK(memory[1] == 35000000000000ll);
 }
 
-#endif
 
 void testShuffleSwapDouble()
 {
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadDoubleConstant(root, 1, Tmp(FPRInfo::fpRegT0), Tmp(GPRInfo::regT0));
     loadDoubleConstant(root, 2, Tmp(FPRInfo::fpRegT1), Tmp(GPRInfo::regT0));
@@ -1710,6 +1750,7 @@ void testShuffleShiftDouble()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadDoubleConstant(root, 1, Tmp(FPRInfo::fpRegT0), Tmp(GPRInfo::regT0));
     loadDoubleConstant(root, 2, Tmp(FPRInfo::fpRegT1), Tmp(GPRInfo::regT0));
@@ -1955,7 +1996,7 @@ void testInvalidateCachedTempRegisters()
 
     // In Patchpoint, Load things[0] -> tmp. This will materialize the address in x17 (dataMemoryRegister).
     B3::PatchpointValue* patchpoint1 = patchPoint1Root->appendNew<B3::PatchpointValue>(proc, B3::Void, B3::Origin());
-    patchpoint1->clobber(RegisterSetBuilder::macroClobberedGPRs());
+    patchpoint1->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint1->setGenerator(
         [=] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -1970,7 +2011,7 @@ void testInvalidateCachedTempRegisters()
     // In Patchpoint, Load things[2] -> tmp. This should not reuse the prior contents of x17.
     B3::BasicBlock* patchPoint2Root = proc.addBlock();
     B3::PatchpointValue* patchpoint2 = patchPoint2Root->appendNew<B3::PatchpointValue>(proc, B3::Void, B3::Origin());
-    patchpoint2->clobber(RegisterSetBuilder::macroClobberedGPRs());
+    patchpoint2->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint2->setGenerator(
         [=] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -1984,7 +2025,7 @@ void testInvalidateCachedTempRegisters()
     // This will use and cache both x16 (dataMemoryRegister) and x17 (dataTempRegister).
     B3::BasicBlock* patchPoint3Root = proc.addBlock();
     B3::PatchpointValue* patchpoint3 = patchPoint3Root->appendNew<B3::PatchpointValue>(proc, B3::Void, B3::Origin());
-    patchpoint3->clobber(RegisterSetBuilder::macroClobberedGPRs());
+    patchpoint3->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint3->setGenerator(
         [=] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -2000,7 +2041,7 @@ void testInvalidateCachedTempRegisters()
     // This should rematerialize both x16 (dataMemoryRegister) and x17 (dataTempRegister).
     B3::BasicBlock* patchPoint4Root = proc.addBlock();
     B3::PatchpointValue* patchpoint4 = patchPoint4Root->appendNew<B3::PatchpointValue>(proc, B3::Void, B3::Origin());
-    patchpoint4->clobber(RegisterSetBuilder::macroClobberedGPRs());
+    patchpoint4->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint4->setGenerator(
         [=] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -2030,7 +2071,7 @@ void testArgumentRegPinned()
 
     B3::BasicBlock* b3Root = proc.addBlock();
     B3::PatchpointValue* patchpoint = b3Root->appendNew<B3::PatchpointValue>(proc, B3::Void, B3::Origin());
-    patchpoint->clobber(RegisterSetBuilder(pinned));
+    patchpoint->clobber(RegisterSet(pinned));
     patchpoint->setGenerator(
         [=] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             jit.move(CCallHelpers::TrustedImm32(42), pinned);
@@ -2100,7 +2141,7 @@ void testArgumentRegPinned3()
 
     B3::BasicBlock* b3Root = proc.addBlock();
     B3::PatchpointValue* patchpoint = b3Root->appendNew<B3::PatchpointValue>(proc, B3::Void, B3::Origin());
-    patchpoint->clobber(RegisterSetBuilder(pinned));
+    patchpoint->clobber(RegisterSet(pinned));
     patchpoint->setGenerator(
         [=] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             jit.move(CCallHelpers::TrustedImm32(42), pinned);
@@ -2125,7 +2166,6 @@ void testArgumentRegPinned3()
     CHECK(r == 10 + 42 + 42);
 }
 
-#if USE(JSVALUE64)
 void testLea64()
 {
     B3::Procedure proc;
@@ -2142,7 +2182,6 @@ void testLea64()
     int64_t r = compileAndRun<int64_t>(proc, a);
     CHECK(r == a + b);
 }
-#endif
 
 void testLea32()
 {
@@ -2152,7 +2191,7 @@ void testLea32()
     BasicBlock* root = code.addBlock();
 
     int32_t a = 0x11223344;
-    int32_t b = 1 << (isARM_THUMB2() ? 11 : 13);
+    int32_t b = 1 << 13;
 
     root->append(Lea32, nullptr, Arg::addr(Tmp(GPRInfo::argumentGPR0), b), Tmp(GPRInfo::returnValueGPR));
     root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
@@ -2161,13 +2200,13 @@ void testLea32()
     CHECK(r == a + b);
 }
 
-inline Vector<String> matchAll(const CString& source, std::regex regex)
+inline Vector<String> matchAll(const UTF8CString& source, std::regex regex)
 {
     Vector<String> matches;
     std::smatch match;
-    for (std::string str = source.data(); std::regex_search(str, match, regex); str = match.suffix()) {
+    for (std::string str = source.toStdString(); std::regex_search(str, match, regex); str = match.suffix()) {
         ASSERT(match.size() == 1);
-        matches.append(String::fromLatin1(match[0].str().c_str()));
+        matches.append(String::fromUTF8(match[0].str().c_str()));
     }
     return matches;
 }
@@ -2191,19 +2230,14 @@ void testElideSimpleMove()
         root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
 
         auto compilation = compile(proc);
-        CString disassembly = compilation->disassembly();
-        std::regex findRRMove(isARM64() ? "mov\\s+x\\d+, x\\d+\\n" : isARM_THUMB2() ? "mov\\s+\\w+, \\w+\\n" : "mov %\\w+, %\\w+\\n");
+        auto disassembly = compilation->disassembly();
+        std::regex findRRMove(isARM64() ? "mov\\s+x\\d+, x\\d+\\n" : "mov %\\w+, %\\w+\\n");
         auto result = matchAll(disassembly, findRRMove);
         if (isARM64()) {
             if (!Options::defaultB3OptLevel())
                 CHECK(result.size() == 2);
             else
                 CHECK(result.size() == 0);
-        } else if (isARM_THUMB2()) {
-            if (!Options::defaultB3OptLevel())
-                CHECK(result.size() == 4);
-            else
-                CHECK(result.size() == 2);
         } else if (isX86()) {
             // sp -> fp; arg0 -> ret0; fp -> sp
             // fp -> sp only happens in O0 because we don't actually need to move the stack in general.
@@ -2220,21 +2254,21 @@ void testElideHandlesEarlyClobber()
 
     BasicBlock* root = code.addBlock();
 
-    const unsigned tmpCount = RegisterSetBuilder::allGPRs().numberOfSetRegisters() * 2;
+    const unsigned tmpCount = RegisterSet::allGPRs().numberOfSetRegisters() * 2;
     Vector<Tmp> tmps(tmpCount);
     for (unsigned i = 0; i < tmpCount; ++i) {
         tmps[i] = code.newTmp(B3::GP);
         root->append(Move, nullptr, Arg::imm(i), tmps[i]);
     }
 
-    RegisterSetBuilder registers = RegisterSetBuilder::allGPRs();
-    registers.exclude(RegisterSetBuilder::reservedHardwareRegisters());
-    registers.exclude(RegisterSetBuilder::stackRegisters());
+    RegisterSet registers = RegisterSet::allGPRs();
+    registers.exclude(RegisterSet::reservedHardwareRegisters());
+    registers.exclude(RegisterSet::stackRegisters());
     Reg firstCalleeSave;
     Reg lastCalleeSave;
     auto* patch = proc.add<B3::PatchpointValue>(B3::Int32, B3::Origin());
     patch->clobberEarly(registers);
-    for (Reg reg : registers.buildAndValidate()) {
+    for (Reg reg : registers) {
         if (!firstCalleeSave)
             firstCalleeSave = reg;
         lastCalleeSave = reg;
@@ -2243,17 +2277,16 @@ void testElideHandlesEarlyClobber()
     patch->earlyClobbered().remove(firstCalleeSave);
     patch->resultConstraints.append({ B3::ValueRep::reg(firstCalleeSave) });
     patch->earlyClobbered().remove(lastCalleeSave);
-    patch->clobber(RegisterSetBuilder(lastCalleeSave));
+    patch->clobber(RegisterSet(lastCalleeSave));
 
     patch->setGenerator([=] (CCallHelpers& jit, const JSC::B3::StackmapGenerationParams&) {
         jit.probeDebug([=] (Probe::Context& context) {
-            for (Reg reg : registers.buildAndValidate())
+            for (Reg reg : registers)
                 context.gpr(reg.gpr()) = 0;
         });
     });
 
-    Inst inst(Patch, patch, Arg::special(code.addSpecial(makeUniqueWithoutFastMallocCheck<JSC::B3::PatchpointSpecial>())));
-    inst.args.append(Tmp(firstCalleeSave));
+    Inst inst(Patch, patch, Arg::special(code.addSpecial(makeUniqueWithoutFastMallocCheck<JSC::B3::PatchpointSpecial>())), Tmp(firstCalleeSave));
     root->appendInst(WTF::move(inst));
 
     Tmp result = code.newTmp(B3::GP);
@@ -2270,11 +2303,11 @@ void testElideHandlesEarlyClobber()
 
 void testElideMoveThenRealloc()
 {
-    RegisterSetBuilder registers = RegisterSetBuilder::allGPRs();
-    registers.exclude(RegisterSetBuilder::stackRegisters());
-    registers.exclude(RegisterSetBuilder::reservedHardwareRegisters());
+    RegisterSet registers = RegisterSet::allGPRs();
+    registers.exclude(RegisterSet::stackRegisters());
+    registers.exclude(RegisterSet::reservedHardwareRegisters());
 
-    for (Reg reg : registers.buildAndValidate()) {
+    for (Reg reg : registers) {
         B3::Procedure proc;
         Code& code = proc.code();
 
@@ -2287,7 +2320,7 @@ void testElideMoveThenRealloc()
 
         Tmp tmp = code.newTmp(B3::GP);
         Arg negOne;
-        if (isARM64() || isARM_THUMB2()) {
+        if (isARM64()) {
             negOne = code.newTmp(B3::GP);
             root->append(Move, nullptr, Arg::bigImm(-1), negOne);
         } else if (isX86())
@@ -2378,9 +2411,7 @@ void testLinearScanSpillRangesLateUse()
 
         });
 
-        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-        inst.args.append(tmp1);
-        inst.args.append(tmp2);
+        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp1, tmp2);
 
         root->append(inst);
     }
@@ -2428,9 +2459,7 @@ void testLinearScanSpillRangesEarlyDef()
             jit.move(CCallHelpers::TrustedImm32(i + 1), params[0].gpr());
         });
 
-        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-        inst.args.append(tmp2); // def
-        inst.args.append(tmp1); // use
+        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp2, tmp1); // def, use
 
         root->append(inst);
     }
@@ -2449,8 +2478,7 @@ void testLinearScanSpillRangesEarlyDef()
             good.link(&jit);
         });
 
-        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-        inst.args.append(tmp);
+        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp);
         root->append(inst);
     }
 
@@ -2461,10 +2489,10 @@ void testLinearScanSpillRangesEarlyDef()
     CHECK(runResult == 99);
 }
 
-#if USE(JSVALUE64)
 void testZDefOfSpillSlotWithOffsetNeedingToBeMaterializedInARegister()
 {
-    if (Options::defaultB3OptLevel() == 2)
+    // This test runs slowly in Debug builds so run it less frequently. B3OptLevel 1 and 2 behave the same w.r.t. this code anyway.
+    if (Options::defaultB3OptLevel() == 1)
         return;
 
     B3::Procedure proc;
@@ -2498,10 +2526,105 @@ void testZDefOfSpillSlotWithOffsetNeedingToBeMaterializedInARegister()
     CHECK(result == (numberOfLiveTmps * (numberOfLiveTmps - 1)) / 2);
 }
 
+void testStackSlotSharingWithNonInterferingSlots()
+{
+    // O0 uses a simple stack allocator that gives every slot a unique offset — no sharing.
+    // This test verifies the graph coloring stack allocator's sharing, which is used at O1+.
+    if (!Options::defaultB3OptLevel())
+        return;
+
+    B3::Procedure proc;
+    Code& code = proc.code();
+    BasicBlock* root = code.addBlock();
+
+    // "interfering" tmps are live across both phases — they interfere with all other tmps.
+    // "non-interfering" tmps per phase — phase 1 and phase 2 tmps don't interfere with each other.
+    // Choose values large enough to force spilling.
+    unsigned numberOfInterferingTmps = 200;
+    unsigned numberOfNonInterferingTmpsPerPhase = 200;
+
+    // Initialize shared tmps with values 0..numberOfInterferingTmps-1.
+    Vector<Tmp> sharedTmps;
+    Tmp counter = code.newTmp(GP);
+    root->append(Move, nullptr, Arg::imm(0), counter);
+    for (unsigned i = 0; i < numberOfInterferingTmps; ++i) {
+        Tmp tmp = code.newTmp(GP);
+        sharedTmps.append(tmp);
+        root->append(Move, nullptr, counter, tmp);
+        root->append(Add64, nullptr, Arg::imm(1), counter);
+    }
+
+    // Phase 1: create all local tmps first (so they're all simultaneously live), then consume them.
+    Vector<Tmp> phase1Tmps;
+    Tmp result = code.newTmp(GP);
+    Tmp loadResult = code.newTmp(GP);
+    root->append(Move, nullptr, Arg::imm(0), result);
+    for (unsigned i = 0; i < numberOfNonInterferingTmpsPerPhase; ++i) {
+        Tmp tmp = code.newTmp(GP);
+        phase1Tmps.append(tmp);
+        root->append(Move, nullptr, counter, tmp);
+        root->append(Add64, nullptr, Arg::imm(1), counter);
+    }
+    for (auto tmp : phase1Tmps) {
+        root->append(Move, nullptr, tmp, loadResult);
+        root->append(Add64, nullptr, loadResult, result);
+    }
+    // Phase 1 locals are now dead.
+
+    // Phase 2: same pattern — all local tmps live simultaneously, then consumed.
+    Vector<Tmp> phase2Tmps;
+    for (unsigned i = 0; i < numberOfNonInterferingTmpsPerPhase; ++i) {
+        Tmp tmp = code.newTmp(GP);
+        phase2Tmps.append(tmp);
+        root->append(Move, nullptr, counter, tmp);
+        root->append(Add64, nullptr, Arg::imm(1), counter);
+    }
+    for (auto tmp : phase2Tmps) {
+        root->append(Move, nullptr, tmp, loadResult);
+        root->append(Add64, nullptr, loadResult, result);
+    }
+    // Phase 2 locals are now dead.
+
+    // Use all shared tmps — they're still live, proving they interfere with both phases.
+    for (auto tmp : sharedTmps) {
+        root->append(Move, nullptr, tmp, loadResult);
+        root->append(Add64, nullptr, loadResult, result);
+    }
+
+    root->append(Move, nullptr, result, Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    // Compile and check correctness.
+    prepareForGeneration(code);
+
+    // Verify frame size reflects sharing: phase 1 and phase 2 non-interfering tmps should share stack space.
+    // Without sharing: need space for numberOfInterferingTmps + 2*numberOfNonInterferingTmpsPerPhase spilled slots.
+    // With sharing: need space for only numberOfInterferingTmps + numberOfNonInterferingTmpsPerPhase spilled slots.
+    // Some tmps will be register-allocated rather than spilled, so account for that.
+    unsigned numGPRs = RegisterSet::allGPRs().numberOfSetRegisters();
+    unsigned minFrameSize = (numberOfInterferingTmps - numGPRs) * 8 + stackAdjustmentForAlignment();
+    // Allow some slack for callee-save slots and helper tmps that may spill.
+    unsigned slackSlots = numGPRs;
+    unsigned maxFrameSizeWithSharing = (numberOfInterferingTmps + numberOfNonInterferingTmpsPerPhase + slackSlots) * 8 + stackAdjustmentForAlignment();
+    CHECK(code.frameSize() >= minFrameSize);
+    CHECK(code.frameSize() <= maxFrameSizeWithSharing);
+
+    // Also verify the computed result is correct (no stack corruption).
+    unsigned total = numberOfInterferingTmps + 2 * numberOfNonInterferingTmpsPerPhase;
+    uint64_t expectedResult = static_cast<uint64_t>(total) * (total - 1) / 2;
+
+    CCallHelpers jit;
+    generate(code, jit);
+    LinkBuffer linkBuffer(jit, nullptr);
+    auto compilation = makeUnique<Compilation>(
+        FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "testair compilation"), proc.releaseByproducts());
+    CHECK(invoke<uint64_t>(*compilation) == expectedResult);
+}
+
 void testEarlyAndLateUseOfSameTmp()
 {
     WeakRandom weakRandom;
-    size_t numTmps = RegisterSetBuilder::allGPRs().numberOfSetRegisters();
+    size_t numTmps = RegisterSet::allGPRs().numberOfSetRegisters();
     int64_t expectedResult = 0;
     for (size_t i = 0; i < numTmps; ++i)
         expectedResult += i;
@@ -2529,9 +2652,9 @@ void testEarlyAndLateUseOfSameTmp()
             B3::PatchpointValue* patchpoint = proc.add<B3::PatchpointValue>(B3::Void, B3::Origin());
             patchpoint->append(dummyValue, B3::ValueRep::SomeRegister);
             patchpoint->append(dummyValue, B3::ValueRep::SomeLateRegister);
-            patchpoint->clobberLate(RegisterSetBuilder::registersToSaveForJSCall(RegisterSetBuilder::allScalarRegisters()));
+            patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
             patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-                RELEASE_ASSERT(!RegisterSetBuilder::registersToSaveForJSCall(RegisterSetBuilder::allScalarRegisters()).buildWithLowerBits().contains(params[1].gpr(), IgnoreVectors));
+                RELEASE_ASSERT(!RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()).normalizeWidths().contains(params[1].gpr(), IgnoreVectors));
 
                 auto good = jit.branch64(CCallHelpers::Equal, params[1].gpr(), CCallHelpers::TrustedImm32(rand));
                 jit.breakpoint();
@@ -2542,11 +2665,8 @@ void testEarlyAndLateUseOfSameTmp()
                 good2.link(&jit);
             });
 
-            Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-
             Tmp tmp = tmps[rand];
-            inst.args.append(tmp);
-            inst.args.append(tmp);
+            Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp, tmp);
             root->append(inst);
         }
 
@@ -2563,7 +2683,7 @@ void testEarlyAndLateUseOfSameTmp()
 void testEarlyClobberInterference()
 {
     WeakRandom weakRandom;
-    size_t numTmps = RegisterSetBuilder::allGPRs().numberOfSetRegisters();
+    size_t numTmps = RegisterSet::allGPRs().numberOfSetRegisters();
     int64_t expectedResult = 0;
     for (size_t i = 0; i < numTmps; ++i)
         expectedResult += i;
@@ -2590,19 +2710,17 @@ void testEarlyClobberInterference()
 
             B3::PatchpointValue* patchpoint = proc.add<B3::PatchpointValue>(B3::Void, B3::Origin());
             patchpoint->append(dummyValue, B3::ValueRep::SomeRegister);
-            patchpoint->clobberEarly(RegisterSetBuilder::registersToSaveForJSCall(RegisterSetBuilder::allScalarRegisters()));
+            patchpoint->clobberEarly(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
             patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-                RELEASE_ASSERT(!RegisterSetBuilder::registersToSaveForJSCall(RegisterSetBuilder::allScalarRegisters()).buildWithLowerBits().contains(params[0].gpr(), IgnoreVectors));
+                RELEASE_ASSERT(!RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()).normalizeWidths().contains(params[0].gpr(), IgnoreVectors));
 
                 auto good = jit.branch64(CCallHelpers::Equal, params[0].gpr(), CCallHelpers::TrustedImm32(rand));
                 jit.breakpoint();
                 good.link(&jit);
             });
 
-            Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-
             Tmp tmp = tmps[rand];
-            inst.args.append(tmp);
+            Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp);
             root->append(inst);
         }
 
@@ -2614,6 +2732,179 @@ void testEarlyClobberInterference()
         int64_t actualResult = compileAndRun<int64_t>(proc);
         CHECK(actualResult == expectedResult);
     }
+}
+
+void testMoveDoubleZeroConstant()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    Tmp result = code.newTmp(FP);
+    // Test MoveDouble with FPImm64 zero
+    root->append(MoveDouble, nullptr, Arg::fpImm64(0), result);
+    root->append(MoveDoubleTo64, nullptr, result, Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    CHECK(compileAndRun<uint64_t>(proc) == 0);
+}
+
+void testMoveFloatZeroConstant()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    Tmp result = code.newTmp(FP);
+    // Test MoveFloat with FPImm32 zero
+    root->append(MoveFloat, nullptr, Arg::fpImm32(0), result);
+    root->append(MoveFloatTo32, nullptr, result, Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    CHECK(compileAndRun<uint32_t>(proc) == 0);
+}
+
+void testMoveDoubleConstant()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    Tmp result = code.newTmp(FP);
+    // 1.5 = 0x3ff8000000000000
+    uint64_t bits = 0x3ff8000000000000ULL;
+    root->append(MoveDouble, nullptr, Arg::fpImm64(bits), result);
+    root->append(MoveDoubleTo64, nullptr, result, Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    CHECK(compileAndRun<uint64_t>(proc) == bits);
+}
+
+void testMoveFloatConstant()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    Tmp result = code.newTmp(FP);
+    // 1.5f = 0x3fc00000
+    uint32_t bits = 0x3fc00000U;
+    root->append(MoveFloat, nullptr, Arg::fpImm32(bits), result);
+    root->append(MoveFloatTo32, nullptr, result, Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    CHECK(compileAndRun<uint32_t>(proc) == bits);
+}
+
+void testMoveVectorZeroConstant()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    Tmp result = code.newTmp(FP);
+    Tmp gpScratch = code.newTmp(GP);
+    // Test MoveVector with FPImm128 zero
+    root->append(MoveVector, nullptr, Arg::fpImm128(vectorAllZeros()), result);
+
+    // Store vector to memory and verify
+    uint64_t output[2] = { 0xdeadbeef, 0xdeadbeef };
+    root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&output)), gpScratch);
+    root->append(MoveVector, nullptr, result, Arg::addr(gpScratch));
+    root->append(Move, nullptr, Arg::imm(1), Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    CHECK(compileAndRun<int>(proc) == 1);
+    CHECK(output[0] == 0);
+    CHECK(output[1] == 0);
+}
+
+// Test that float constants are correctly rematerialized when spilled.
+// This test creates many float tmps to force spilling, and verifies
+// that the 32-bit float constant is not misinterpreted as a 64-bit double.
+// Regression test for https://bugs.webkit.org/show_bug.cgi?id=308019
+void testMoveFloatConstantSpill()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+
+    // 1.0f = 0x3f800000 as a 32-bit float
+    // If misinterpreted as a 64-bit double, it's ~4.6e-315
+    uint32_t floatBits = 0x3f800000U;
+
+    // Create many float constants to force spilling
+    Vector<Tmp> tmps;
+    for (unsigned i = 0; i < 50; ++i) {
+        Tmp tmp = code.newTmp(FP);
+        tmps.append(tmp);
+        root->append(MoveFloat, nullptr, Arg::fpImm32(floatBits), tmp);
+    }
+
+    // Use all the temps to ensure they stay live and get spilled
+    Tmp accumulator = code.newTmp(FP);
+    root->append(MoveFloat, nullptr, tmps[0], accumulator);
+    for (unsigned i = 1; i < tmps.size(); ++i)
+        root->append(AddFloat, nullptr, accumulator, tmps[i], accumulator);
+
+    // Return the result as a 32-bit value
+    root->append(MoveFloatTo32, nullptr, accumulator, Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    // The result should be 50.0f (1.0 + 1.0 + ... 50 times)
+    uint32_t expected = std::bit_cast<uint32_t>(50.0f);
+    CHECK(compileAndRun<uint32_t>(proc) == expected);
+}
+
+void testAddDoubleZeroWithOther()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    Tmp zero = code.newTmp(FP);
+    Tmp scratch = code.newTmp(GP);
+
+    // Load 2.5 into a register
+    double inputValue = 2.5;
+    loadDoubleConstant(root, inputValue, Tmp(FPRInfo::fpRegT0), scratch);
+
+    // Move zero to another register
+    root->append(MoveDouble, nullptr, Arg::fpImm64(0), zero);
+
+    // Add them
+    Tmp result = code.newTmp(FP);
+    root->append(AddDouble, nullptr, Tmp(FPRInfo::fpRegT0), zero, result);
+    root->append(MoveDoubleTo64, nullptr, result, Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    CHECK(std::bit_cast<double>(compileAndRun<uint64_t>(proc)) == 2.5);
+}
+
+void testMulDoubleZeroWithOther()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    Tmp zero = code.newTmp(FP);
+    Tmp scratch = code.newTmp(GP);
+
+    // Load 2.5 into a register
+    double inputValue = 2.5;
+    loadDoubleConstant(root, inputValue, Tmp(FPRInfo::fpRegT0), scratch);
+
+    // Move zero to another register
+    root->append(MoveDouble, nullptr, Arg::fpImm64(0), zero);
+
+    // Multiply them
+    Tmp result = code.newTmp(FP);
+    root->append(MulDouble, nullptr, Tmp(FPRInfo::fpRegT0), zero, result);
+    root->append(MoveDoubleTo64, nullptr, result, Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    CHECK(std::bit_cast<double>(compileAndRun<uint64_t>(proc)) == 0.0);
 }
 
 #if CPU(ARM64)
@@ -2689,7 +2980,325 @@ void testStorePairClobberMemoryLoad()
     CHECK(values1[1] == 43);
 }
 #endif
-#endif
+
+// Test loop-aware live range splitting.
+// Fast tmps create register pressure to steer which side spills.
+// 18 of 32 combinations tested (excludes infeasible and redundant cases).
+template<bool nonLoopSpilled, bool loopSpilled, bool hasDef, bool liveAtHeader, bool liveAtExit>
+void testSplitAroundLoop()
+{
+    unsigned numRegs = 8;
+    unsigned numAcrossLoopTmps = 4;
+
+    // Fast tmps steer which side spills by consuming registers in specific regions.
+    unsigned numFastTmpsOutsideLoop = 0;
+    unsigned numFastTmpsInsideLoop = 0;
+
+    if (nonLoopSpilled)
+        numFastTmpsOutsideLoop = numRegs - 1;
+    if (loopSpilled)
+        numFastTmpsInsideLoop = numRegs - 1;
+
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    {
+        Vector<Reg> allRegs = code.regsInPriorityOrder(GP);
+        for (size_t i = numRegs; i < allRegs.size(); ++i)
+            code.pinRegister(allRegs[i]);
+    }
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* header = code.addBlock(10.0);
+    BasicBlock* body = code.addBlock(10.0);
+    BasicBlock* exit = code.addBlock();
+
+    Vector<Tmp> tmps;
+    for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+        tmps.append(code.newTmp(GP));
+
+    Vector<Tmp> fastTmpsOutside;
+    for (unsigned i = 0; i < numFastTmpsOutsideLoop; ++i) {
+        Tmp ft = code.newTmp(GP);
+        code.addFastTmp(ft);
+        fastTmpsOutside.append(ft);
+    }
+    Vector<Tmp> fastTmpsInside;
+    for (unsigned i = 0; i < numFastTmpsInsideLoop; ++i) {
+        Tmp ft = code.newTmp(GP);
+        code.addFastTmp(ft);
+        fastTmpsInside.append(ft);
+    }
+
+    Tmp counter = code.newTmp(GP);
+    Tmp sum = code.newTmp(GP);
+
+    // Root: define tmps, optional pre-loop use, fast tmps, counter.
+    root->append(Move, nullptr, Arg::imm(0), sum);
+    for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+        loadConstant(root, static_cast<intptr_t>(i + 1), tmps[i]);
+    if (!liveAtHeader) {
+        // Pre-loop use creates a separate range not connected to the loop.
+        for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+            root->append(Add64, nullptr, tmps[i], sum);
+    }
+    for (unsigned i = 0; i < numFastTmpsOutsideLoop; ++i)
+        loadConstant(root, static_cast<intptr_t>(100 + i), fastTmpsOutside[i]);
+    for (unsigned i = 0; i < numFastTmpsOutsideLoop; ++i)
+        root->append(Add64, nullptr, fastTmpsOutside[i], sum);
+    loadConstant(root, static_cast<intptr_t>(5), counter);
+    root->append(Jump, nullptr);
+    root->setSuccessors(header);
+
+    // Header: branch to body or exit.
+    header->append(Branch32, nullptr, Arg::relCond(MacroAssembler::GreaterThan), counter, Arg::imm(0));
+    header->setSuccessors(body, exit);
+
+    // Body: fast tmps, optional fresh def, read tmps, optional modify, decrement.
+    for (unsigned i = 0; i < numFastTmpsInsideLoop; ++i)
+        body->append(Move, nullptr, counter, fastTmpsInside[i]);
+
+    if (!liveAtHeader) {
+        // Fresh def not connected to pre-loop range.
+        for (unsigned i = 0; i < numAcrossLoopTmps; ++i) {
+            body->append(Move, nullptr, counter, tmps[i]);
+            body->append(Add64, nullptr, Arg::imm(i + 1), tmps[i]);
+        }
+    }
+
+    for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+        body->append(Add64, nullptr, tmps[i], sum);
+
+    if (hasDef) {
+        for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+            body->append(Add64, nullptr, counter, tmps[i]);
+    }
+
+    for (unsigned i = 0; i < numFastTmpsInsideLoop; ++i)
+        body->append(Add64, nullptr, fastTmpsInside[i], sum);
+
+    body->append(Sub32, nullptr, Arg::imm(1), counter);
+    body->append(Jump, nullptr);
+    body->setSuccessors(header);
+
+    // Exit: optional redef, read tmps, fast tmps, return sum.
+    if (!liveAtExit) {
+        // Post-loop redef creates a separate range not connected to the loop.
+        for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+            loadConstant(exit, static_cast<intptr_t>(i + 1), tmps[i]);
+    }
+    for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+        exit->append(Add64, nullptr, tmps[i], sum);
+    for (unsigned i = 0; i < numFastTmpsOutsideLoop; ++i)
+        loadConstant(exit, static_cast<intptr_t>(200 + i), fastTmpsOutside[i]);
+    for (unsigned i = 0; i < numFastTmpsOutsideLoop; ++i)
+        exit->append(Add64, nullptr, fastTmpsOutside[i], sum);
+    exit->append(Move, nullptr, sum, Tmp(GPRInfo::returnValueGPR));
+    exit->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    // Compute expected result.
+    int64_t expected = 0;
+
+    for (unsigned i = 0; i < numFastTmpsOutsideLoop; ++i)
+        expected += static_cast<int64_t>(100 + i);
+
+    if (!liveAtHeader) {
+        for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+            expected += static_cast<int64_t>(i + 1);
+    }
+
+    {
+        int64_t tmpVals[4];
+        for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+            tmpVals[i] = static_cast<int64_t>(i + 1);
+
+        for (int c = 5; c >= 1; --c) {
+            if (!liveAtHeader) {
+                for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+                    tmpVals[i] = c + static_cast<int64_t>(i + 1);
+            }
+            for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+                expected += tmpVals[i];
+            if (hasDef) {
+                for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+                    tmpVals[i] += c;
+            }
+            for (unsigned i = 0; i < numFastTmpsInsideLoop; ++i)
+                expected += c;
+        }
+
+        if (liveAtExit) {
+            for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+                expected += tmpVals[i];
+        }
+    }
+
+    if (!liveAtExit) {
+        for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+            expected += static_cast<int64_t>(i + 1);
+    }
+
+    for (unsigned i = 0; i < numFastTmpsOutsideLoop; ++i)
+        expected += static_cast<int64_t>(200 + i);
+
+    auto runResult = compileAndRun<int64_t>(proc);
+    CHECK(runResult == expected);
+}
+
+void testSplitAroundLoopNoInLoopUses()
+{
+    // Tmps defined before loop, not used inside, used after. loopTmp has zero cost and spills.
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    unsigned numRegs = 8;
+    unsigned numAcrossLoopTmps = 4;
+    unsigned numFastTmpsInsideLoop = numRegs - 1;
+
+    {
+        Vector<Reg> allRegs = code.regsInPriorityOrder(GP);
+        for (size_t i = numRegs; i < allRegs.size(); ++i)
+            code.pinRegister(allRegs[i]);
+    }
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* header = code.addBlock(10.0);
+    BasicBlock* body = code.addBlock(10.0);
+    BasicBlock* exit = code.addBlock();
+
+    Vector<Tmp> tmps;
+    for (unsigned i = 0; i < numAcrossLoopTmps; ++i) {
+        Tmp tmp = code.newTmp(GP);
+        tmps.append(tmp);
+        loadConstant(root, static_cast<intptr_t>(i + 1), tmp);
+    }
+
+    Vector<Tmp> fastTmpsInside;
+    for (unsigned i = 0; i < numFastTmpsInsideLoop; ++i) {
+        Tmp ft = code.newTmp(GP);
+        code.addFastTmp(ft);
+        fastTmpsInside.append(ft);
+    }
+
+    Tmp counter = code.newTmp(GP);
+    Tmp sum = code.newTmp(GP);
+    root->append(Move, nullptr, Arg::imm(0), sum);
+    loadConstant(root, static_cast<intptr_t>(5), counter);
+    root->append(Jump, nullptr);
+    root->setSuccessors(header);
+
+    header->append(Branch32, nullptr, Arg::relCond(MacroAssembler::GreaterThan), counter, Arg::imm(0));
+    header->setSuccessors(body, exit);
+
+    for (unsigned i = 0; i < numFastTmpsInsideLoop; ++i)
+        body->append(Move, nullptr, counter, fastTmpsInside[i]);
+    for (unsigned i = 0; i < numFastTmpsInsideLoop; ++i)
+        body->append(Add64, nullptr, fastTmpsInside[i], sum);
+    body->append(Sub32, nullptr, Arg::imm(1), counter);
+    body->append(Jump, nullptr);
+    body->setSuccessors(header);
+
+    for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+        exit->append(Add64, nullptr, tmps[i], sum);
+    exit->append(Move, nullptr, sum, Tmp(GPRInfo::returnValueGPR));
+    exit->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    // 7*(5+4+3+2+1) + (1+2+3+4) = 105 + 10 = 115
+    CHECK(compileAndRun<int64_t>(proc) == 115);
+}
+
+template<bool criticalEntry>
+void testSplitAroundLoopCriticalEdge()
+{
+    // criticalEntry=true: root→header AND root→altExit (critical entry edge).
+    // criticalEntry=false: exit has predecessors from both loop and non-loop (critical exit edge).
+    // Loop splitting is prevented by the critical edge; verify correctness without it.
+
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    unsigned numRegs = 8;
+    unsigned numAcrossLoopTmps = 4;
+    unsigned numFastTmps = numRegs - 1;
+
+    {
+        Vector<Reg> allRegs = code.regsInPriorityOrder(GP);
+        for (size_t i = numRegs; i < allRegs.size(); ++i)
+            code.pinRegister(allRegs[i]);
+    }
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* header = code.addBlock(10.0);
+    BasicBlock* body = code.addBlock(10.0);
+    BasicBlock* exit = code.addBlock();
+
+    Vector<Tmp> tmps;
+    for (unsigned i = 0; i < numAcrossLoopTmps; ++i) {
+        Tmp tmp = code.newTmp(GP);
+        tmps.append(tmp);
+        loadConstant(root, static_cast<intptr_t>(i + 1), tmp);
+    }
+
+    Vector<Tmp> fastTmps;
+    for (unsigned i = 0; i < numFastTmps; ++i) {
+        Tmp ft = code.newTmp(GP);
+        code.addFastTmp(ft);
+        fastTmps.append(ft);
+        loadConstant(root, static_cast<intptr_t>(100 + i), ft);
+    }
+
+    Tmp counter = code.newTmp(GP);
+    Tmp arg = code.newTmp(GP);
+    Tmp sum = code.newTmp(GP);
+    root->append(Move, nullptr, Arg::imm(0), sum);
+    for (unsigned i = 0; i < numFastTmps; ++i)
+        root->append(Add64, nullptr, fastTmps[i], sum);
+    root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), arg);
+    loadConstant(root, static_cast<intptr_t>(5), counter);
+
+    if (criticalEntry) {
+        // root→header AND root→altExit: critical entry edge.
+        BasicBlock* altExit = code.addBlock();
+        root->append(Branch32, nullptr, Arg::relCond(MacroAssembler::GreaterThan), arg, Arg::imm(0));
+        root->setSuccessors(header, altExit);
+        altExit->append(Move, nullptr, Arg::imm(0), Tmp(GPRInfo::returnValueGPR));
+        for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+            altExit->append(Add64, nullptr, tmps[i], Tmp(GPRInfo::returnValueGPR));
+        altExit->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+    } else {
+        // root→preheader→header, root→exit: exit has non-loop predecessor.
+        BasicBlock* preheader = code.addBlock();
+        root->append(Branch32, nullptr, Arg::relCond(MacroAssembler::GreaterThan), arg, Arg::imm(0));
+        root->setSuccessors(preheader, exit);
+        preheader->append(Jump, nullptr);
+        preheader->setSuccessors(header);
+    }
+
+    header->append(Branch32, nullptr, Arg::relCond(MacroAssembler::GreaterThan), counter, Arg::imm(0));
+    header->setSuccessors(body, exit);
+
+    for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+        body->append(Add64, nullptr, tmps[i], sum);
+    body->append(Sub32, nullptr, Arg::imm(1), counter);
+    body->append(Jump, nullptr);
+    body->setSuccessors(header);
+
+    for (unsigned i = 0; i < numFastTmps; ++i)
+        loadConstant(exit, static_cast<intptr_t>(200 + i), fastTmps[i]);
+    for (unsigned i = 0; i < numFastTmps; ++i)
+        exit->append(Add64, nullptr, fastTmps[i], sum);
+
+    for (unsigned i = 0; i < numAcrossLoopTmps; ++i)
+        exit->append(Add64, nullptr, tmps[i], sum);
+    exit->append(Move, nullptr, sum, Tmp(GPRInfo::returnValueGPR));
+    exit->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    // arg=1: 721 (pre fast) + 50 (loop) + 10 (tmps) + 1421 (post fast) = 2202
+    // arg=0: altExit returns 10, or exit returns 2152 (no loop iterations)
+    auto compilation = compile(proc);
+    CHECK(invoke<int64_t>(*compilation, static_cast<int64_t>(1)) == 2202);
+    CHECK(invoke<int64_t>(*compilation, static_cast<int64_t>(0)) == (criticalEntry ? 10 : 2152));
+}
 
 #define PREFIX "O", Options::defaultB3OptLevel(), ": "
 
@@ -2713,6 +3322,38 @@ void run(const char* filter)
         return !filter || WTF::findIgnoringASCIICaseWithoutLength(testName, filter) != WTF::notFound;
     };
 
+    auto dispatchTasks = [&] {
+        Lock lock;
+
+        Vector<Ref<Thread>> threads;
+        for (unsigned i = filter ? 1 : WTF::numberOfProcessorCores(); i--;) {
+            threads.append(
+                Thread::create(
+                    "testair thread"_s,
+                    [&] () {
+                        for (;;) {
+                            RefPtr<SharedTask<void()>> task;
+                            {
+                                Locker locker { lock };
+                                if (tasks.isEmpty())
+                                    return;
+                                task = tasks.takeFirst();
+                            }
+#if USE(PROTECTED_JIT)
+                            // Must be constructed before we allocate anything using SequesteredArenaMalloc
+                            ArenaLifetime arenaLifetime;
+#endif
+                            task->run();
+                        }
+                    }));
+        }
+
+        for (auto& thread : threads)
+            thread->waitForCompletion();
+    };
+
+    bool anyTestsScheduled = false;
+
     RUN(testSimple());
 
     RUN(testShuffleSimpleSwap());
@@ -2734,26 +3375,20 @@ void run(const char* filter)
     RUN(testShuffleShiftAndRotate());
     RUN(testShuffleShiftAllRegs());
     RUN(testShuffleRotateAllRegs());
-#if USE(JSVALUE64)
     RUN(testShuffleSimpleSwap64());
     RUN(testShuffleSimpleShift64());
     RUN(testShuffleSwapMixedWidth());
     RUN(testShuffleShiftMixedWidth());
-#endif
     RUN(testShuffleShiftMemory());
     RUN(testShuffleShiftMemoryLong());
     RUN(testShuffleShiftMemoryAllRegs());
-#if USE(JSVALUE64)
     RUN(testShuffleShiftMemoryAllRegs64());
     RUN(testShuffleShiftMemoryAllRegsMixedWidth());
-#endif
     RUN(testShuffleRotateMemory());
-#if USE(JSVALUE64)
     RUN(testShuffleRotateMemory64());
     RUN(testShuffleRotateMemoryMixedWidth());
     RUN(testShuffleRotateMemoryAllRegs64());
     RUN(testShuffleRotateMemoryAllRegsMixedWidth());
-#endif
     RUN(testShuffleSwapDouble());
     RUN(testShuffleShiftDouble());
 
@@ -2784,9 +3419,7 @@ void run(const char* filter)
     RUN(testArgumentRegPinned3());
 
     RUN(testLea32());
-#if USE(JSVALUE64)
     RUN(testLea64());
-#endif
 
     RUN(testElideSimpleMove());
     RUN(testElideHandlesEarlyClobber());
@@ -2795,8 +3428,17 @@ void run(const char* filter)
     RUN(testLinearScanSpillRangesLateUse());
     RUN(testLinearScanSpillRangesEarlyDef());
 
-#if USE(JSVALUE64)
+    RUN(testMoveDoubleZeroConstant());
+    RUN(testMoveFloatZeroConstant());
+    RUN(testMoveDoubleConstant());
+    RUN(testMoveFloatConstant());
+    RUN(testMoveVectorZeroConstant());
+    RUN(testMoveFloatConstantSpill());
+    RUN(testAddDoubleZeroWithOther());
+    RUN(testMulDoubleZeroWithOther());
+
     RUN(testZDefOfSpillSlotWithOffsetNeedingToBeMaterializedInARegister());
+    RUN(testStackSlotSharingWithNonInterferingSlots());
 
     RUN(testEarlyAndLateUseOfSameTmp());
     RUN(testEarlyClobberInterference());
@@ -2807,35 +3449,51 @@ void run(const char* filter)
     RUN(testStorePairClobberMemoryStore());
     RUN(testStorePairClobberMemoryLoad());
 #endif
-#endif
 
-    if (tasks.isEmpty())
-        usage();
-
-    Lock lock;
-
-    Vector<Ref<Thread>> threads;
-    for (unsigned i = filter ? 1 : WTF::numberOfProcessorCores(); i--;) {
-        threads.append(
-            Thread::create(
-                "testair thread"_s,
-                [&] () {
-                    for (;;) {
-                        RefPtr<SharedTask<void()>> task;
-                        {
-                            Locker locker { lock };
-                            if (tasks.isEmpty())
-                                return;
-                            task = tasks.takeFirst();
-                        }
-
-                        task->run();
-                    }
-                }));
+    if (!tasks.isEmpty()) {
+        anyTestsScheduled = true;
+        dispatchTasks();
     }
 
-    for (auto& thread : threads)
-        thread->waitForCompletion();
+    // Batch 2: loop-aware live range splitting enabled.
+    {
+        SetForScope splitAroundLoopsScope(Options::airGreedyRegAllocSplitAroundLoops(), true);
+        SetForScope loopFractionScope(Options::airGreedyRegAllocLoopSplitMaxLoopFraction(), 1.0);
+
+        // testSplitAroundLoop<nonLoopSpilled, loopSpilled, hasDef, liveAtHeader, liveAtExit>()
+        RUN((testSplitAroundLoop<false, true,  false, true,  true>()));
+        RUN((testSplitAroundLoop<false, true,  true,  true,  true>()));
+        RUN((testSplitAroundLoop<false, true,  false, true,  false>()));
+        RUN((testSplitAroundLoop<false, true,  true,  true,  false>()));
+        RUN((testSplitAroundLoop<false, false, false, true,  true>()));
+        RUN((testSplitAroundLoop<false, false, true,  true,  true>()));
+        RUN((testSplitAroundLoop<false, false, false, true,  false>()));
+        RUN((testSplitAroundLoop<false, false, true,  true,  false>()));
+        RUN((testSplitAroundLoop<true,  false, false, true,  true>()));
+        RUN((testSplitAroundLoop<true,  false, true,  true,  true>()));
+        RUN((testSplitAroundLoop<true,  false, false, true,  false>()));
+        RUN((testSplitAroundLoop<true,  false, true,  true,  false>()));
+        RUN((testSplitAroundLoop<false, true,  true,  false, true>()));
+        RUN((testSplitAroundLoop<false, true,  true,  false, false>()));
+        RUN((testSplitAroundLoop<false, false, true,  false, true>()));
+        RUN((testSplitAroundLoop<false, false, true,  false, false>()));
+        RUN((testSplitAroundLoop<true,  false, true,  false, true>()));
+        RUN((testSplitAroundLoop<true,  true,  true,  true,  true>()));
+
+        // Loop-aware splitting: standalone tests.
+        RUN(testSplitAroundLoopNoInLoopUses());
+        RUN((testSplitAroundLoopCriticalEdge<true>()));
+        RUN((testSplitAroundLoopCriticalEdge<false>()));
+
+        if (!tasks.isEmpty()) {
+            anyTestsScheduled = true;
+            dispatchTasks();
+        }
+    }
+
+    if (!anyTestsScheduled)
+        usage();
+
     crashLock.lock();
     crashLock.unlock();
 }

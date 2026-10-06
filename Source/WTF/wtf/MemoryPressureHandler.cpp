@@ -29,8 +29,9 @@
 #include <algorithm>
 #include <atomic>
 #include <functional>
-#include <ranges>
 #include <wtf/Logging.h>
+#include <wtf/MainThread.h>
+#include <wtf/MathExtras.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RAMSize.h>
@@ -53,7 +54,7 @@ static const double s_strictThresholdFraction = 0.5;
 static const std::optional<double> s_killThresholdFraction;
 static const Seconds s_pollInterval = 30_s;
 
-static std::atomic<bool> s_hasCreatedMemoryPressureHandler { true };
+static std::atomic<bool> s_hasCreatedMemoryPressureHandler;
 
 MemoryPressureHandler& MemoryPressureHandler::singleton()
 {
@@ -61,18 +62,18 @@ MemoryPressureHandler& MemoryPressureHandler::singleton()
     return memoryPressureHandler;
 }
 
-static MemoryPressureHandler* memoryPressureHandlerIfExists()
-{
-    return s_hasCreatedMemoryPressureHandler.load() ? &MemoryPressureHandler::singleton() : nullptr;
-}
-
 MemoryPressureHandler::MemoryPressureHandler()
-#if OS(LINUX) || OS(FREEBSD) || OS(HAIKU) || OS(QNX)
-    : m_holdOffTimer(RunLoop::mainSingleton(), "MemoryPressureHandler::HoldOffTimer"_s, this, &MemoryPressureHandler::holdOffTimerFired)
+#if (OS(LINUX) || OS(FREEBSD) || OS(HAIKU) || OS(QNX)) && !OS(ANDROID)
+    : m_holdOffTimer(RunLoop::mainSingleton(), "MemoryPressureHandler::HoldOffTimer"_s, [] {
+        MemoryPressureHandler::singleton().holdOffTimerFired();
+    })
 #elif OS(WINDOWS)
-    : m_windowsMeasurementTimer(RunLoop::mainSingleton(), "MemoryPressureHandler::WindowsMeasurementTimer"_s, this, &MemoryPressureHandler::windowsMeasurementTimerFired)
+    : m_windowsMeasurementTimer(RunLoop::mainSingleton(), "MemoryPressureHandler::WindowsMeasurementTimer"_s, [] {
+        MemoryPressureHandler::singleton().windowsMeasurementTimerFired();
+    })
 #endif
 {
+    s_hasCreatedMemoryPressureHandler.store(true);
 #if PLATFORM(COCOA)
     setDispatchQueue(mainDispatchQueueSingleton());
 #endif
@@ -86,7 +87,9 @@ void MemoryPressureHandler::setMemoryFootprintPollIntervalForTesting(Seconds pol
 void MemoryPressureHandler::setShouldUsePeriodicMemoryMonitor(bool use)
 {
     if (use) {
-        m_measurementTimer = makeUnique<RunLoop::Timer>(RunLoop::mainSingleton(), "MemoryPressureHandler::MeasurementTimer"_s, this, &MemoryPressureHandler::measurementTimerFired);
+        m_measurementTimer = makeUnique<RunLoop::Timer>(RunLoop::mainSingleton(), "MemoryPressureHandler::MeasurementTimer"_s, [] {
+            MemoryPressureHandler::singleton().measurementTimerFired();
+        });
         m_measurementTimer->startRepeating(m_configuration.pollInterval);
     } else
         m_measurementTimer = nullptr;
@@ -112,7 +115,7 @@ static size_t thresholdForMemoryKillOfActiveProcess(unsigned tabCount)
     return baseThreshold + tabCount * GB;
 #else
     UNUSED_PARAM(tabCount);
-    return std::min(3 * GB, static_cast<size_t>(ramSize() * 0.9));
+    return std::min(3 * GB, static_cast<size_t>(truncateDoubleToUint64(ramSize() * 0.9)));
 #endif
 }
 
@@ -123,7 +126,7 @@ static size_t thresholdForMemoryKillOfInactiveProcess(unsigned tabCount)
 #else
     size_t baseThreshold = tabCount > 1 ? 3 * GB : 2 * GB;
 #endif
-    return std::min(baseThreshold, static_cast<size_t>(ramSize() * 0.9));
+    return std::min(baseThreshold, static_cast<size_t>(truncateDoubleToUint64(ramSize() * 0.9)));
 }
 
 void MemoryPressureHandler::setPageCount(unsigned pageCount)
@@ -262,8 +265,8 @@ void MemoryPressureHandler::setProcessState(WebsamProcessState state)
 
 ASCIILiteral MemoryPressureHandler::processStateDescription()
 {
-    if (RefPtr handler = memoryPressureHandlerIfExists()) {
-        switch (handler->processState()) {
+    if (s_hasCreatedMemoryPressureHandler.load()) {
+        switch (singleton().processState()) {
         case WebsamProcessState::Active:
             return "active"_s;
         case WebsamProcessState::Inactive:
@@ -338,6 +341,12 @@ void MemoryPressureHandler::didExceedProcessMemoryLimit(ProcessMemoryLimit limit
         m_didExceedProcessMemoryLimitCallback(limit);
 }
 
+MemoryPressureHandler::ReliefLogger::~ReliefLogger()
+{
+    if (loggingEnabled())
+        logMemoryUsageChange();
+}
+
 void MemoryPressureHandler::ReliefLogger::logMemoryUsageChange()
 {
 #if !RELEASE_LOG_DISABLED
@@ -383,4 +392,4 @@ MemoryPressureHandlerConfiguration::MemoryPressureHandlerConfiguration(uint64_t 
 {
 }
 
-} // namespace WebCore
+} // namespace WTF

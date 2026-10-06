@@ -26,7 +26,7 @@
 
 #if ENABLE(MEDIA_STREAM)
 
-#include <WebCore/Event.h>
+#include "Event.h"
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -41,11 +41,11 @@ public:
     static Ref<MediaStreamTrackEvent> create(const AtomString& type, CanBubble, IsCancelable, Ref<MediaStreamTrack>&&);
 
     struct Init : EventInit {
-        RefPtr<MediaStreamTrack> track;
+        Ref<MediaStreamTrack> track;
     };
     static Ref<MediaStreamTrackEvent> create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
 
-    MediaStreamTrack& track() const;
+    MediaStreamTrack& NODELETE track() const;
 
 private:
     MediaStreamTrackEvent(const AtomString& type, CanBubble, IsCancelable, Ref<MediaStreamTrack>&&);

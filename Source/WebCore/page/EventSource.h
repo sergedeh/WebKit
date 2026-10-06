@@ -54,7 +54,7 @@ public:
     struct Init {
         bool withCredentials;
     };
-    static ExceptionOr<Ref<EventSource>> create(ScriptExecutionContext&, const String& url, const Init&);
+    static ExceptionOr<Ref<EventSource>> create(ScriptExecutionContext&, const String& url, Init&&);
     virtual ~EventSource();
 
     // EventTarget, ThreadableLoaderClient.
@@ -63,7 +63,7 @@ public:
 
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    const String& url() const;
+    const String& url() const LIFETIME_BOUND;
     bool withCredentials() const;
 
     using State = short;
@@ -76,11 +76,10 @@ public:
     void close();
 
 private:
-    EventSource(ScriptExecutionContext&, const URL&, const Init&);
+    EventSource(ScriptExecutionContext&, const URL&, Init&&);
 
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::EventSource; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
@@ -96,9 +95,9 @@ private:
 
     // ActiveDOMObject
     void stop() final;
-    void suspend(ReasonForSuspension) final;
+    void NODELETE suspend(ReasonForSuspension) final;
     void resume() final;
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     void connect();
     void networkRequestEnded();
@@ -135,7 +134,7 @@ private:
     RefPtr<SecurityOrigin> m_eventStreamOrigin;
 };
 
-inline const String& EventSource::url() const
+inline const String& EventSource::url() const LIFETIME_BOUND
 {
     return m_url.string();
 }

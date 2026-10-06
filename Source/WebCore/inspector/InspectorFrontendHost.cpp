@@ -34,13 +34,14 @@
 #include "CertificateInfo.h"
 #include "ColorConversion.h"
 #include "ColorSerialization.h"
-#include "ColorSpace.h"
+#include "ColorSpaceName.h"
 #include "ContextDestructionObserverInlines.h"
 #include "ContextMenu.h"
 #include "ContextMenuController.h"
 #include "ContextMenuItem.h"
 #include "ContextMenuProvider.h"
 #include "DOMWrapperWorld.h"
+#include "DiagnosticLoggingClient.h"
 #include "DocumentPage.h"
 #include "DocumentView.h"
 #include "Editor.h"
@@ -53,6 +54,7 @@
 #include "HitTestResult.h"
 #include "InspectorDebuggableType.h"
 #include "JSDOMConvertInterface.h"
+#include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSExecState.h"
@@ -62,7 +64,6 @@
 #include "LocalFrameView.h"
 #include "MouseEvent.h"
 #include "NodeDocument.h"
-#include "NodeInlines.h"
 #include "OffscreenCanvasRenderingContext2D.h"
 #include "Page.h"
 #include "PageInspectorController.h"
@@ -74,8 +75,11 @@
 #include "SystemSoundManager.h"
 #include "UserGestureIndicator.h"
 #include "WebCorePersistentCoders.h"
+#include <JavaScriptCore/FrameTracers.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/ScriptFunctionCall.h>
 #include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/StrongInlines.h>
 #include <pal/system/Sound.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/JSONValues.h>
@@ -85,13 +89,15 @@
 #include <wtf/text/MakeString.h>
 
 #if PLATFORM(COCOA)
+#include "ScriptSourceCode.h"
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/spi/darwin/OSVariantSPI.h>
 #endif
 
 namespace WebCore {
 
 using namespace Inspector;
-using ValueOrException = Expected<JSC::JSValue, ExceptionDetails>;
+using ValueOrException = std::expected<JSC::JSValue, ExceptionDetails>;
 
 #if ENABLE(CONTEXT_MENUS)
 class FrontendMenuProvider : public ContextMenuProvider {
@@ -189,7 +195,7 @@ void InspectorFrontendHost::addSelfToGlobalObjectInWorld(DOMWrapperWorld& world)
     RefPtr localMainFrame = m_frontendPage->localMainFrame();
     if (!localMainFrame)
         return;
-    auto& globalObject = *localMainFrame->script().globalObject(world);
+    auto& globalObject = *protect(localMainFrame->script())->globalObject(world);
     auto& vm = globalObject.vm();
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -289,7 +295,7 @@ void InspectorFrontendHost::setForcedAppearance(String appearance)
 {
     if (appearance == "light"_s) {
         if (m_frontendPage)
-            m_frontendPage->setUseDarkAppearanceOverride(false);
+            protect(m_frontendPage)->setUseDarkAppearanceOverride(false);
         if (m_client)
             m_client->setForcedAppearance(InspectorFrontendClient::Appearance::Light);
         return;
@@ -297,14 +303,14 @@ void InspectorFrontendHost::setForcedAppearance(String appearance)
 
     if (appearance == "dark"_s) {
         if (m_frontendPage)
-            m_frontendPage->setUseDarkAppearanceOverride(true);
+            protect(m_frontendPage)->setUseDarkAppearanceOverride(true);
         if (m_client)
             m_client->setForcedAppearance(InspectorFrontendClient::Appearance::Dark);
         return;
     }
 
     if (m_frontendPage)
-        m_frontendPage->setUseDarkAppearanceOverride(std::nullopt);
+        protect(m_frontendPage)->setUseDarkAppearanceOverride(std::nullopt);
     if (m_client)
         m_client->setForcedAppearance(InspectorFrontendClient::Appearance::System);
 }
@@ -421,12 +427,8 @@ String InspectorFrontendHost::platform() const
 
 String InspectorFrontendHost::platformVersionName() const
 {
-#if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 120000
-    return "monterey"_s;
-#elif PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 110000
-    return "big-sur"_s;
-#elif PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101500
-    return "catalina"_s;
+#if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 260000
+    return "tahoe"_s;
 #else
     return emptyString();
 #endif
@@ -455,7 +457,7 @@ void InspectorFrontendHost::killText(const String& text, bool shouldPrependToKil
 
 void InspectorFrontendHost::openURLExternally(const String& url)
 {
-    if (WTF::protocolIsJavaScript(url))
+    if (WTF::isValidJavaScriptURL(url))
         return;
 
     if (m_client)
@@ -528,7 +530,7 @@ void InspectorFrontendHost::pickColorFromScreen(Ref<DeferredPromise>&& promise)
 
         String serializedColor;
         // FIXME: <webkit.org/b/241198> Inspector frontend should support all color function gamuts.
-        if (color->colorSpace() != ColorSpace::SRGB || color->colorSpace() != ColorSpace::DisplayP3) {
+        if (color->colorSpace() != ColorSpaceName::SRGB && color->colorSpace() != ColorSpaceName::DisplayP3) {
             // DisplayP3 is the least-lossy format the frontend currently supports. This conversion will only be lossy
             // if the color space the system is providing colors in were to support a wider gamut than DisplayP3.
             auto colorForFrontend = color->toColorTypeLossy<DisplayP3<float>>();
@@ -585,7 +587,7 @@ void InspectorFrontendHost::showContextMenu(Event& event, Vector<ContextMenuItem
     RefPtr localMainFrame = m_frontendPage->localMainFrame();
     if (!localMainFrame)
         return;
-    auto& globalObject = *localMainFrame->script().globalObject(debuggerWorldSingleton());
+    auto& globalObject = *protect(localMainFrame->script())->globalObject(debuggerWorldSingleton());
     auto& vm = globalObject.vm();
     auto value = globalObject.get(&globalObject, JSC::Identifier::fromString(vm, "InspectorFrontendAPI"_s));
     ASSERT(value);
@@ -632,7 +634,7 @@ bool InspectorFrontendHost::isUnderTest()
 void InspectorFrontendHost::unbufferedLog(const String& message)
 {
     // This is used only for debugging inspector tests.
-    WTFLogAlways("%s", message.utf8().data());
+    SAFE_WTFLOGALWAYS("%s", message.utf8());
 }
 
 void InspectorFrontendHost::beep()
@@ -825,15 +827,13 @@ ExceptionOr<JSC::JSValue> InspectorFrontendHost::evaluateScriptInExtensionTab(HT
     if (!frame)
         return Exception { ExceptionCode::InvalidStateError, "Unable to find global object for <iframe>"_s };
 
-    Ref protectedFrame(*frame);
-
-    JSDOMGlobalObject* frameGlobalObject = frame->script().globalObject(mainThreadNormalWorldSingleton());
+    CheckedRef script = frame->script();
+    JSDOMGlobalObject* frameGlobalObject = script->globalObject(mainThreadNormalWorldSingleton());
     if (!frameGlobalObject)
         return Exception { ExceptionCode::InvalidStateError, "Unable to find global object for <iframe>"_s };
 
-
     JSC::SuspendExceptionScope scope(frameGlobalObject->vm());
-    ValueOrException result = frame->script().evaluateInWorld(ScriptSourceCode(scriptSource, JSC::SourceTaintedOrigin::Untainted), mainThreadNormalWorldSingleton());
+    ValueOrException result = script->evaluateInWorld(ScriptSourceCode(scriptSource, JSC::SourceTaintedOrigin::Untainted), mainThreadNormalWorldSingleton());
     
     if (!result)
         return Exception { ExceptionCode::InvalidStateError, result.error().message };

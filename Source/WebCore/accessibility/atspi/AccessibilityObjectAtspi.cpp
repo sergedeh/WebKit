@@ -31,6 +31,7 @@
 #include "HTMLSpanElement.h"
 #include "RenderAncestorIterator.h"
 #include "RenderBlock.h"
+#include "RenderElementInlines.h"
 #include "RenderInline.h"
 #include "RenderObject.h"
 #include "RenderTableCell.h"
@@ -39,6 +40,7 @@
 #include "TextIterator.h"
 #include <glib/gi18n-lib.h>
 #include <wtf/UUID.h>
+#include <wtf/glib/GLibExtras.h>
 
 namespace WebCore {
 
@@ -387,7 +389,7 @@ GDBusInterfaceVTable AccessibilityObjectAtspi::s_accessibleFunctions = {
         if (!g_strcmp0(methodName, "GetRole"))
             g_dbus_method_invocation_return_value(invocation, g_variant_new("(u)", atspiObject->role()));
         else if (!g_strcmp0(methodName, "GetRoleName"))
-            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", atspiObject->roleName().utf8().data()));
+            g_dbus_method_invocation_return_value(invocation, gVariantNew("(s)", atspiObject->roleName().utf8()));
         else if (!g_strcmp0(methodName, "GetLocalizedRoleName"))
             g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", atspiObject->localizedRoleName()));
         else if (!g_strcmp0(methodName, "GetState")) {
@@ -436,14 +438,14 @@ GDBusInterfaceVTable AccessibilityObjectAtspi::s_accessibleFunctions = {
         atspiObject->updateBackingStore();
 
         if (!g_strcmp0(propertyName, "Name"))
-            return g_variant_new_string(atspiObject->name().data());
+            return gVariantNewString(atspiObject->name());
         if (!g_strcmp0(propertyName, "Description"))
-            return g_variant_new_string(atspiObject->description().data());
+            return gVariantNewString(atspiObject->description());
         if (!g_strcmp0(propertyName, "Locale"))
-            return g_variant_new_string(atspiObject->locale().utf8().data());
+            return gVariantNewString(atspiObject->locale().utf8());
         if (!g_strcmp0(propertyName, "AccessibleId")) {
             auto objectID = atspiObject->m_coreObject->objectID();
-            return g_variant_new_string(atspiObject->m_coreObject ? String::number(objectID.toUInt64()).utf8().data() : "");
+            return gVariantNewString(atspiObject->m_coreObject ? UTF8CStringView { String::number(objectID.toUInt64()).utf8() } : ""_s);
         }
         if (!g_strcmp0(propertyName, "Parent"))
             return atspiObject->parentReference();
@@ -511,7 +513,7 @@ const String& AccessibilityObjectAtspi::path()
 
 GVariant* AccessibilityObjectAtspi::reference()
 {
-    return g_variant_new("(so)", AccessibilityAtspi::singleton().uniqueName(), path().utf8().data());
+    return gVariantNew("(so)", AccessibilityAtspi::singleton().uniqueName(), path().utf8());
 }
 
 GVariant* AccessibilityObjectAtspi::hyperlinkReference()
@@ -521,7 +523,7 @@ GVariant* AccessibilityObjectAtspi::hyperlinkReference()
         m_hyperlinkPath = AccessibilityAtspi::singleton().registerHyperlink(*this, { { const_cast<GDBusInterfaceInfo*>(&webkit_hyperlink_interface), &s_hyperlinkFunctions } });
     }
 
-    return g_variant_new("(so)", AccessibilityAtspi::singleton().uniqueName(), m_hyperlinkPath.utf8().data());
+    return gVariantNew("(so)", AccessibilityAtspi::singleton().uniqueName(), m_hyperlinkPath.utf8());
 }
 
 void AccessibilityObjectAtspi::setParent(std::optional<AccessibilityObjectAtspi*> atspiParent)
@@ -640,10 +642,10 @@ int AccessibilityObjectAtspi::indexInParentForChildrenChanged(AccessibilityAtspi
     return indexInParent();
 }
 
-CString AccessibilityObjectAtspi::name() const
+UTF8CString AccessibilityObjectAtspi::name() const
 {
     if (!m_coreObject)
-        return "";
+        return ""_s;
 
     if (m_coreObject->role() == AccessibilityRole::ListBoxOption || m_coreObject->role() == AccessibilityRole::MenuListOption) {
         auto value = m_coreObject->stringValue();
@@ -668,13 +670,13 @@ CString AccessibilityObjectAtspi::name() const
             return text.text.utf8();
     }
 
-    return "";
+    return ""_s;
 }
 
-CString AccessibilityObjectAtspi::description() const
+UTF8CString AccessibilityObjectAtspi::description() const
 {
     if (!m_coreObject)
-        return "";
+        return ""_s;
 
     Vector<AccessibilityText> textOrder;
     m_coreObject->accessibilityText(textOrder);
@@ -695,7 +697,7 @@ CString AccessibilityObjectAtspi::description() const
         nameTextAvailable = true;
     }
 
-    return "";
+    return ""_s;
 }
 
 String AccessibilityObjectAtspi::locale() const
@@ -717,6 +719,33 @@ static bool shouldIncludeOrientationState(const AXCoreObject& coreObject)
         || coreObject.isTabList()
         || coreObject.isToolbar()
         || coreObject.isSlider();
+}
+
+AccessibilityObjectAtspi* AccessibilityObjectAtspi::focusableAncestor() const
+{
+    if (!m_coreObject)
+        return nullptr;
+
+    auto ancestor = m_coreObject->focusableAncestor();
+    return ancestor ? ancestor->wrapper() : nullptr;
+}
+
+AccessibilityObjectAtspi* AccessibilityObjectAtspi::editableAncestor() const
+{
+    if (!m_coreObject)
+        return nullptr;
+
+    auto ancestor = m_coreObject->editableAncestor();
+    return ancestor ? ancestor->wrapper() : nullptr;
+}
+
+AccessibilityObjectAtspi* AccessibilityObjectAtspi::highestEditableAncestor() const
+{
+    if (!m_coreObject)
+        return nullptr;
+
+    auto ancestor = m_coreObject->highestEditableAncestor();
+    return ancestor ? ancestor->wrapper() : nullptr;
 }
 
 OptionSet<Atspi::State> AccessibilityObjectAtspi::states() const
@@ -758,7 +787,7 @@ OptionSet<Atspi::State> AccessibilityObjectAtspi::states() const
         if (m_coreObject->supportsChecked())
             states.add(Atspi::State::Checkable);
 
-        if (m_coreObject->isTextControl() || m_coreObject->isNonNativeTextControl())
+        if (m_coreObject->isTextControl() || m_coreObject->isNonNativeTextControl() || m_coreObject->editableAncestor())
             states.add(Atspi::State::Editable);
     } else if (liveObject && liveObject->supportsReadOnly())
         states.add(Atspi::State::ReadOnly);
@@ -822,7 +851,7 @@ OptionSet<Atspi::State> AccessibilityObjectAtspi::states() const
     if (m_coreObject->isBusy())
         states.add(Atspi::State::Busy);
 
-    if (m_coreObject->invalidStatus() != "false"_s)
+    if (m_coreObject->invalidStatusIncludingInferred() != "false"_s)
         states.add(Atspi::State::InvalidEntry);
 
     if (liveObject && liveObject->supportsAutoComplete() && liveObject->autoCompleteValue() != "none"_s)
@@ -906,7 +935,7 @@ HashMap<String, String> AccessibilityObjectAtspi::attributes() const
         map.add("autocomplete"_s, m_coreObject->autoCompleteValue());
 
     if (m_coreObject->supportsHasPopup())
-        map.add("haspopup"_s, m_coreObject->popupValue());
+        map.add("haspopup"_s, m_coreObject->popupValueString());
 
     if (m_coreObject->supportsCurrent())
         map.add("current"_s, m_coreObject->currentValue());
@@ -1014,7 +1043,7 @@ HashMap<String, String> AccessibilityObjectAtspi::attributes() const
 void AccessibilityObjectAtspi::buildAttributes(GVariantBuilder* builder) const
 {
     for (const auto& it : attributes())
-        g_variant_builder_add(builder, "{ss}", it.key.utf8().data(), it.value.utf8().data());
+        gVariantBuilderAdd(builder, "{ss}", it.key.utf8(), it.value.utf8());
 }
 
 RelationMap AccessibilityObjectAtspi::relationMap() const
@@ -1120,7 +1149,7 @@ void AccessibilityObjectAtspi::buildStates(GVariantBuilder* builder) const
 
 void AccessibilityObjectAtspi::serialize(GVariantBuilder* builder) const
 {
-    g_variant_builder_add(builder, "(so)", AccessibilityAtspi::singleton().uniqueName(), m_path.utf8().data());
+    gVariantBuilderAdd(builder, "(so)", AccessibilityAtspi::singleton().uniqueName(), m_path.utf8());
     g_variant_builder_add(builder, "@(so)", AccessibilityAtspi::singleton().applicationReference());
     g_variant_builder_add(builder, "@(so)", parentReference());
 
@@ -1132,11 +1161,11 @@ void AccessibilityObjectAtspi::serialize(GVariantBuilder* builder) const
     buildInterfaces(&interfacesBuilder);
     g_variant_builder_add(builder, "@as", g_variant_new("as", &interfacesBuilder));
 
-    g_variant_builder_add(builder, "s", name().data());
+    gVariantBuilderAdd(builder, "s", name());
 
     g_variant_builder_add(builder, "u", role());
 
-    g_variant_builder_add(builder, "s", description().data());
+    gVariantBuilderAdd(builder, "s", description());
 
     GVariantBuilder statesBuilder = G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("au"));
     buildStates(&statesBuilder);
@@ -1167,7 +1196,7 @@ void AccessibilityObjectAtspi::stateChanged(const char* name, bool value)
     AccessibilityAtspi::singleton().stateChanged(*this, name, value);
 }
 
-void AccessibilityObjectAtspi::loadEvent(const char* event)
+void AccessibilityObjectAtspi::loadEvent(ASCIILiteral event)
 {
     AccessibilityAtspi::singleton().loadEvent(*this, event);
 }
@@ -1404,7 +1433,9 @@ AccessibilityObjectInclusion AccessibilityObject::accessibilityPlatformIncludesO
         return AccessibilityObjectInclusion::IgnoreObject;
 
     // Entries and password fields have extraneous children which we want to ignore.
-    if (parent->isSecureField() || parent->isTextControl())
+    // Exclude content-editable regions since they can contain valid non-text
+    // descendants (e.g: a button).
+    if (parent->isSecureField() || (parent->isTextControl() && !parent->hasContentEditableAttributeSet()))
         return AccessibilityObjectInclusion::IgnoreObject;
 
     // We expose the slider as a whole but not its value indicator.
@@ -1431,7 +1462,7 @@ AccessibilityObjectInclusion AccessibilityObject::accessibilityPlatformIncludesO
     // We always want to include table cells (layout and CSS) that have rendered text content.
     if (is<RenderTableCell>(renderObject)) {
         for (const auto& child : childrenOfType<RenderObject>(downcast<RenderElement>(*renderObject))) {
-            if (is<RenderInline>(child) || is<RenderText>(child) || is<HTMLSpanElement>(child.node()))
+            if (child.isInlineBox() || is<RenderText>(child) || is<HTMLSpanElement>(child.node()))
                 return AccessibilityObjectInclusion::IncludeObject;
         }
         return AccessibilityObjectInclusion::DefaultBehavior;

@@ -11,11 +11,11 @@
       <dep package="glib"/>
       <dep package="glib-networking"/>
       <dep package="libavif"/>
+      <dep package="libbacktrace"/>
       <dep package="libdrm"/>
       <dep package="libjxl"/>
       <dep package="libsoup"/>
       <dep package="libvpx"/>
-      <dep package="wpebackend-fdo"/>
     </dependencies>
   </metamodule>
 
@@ -27,11 +27,11 @@
       <dep package="glib"/>
       <dep package="glib-networking"/>
       <dep package="libavif"/>
+      <dep package="libbacktrace"/>
       <dep package="libdrm"/>
       <dep package="libjxl"/>
       <dep package="libsoup"/>
       <dep package="libvpx"/>
-      <dep package="wpebackend-fdo"/>
     </dependencies>
   </metamodule>
 
@@ -63,24 +63,6 @@
 <!-- This moduleset is used when the environment variable WEBKIT_JHBUILD_MODULESET=minimal is set -->
 <!-- Its intended to allow building WebKit using as much as libraries from your distribution as possible -->
 <!-- In order to ensure its minimal, all the modules should have a pkg-config declaration line -->
-
-  <cmake id="libwpe">
-    <branch repo="github-tarball"
-            module="WebPlatformForEmbedded/libwpe/releases/download/${version}/libwpe-${version}.tar.xz"
-            version="1.14.1"
-            hash="sha256:b1d0cdcf0f8dbb494e65b0f7913e357106da9a0d57f4fbb7b9d1238a6dbe9ade"/>
-  </cmake>
-
-  <meson id="wpebackend-fdo">
-    <dependencies>
-      <dep package="libwpe"/>
-    </dependencies>
-    <branch repo="github-tarball"
-            module="Igalia/WPEBackend-fdo/releases/download/${version}/wpebackend-fdo-${version}.tar.xz"
-            version="1.14.2"
-            hash="sha256:93c9766ae9864eeaeaee2b0a74f22cbca08df42c1a1bdb55b086f2528e380d38">
-    </branch>
-  </meson>
 
   <autotools id="icu" autogen-sh="./source/configure" autogenargs="--disable-samples --disable-tests">
      <pkg-config>icu-i18n.pc</pkg-config>
@@ -157,7 +139,7 @@
             tag="v0.9.3"/>
   </cmake>
 
-  <cmake id="libyuv">
+  <cmake id="libyuv" cmakeargs="-DCMAKE_POLICY_VERSION_MINIMUM=3.5">
     <branch module="libyuv/libyuv"
             repo="chromium.googlesource.com"
             tag="stable"
@@ -194,8 +176,8 @@
     </dependencies>
     <branch module="GNOME/libsoup.git"
             repo="github.com"
-            tag="3.6.0"
-            version="3.6.0"
+            tag="3.6.6"
+            version="3.6.6"
             checkoutdir="libsoup-${version}"/>
   </meson>
 
@@ -244,6 +226,7 @@
   <!-- libjxl required for JPEGXL support -->
   <cmake id="libjxl"
          cmakeargs="-DBUILD_TESTING=OFF
+                    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
                     -DPROVISION_DEPENDENCIES=ON
                     -DJPEGXL_ENABLE_FUZZERS=OFF
                     -DJPEGXL_ENABLE_DEVTOOLS=OFF
@@ -270,5 +253,11 @@
       <patch file="libjxl-add-cmake-flag-provision-dependencies.patch" strip="1"/>
     </branch>
   </cmake>
+
+  <autotools id="libbacktrace" autogenargs="--with-system-libunwind --enable-shared --disable-static">
+    <branch repo="github.com"
+            module="ianlancetaylor/libbacktrace.git"
+            checkoutdir="libbacktrace"/>
+  </autotools>
 
 </moduleset>

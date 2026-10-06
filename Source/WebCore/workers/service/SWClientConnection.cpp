@@ -88,7 +88,7 @@ bool SWClientConnection::postTaskForJob(ServiceWorkerJobIdentifier jobIdentifier
 
     auto iterator = m_scheduledJobSources.find(jobIdentifier);
     if (iterator == m_scheduledJobSources.end()) {
-        LOG_ERROR("Job %s was not found", jobIdentifier.loggingString().utf8().data());
+        LOG_ERROR("Job %s was not found", jobIdentifier.loggingString().utf8());
         return false;
     }
     auto isPosted = dispatchToContextThreadIfNecessary(iterator->value, [jobIdentifier, task = WTF::move(task)] (ScriptExecutionContext& context) mutable {
@@ -135,7 +135,7 @@ static void postMessageToContainer(ScriptExecutionContext& context, MessageWithM
         container->postMessage(WTF::move(message), WTF::move(sourceData), sourceOrigin.securityOrigin());
 }
 
-void SWClientConnection::postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&& message, ServiceWorkerData&& sourceData, const SecurityOriginData& sourceOrigin)
+void SWClientConnection::dispatchMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&& message, ServiceWorkerData&& sourceData, const SecurityOriginData& sourceOrigin, CompletionHandlerCallingScope&& messageDispatched)
 {
     ASSERT(isMainThread());
 
@@ -143,7 +143,7 @@ void SWClientConnection::postMessageToServiceWorkerClient(ScriptExecutionContext
         postMessageToContainer(*destinationDocument, WTF::move(message), WTF::move(sourceData), sourceOrigin);
         return;
     }
-    ScriptExecutionContext::postTaskTo(destinationContextIdentifier, [message = WTF::move(message), sourceData = WTF::move(sourceData).isolatedCopy(), sourceOrigin = sourceOrigin.isolatedCopy()](auto& context) mutable {
+    ScriptExecutionContext::postTaskTo(destinationContextIdentifier, [message = WTF::move(message), sourceData = WTF::move(sourceData).isolatedCopy(), sourceOrigin = sourceOrigin.isolatedCopy(), messageDispatched = WTF::move(messageDispatched)](auto& context) mutable {
         postMessageToContainer(context, WTF::move(message), WTF::move(sourceData), sourceOrigin);
     });
 }
@@ -211,7 +211,7 @@ void SWClientConnection::setRegistrationLastUpdateTime(ServiceWorkerRegistration
 
     for (auto& document : Document::allDocuments()) {
         if (RefPtr container = document->serviceWorkerContainer()) {
-            if (RefPtr registration = container->registration(identifier))
+            if (auto* registration = container->registration(identifier))
                 registration->setLastUpdateTime(lastUpdateTime);
         }
     }
@@ -219,7 +219,7 @@ void SWClientConnection::setRegistrationLastUpdateTime(ServiceWorkerRegistration
     forDedicatedAndSharedWorkers([identifier, lastUpdateTime] {
         return [identifier, lastUpdateTime] (auto& context) {
             if (RefPtr container = context.serviceWorkerContainer()) {
-                if (RefPtr registration = container->registration(identifier))
+                if (auto* registration = container->registration(identifier))
                     registration->setLastUpdateTime(lastUpdateTime);
             }
         };
@@ -232,7 +232,7 @@ void SWClientConnection::setRegistrationUpdateViaCache(ServiceWorkerRegistration
 
     for (auto& document : Document::allDocuments()) {
         if (RefPtr container = document->serviceWorkerContainer()) {
-            if (RefPtr registration = container->registration(identifier))
+            if (auto* registration = container->registration(identifier))
                 registration->setUpdateViaCache(updateViaCache);
         }
     }

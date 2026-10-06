@@ -26,19 +26,55 @@
 #include "config.h"
 #include "GPURenderPassEncoder.h"
 
+#include "ExceptionOr.h"
 #include "GPUBindGroup.h"
 #include "GPUBuffer.h"
+#include "GPUCommandEncoder.h"
+#include "GPUDevice.h"
 #include "GPUQuerySet.h"
 #include "GPURenderBundle.h"
 #include "GPURenderPipeline.h"
-#include "WebGPUDevice.h"
+#include "InspectorInstrumentation.h"
+#include <wtf/Scope.h>
 
 namespace WebCore {
 
-GPURenderPassEncoder::GPURenderPassEncoder(Ref<WebGPU::RenderPassEncoder>&& backing, WebGPU::Device& device)
-    : m_backing(WTF::move(backing))
-    , m_device(&device)
+static RefPtr<WebGPU::RenderPipeline> applyInspectorPipelineHighlight(WebGPU::RenderPassEncoder& encoder, GPURenderPipeline& pipeline, unsigned canvasColorAttachmentMask)
 {
+    if (!canvasColorAttachmentMask)
+        return nullptr;
+
+    RefPtr highlightedPipeline = InspectorInstrumentation::renderPipelineForWebGPUHighlighting(pipeline, canvasColorAttachmentMask);
+    if (!highlightedPipeline)
+        return nullptr;
+
+    encoder.setPipeline(*highlightedPipeline);
+    encoder.setBlendConstant(WebGPU::Color { WebGPU::ColorDict { 111.0 / 255.0, 168.0 / 255.0, 220.0 / 255.0, 2.0 / 3.0 } });
+    return highlightedPipeline;
+}
+
+static void restorePipelineAfterInspectorHighlight(WebGPU::RenderPassEncoder& encoder, GPURenderPipeline& pipeline, const GPUColor& blendConstant)
+{
+    encoder.setPipeline(protect(pipeline.backing()));
+    encoder.setBlendConstant(convertToBacking(blendConstant));
+}
+
+GPURenderPassEncoder::GPURenderPassEncoder(Ref<WebGPU::RenderPassEncoder>&& backing, GPUCommandEncoder& commandEncoder, uint8_t canvasColorAttachmentMask)
+    : m_backing(WTF::move(backing))
+    , m_device(commandEncoder.device())
+    , m_canvasColorAttachmentMask(canvasColorAttachmentMask)
+{
+}
+
+bool GPURenderPassEncoder::hasActiveInspectorCanvasCallTracer() const
+{
+    RefPtr device = m_device;
+    return device && device->hasActiveInspectorCanvasCallTracer();
+}
+
+GPUDevice* GPURenderPassEncoder::device() const
+{
+    return m_device;
 }
 
 String GPURenderPassEncoder::label() const
@@ -48,28 +84,41 @@ String GPURenderPassEncoder::label() const
 
 void GPURenderPassEncoder::setLabel(String&& label)
 {
-    protectedBacking()->setLabel(WTF::move(label));
+    protect(backing())->setLabel(WTF::move(label));
 }
 
 void GPURenderPassEncoder::setPipeline(const GPURenderPipeline& renderPipeline)
 {
-    protectedBacking()->setPipeline(renderPipeline.backing());
+    m_currentPipeline = renderPipeline;
+    protect(backing())->setPipeline(protect(renderPipeline.backing()));
 }
 
 void GPURenderPassEncoder::setIndexBuffer(const GPUBuffer& buffer, GPUIndexFormat indexFormat, GPUSize64 offset, std::optional<GPUSize64> size)
 {
-    protectedBacking()->setIndexBuffer(buffer.backing(), convertToBacking(indexFormat), offset, size);
+    protect(backing())->setIndexBuffer(buffer.backing(), convertToBacking(indexFormat), offset, size);
 }
 
 void GPURenderPassEncoder::setVertexBuffer(GPUIndex32 slot, const GPUBuffer* buffer, GPUSize64 offset, std::optional<GPUSize64> size)
 {
-    protectedBacking()->setVertexBuffer(slot, buffer ? &buffer->backing() : nullptr, offset, size);
+    protect(backing())->setVertexBuffer(slot, buffer ? &buffer->backing() : nullptr, offset, size);
 }
 
 void GPURenderPassEncoder::draw(GPUSize32 vertexCount, GPUSize32 instanceCount,
     GPUSize32 firstVertex, GPUSize32 firstInstance)
 {
-    protectedBacking()->draw(vertexCount, instanceCount, firstVertex, firstInstance);
+    RefPtr pipeline = m_currentPipeline;
+    if (pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
+        return;
+
+    Ref protectedBacking = backing();
+
+    RefPtr highlightedPipeline = pipeline ? applyInspectorPipelineHighlight(protectedBacking, *pipeline, m_canvasColorAttachmentMask) : nullptr;
+    auto restorePipeline = makeScopeExit([&] {
+        if (highlightedPipeline)
+            restorePipelineAfterInspectorHighlight(protectedBacking, *pipeline, m_blendConstant);
+    });
+
+    protectedBacking->draw(vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
 void GPURenderPassEncoder::drawIndexed(GPUSize32 indexCount, GPUSize32 instanceCount,
@@ -77,23 +126,59 @@ void GPURenderPassEncoder::drawIndexed(GPUSize32 indexCount, GPUSize32 instanceC
     GPUSignedOffset32 baseVertex,
     GPUSize32 firstInstance)
 {
-    protectedBacking()->drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+    RefPtr pipeline = m_currentPipeline;
+    if (pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
+        return;
+
+    Ref protectedBacking = backing();
+
+    RefPtr highlightedPipeline = pipeline ? applyInspectorPipelineHighlight(protectedBacking, *pipeline, m_canvasColorAttachmentMask) : nullptr;
+    auto restorePipeline = makeScopeExit([&] {
+        if (highlightedPipeline)
+            restorePipelineAfterInspectorHighlight(protectedBacking, *pipeline, m_blendConstant);
+    });
+
+    protectedBacking->drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
 }
 
 void GPURenderPassEncoder::drawIndirect(const GPUBuffer& indirectBuffer, GPUSize64 indirectOffset)
 {
-    protectedBacking()->drawIndirect(indirectBuffer.backing(), indirectOffset);
+    RefPtr pipeline = m_currentPipeline;
+    if (pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
+        return;
+
+    Ref protectedBacking = backing();
+
+    RefPtr highlightedPipeline = pipeline ? applyInspectorPipelineHighlight(protectedBacking, *pipeline, m_canvasColorAttachmentMask) : nullptr;
+    auto restorePipeline = makeScopeExit([&] {
+        if (highlightedPipeline)
+            restorePipelineAfterInspectorHighlight(protectedBacking, *pipeline, m_blendConstant);
+    });
+
+    protectedBacking->drawIndirect(indirectBuffer.backing(), indirectOffset);
 }
 
 void GPURenderPassEncoder::drawIndexedIndirect(const GPUBuffer& indirectBuffer, GPUSize64 indirectOffset)
 {
-    protectedBacking()->drawIndexedIndirect(indirectBuffer.backing(), indirectOffset);
+    RefPtr pipeline = m_currentPipeline;
+    if (pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
+        return;
+
+    Ref protectedBacking = backing();
+
+    RefPtr highlightedPipeline = pipeline ? applyInspectorPipelineHighlight(protectedBacking, *pipeline, m_canvasColorAttachmentMask) : nullptr;
+    auto restorePipeline = makeScopeExit([&] {
+        if (highlightedPipeline)
+            restorePipelineAfterInspectorHighlight(protectedBacking, *pipeline, m_blendConstant);
+    });
+
+    protectedBacking->drawIndexedIndirect(indirectBuffer.backing(), indirectOffset);
 }
 
 void GPURenderPassEncoder::setBindGroup(GPUIndex32 index, const GPUBindGroup* bindGroup,
     std::optional<Vector<GPUBufferDynamicOffset>>&& dynamicOffsets)
 {
-    protectedBacking()->setBindGroup(index, bindGroup ? &bindGroup->backing() : nullptr, WTF::move(dynamicOffsets));
+    protect(backing())->setBindGroup(index, bindGroup ? &bindGroup->backing() : nullptr, WTF::move(dynamicOffsets));
 }
 
 ExceptionOr<void> GPURenderPassEncoder::setBindGroup(GPUIndex32 index, const GPUBindGroup* bindGroup,
@@ -105,56 +190,57 @@ ExceptionOr<void> GPURenderPassEncoder::setBindGroup(GPUIndex32 index, const GPU
     if (offset.hasOverflowed() || offset > dynamicOffsetsData.length())
         return Exception { ExceptionCode::RangeError, "dynamic offsets overflowed"_s };
 
-    protectedBacking()->setBindGroup(index, bindGroup ? &bindGroup->backing() : nullptr, dynamicOffsetsData.typedSpan(), dynamicOffsetsDataStart, dynamicOffsetsDataLength);
+    protect(backing())->setBindGroup(index, bindGroup ? &bindGroup->backing() : nullptr, dynamicOffsetsData.typedSpan(), dynamicOffsetsDataStart, dynamicOffsetsDataLength);
     return { };
 }
 
 void GPURenderPassEncoder::pushDebugGroup(String&& groupLabel)
 {
-    protectedBacking()->pushDebugGroup(WTF::move(groupLabel));
+    protect(backing())->pushDebugGroup(WTF::move(groupLabel));
 }
 
 void GPURenderPassEncoder::popDebugGroup()
 {
-    protectedBacking()->popDebugGroup();
+    protect(backing())->popDebugGroup();
 }
 
 void GPURenderPassEncoder::insertDebugMarker(String&& markerLabel)
 {
-    protectedBacking()->insertDebugMarker(WTF::move(markerLabel));
+    protect(backing())->insertDebugMarker(WTF::move(markerLabel));
 }
 
 void GPURenderPassEncoder::setViewport(float x, float y,
     float width, float height,
     float minDepth, float maxDepth)
 {
-    protectedBacking()->setViewport(x, y, width, height, minDepth, maxDepth);
+    protect(backing())->setViewport(x, y, width, height, minDepth, maxDepth);
 }
 
 void GPURenderPassEncoder::setScissorRect(GPUIntegerCoordinate x, GPUIntegerCoordinate y,
     GPUIntegerCoordinate width, GPUIntegerCoordinate height)
 {
-    protectedBacking()->setScissorRect(x, y, width, height);
+    protect(backing())->setScissorRect(x, y, width, height);
 }
 
 void GPURenderPassEncoder::setBlendConstant(GPUColor color)
 {
-    protectedBacking()->setBlendConstant(convertToBacking(color));
+    m_blendConstant = WTF::move(color);
+    protect(backing())->setBlendConstant(convertToBacking(m_blendConstant));
 }
 
 void GPURenderPassEncoder::setStencilReference(GPUStencilValue stencilValue)
 {
-    protectedBacking()->setStencilReference(stencilValue);
+    protect(backing())->setStencilReference(stencilValue);
 }
 
 void GPURenderPassEncoder::beginOcclusionQuery(GPUSize32 queryIndex)
 {
-    protectedBacking()->beginOcclusionQuery(queryIndex);
+    protect(backing())->beginOcclusionQuery(queryIndex);
 }
 
 void GPURenderPassEncoder::endOcclusionQuery()
 {
-    protectedBacking()->endOcclusionQuery();
+    protect(backing())->endOcclusionQuery();
 }
 
 void GPURenderPassEncoder::executeBundles(Vector<Ref<GPURenderBundle>>&& bundles)
@@ -162,15 +248,17 @@ void GPURenderPassEncoder::executeBundles(Vector<Ref<GPURenderBundle>>&& bundles
     auto result = WTF::map(bundles, [](auto& bundle) -> Ref<WebGPU::RenderBundle> {
         return bundle->backing();
     });
-    protectedBacking()->executeBundles(WTF::move(result));
+    protect(backing())->executeBundles(WTF::move(result));
+    m_currentPipeline = nullptr;
 }
 
 void GPURenderPassEncoder::end()
 {
-    protectedBacking()->end();
-    if (RefPtr device = m_device.get()) {
+    protect(backing())->end();
+    m_currentPipeline = nullptr;
+    if (RefPtr device = m_device) {
         m_overrideLabel = label();
-        m_backing = device->invalidRenderPassEncoder();
+        m_backing = device->backing().invalidRenderPassEncoder();
     }
 }
 

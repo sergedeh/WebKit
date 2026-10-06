@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,18 +26,13 @@
 
 #include <WebCore/CSSPosition.h>
 #include <WebCore/FloatPoint.h>
-#include <WebCore/StyleLengthWrapper.h>
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
 namespace WebCore {
 namespace Style {
 
-struct PositionX : LengthWrapperBase<LengthPercentage<>> {
-    using Base::Base;
-};
-struct PositionY : LengthWrapperBase<LengthPercentage<>> {
-    using Base::Base;
-};
+DEFINE_PRIMITIVE_NUMERIC_TYPE_WRAPPER(PositionX, LengthPercentage<>);
+DEFINE_PRIMITIVE_NUMERIC_TYPE_WRAPPER(PositionY, LengthPercentage<>);
 
 struct TwoComponentPositionHorizontal {
     PositionX offset;
@@ -112,19 +107,19 @@ template<size_t I> const auto& get(const Position& position)
 
 // MARK: - Conversion
 
-template<> struct ToCSS<TwoComponentPositionHorizontal> { auto operator()(const TwoComponentPositionHorizontal&, const RenderStyle&) -> CSS::TwoComponentPositionHorizontal; };
+template<> struct ToCSS<TwoComponentPositionHorizontal> { auto operator()(const TwoComponentPositionHorizontal&, const Style::ComputedStyle&) -> CSS::TwoComponentPositionHorizontal; };
 template<> struct ToStyle<CSS::TwoComponentPositionHorizontal> { auto operator()(const CSS::TwoComponentPositionHorizontal&, const BuilderState&) -> TwoComponentPositionHorizontal; };
 
-template<> struct ToCSS<TwoComponentPositionVertical> { auto operator()(const TwoComponentPositionVertical&, const RenderStyle&) -> CSS::TwoComponentPositionVertical; };
+template<> struct ToCSS<TwoComponentPositionVertical> { auto operator()(const TwoComponentPositionVertical&, const Style::ComputedStyle&) -> CSS::TwoComponentPositionVertical; };
 template<> struct ToStyle<CSS::TwoComponentPositionVertical> { auto operator()(const CSS::TwoComponentPositionVertical&, const BuilderState&) -> TwoComponentPositionVertical; };
 
-template<> struct ToCSS<Position> { auto operator()(const Position&, const RenderStyle&) -> CSS::Position; };
+template<> struct ToCSS<Position> { auto operator()(const Position&, const Style::ComputedStyle&) -> CSS::Position; };
 template<> struct ToStyle<CSS::Position> { auto operator()(const CSS::Position&, const BuilderState&) -> Position; };
 
-template<> struct ToCSS<PositionX> { auto operator()(const PositionX&, const RenderStyle&) -> CSS::PositionX; };
+template<> struct ToCSS<PositionX> { auto operator()(const PositionX&, const Style::ComputedStyle&) -> CSS::PositionX; };
 template<> struct ToStyle<CSS::PositionX> { auto operator()(const CSS::PositionX&, const BuilderState&) -> PositionX; };
 
-template<> struct ToCSS<PositionY> { auto operator()(const PositionY&, const RenderStyle&) -> CSS::PositionY; };
+template<> struct ToCSS<PositionY> { auto operator()(const PositionY&, const Style::ComputedStyle&) -> CSS::PositionY; };
 template<> struct ToStyle<CSS::PositionY> { auto operator()(const CSS::PositionY&, const BuilderState&) -> PositionY; };
 
 template<> struct CSSValueConversion<Position> { auto operator()(BuilderState&, const CSSValue&) -> Position; };
@@ -134,14 +129,14 @@ template<> struct CSSValueConversion<PositionY> { auto operator()(BuilderState&,
 // MARK: - Evaluation
 
 template<> struct Evaluation<Position, FloatPoint> {
-    auto operator()(const Position&, FloatSize, ZoomNeeded) -> FloatPoint;
+    auto operator()(const Position&, FloatSize, ZoomFactor) -> FloatPoint;
 };
 
 } // namespace Style
 } // namespace WebCore
 
-DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::PositionX)
-DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::PositionY)
+DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::Style::PositionX)
+DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::Style::PositionY)
 DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::Style::TwoComponentPositionHorizontal)
 DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::Style::TwoComponentPositionVertical)
 DEFINE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::Style::Position, 2)

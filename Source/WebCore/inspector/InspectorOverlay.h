@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011 Google Inc. All rights reserved.
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,6 +33,7 @@
 #include <WebCore/FloatLine.h>
 #include <WebCore/FloatQuad.h>
 #include <WebCore/FloatRect.h>
+#include <WebCore/InspectorBackendClient.h>
 #include <WebCore/InspectorOverlayLabel.h>
 #include <WebCore/Path.h>
 #include <WebCore/Timer.h>
@@ -50,7 +51,7 @@ namespace Inspector {
 using ErrorString = String;
 
 template <typename T>
-using ErrorStringOr = Expected<T, ErrorString>;
+using ErrorStringOr = std::expected<T, ErrorString>;
 }
 
 namespace WebCore {
@@ -59,7 +60,6 @@ class WeakPtrImplWithEventTargetData;
 class FontCascade;
 class FloatPoint;
 class GraphicsContext;
-class InspectorBackendClient;
 class Node;
 class NodeList;
 class Page;
@@ -82,8 +82,8 @@ struct InspectorOverlayHighlight {
         Color padding;
         Color border;
         Color margin;
-        bool showInfo;
-        bool usePageCoordinates;
+        bool showInfo { false };
+        bool usePageCoordinates { false };
     };
 
     struct GridHighlightOverlay {
@@ -146,7 +146,7 @@ public:
     InspectorOverlay(PageInspectorController&, InspectorBackendClient*);
     ~InspectorOverlay();
 
-    void ref() const;
+    void NODELETE ref() const;
     void deref() const;
 
     using Highlight = InspectorOverlayHighlight;
@@ -158,12 +158,12 @@ public:
             WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Config);
 
             Color gridColor;
-            bool showLineNames;
-            bool showLineNumbers;
-            bool showExtendedGridLines;
-            bool showTrackSizes;
-            bool showAreaNames;
-            bool showOrderNumbers;
+            bool showLineNames { false };
+            bool showLineNumbers { false };
+            bool showExtendedGridLines { false };
+            bool showTrackSizes { false };
+            bool showAreaNames { false };
+            bool showOrderNumbers { false };
         };
 
         WeakPtr<Node, WeakPtrImplWithEventTargetData> gridNode;
@@ -177,7 +177,7 @@ public:
             WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Config);
 
             Color flexColor;
-            bool showOrderNumbers;
+            bool showOrderNumbers { false };
         };
 
         WeakPtr<Node, WeakPtrImplWithEventTargetData> flexNode;
@@ -192,7 +192,7 @@ public:
     void update();
     void paint(GraphicsContext&);
     void getHighlight(Highlight&, CoordinateSystem);
-    bool shouldShowOverlay() const;
+    bool NODELETE shouldShowOverlay() const;
 
     void hideHighlight();
     void highlightNodeList(RefPtr<NodeList>&&, const Highlight::Config&, const std::optional<Grid::Config>& = std::nullopt, const std::optional<Flex::Config>& = std::nullopt, bool showRulers = false);
@@ -205,7 +205,7 @@ public:
 
     void setShowRulers(bool);
 
-    Node* highlightedNode() const;
+    Node* NODELETE highlightedNode() const;
     unsigned gridOverlayCount() const { return m_activeGridOverlays.size(); }
     unsigned flexOverlayCount() const { return m_activeFlexOverlays.size(); }
 
@@ -251,7 +251,7 @@ private:
     bool removeGridOverlayForNode(Node&);
     bool removeFlexOverlayForNode(Node&);
 
-    Page& page() const;
+    Page& NODELETE page() const;
 
     const WeakRef<PageInspectorController> m_controller;
     InspectorBackendClient* m_client;
@@ -271,6 +271,7 @@ private:
     Vector<InspectorOverlay::Grid> m_activeGridOverlays;
     Vector<InspectorOverlay::Flex> m_activeFlexOverlays;
 
+    bool m_isVisible { false };
     bool m_indicating { false };
     bool m_showPaintRects { false };
     bool m_showRulers { false };

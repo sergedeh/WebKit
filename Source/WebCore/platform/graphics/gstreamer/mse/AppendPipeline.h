@@ -56,8 +56,11 @@ public:
     void pushNewBuffer(GRefPtr<GstBuffer>&&);
     void resetParserState();
     void stopParser();
+    void startChangingType();
     SourceBufferPrivateGStreamer& sourceBufferPrivate() { return m_sourceBufferPrivate; }
     MediaPlayerPrivateGStreamerMSE* playerPrivate() { return m_playerPrivate; }
+
+    GstElement* pipeline() const { return m_pipeline.get(); }
 
 private:
     struct Track {
@@ -79,6 +82,8 @@ private:
         GRefPtr<GstCaps> caps;
         GRefPtr<GstCaps> finalCaps;
         FloatSize presentationSize;
+
+        gboolean ongoingChangeType { false };
 
         // Needed by some formats. To simplify the code, parser/encoder can be a GstIdentity when not needed.
         GRefPtr<GstElement> parser;
@@ -102,6 +107,8 @@ private:
         bool isLinked() const { return gst_pad_is_linked(entryPad.get()); }
     };
 
+    void resetElementsForChangeType();
+    void setupDemuxing();
     void configureOptionalDemuxerFromAnyThread();
     void removeParserForDemuxerPad(const GRefPtr<GstPad>&);
     void handleErrorSyncMessage(GstMessage*);
@@ -121,14 +128,13 @@ private:
     void handleEndOfAppend();
     void didReceiveInitializationSegment();
 
-    GstElement* pipeline() { return m_pipeline.get(); }
     GstElement* appsrc() { return m_appsrc.get(); }
 
     static AtomString generateTrackId(StreamType, int padIndex);
     enum class CreateTrackResult { TrackCreated, TrackIgnored, AppendParsingFailed };
     std::pair<CreateTrackResult, AppendPipeline::Track*> tryCreateTrackFromPad(GstPad* demuxerSrcPad);
 
-    bool recycleTrackForPad(GstPad*);
+    void recycleTrackForPad(GstPad*);
     void linkPadWithTrack(GstPad* demuxerSrcPad, Track&);
 
     void consumeAppsinksAvailableSamples();
@@ -146,6 +152,7 @@ private:
     Thread* m_streamingThread;
 
     bool m_hasReceivedFirstInitializationSegment { false };
+    bool m_pendingInitializationSegmentForChangeType { false };
     // Used only for asserting EOS events are only caused by demuxing errors.
     bool m_errorReceived { false };
 

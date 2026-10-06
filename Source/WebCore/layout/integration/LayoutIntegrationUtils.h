@@ -44,17 +44,26 @@ class IntegrationUtils {
 public:
     IntegrationUtils(const LayoutState&);
 
-    void layoutWithFormattingContextForBox(const ElementBox&, std::optional<LayoutUnit> widthConstraint = { }, std::optional<LayoutUnit> heightConstraint = { }) const;
+    void layoutWithFormattingContextForBox(const ElementBox&, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth = { }, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight = { }) const;
+    std::pair<LayoutUnit, LayoutUnit> borderAndPaddingForGridItem(const ElementBox&, LayoutUnit gridAreaInlineSize) const;
+    void layoutGridItem(const ElementBox&, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize) const;
     LayoutUnit maxContentWidth(const ElementBox&) const;
+    LayoutUnit maxContentWidthForGridItem(const ElementBox&, LayoutUnit gridAreaInlineSize) const;
     LayoutUnit minContentWidth(const ElementBox&) const;
     LayoutUnit minContentHeight(const ElementBox&) const;
-    LayoutUnit preferredMinWidth(const ElementBox&) const;
-    LayoutUnit preferredMaxWidth(const ElementBox&) const;
+    LayoutUnit minContentWidthForGridItem(const ElementBox&, LayoutUnit gridAreaInlineSize) const;
+    LayoutUnit minContentHeightForGridItem(const ElementBox&, LayoutUnit gridAreaInlineSize) const;
+    LayoutUnit maxContentHeightForGridItem(const ElementBox&, LayoutUnit gridAreaInlineSize) const;
+    LayoutUnit minContentContributionHeightForGridItem(const ElementBox&, LayoutUnit gridAreaInlineSize) const;
+    LayoutUnit maxContentContributionHeightForGridItem(const ElementBox&, LayoutUnit gridAreaInlineSize) const;
+    LayoutUnit minContentLogicalWidthContribution(const ElementBox&) const;
+    LayoutUnit maxContentLogicalWidthContribution(const ElementBox&) const;
     void layoutWithFormattingContextForBlockInInline(const ElementBox& block, LayoutPoint blockLineLogicalTopLeft, const InlineLayoutState&) const;
+    static const Style::ComputedStyle& firstNonAnonymousAncestorStyle(const Box&);
 
-    static BlockLayoutState::MarginState toMarginState(const RenderBlockFlow::MarginInfo&, LayoutUnit contentOffsetAfterSelfCollapsingBlock);
+    static BlockLayoutState::MarginState NODELETE toMarginState(const RenderBlockFlow::MarginInfo&);
     static RenderBlockFlow::MarginInfo toMarginInfo(const Layout::BlockLayoutState::MarginState&);
-    static std::pair<LayoutRect, LayoutRect> toMarginAndBorderBoxVisualRect(const BoxGeometry& logicalGeometry, const LayoutSize& containerSize, WritingMode);
+    static std::pair<LayoutRect, LayoutRect> NODELETE toMarginAndBorderBoxVisualRect(const BoxGeometry& logicalGeometry, const LayoutSize& containerSize, WritingMode);
 
 private:
     const CheckedRef<const LayoutState> m_globalLayoutState;

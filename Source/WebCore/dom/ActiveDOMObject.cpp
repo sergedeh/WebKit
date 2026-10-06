@@ -37,7 +37,7 @@
 
 namespace WebCore {
 
-static inline ScriptExecutionContext* suitableScriptExecutionContext(ScriptExecutionContext* scriptExecutionContext)
+static inline ScriptExecutionContext* NODELETE suitableScriptExecutionContext(ScriptExecutionContext* scriptExecutionContext)
 {
     // For detached documents, make sure we observe their context document instead.
     if (auto* document = dynamicDowncast<Document>(scriptExecutionContext))
@@ -73,7 +73,7 @@ ActiveDOMObject::ActiveDOMObject(Document& document)
 
 ActiveDOMObject::~ActiveDOMObject()
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(m_creationThread));
+    ASSERT(canCurrentThreadIDAccessThreadLocalData(m_creationThreadID));
 
     // ActiveDOMObject may be inherited by a sub-class whose life-cycle
     // exceeds that of the associated ScriptExecutionContext. In those cases,
@@ -146,7 +146,7 @@ void ActiveDOMObject::queueTaskInEventLoop(TaskSource source, Function<void ()>&
     RefPtr context = scriptExecutionContext();
     if (!context)
         return;
-    context->checkedEventLoop()->queueTask(source, WTF::move(function));
+    protect(context->eventLoop())->queueTask(source, WTF::move(function));
 }
 
 class ActiveDOMObjectEventDispatchTask : public EventLoopTask {

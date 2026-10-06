@@ -33,6 +33,7 @@
 #include <WebCore/MemoryIDBBackingStore.h>
 #include <WebCore/SQLiteFileSystem.h>
 #include <WebCore/SQLiteIDBBackingStore.h>
+#include <WebCore/SQLiteMemoryIDBBackingStore.h>
 #include <algorithm>
 #include <wtf/TZoneMalloc.h>
 
@@ -40,7 +41,7 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IDBStorageManager);
 
-static bool migrateOriginDataImpl(const String& oldOriginDirectory, const String& newOriginDirectory, Function<String(const String&)>&& createFileNameFunction)
+static bool migrateOriginDataImpl(const String& oldOriginDirectory, const String& newOriginDirectory, NOESCAPE const Function<String(const String&)>& createFileNameFunction)
 {
     if (oldOriginDirectory.isEmpty() || !FileSystem::fileExists(oldOriginDirectory))
         return true;
@@ -196,15 +197,17 @@ bool IDBStorageManager::migrateOriginData(const String& oldOriginDirectory, cons
     });
 }
 
-IDBStorageManager::IDBStorageManager(const String& path, IDBStorageRegistry& registry, QuotaCheckFunction&& quotaCheckFunction)
+IDBStorageManager::IDBStorageManager(const String& path, IDBStorageRegistry& registry, QuotaCheckFunction&& quotaCheckFunction, bool useSQLiteMemoryBackingStore)
     : m_path(path)
     , m_registry(registry)
     , m_quotaCheckFunction(WTF::move(quotaCheckFunction))
+    , m_useSQLiteMemoryBackingStore(useSQLiteMemoryBackingStore)
 {
 }
 
 IDBStorageManager::~IDBStorageManager()
 {
+    m_isClosing = true;
     for (auto& database : m_databases.values())
         database->immediateClose();
 }
@@ -338,8 +341,11 @@ void IDBStorageManager::unregisterTransaction(WebCore::IDBServer::UniqueIDBDatab
 
 std::unique_ptr<WebCore::IDBServer::IDBBackingStore> IDBStorageManager::createBackingStore(const WebCore::IDBDatabaseIdentifier& identifier)
 {
-    if (m_path.isEmpty() || identifier.isTransient())
+    if (m_path.isEmpty() || identifier.isTransient()) {
+        if (m_useSQLiteMemoryBackingStore)
+            return makeUnique<WebCore::IDBServer::SQLiteMemoryIDBBackingStore>(identifier);
         return makeUnique<WebCore::IDBServer::MemoryIDBBackingStore>(identifier);
+    }
 
     auto name = WebCore::SQLiteFileSystem::computeHashForFileName(identifier.databaseName());
     return makeUnique<WebCore::IDBServer::SQLiteIDBBackingStore>(identifier, FileSystem::pathByAppendingComponent(m_path, name));
@@ -347,6 +353,8 @@ std::unique_ptr<WebCore::IDBServer::IDBBackingStore> IDBStorageManager::createBa
 
 void IDBStorageManager::requestSpace(const WebCore::ClientOrigin&, uint64_t size, CompletionHandler<void(bool)>&& completionHandler)
 {
+    if (m_isClosing)
+        return completionHandler(size ? false : true);
     m_quotaCheckFunction(size, WTF::move(completionHandler));
 }
 

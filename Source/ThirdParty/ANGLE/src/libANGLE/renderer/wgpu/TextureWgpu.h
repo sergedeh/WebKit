@@ -15,12 +15,16 @@
 #include "libANGLE/renderer/wgpu/RenderTargetWgpu.h"
 #include "libANGLE/renderer/wgpu/wgpu_helpers.h"
 
+#include <deque>
+#include <vector>
+
 namespace rx
 {
 
 class TextureWgpu : public TextureImpl, public angle::ObserverInterface
 {
   public:
+    using RenderTargetLevels = std::vector<std::deque<RenderTargetWgpu>>;
     TextureWgpu(const gl::TextureState &state);
     ~TextureWgpu() override;
 
@@ -74,7 +78,7 @@ class TextureWgpu : public TextureImpl, public angle::ObserverInterface
                               const gl::ImageIndex &index,
                               GLenum internalFormat,
                               GLenum type,
-                              GLint sourceLevel,
+                              gl::LevelIndex sourceLevel,
                               bool unpackFlipY,
                               bool unpackPremultiplyAlpha,
                               bool unpackUnmultiplyAlpha,
@@ -82,7 +86,7 @@ class TextureWgpu : public TextureImpl, public angle::ObserverInterface
     angle::Result copySubTexture(const gl::Context *context,
                                  const gl::ImageIndex &index,
                                  const gl::Offset &destOffset,
-                                 GLint sourceLevel,
+                                 gl::LevelIndex sourceLevel,
                                  const gl::Box &sourceBox,
                                  bool unpackFlipY,
                                  bool unpackPremultiplyAlpha,
@@ -91,28 +95,25 @@ class TextureWgpu : public TextureImpl, public angle::ObserverInterface
 
     angle::Result copyRenderbufferSubData(const gl::Context *context,
                                           const gl::Renderbuffer *srcBuffer,
-                                          GLint srcLevel,
                                           GLint srcX,
                                           GLint srcY,
-                                          GLint srcZ,
-                                          GLint dstLevel,
+                                          gl::LevelIndex dstLevel,
                                           GLint dstX,
                                           GLint dstY,
-                                          GLint dstZ,
+                                          gl::LayerIndex dstZ,
                                           GLsizei srcWidth,
-                                          GLsizei srcHeight,
-                                          GLsizei srcDepth) override;
+                                          GLsizei srcHeight) override;
 
     angle::Result copyTextureSubData(const gl::Context *context,
                                      const gl::Texture *srcTexture,
-                                     GLint srcLevel,
+                                     gl::LevelIndex srcLevel,
                                      GLint srcX,
                                      GLint srcY,
-                                     GLint srcZ,
-                                     GLint dstLevel,
+                                     gl::LayerIndex srcZ,
+                                     gl::LevelIndex dstLevel,
                                      GLint dstX,
                                      GLint dstY,
-                                     GLint dstZ,
+                                     gl::LayerIndex dstZ,
                                      GLsizei srcWidth,
                                      GLsizei srcHeight,
                                      GLsizei srcDepth) override;
@@ -207,6 +208,18 @@ class TextureWgpu : public TextureImpl, public angle::ObserverInterface
                                    const gl::InternalFormat &internalFormat,
                                    gl::Framebuffer *source);
 
+    angle::Result copySubTextureImpl(const gl::Context *context,
+                                     const gl::ImageIndex &index,
+                                     const gl::Offset &destOffset,
+                                     GLint sourceLevel,
+                                     const gl::Box &sourceBox,
+                                     bool unpackFlipY,
+                                     bool unpackPremultiplyAlpha,
+                                     bool unpackUnmultiplyAlpha,
+                                     const webgpu::Format &dstWebgpuFormat,
+                                     const gl::InternalFormat &internalFormat,
+                                     TextureWgpu *sourceTextureWgpu);
+
     angle::Result initializeImage(ContextWgpu *contextWgpu, ImageMipLevels mipLevels);
     angle::Result initializeImageImpl(ContextWgpu *contextWgpu,
                                       const webgpu::Format &webgpuFormat,
@@ -233,6 +246,7 @@ class TextureWgpu : public TextureImpl, public angle::ObserverInterface
 
     void setImageHelper(webgpu::ImageHelper *imageHelper, bool ownsImageHelper);
 
+    void resetImageAndReleaseViews();
     bool mOwnsImage             = false;
     webgpu::ImageHelper *mImage = nullptr;
     gl::LevelIndex mCurrentBaseLevel;
@@ -246,8 +260,7 @@ class TextureWgpu : public TextureImpl, public angle::ObserverInterface
     // - First dimension: only RenderToTextureImageIndex::Default for now.
     // - Second dimension: level
     // - Third dimension: layer
-    gl::RenderToTextureImageMap<std::vector<std::vector<RenderTargetWgpu>>>
-        mSingleLayerRenderTargets;
+    gl::RenderToTextureImageMap<RenderTargetLevels> mSingleLayerRenderTargets;
 };
 
 }  // namespace rx

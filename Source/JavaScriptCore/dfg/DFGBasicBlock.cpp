@@ -41,7 +41,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(BasicBlock);
 
 BasicBlock::BasicBlock(BytecodeIndex bytecodeBegin, unsigned numArguments, unsigned numLocals, unsigned numTmps, float executionCount)
     : bytecodeBegin(bytecodeBegin)
-    , index(NoBlock)
+    , m_index(NoBlock)
     , cfaStructureClobberStateAtHead(StructuresAreWatched)
     , cfaStructureClobberStateAtTail(StructuresAreWatched)
     , cfaBranchDirection(InvalidBranchDirection)
@@ -59,7 +59,6 @@ BasicBlock::BasicBlock(BytecodeIndex bytecodeBegin, unsigned numArguments, unsig
     , variablesAtTail(numArguments, numLocals, numTmps)
     , valuesAtHead(numArguments, numLocals, numTmps)
     , valuesAtTail(numArguments, numLocals, numTmps)
-    , intersectionOfPastValuesAtHead(numArguments, numLocals, numTmps, AbstractValue::fullTop())
     , executionCount(executionCount)
 {
 }
@@ -72,7 +71,8 @@ void BasicBlock::ensureLocals(unsigned newNumLocals)
     variablesAtTail.ensureLocals(newNumLocals);
     valuesAtHead.ensureLocals(newNumLocals);
     valuesAtTail.ensureLocals(newNumLocals);
-    intersectionOfPastValuesAtHead.ensureLocals(newNumLocals, AbstractValue::fullTop());
+    if (intersectionOfPastValuesAtHead.size())
+        intersectionOfPastValuesAtHead.ensureLocals(newNumLocals, AbstractValue::fullTop());
 }
 
 void BasicBlock::ensureTmps(unsigned newNumTmps)
@@ -81,7 +81,16 @@ void BasicBlock::ensureTmps(unsigned newNumTmps)
     variablesAtTail.ensureTmps(newNumTmps);
     valuesAtHead.ensureTmps(newNumTmps);
     valuesAtTail.ensureTmps(newNumTmps);
-    intersectionOfPastValuesAtHead.ensureTmps(newNumTmps, AbstractValue::fullTop());
+    if (intersectionOfPastValuesAtHead.size())
+        intersectionOfPastValuesAtHead.ensureTmps(newNumTmps, AbstractValue::fullTop());
+}
+
+Operands<AbstractValue>& BasicBlock::ensureIntersectionOfPastValuesAtHead()
+{
+    if (!intersectionOfPastValuesAtHead.size())
+        intersectionOfPastValuesAtHead = Operands<AbstractValue>(OperandsLike, variablesAtHead, AbstractValue::fullTop());
+    ASSERT(intersectionOfPastValuesAtHead.size() == variablesAtHead.size());
+    return intersectionOfPastValuesAtHead;
 }
 
 void BasicBlock::replaceTerminal(Graph& graph, Node* node)
@@ -140,7 +149,7 @@ void BasicBlock::replacePredecessor(BasicBlock* from, BasicBlock* to)
 
 void BasicBlock::dump(PrintStream& out) const
 {
-    out.print("#", index);
+    out.print("#", m_index);
 }
 
 BasicBlock::SSAData::SSAData(BasicBlock* block)

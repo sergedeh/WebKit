@@ -21,6 +21,15 @@ Cursor Info: type=None hotSpot=0,0
 TEST CASE: Pointer
 Cursor Info: type=Hand hotSpot=0,0
 
+TEST CASE: grab
+Cursor Info: type=Grab hotSpot=0,0
+
+TEST CASE: grabbing
+Cursor Info: type=Grabbing hotSpot=0,0
+
+TEST CASE: -webkit-grab
+Cursor Info: type=Grab hotSpot=0,0
+
 TEST CASE: -webkit-grabbing
 Cursor Info: type=Grabbing hotSpot=0,0
 
@@ -57,13 +66,13 @@ Cursor Info: type=Custom hotSpot=0,0 image=25x25
 TEST CASE: Over large image with fallback to pointer
 Cursor Info: type=Hand hotSpot=0,0
 
-TEST CASE: SVG cursor
-Cursor Info: type=Custom hotSpot=0,0 image=25x25
+TEST CASE: Local element reference
+Cursor Info: type=Hand hotSpot=0,0
 
 TEST CASE: Multiple invalid cursors with fallback to pointer
 Cursor Info: type=Hand hotSpot=0,0
 
-TEST CASE: Nonexistent SVG cursor with fallback to pointer
+TEST CASE: Nonexistent local element reference with fallback to pointer
 Cursor Info: type=Hand hotSpot=0,0
 
 TEST CASE: A link with default cursor

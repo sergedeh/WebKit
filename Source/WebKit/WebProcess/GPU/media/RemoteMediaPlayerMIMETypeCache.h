@@ -28,10 +28,12 @@
 #if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
 
 #include <WebCore/MediaPlayerEnums.h>
+#include <WebCore/PlatformMediaDecodingType.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/StringHash.h>
 
@@ -52,7 +54,7 @@ public:
     HashSet<String>& supportedTypes();
     WebCore::MediaPlayerEnums::SupportsType supportsTypeAndCodecs(const WebCore::MediaEngineSupportParameters&);
     void addSupportedTypes(const Vector<String>&);
-    bool isEmpty() const;
+    bool NODELETE isEmpty() const;
 
 private:
     Ref<RemoteMediaPlayerManager> manager() const;
@@ -60,7 +62,7 @@ private:
     ThreadSafeWeakRef<RemoteMediaPlayerManager> m_manager;
     WebCore::MediaPlayerEnums::MediaEngineIdentifier m_engineIdentifier;
 
-    using SupportedTypesAndCodecsKey = std::tuple<String, bool, bool, bool, WebCore::MediaPlaybackTargetType>;
+    using SupportedTypesAndCodecsKey = std::tuple<String, WebCore::PlatformMediaDecodingType, bool, WebCore::MediaPlaybackTargetType>;
     std::optional<HashMap<SupportedTypesAndCodecsKey, WebCore::MediaPlayerEnums::SupportsType>> m_supportsTypeAndCodecsCache;
     HashSet<String> m_supportedTypesCache;
     bool m_hasPopulatedSupportedTypesCacheFromGPUProcess { false };

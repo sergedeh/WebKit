@@ -33,6 +33,10 @@ namespace WebCore {
 class FloatQuad;
 class FloatRoundedRect;
 
+// Rect with per-corner radii and geometry operations. The radii define the corner extent (where
+// straight edges end and corners begin) and are used by all corner-shape values, not just round.
+// The actual rendered corner shape (round, bevel, notch, superellipse, etc.) is determined by
+// the corner-shape property and is not encoded here.
 class LayoutRoundedRectRadii {
 public:
     LayoutRoundedRectRadii() = default;
@@ -48,19 +52,19 @@ public:
     void setTopRight(const LayoutSize& size) { m_topRight = size; }
     void setBottomLeft(const LayoutSize& size) { m_bottomLeft = size; }
     void setBottomRight(const LayoutSize& size) { m_bottomRight = size; }
-    const LayoutSize& topLeft() const { return m_topLeft; }
-    const LayoutSize& topRight() const { return m_topRight; }
-    const LayoutSize& bottomLeft() const { return m_bottomLeft; }
-    const LayoutSize& bottomRight() const { return m_bottomRight; }
-    void setRadiiForEdges(const LayoutRoundedRectRadii&, RectEdges<bool> includeEdges);
+    const LayoutSize& topLeft() const LIFETIME_BOUND { return m_topLeft; }
+    const LayoutSize& topRight() const LIFETIME_BOUND { return m_topRight; }
+    const LayoutSize& bottomLeft() const LIFETIME_BOUND { return m_bottomLeft; }
+    const LayoutSize& bottomRight() const LIFETIME_BOUND { return m_bottomRight; }
+    WEBCORE_EXPORT void NODELETE setRadiiForEdges(const LayoutRoundedRectRadii&, RectEdges<bool> includeEdges);
 
-    bool isZero() const;
+    WEBCORE_EXPORT bool NODELETE isZero() const;
 
-    bool areRenderableInRect(const LayoutRect&) const;
+    bool NODELETE areRenderableInRect(const LayoutRect&) const;
     void makeRenderableInRect(const LayoutRect&);
 
-    void scale(float factor);
-    void expand(LayoutUnit topWidth, LayoutUnit bottomWidth, LayoutUnit leftWidth, LayoutUnit rightWidth);
+    void NODELETE scale(float factor);
+    WEBCORE_EXPORT void expand(LayoutUnit topWidth, LayoutUnit bottomWidth, LayoutUnit leftWidth, LayoutUnit rightWidth);
     void expand(LayoutUnit size) { expand(size, size, size, size); }
     void shrink(LayoutUnit topWidth, LayoutUnit bottomWidth, LayoutUnit leftWidth, LayoutUnit rightWidth) { expand(-topWidth, -bottomWidth, -leftWidth, -rightWidth); }
     void shrink(LayoutUnit size) { shrink(size, size, size, size); }
@@ -87,9 +91,9 @@ public:
     LayoutRoundedRect(LayoutUnit, LayoutUnit, LayoutUnit width, LayoutUnit height);
     WEBCORE_EXPORT LayoutRoundedRect(const LayoutRect&, const LayoutSize& topLeft, const LayoutSize& topRight, const LayoutSize& bottomLeft, const LayoutSize& bottomRight);
 
-    const LayoutRect& rect() const { return m_rect; }
-    const Radii& radii() const { return m_radii; }
-    bool isRounded() const { return !m_radii.isZero(); }
+    const LayoutRect& rect() const LIFETIME_BOUND { return m_rect; }
+    const Radii& radii() const LIFETIME_BOUND { return m_radii; }
+    bool hasNonZeroRadii() const { return !m_radii.isZero(); }
     bool isEmpty() const { return m_rect.isEmpty(); }
 
     void setRect(const LayoutRect& rect) { m_rect = rect; }
@@ -103,13 +107,13 @@ public:
     void expandRadii(LayoutUnit size) { m_radii.expand(size); }
     void shrinkRadii(LayoutUnit size) { m_radii.shrink(size); }
 
-    bool isRenderable() const;
+    bool NODELETE isRenderable() const;
     void adjustRadii();
 
     // Tests whether the quad intersects any part of this rounded rectangle.
     // This only works for convex quads.
-    bool intersectsQuad(const FloatQuad&) const;
-    WEBCORE_EXPORT bool contains(const LayoutRect&) const;
+    bool NODELETE intersectsQuad(const FloatQuad&) const;
+    WEBCORE_EXPORT bool NODELETE contains(const LayoutRect&) const;
 
     FloatRoundedRect pixelSnappedRoundedRectForPainting(float deviceScaleFactor) const;
 

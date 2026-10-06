@@ -120,19 +120,23 @@ class Printer(object):
 
         write(self._test_line(self.running_tests[0], suffix))
 
-    def print_finished_test(self, source, test_name, test_time, failures, errors):
+    def print_finished_test(self, source, test_name, test_time, failures, errors,
+                            expected_failures=None, unexpected_successes=None):
         write = self.meter.writeln
-        if failures:
-            lines = failures[0].splitlines() + ['']
+        if failures or unexpected_successes:
+            messages = list(failures or []) + ['UNEXPECTED SUCCESS' for _ in (unexpected_successes or [])]
             suffix = ' failed:'
-            self.num_failures += 1
+            self.num_failures += len(failures or []) + len(unexpected_successes or [])
         elif errors:
-            lines = errors[0].splitlines() + ['']
+            messages = list(errors) + ['']
             suffix = ' erred:'
-            self.num_errors += 1
+            self.num_errors += len(errors)
+        elif expected_failures:
+            suffix = ' expected failure'
+            messages = []
         else:
             suffix = ' passed'
-            lines = []
+            messages = []
             if self.options.verbose:
                 write = self.meter.writeln
             else:
@@ -143,16 +147,19 @@ class Printer(object):
         self.num_started += 1
 
         if test_name == self.running_tests[0]:
-            self.completed_tests.insert(0, [test_name, suffix, lines])
+            self.completed_tests.insert(0, [test_name, suffix, messages])
         else:
-            self.completed_tests.append([test_name, suffix, lines])
+            self.completed_tests.append([test_name, suffix, messages])
         self.running_tests.remove(test_name)
 
-        for test_name, msg, lines in self.completed_tests:
-            if lines:
+        for test_name, msg, messages in self.completed_tests:
+            if messages:
                 self.meter.writeln(self._test_line(test_name, msg))
-                for line in lines:
-                    self.meter.writeln('  ' + line)
+                for i, message in enumerate(messages):
+                    if i:
+                        self.meter.writeln('  ')
+                    for line in message.splitlines():
+                        self.meter.writeln('  ' + line)
             else:
                 write(self._test_line(test_name, msg))
         self.completed_tests = []

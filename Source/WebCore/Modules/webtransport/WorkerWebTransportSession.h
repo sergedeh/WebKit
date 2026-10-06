@@ -54,6 +54,7 @@ private:
     void didFail(std::optional<uint32_t>&&, String&&) final;
     void didDrain() final;
 
+    Ref<WebTransportSessionInitializationPromise> initialize(ScriptExecutionContext&, const URL&, const WebTransportOptions&, const Vector<KeyValuePair<String, String>>&, const ClientOrigin&) final;
     Ref<WebTransportSendPromise> sendDatagram(std::optional<WebTransportSendGroupIdentifier>, std::span<const uint8_t>) final;
     Ref<WebTransportStreamPromise> createOutgoingUnidirectionalStream() final;
     Ref<WebTransportStreamPromise> createBidirectionalStream() final;
@@ -62,19 +63,20 @@ private:
     Ref<WebTransportSendStreamStatsPromise> getSendStreamStats(WebTransportStreamIdentifier) final;
     Ref<WebTransportReceiveStreamStatsPromise> getReceiveStreamStats(WebTransportStreamIdentifier) final;
     Ref<WebTransportSendStreamStatsPromise> getSendGroupStats(WebTransportSendGroupIdentifier) final;
+    Ref<WebTransportExportKeyingMaterialPromise> exportKeyingMaterial(std::span<const uint8_t>, std::span<const uint8_t>, uint32_t) final;
 
     void cancelReceiveStream(WebTransportStreamIdentifier, std::optional<WebTransportStreamErrorCode>) final;
     void cancelSendStream(WebTransportStreamIdentifier, std::optional<WebTransportStreamErrorCode>) final;
     void destroyStream(WebTransportStreamIdentifier, std::optional<WebTransportStreamErrorCode>) final;
-    void terminate(WebTransportSessionErrorCode, CString&&) final;
+    void terminate(WebTransportSessionErrorCode, UTF8CString&&) final;
     void datagramIncomingMaxAgeUpdated(std::optional<double>) final;
     void datagramOutgoingMaxAgeUpdated(std::optional<double>) final;
-    void datagramIncomingHighWaterMarkUpdated(double) final;
-    void datagramOutgoingHighWaterMarkUpdated(double) final;
+    void incomingMaxBufferedDatagramsUpdated(uint32_t) final;
+    void outgoingMaxBufferedDatagramsUpdated(uint32_t) final;
 
     const ScriptExecutionContextIdentifier m_contextID;
     ThreadSafeWeakPtr<WebTransportSessionClient> m_client;
-    RefPtr<WebTransportSession> m_session;
+    const RefPtr<WebTransportSession> m_session;
 };
 
 }

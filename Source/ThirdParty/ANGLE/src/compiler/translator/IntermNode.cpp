@@ -17,6 +17,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <algorithm>
+#include <array>
 #include <vector>
 
 #include "common/mathutil.h"
@@ -117,22 +118,24 @@ angle::Matrix<float> GetMatrix(const TConstantUnion *paramArray,
                                const unsigned int cols)
 {
     std::vector<float> elements;
+    elements.reserve(rows * cols);
     for (size_t i = 0; i < rows * cols; i++)
         elements.push_back(paramArray[i].getFConst());
     // Transpose is used since the Matrix constructor expects arguments in row-major order,
     // whereas the paramArray is in column-major order. Rows/cols parameters are also flipped below
     // so that the created matrix will have the expected dimensions after the transpose.
-    return angle::Matrix<float>(elements, cols, rows).transpose();
+    return angle::Matrix<float>(std::move(elements), cols, rows).transpose();
 }
 
 angle::Matrix<float> GetMatrix(const TConstantUnion *paramArray, const unsigned int size)
 {
     std::vector<float> elements;
+    elements.reserve(size * size);
     for (size_t i = 0; i < size * size; i++)
         elements.push_back(paramArray[i].getFConst());
     // Transpose is used since the Matrix constructor expects arguments in row-major order,
     // whereas the paramArray is in column-major order.
-    return angle::Matrix<float>(elements, size).transpose();
+    return angle::Matrix<float>(std::move(elements), size).transpose();
 }
 
 void SetUnionArrayFromMatrix(const angle::Matrix<float> &m, TConstantUnion *resultArray)
@@ -140,7 +143,7 @@ void SetUnionArrayFromMatrix(const angle::Matrix<float> &m, TConstantUnion *resu
     // Transpose is used since the input Matrix is in row-major order,
     // whereas the actual result should be in column-major order.
     angle::Matrix<float> result       = m.transpose();
-    std::vector<float> resultElements = result.elements();
+    angle::Span<const float> resultElements = result.elements();
     for (size_t i = 0; i < resultElements.size(); i++)
         resultArray[i].setFConst(resultElements[i]);
 }
@@ -261,7 +264,7 @@ size_t TIntermLoop::getChildCount() const
 
 TIntermNode *TIntermLoop::getChildNode(size_t index) const
 {
-    TIntermNode *children[4];
+    std::array<TIntermNode *, 4> children;
     unsigned int childIndex = 0;
     if (mInit)
     {
@@ -874,7 +877,11 @@ const TConstantUnion *TIntermAggregate::getConstantValue() const
     if (isArray())
     {
         size_t elementSize = mArguments.front()->getAsTyped()->getType().getObjectSize();
-        constArray         = new TConstantUnion[elementSize * getOutermostArraySize()];
+        // Overflow should never happen due to parser validation, but hardened here just in case.
+        // http://crbug.com/498400132
+        angle::base::CheckedNumeric<size_t> checkedArraySize = elementSize;
+        checkedArraySize *= getOutermostArraySize();
+        constArray = new TConstantUnion[static_cast<size_t>(checkedArraySize.ValueOrDie())];
 
         size_t elementOffset = 0u;
         for (TIntermNode *constructorArg : mArguments)
@@ -1012,6 +1019,22 @@ bool TIntermAggregate::hasSideEffects() const
     return false;
 }
 
+bool TIntermAggregate::isSafeToExecuteInShortCircuit() const
+{
+    if (mOp == EOpConstruct)
+    {
+        for (TIntermNode *component : mArguments)
+        {
+            if (!component->isSafeToExecuteInShortCircuit())
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 void TIntermBlock::appendStatement(TIntermNode *statement)
 {
     // Declaration nodes with no children can appear if it was an empty declaration or if all the
@@ -1117,7 +1140,11 @@ bool TIntermSwitch::replaceChildNode(TIntermNode *original, TIntermNode *replace
     return false;
 }
 
-TIntermCase::TIntermCase(const TIntermCase &node) : TIntermCase(node.mCondition->deepCopy()) {}
+TIntermCase::TIntermCase(const TIntermCase &node)
+    : TIntermCase(node.mCondition ? node.mCondition->deepCopy() : nullptr)
+{
+    setLine(node.getLine());
+}
 
 size_t TIntermCase::getChildCount() const
 {
@@ -1290,6 +1317,17 @@ bool TIntermOperator::isFunctionCall() const
         default:
             return false;
     }
+}
+
+bool TIntermOperator::isShortCircuitNeeded() const
+{
+    if (mOp != EOpLogicalAnd && mOp != EOpLogicalOr)
+    {
+        return false;
+    }
+
+    ASSERT(getChildCount() == 2);
+    return !getChildNode(1)->isSafeToExecuteInShortCircuit();
 }
 
 TOperator TIntermBinary::GetMulOpBasedOnOperands(const TType &left, const TType &right)
@@ -1748,7 +1786,7 @@ bool TIntermSwizzle::hasDuplicateOffsets() const
     {
         return true;
     }
-    uint32_t offsetCount[4] = {0u, 0u, 0u, 0u};
+    std::array<uint32_t, 4> offsetCount = {0u, 0u, 0u, 0u};
     for (const uint32_t offset : mSwizzleOffsets)
     {
         offsetCount[offset]++;
@@ -1768,6 +1806,11 @@ void TIntermSwizzle::setHasFoldedDuplicateOffsets(bool hasFoldedDuplicateOffsets
 bool TIntermSwizzle::offsetsMatch(uint32_t offset) const
 {
     return mSwizzleOffsets.size() == 1 && mSwizzleOffsets[0] == offset;
+}
+
+bool TIntermSwizzle::isSafeToExecuteInShortCircuit() const
+{
+    return mOperand->isSafeToExecuteInShortCircuit();
 }
 
 ImmutableString TIntermSwizzle::getOffsetsAsXYZW() const
@@ -2313,6 +2356,12 @@ const ImmutableString &TIntermBinary::getIndexStructFieldName() const
     const int index             = mRight->getAsConstantUnion()->getIConst(0);
 
     return structure->fields()[index]->name();
+}
+
+bool TIntermBinary::isSafeToExecuteInShortCircuit() const
+{
+    return (mOp == EOpIndexDirectInterfaceBlock || mOp == EOpIndexDirectStruct) &&
+           mLeft->isSafeToExecuteInShortCircuit();
 }
 
 TIntermTyped *TIntermUnary::fold(TDiagnostics *diagnostics)

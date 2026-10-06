@@ -46,7 +46,7 @@ class ThreadSafeDataBuffer;
 struct IDBKeyRangeData;
 
 namespace IndexedDB {
-enum class GetAllType : bool;
+enum class GetAllType : uint8_t;
 enum class IndexRecordType : bool;
 }
 
@@ -65,7 +65,7 @@ public:
 
     ~MemoryIndex();
 
-    const IDBIndexInfo& info() const { return m_info; }
+    const IDBIndexInfo& info() const LIFETIME_BOUND { return m_info; }
 
     void rename(const String& newName) { m_info.rename(newName); }
 
@@ -75,6 +75,8 @@ public:
 
     IDBError putIndexKey(const IDBKeyData&, const IndexKey&);
 
+    bool hasRecordForOtherPrimaryKey(const IDBKeyData& indexKey, const IDBKeyData& primaryKey);
+
     void removeEntriesWithValueKey(const IDBKeyData&);
     void removeRecord(const IDBKeyData&, const IndexKey&);
 
@@ -83,8 +85,7 @@ public:
     MemoryIndexCursor* maybeOpenCursor(const IDBCursorInfo&, MemoryBackingStoreTransaction&);
     IndexValueStore* valueStore() { return m_records.get(); }
 
-    MemoryObjectStore* objectStore();
-    RefPtr<MemoryObjectStore> protectedObjectStore();
+    MemoryObjectStore* NODELETE objectStore();
 
     void cursorDidBecomeClean(MemoryIndexCursor&);
     void cursorDidBecomeDirty(MemoryIndexCursor&);
@@ -92,7 +93,7 @@ public:
     void notifyCursorsOfValueChange(const IDBKeyData& indexKey, const IDBKeyData& primaryKey);
     void transactionFinished(MemoryBackingStoreTransaction&);
 
-    void writeTransactionStarted(MemoryBackingStoreTransaction&);
+    void NODELETE writeTransactionStarted(MemoryBackingStoreTransaction&);
     void writeTransactionFinished(MemoryBackingStoreTransaction&);
     void transactionAborted(MemoryBackingStoreTransaction&);
 
@@ -113,7 +114,7 @@ private:
     HashMap<IDBKeyData, Vector<IDBKeyData>, DefaultHash<IDBKeyData>, IDBKeyDataHashTraits> m_transactionModifiedRecords;
     std::unique_ptr<IndexValueStore> m_records;
 
-    HashMap<IDBResourceIdentifier, RefPtr<MemoryIndexCursor>> m_cursors;
+    HashMap<IDBResourceIdentifier, Ref<MemoryIndexCursor>> m_cursors;
     WeakHashSet<MemoryIndexCursor> m_cleanCursors;
 };
 

@@ -43,6 +43,7 @@ FrameProcess::FrameProcess(WebProcessProxy& process, BrowsingContextGroup& group
     , m_mainFrameSite(mainFrameSite)
     , m_isArchiveProcess(loadedWebArchive == LoadedWebArchive::Yes)
 {
+    m_process->incrementFrameProcessCount();
     if (!preferences.siteIsolationEnabled()) {
         m_browsingContextGroup = nullptr;
         return;
@@ -61,8 +62,16 @@ FrameProcess::FrameProcess(WebProcessProxy& process, BrowsingContextGroup& group
 
 FrameProcess::~FrameProcess()
 {
+    m_process->decrementFrameProcessCount();
+    ASSERT(!m_frameCount);
+
     if (RefPtr group = m_browsingContextGroup.get())
         group->removeFrameProcess(*this);
+}
+
+BrowsingContextGroup* FrameProcess::browsingContextGroup() const
+{
+    return m_browsingContextGroup.get();
 }
 
 }

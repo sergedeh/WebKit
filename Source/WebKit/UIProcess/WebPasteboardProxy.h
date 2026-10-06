@@ -56,6 +56,7 @@ class SharedBuffer;
 namespace WebKit {
 
 enum class PasteboardAccessIntent : bool;
+enum class WriteWebArchiveToPasteBoardResult : uint8_t;
 class WebFrameProxy;
 class WebProcessProxy;
 
@@ -63,7 +64,7 @@ class WebPasteboardProxy : public IPC::MessageReceiver {
     WTF_MAKE_NONCOPYABLE(WebPasteboardProxy);
     friend NeverDestroyed<WebPasteboardProxy>;
 public:
-    static WebPasteboardProxy& singleton();
+    static WebPasteboardProxy& NODELETE singleton();
 
     void addWebProcessProxy(WebProcessProxy&);
     void removeWebProcessProxy(WebProcessProxy&);
@@ -90,7 +91,7 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) override;
 
-    RefPtr<WebProcessProxy> webProcessProxyForConnection(IPC::Connection&) const;
+    RefPtr<WebProcessProxy> NODELETE webProcessProxyForConnection(IPC::Connection&) const;
 
 #if PLATFORM(IOS_FAMILY)
     void writeURLToPasteboard(IPC::Connection&, const WebCore::PasteboardURL&, const String& pasteboardName, std::optional<WebPageProxyIdentifier>);
@@ -116,7 +117,7 @@ private:
     void setPasteboardColor(IPC::Connection&, const String&, const WebCore::Color&, std::optional<WebPageProxyIdentifier>, CompletionHandler<void(int64_t)>&&);
     void setPasteboardStringForType(IPC::Connection&, const String& pasteboardName, const String& pasteboardType, const String&, std::optional<WebPageProxyIdentifier>, CompletionHandler<void(int64_t)>&&);
     void setPasteboardBufferForType(IPC::Connection&, const String& pasteboardName, const String& pasteboardType, RefPtr<WebCore::SharedBuffer>&&, std::optional<WebPageProxyIdentifier>, CompletionHandler<void(int64_t)>&&);
-    void writeWebArchiveToPasteBoard(IPC::Connection&, const String& pasteboardName, WebCore::FrameIdentifier, HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>>&&, const Vector<WebCore::FrameIdentifier>&, CompletionHandler<void(int64_t)>&&);
+    void writeWebArchiveToPasteBoard(IPC::Connection&, const String& pasteboardName, WebCore::FrameIdentifier, HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>>&&, const Vector<WebCore::FrameIdentifier>&, CompletionHandler<void(WriteWebArchiveToPasteBoardResult, int64_t)>&&);
     void createOneWebArchiveFromFrames(WebProcessProxy&, WebCore::FrameIdentifier, HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>>&&, const Vector<WebCore::FrameIdentifier>&, CompletionHandler<void(RefPtr<WebCore::LegacyWebArchive>&&)>&&);
 
 #if ENABLE(IPC_TESTING_API)
@@ -145,11 +146,14 @@ private:
     void readBuffer(IPC::Connection&, const String& pasteboardName, const String& pasteboardType, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
     void writeToClipboard(const String& pasteboardName, WebCore::SelectionData&&);
     void clearClipboard(const String& pasteboardName);
-    void getPasteboardChangeCount(IPC::Connection&, const String& pasteboardName, CompletionHandler<void(int64_t)>&&);
 #elif USE(LIBWPE)
     void getPasteboardTypes(CompletionHandler<void(Vector<String>&&)>&&);
     void writeWebContentToPasteboard(const WebCore::PasteboardWebContent&);
     void writeStringToPasteboard(const String& pasteboardType, const String&);
+#endif
+
+#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)
+    void getPasteboardChangeCount(IPC::Connection&, const String& pasteboardName, CompletionHandler<void(int64_t)>&&);
 #endif
 
 #if PLATFORM(COCOA)

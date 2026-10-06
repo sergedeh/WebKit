@@ -49,7 +49,6 @@ struct Renderer11DeviceCaps
     Renderer11DeviceCaps();
 
     D3D_FEATURE_LEVEL featureLevel;
-    bool supportsDXGI1_2;                         // Support for DXGI 1.2
     bool supportsClearView;                       // Support for ID3D11DeviceContext1::ClearView
     bool supportsConstantBufferOffsets;           // Support for Constant buffer offset
     bool supportsVpRtIndexWriteFromVertexShader;  // VP/RT can be selected in the Vertex Shader
@@ -134,7 +133,6 @@ class Renderer11 : public RendererD3D
 
     int getMajorShaderModel() const override;
     int getMinorShaderModel() const override;
-    std::string getShaderModelSuffix() const override;
 
     // Pixel operations
     angle::Result copyImage2D(const gl::Context *context,
@@ -252,13 +250,11 @@ class Renderer11 : public RendererD3D
                                            GLsizei width,
                                            GLsizei height,
                                            int levels,
-                                           const std::string &label,
-                                           bool hintLevelZeroOnly) override;
+                                           const std::string &label) override;
     TextureStorage *createTextureStorageCube(GLenum internalformat,
                                              BindFlags bindFlags,
                                              int size,
                                              int levels,
-                                             bool hintLevelZeroOnly,
                                              const std::string &label) override;
     TextureStorage *createTextureStorage3D(GLenum internalformat,
                                            BindFlags bindFlags,
@@ -355,7 +351,7 @@ class Renderer11 : public RendererD3D
                                          const gl::VertexBinding &binding,
                                          size_t count,
                                          GLsizei instances,
-                                         GLuint baseInstance,
+                                         uint64_t baseInstance,
                                          unsigned int *bytesRequiredOut) const override;
 
     angle::Result readFromAttachment(const gl::Context *context,
@@ -386,7 +382,6 @@ class Renderer11 : public RendererD3D
     RendererClass getRendererClass() const override;
     StateManager11 *getStateManager() { return &mStateManager; }
 
-    void onSwap();
     void onBufferCreate(const Buffer11 *created);
     void onBufferDelete(const Buffer11 *deleted);
 
@@ -415,18 +410,8 @@ class Renderer11 : public RendererD3D
     // Necessary hack for default framebuffers in D3D.
     FramebufferImpl *createDefaultFramebuffer(const gl::FramebufferState &state) override;
 
-    angle::Result getScratchMemoryBuffer(Context11 *context11,
-                                         size_t requestedSize,
-                                         angle::MemoryBuffer **bufferOut);
-
     gl::Version getMaxSupportedESVersion() const override;
     gl::Version getMaxConformantESVersion() const override;
-
-    angle::Result dispatchCompute(const gl::Context *context,
-                                  GLuint numGroupsX,
-                                  GLuint numGroupsY,
-                                  GLuint numGroupsZ);
-    angle::Result dispatchComputeIndirect(const gl::Context *context, GLintptr indirect);
 
     angle::Result createStagingTexture(const gl::Context *context,
                                        ResourceType textureType,
@@ -504,6 +489,12 @@ class Renderer11 : public RendererD3D
     std::string getVendorString() const override;
     std::string getVersionString(bool includeFullVersion) const override;
 
+    angle::Result resolveMultisampledTexture(const gl::Context *context,
+                                             RenderTarget11 *renderTarget,
+                                             bool depth,
+                                             bool stencil,
+                                             TextureHelper11 *textureOut);
+
   private:
     void generateCaps(gl::Caps *outCaps,
                       gl::TextureCapsMap *outTextureCaps,
@@ -527,12 +518,6 @@ class Renderer11 : public RendererD3D
                                   const void *indices,
                                   int baseVertex,
                                   int instances);
-
-    angle::Result resolveMultisampledTexture(const gl::Context *context,
-                                             RenderTarget11 *renderTarget,
-                                             bool depth,
-                                             bool stencil,
-                                             TextureHelper11 *textureOut);
 
     void populateRenderer11DeviceCaps();
 
@@ -604,8 +589,6 @@ class Renderer11 : public RendererD3D
     // Created objects state tracking
     std::set<const Buffer11 *> mAliveBuffers;
 
-    double mLastHistogramUpdateTime;
-
     angle::ComPtr<ID3D12Device> mDevice12;
     angle::ComPtr<ID3D12CommandQueue> mCommandQueue;
 
@@ -622,8 +605,6 @@ class Renderer11 : public RendererD3D
     angle::ComPtr<ID3D11Debug> mDebug;
 
     std::vector<GLuint> mScratchIndexDataBuffer;
-
-    angle::ScratchBuffer mScratchMemoryBuffer;
 
     DebugAnnotatorContext11 mAnnotatorContext;
 

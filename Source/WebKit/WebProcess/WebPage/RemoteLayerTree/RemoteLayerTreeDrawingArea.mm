@@ -248,7 +248,7 @@ void RemoteLayerTreeDrawingArea::updateRenderingWithForcedRepaint()
     if (m_isRenderingSuspended)
         return;
 
-    protectedWebPage()->protectedCorePage()->forceRepaintAllFrames();
+    protect(protect(m_webPage)->corePage())->forceRepaintAllFrames();
     updateRendering();
 }
 
@@ -272,13 +272,13 @@ void RemoteLayerTreeDrawingArea::setViewExposedRect(std::optional<WebCore::Float
 {
     m_viewExposedRect = viewExposedRect;
 
-    if (RefPtr frameView = protectedWebPage()->localMainFrameView())
+    if (RefPtr frameView = protect(m_webPage)->localMainFrameView())
         frameView->setViewExposedRect(m_viewExposedRect);
 }
 
 WebCore::FloatRect RemoteLayerTreeDrawingArea::exposedContentRect() const
 {
-    RefPtr frameView = protectedWebPage()->localMainFrameView();
+    RefPtr frameView = protect(m_webPage)->localMainFrameView();
     if (!frameView)
         return FloatRect();
 
@@ -287,7 +287,7 @@ WebCore::FloatRect RemoteLayerTreeDrawingArea::exposedContentRect() const
 
 void RemoteLayerTreeDrawingArea::setExposedContentRect(const FloatRect& exposedContentRect)
 {
-    RefPtr frameView = protectedWebPage()->localMainFrameView();
+    RefPtr frameView = protect(m_webPage)->localMainFrameView();
     if (!frameView)
         return;
     if (frameView->exposedContentRect() == exposedContentRect)
@@ -385,7 +385,7 @@ void RemoteLayerTreeDrawingArea::updateRendering()
         RemoteScrollingCoordinatorTransaction scrollingTransaction;
 #if ENABLE(ASYNC_SCROLLING)
         if (webPage->scrollingCoordinator())
-            scrollingTransaction = downcast<RemoteScrollingCoordinator>(*webPage->protectedScrollingCoordinator()).buildTransaction(rootLayer.frameID);
+            scrollingTransaction = downcast<RemoteScrollingCoordinator>(*protect(webPage->scrollingCoordinator())).buildTransaction(rootLayer.frameID);
         scrollingTransaction.setFrameIdentifier(rootLayer.frameID);
 #endif
 
@@ -395,7 +395,7 @@ void RemoteLayerTreeDrawingArea::updateRendering()
     for (auto& transaction : transactions)
         backingStoreCollection->willCommitLayerTree(CheckedRef { transaction.first });
 
-    RemoteLayerTreeCommitBundle bundle { WTF::move(transactions), { WTF::move(m_pendingCallbackIDs), webPage->protectedCorePage()->renderTreeSize() }, std::nullopt, transactionID };
+    RemoteLayerTreeCommitBundle bundle { WTF::move(transactions), { WTF::move(m_pendingCallbackIDs), protect(webPage->corePage())->renderTreeSize() }, std::nullopt, std::nullopt, transactionID };
 
     if (webPage->localMainFrame()) {
         bundle.mainFrameData = MainFrameData { };
@@ -406,6 +406,9 @@ void RemoteLayerTreeDrawingArea::updateRendering()
         webPage->willCommitMainFrameData(mainFrameData, transactionID);
         willCommitMainFrameData(mainFrameData);
     }
+
+    bundle.editorState = webPage->editorStateIfUpdateNeeded();
+
     bundle.startTime = *std::exchange(m_updateStartTime, std::nullopt);
 
     auto commitEncoder = makeUniqueRef<IPC::Encoder>(Messages::RemoteLayerTreeDrawingAreaProxy::CommitLayerTree::name(), m_identifier.toUInt64());
@@ -441,7 +444,7 @@ void RemoteLayerTreeDrawingArea::updateRendering()
 
 void RemoteLayerTreeDrawingArea::didCompleteRenderingUpdateDisplayFlush(bool flushSucceeded)
 {
-    protectedWebPage()->didFlushLayerTreeAtTime(MonotonicTime::now(), flushSucceeded);
+    protect(m_webPage)->didFlushLayerTreeAtTime(MonotonicTime::now(), flushSucceeded);
     didCompleteRenderingUpdateDisplay();
 }
 
@@ -547,7 +550,28 @@ void RemoteLayerTreeDrawingArea::dispatchAfterEnsuringDrawing(IPC::AsyncReplyID 
 
 void RemoteLayerTreeDrawingArea::adoptLayersFromDrawingArea(DrawingArea& oldDrawingArea)
 {
-    m_remoteLayerTreeContext->adoptLayersFromContext(downcast<RemoteLayerTreeDrawingArea>(oldDrawingArea).m_remoteLayerTreeContext);
+    Ref oldArea = downcast<RemoteLayerTreeDrawingArea>(oldDrawingArea);
+    m_remoteLayerTreeContext->adoptLayersFromContext(oldArea->m_remoteLayerTreeContext);
+
+    // RenderLayerCompositor::setIsInWindow() bails out while m_rootLayerAttachment is set, so a page that already
+    // attached to the old drawing area never attaches to the new one; take the attachment over here.
+    for (auto& oldRootLayer : oldArea->m_rootLayers) {
+        auto* rootLayerInfo = rootLayerInfoWithFrameIdentifier(oldRootLayer.frameID);
+        if (!rootLayerInfo)
+            continue;
+        ASSERT(!rootLayerInfo->contentLayer);
+        rootLayerInfo->contentLayer = std::exchange(oldRootLayer.contentLayer, nullptr);
+
+        // Unlike the root layer, a view overlay can already be attached here: updatePreferences() runs
+        // first and DebugPageOverlays::settingsChanged() reaches the chrome client synchronously.
+        if (RefPtr viewOverlayRootLayer = std::exchange(oldRootLayer.viewOverlayRootLayer, nullptr))
+            rootLayerInfo->viewOverlayRootLayer = WTF::move(viewOverlayRootLayer);
+        // The size comes from mainFrameContentSizeChanged(), which a restore need not produce again.
+        rootLayerInfo->layer->setSize(oldRootLayer.layer->size());
+    }
+
+    updateRootLayers();
+    triggerRenderingUpdate();
 }
 
 void RemoteLayerTreeDrawingArea::scheduleRenderingUpdateTimerFired()
@@ -569,10 +593,10 @@ bool RemoteLayerTreeDrawingArea::scheduleRenderingUpdate()
         if (displayDidRefreshIsPending())
             return true;
 
-        callOnMainRunLoop([self = WeakPtr { this }] () {
-            if (self) {
-                self->m_isScheduled = false;
-                self->triggerRenderingUpdate();
+        callOnMainRunLoop([weakThis = WeakPtr { *this }] () {
+            if (RefPtr protectedThis = weakThis) {
+                protectedThis->m_isScheduled = false;
+                protectedThis->triggerRenderingUpdate();
             }
         });
     } else

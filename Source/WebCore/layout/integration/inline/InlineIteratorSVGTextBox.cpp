@@ -26,7 +26,9 @@
 #include "config.h"
 #include "InlineIteratorSVGTextBox.h"
 
+#include "FontCascadeInlines.h"
 #include "LayoutIntegrationLineLayout.h"
+#include "RenderBlockFlowInlines.h"
 #include "RenderSVGText.h"
 #include "SVGInlineTextBox.h"
 #include "SVGRootInlineBox.h"
@@ -69,7 +71,7 @@ LayoutRect SVGTextBox::localSelectionRect(unsigned start, unsigned end) const
     if (clampedStart >= clampedEnd)
         return LayoutRect();
 
-    auto& style = renderer().style();
+    CheckedRef style = renderer().style();
 
     AffineTransform fragmentTransform;
     FloatRect selectionRect;
@@ -117,7 +119,7 @@ SVGTextBoxIterator::SVGTextBoxIterator(const Box& box)
 
 SVGTextBoxIterator firstSVGTextBoxFor(const RenderSVGInlineText& text)
 {
-    if (auto* lineLayout = LayoutIntegration::LineLayout::containing(text)) {
+    if (CheckedPtr lineLayout = LayoutIntegration::LineLayout::containing(text)) {
         auto box = lineLayout->textBoxesFor(text);
         if (!box)
             return { };
@@ -152,7 +154,7 @@ SVGTextBox::Key makeKey(const SVGTextBox& textBox)
 
 BoxRange<BoxIterator> boxesFor(const RenderSVGText& svgText)
 {
-    if (auto* lineLayout = svgText.inlineLayout())
+    if (CheckedPtr lineLayout = svgText.inlineLayout())
         return { BoxIterator { *lineLayout->firstRootInlineBox() } };
 
     return { BoxIterator { BoxLegacyPath { svgText.legacyRootBox() } } };
@@ -160,8 +162,8 @@ BoxRange<BoxIterator> boxesFor(const RenderSVGText& svgText)
 
 BoxIterator lastBoxFor(const RenderSVGText& svgText)
 {
-    if (auto* lineLayout = svgText.inlineLayout())
-        return { BoxIterator { *lineLayout->lastRootInlineBox() } };
+    if (CheckedPtr lineLayout = svgText.inlineLayout())
+        return lineLayout->lastBox();
 
     return { BoxIterator { BoxLegacyPath { svgText.legacyRootBox() } } };
 }

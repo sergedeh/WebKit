@@ -62,12 +62,19 @@ enum class ValueType {
 //   (e.g "block-start inline-end" becomes "start end")
 //
 // Returns null if the keywords aren't valid/compatible. Otherwise, return a
-// CSSPrimitiveValue or CSSValuePair depending on if the keywords can be collapsed.
-RefPtr<CSSValue> valueForPositionArea(CSSValueID, CSSValueID, ValueType);
+// CSSKeywordValue or CSSValuePair depending on if the keywords can be collapsed.
+RefPtr<CSSValue> NODELETE valueForPositionArea(CSSValueID, CSSValueID, ValueType);
 
 // MARK: <'position-area'>
 // https://drafts.csswg.org/css-anchor-position-1/#propdef-position-area
 RefPtr<CSSValue> consumePositionArea(CSSParserTokenRange&, CSS::PropertyParserState&);
+
+// MARK: <pinned-anchor-name>
+//
+// Hand-written rather than generated so that, when the spatial portal feature is enabled, the anchor
+// name can carry a '#'-delimited suffix naming an attachment point inside the anchor's model asset.
+// See consumePinnedAnchorName() for the grammar.
+RefPtr<CSSValue> consumePinnedAnchorName(CSSParserTokenRange&, CSS::PropertyParserState&);
 
 } // namespace CSSPropertyParserHelpers
 } // namespace WebCore

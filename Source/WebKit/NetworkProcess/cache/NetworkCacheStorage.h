@@ -101,6 +101,7 @@ public:
     // This may call completion handler synchronously on failure.
     using RetrieveCompletionHandler = CompletionHandler<bool(Record&&, const Timings&)>;
     void retrieve(const Key&, unsigned priority, RetrieveCompletionHandler&&);
+    bool NODELETE mayContain(const Key&) const;
 
     using MappedBodyHandler = Function<void (const Data& mappedBody)>;
     void store(const Record&, MappedBodyHandler&&, bool storeBlobInMemoryCache = false);
@@ -114,10 +115,12 @@ public:
         double worth; // 0-1 where 1 is the most valuable.
         unsigned bodyShareCount;
         String bodyHash;
+        WallTime lastAccessTime;
     };
     enum class TraverseFlag : uint8_t {
         ComputeWorth = 1 << 0,
         ShareCount = 1 << 1,
+        LastAccessedRecordPerPartition = 1 << 2,
     };
     using TraverseHandler = Function<void (const Record*, const RecordInfo&)>;
     // Null record signals end.
@@ -126,16 +129,16 @@ public:
 
     void setCapacity(size_t);
     size_t capacity() const { return m_capacity; }
-    size_t approximateSize() const;
+    size_t NODELETE approximateSize() const;
 
     // Incrementing this number will delete all existing cache content for everyone. Do you really need to do it?
-    static const unsigned version = 17;
+    static const unsigned version = 18;
 
     String basePathIsolatedCopy() const;
     String versionPath() const;
     String recordsPathIsolatedCopy() const;
 
-    const Salt& salt() const { return m_salt; }
+    const Salt& salt() const LIFETIME_BOUND { return m_salt; }
 
     ~Storage();
 
@@ -148,7 +151,7 @@ private:
     String recordPathForKey(const Key&) const;
     String blobPathForKey(const Key&) const;
 
-    void traverseWithinRootPath(const String& rootPath, const String& type, OptionSet<TraverseFlag>, TraverseHandler&&);
+    void traverseInternal(const String& partitionName, const String& type, OptionSet<TraverseFlag>, TraverseHandler&&);
 
     void synchronize();
     void deleteOldVersions();
@@ -182,13 +185,14 @@ private:
     ConcurrentWorkQueue& backgroundIOQueue() { return m_backgroundIOQueue.get(); }
     WorkQueue& serialBackgroundIOQueue() { return m_serialBackgroundIOQueue.get(); }
 
-    bool mayContain(const Key&) const;
-    bool mayContainBlob(const Key&) const;
+    bool NODELETE mayContainBlob(const Key&) const;
 
     void addToRecordFilter(const Key&);
     void deleteFiles(const Key&);
 
-    static bool isHigherPriority(const std::unique_ptr<ReadOperation>&, const std::unique_ptr<ReadOperation>&);
+    struct ReadOperationIsLowerPriority {
+        bool NODELETE operator()(const std::unique_ptr<ReadOperation>&, const std::unique_ptr<ReadOperation>&) const;
+    };
 
     size_t estimateRecordsSize(unsigned recordCount, unsigned blobCount) const;
     uint32_t volumeBlockSize() const;
@@ -215,7 +219,7 @@ private:
     Vector<Key::HashType> m_recordFilterHashesAddedDuringSynchronization;
     Vector<Key::HashType> m_blobFilterHashesAddedDuringSynchronization;
 
-    PriorityQueue<std::unique_ptr<ReadOperation>, &isHigherPriority> m_pendingReadOperations;
+    PriorityQueue<std::unique_ptr<ReadOperation>, ReadOperationIsLowerPriority> m_pendingReadOperations;
     HashMap<ReadOperationIdentifier, std::unique_ptr<ReadOperation>> m_activeReadOperations;
     WebCore::Timer m_readOperationTimeoutTimer;
 

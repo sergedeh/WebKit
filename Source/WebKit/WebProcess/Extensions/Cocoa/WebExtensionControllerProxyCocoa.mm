@@ -44,6 +44,8 @@
 #include "WebFrame.h"
 #include "WebPage.h"
 #include "WebProcess.h"
+#include <JavaScriptCore/APICast.h>
+#include <WebCore/JSDOMGlobalObject.h>
 
 namespace WebKit {
 
@@ -65,12 +67,11 @@ void WebExtensionControllerProxy::globalObjectIsAvailableForFrame(WebPage& page,
     auto context = frame.jsContextForWorld(world);
     auto globalObject = JSContextGetGlobalObject(context);
 
-    JSRetainPtr browserString = toJSString("browser"_s);
+    RefPtr browserString = toJSString("browser"_s);
     if (!browserString)
         return;
 
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG auto namespaceObject = JSObjectGetProperty(context, globalObject, browserString.get(), nullptr);
+    auto namespaceObject = JSObjectGetProperty(context, globalObject, browserString.get(), nullptr);
     if (namespaceObject && JSValueIsObject(context, namespaceObject))
         return;
 
@@ -90,12 +91,15 @@ void WebExtensionControllerProxy::globalObjectIsAvailableForFrame(WebPage& page,
 
     namespaceObject = toJS(context, WebExtensionAPINamespace::create(contentWorldType, *extension).ptr());
 
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, globalObject, browserString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
+    JSObjectSetProperty(context, globalObject, browserString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
 
-    if (JSRetainPtr chromeString = toJSString("chrome"_s)) {
-        // This is a safer cpp false positive (rdar://163760990).
-        SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, globalObject, chromeString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
+    if (RefPtr chromeString = toJSString("chrome"_s))
+        JSObjectSetProperty(context, globalObject, chromeString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
+
+    if (auto* domGlobalObject = dynamicDowncast<JSDOMGlobalObject>(toJS(context))) {
+        domGlobalObject->addScriptErrorCallback([extension = Ref { *extension }, contentWorldType](const String& message, const String& sourceURL, unsigned lineNumber, unsigned columnNumber) {
+            extension->didEncounterScriptError(message, sourceURL, lineNumber, columnNumber, contentWorldType);
+        });
     }
 }
 
@@ -110,12 +114,11 @@ void WebExtensionControllerProxy::serviceWorkerGlobalObjectIsAvailableForFrame(W
     auto context = frame.jsContextForServiceWorkerWorld(world);
     auto globalObject = JSContextGetGlobalObject(context);
 
-    JSRetainPtr browserString = toJSString("browser"_s);
+    RefPtr browserString = toJSString("browser"_s);
     if (!browserString)
         return;
 
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG auto namespaceObject = JSObjectGetProperty(context, globalObject, browserString.get(), nullptr);
+    auto namespaceObject = JSObjectGetProperty(context, globalObject, browserString.get(), nullptr);
     if (namespaceObject && JSValueIsObject(context, namespaceObject))
         return;
 
@@ -123,11 +126,14 @@ void WebExtensionControllerProxy::serviceWorkerGlobalObjectIsAvailableForFrame(W
 
     namespaceObject = toJS(context, WebExtensionAPINamespace::create(WebExtensionContentWorldType::Main, *extension).ptr());
 
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, globalObject, browserString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
-    if (JSRetainPtr chromeString = toJSString("chrome"_s)) {
-        // This is a safer cpp false positive (rdar://163760990).
-        SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, globalObject, chromeString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
+    JSObjectSetProperty(context, globalObject, browserString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
+    if (RefPtr chromeString = toJSString("chrome"_s))
+        JSObjectSetProperty(context, globalObject, chromeString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
+
+    if (auto* domGlobalObject = dynamicDowncast<JSDOMGlobalObject>(toJS(context))) {
+        domGlobalObject->addScriptErrorCallback([extension = Ref { *extension }](const String& message, const String& sourceURL, unsigned lineNumber, unsigned columnNumber) {
+            extension->didEncounterScriptError(message, sourceURL, lineNumber, columnNumber, WebExtensionContentWorldType::Main);
+        });
     }
 }
 
@@ -136,19 +142,40 @@ void WebExtensionControllerProxy::addBindingsToWebPageFrameIfNecessary(WebFrame&
     auto context = frame.jsContextForWorld(world);
     auto globalObject = JSContextGetGlobalObject(context);
 
-    JSRetainPtr browserString = toJSString("browser"_s);
+    RefPtr browserString = toJSString("browser"_s);
     if (!browserString)
         return;
 
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG auto namespaceObject = JSObjectGetProperty(context, globalObject, browserString.get(), nullptr);
-    if (namespaceObject && JSValueIsObject(context, namespaceObject))
+    auto namespaceObject = JSObjectGetProperty(context, globalObject, browserString.get(), nullptr);
+    bool browserAlreadySet = namespaceObject && JSValueIsObject(context, namespaceObject);
+
+    auto* domGlobalObject = dynamicDowncast<JSDOMGlobalObject>(toJS(context));
+    bool callbacksAlreadyRegistered = !domGlobalObject || domGlobalObject->hasScriptErrorCallbacks();
+
+    // If both browser and callbacks are already set up, nothing to do.
+    if (browserAlreadySet && callbacksAlreadyRegistered)
         return;
 
-    namespaceObject = toJS(context, WebExtensionAPIWebPageNamespace::create(WebExtensionContentWorldType::WebPage).ptr());
+    if (!browserAlreadySet) {
+        namespaceObject = toJS(context, WebExtensionAPIWebPageNamespace::create(WebExtensionContentWorldType::WebPage).ptr());
 
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, globalObject, browserString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
+        JSObjectSetProperty(context, globalObject, browserString.get(), namespaceObject, kJSPropertyAttributeNone, nullptr);
+    }
+
+    // For each loaded extension, install a callback that fires only when an error's sourceURL
+    // originates from that extension (main-world content script case). Guard against registering
+    // duplicate callbacks: if no callbacks are registered yet (e.g. extension contexts were not
+    // yet loaded when the global object was first created), register them now.
+    if (domGlobalObject && !domGlobalObject->hasScriptErrorCallbacks()) {
+        for (Ref extensionContext : m_extensionContexts) {
+            domGlobalObject->addScriptErrorCallback([extensionContext = extensionContext.copyRef()](const String& message, const String& sourceURL, unsigned lineNumber, unsigned columnNumber) {
+                if (!extensionContext->isURLForThisExtension(URL(URL(), sourceURL)))
+                    return;
+
+                extensionContext->didEncounterScriptError(message, sourceURL, lineNumber, columnNumber, WebExtensionContentWorldType::Main);
+            });
+        }
+    }
 }
 
 static WebExtensionFrameParameters toFrameParameters(WebFrame& frame, const URL& url, bool includeDocumentIdentifier = true)

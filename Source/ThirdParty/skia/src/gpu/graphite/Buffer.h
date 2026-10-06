@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Google Inc.
+ * Copyright 2021 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -24,7 +24,6 @@ class SharedContext;
 class Buffer : public Resource {
 public:
     size_t size() const { return fSize; }
-    Protected isProtected() const { return fIsProtected; }
 
     // TODO(b/262249983): Separate into mapRead(), mapWrite() methods.
     // If the buffer is already mapped then pointer is returned. If an asyncMap() was started then
@@ -42,15 +41,19 @@ public:
 
     const char* getResourceType() const override { return "Buffer"; }
 
+    Protected isProtected() const override { return fIsProtected; }
+
 protected:
     Buffer(const SharedContext* sharedContext,
            size_t size,
            Protected isProtected,
+           std::string_view label,
            bool reusableRequiresPurgeable = false,
            bool requiresPrepareForReturnToCache = false)
             : Resource(sharedContext,
                        Ownership::kOwned,
                        size,
+                       label,
                        reusableRequiresPurgeable,
                        requiresPrepareForReturnToCache)
             , fSize(size)

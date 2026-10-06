@@ -34,13 +34,16 @@
 #include "Gamepad.h"
 #include "GamepadEffectParameters.h"
 #include "GamepadProvider.h"
+#include "JSDOMConvertEnumeration.h"
+#include "JSDOMConvertStrings.h"
 #include "JSDOMPromiseDeferred.h"
 #include "Settings.h"
+#include <JavaScriptCore/JSString.h>
 #include <wtf/CompletionHandler.h>
 
 namespace WebCore {
 
-static bool areEffectParametersValid(GamepadHapticEffectType effectType, const GamepadEffectParameters& parameters)
+static bool NODELETE areEffectParametersValid(GamepadHapticEffectType effectType, const GamepadEffectParameters& parameters)
 {
     if (parameters.duration < 0 || parameters.startDelay < 0)
         return false;

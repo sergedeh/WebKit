@@ -39,31 +39,23 @@ class RenderbufferVk : public RenderbufferImpl, public angle::ObserverInterface
 
     angle::Result copyRenderbufferSubData(const gl::Context *context,
                                           const gl::Renderbuffer *srcBuffer,
-                                          GLint srcLevel,
                                           GLint srcX,
                                           GLint srcY,
-                                          GLint srcZ,
-                                          GLint dstLevel,
                                           GLint dstX,
                                           GLint dstY,
-                                          GLint dstZ,
                                           GLsizei srcWidth,
-                                          GLsizei srcHeight,
-                                          GLsizei srcDepth) override;
+                                          GLsizei srcHeight) override;
 
     angle::Result copyTextureSubData(const gl::Context *context,
                                      const gl::Texture *srcTexture,
-                                     GLint srcLevel,
+                                     gl::LevelIndex srcLevel,
                                      GLint srcX,
                                      GLint srcY,
-                                     GLint srcZ,
-                                     GLint dstLevel,
+                                     gl::LayerIndex srcZ,
                                      GLint dstX,
                                      GLint dstY,
-                                     GLint dstZ,
                                      GLsizei srcWidth,
-                                     GLsizei srcHeight,
-                                     GLsizei srcDepth) override;
+                                     GLsizei srcHeight) override;
 
     angle::Result getAttachmentRenderTarget(const gl::Context *context,
                                             GLenum binding,
@@ -107,8 +99,6 @@ class RenderbufferVk : public RenderbufferImpl, public angle::ObserverInterface
     void onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message) override;
 
     bool mOwnsImage;
-    // Generated from ImageVk if EGLImage target.
-    UniqueSerial mImageSiblingSerial;
 
     // |mOwnsImage| indicates that |RenderbufferVk| owns the image.  Otherwise, this is a weak
     // pointer shared with another class.  Due to this sharing, for example through EGL images, the
@@ -127,6 +117,8 @@ class RenderbufferVk : public RenderbufferImpl, public angle::ObserverInterface
     RenderTargetVk mRenderTarget;
 
     angle::ObserverBinding mImageObserverBinding;
+
+    vk::Renderer *mRenderer;
 };
 
 }  // namespace rx

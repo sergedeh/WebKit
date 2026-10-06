@@ -62,12 +62,12 @@ struct SameSizeAsFontCascadeDescription {
 static_assert(sizeof(FontCascadeDescription) == sizeof(SameSizeAsFontCascadeDescription), "FontCascadeDescription should stay small");
 
 FontCascadeDescription::FontCascadeDescription()
-    : m_families(RefCountedFixedVector<AtomString>::create(1))
+    : m_families(RefCountedFixedVector<FontFamily>::create(1))
     , m_isAbsoluteSize(false)
-    , m_kerning(enumToUnderlyingType(Kerning::Auto))
+    , m_kerning(std::to_underlying(Kerning::Auto))
     , m_keywordSize(0)
-    , m_fontSmoothing(enumToUnderlyingType(FontSmoothingMode::Auto))
-    , m_isSpecifiedFont(false)
+    , m_fontSmoothing(std::to_underlying(FontSmoothingMode::Auto))
+    , m_hasAuthorSpecifiedNonGenericPrimaryFont(false)
 {
 }
 
@@ -93,8 +93,6 @@ FontSelectionValue FontCascadeDescription::bolderWeight(FontSelectionValue weigh
     return weight;
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 bool FontCascadeDescription::familiesEqualForTextAutoSizing(const FontCascadeDescription& other) const
 {
     unsigned thisFamilyCount = familyCount();
@@ -104,14 +102,12 @@ bool FontCascadeDescription::familiesEqualForTextAutoSizing(const FontCascadeDes
         return false;
 
     for (unsigned i = 0; i < thisFamilyCount; ++i) {
-        if (!familyNamesAreEqual(familyAt(i), other.familyAt(i)))
+        if (!familyNamesAreEqual(familyAt(i).name, other.familyAt(i).name))
             return false;
     }
 
     return true;
 }
-
-#endif // ENABLE(TEXT_AUTOSIZING)
 
 bool FontCascadeDescription::familyNamesAreEqual(const AtomString& family1, const AtomString& family2)
 {
@@ -156,8 +152,16 @@ void FontCascadeDescription::resolveFontSizeAdjustFromFontIfNeeded(const Font& f
     if (!fontSizeAdjust.shouldResolveFromFont())
         return;
 
-    auto aspectValue = fontSizeAdjust.resolve(computedSize(), font.fontMetrics());
+    auto aspectValue = fontSizeAdjust.resolve(usedSize(), font.fontMetrics());
     setFontSizeAdjust({ fontSizeAdjust.metric, FontSizeAdjust::ValueType::FromFont, aspectValue });
+}
+
+TextStream& operator<<(TextStream& ts, const FontFamily& family)
+{
+    ts << family.name;
+    if (family.isGeneric())
+        ts << " (generic)"_s;
+    return ts;
 }
 
 TextStream& operator<<(TextStream& ts, const FontCascadeDescription& fontCascadeDescription)
@@ -170,8 +174,8 @@ TextStream& operator<<(TextStream& ts, const FontCascadeDescription& fontCascade
         first = false;
     }
 
-    ts << ", specified size "_s << fontCascadeDescription.specifiedSize();
-    ts << ", computed size "_s << fontCascadeDescription.computedSize();
+    ts << ", specified size "_s << fontCascadeDescription.computedSize();
+    ts << ", used size "_s << fontCascadeDescription.usedSize();
     ts << ", is absolute size "_s << fontCascadeDescription.isAbsoluteSize();
     if (fontCascadeDescription.kerning() != Kerning::Auto)
         ts << ", kerning "_s << fontCascadeDescription.kerning();
@@ -180,7 +184,7 @@ TextStream& operator<<(TextStream& ts, const FontCascadeDescription& fontCascade
         ts << ", font smoothing "_s << fontCascadeDescription.fontSmoothing();
 
     ts << ", keyword size "_s << fontCascadeDescription.keywordSize();
-    ts << ", is specified font "_s << fontCascadeDescription.isSpecifiedFont();
+    ts << ", has author specified non-generic primary font "_s << fontCascadeDescription.hasAuthorSpecifiedNonGenericPrimaryFont();
 
     return ts;
 }

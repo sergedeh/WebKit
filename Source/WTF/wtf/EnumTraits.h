@@ -57,11 +57,13 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <concepts>
 #include <span>
 #include <type_traits>
 #include <utility>
 #include <wtf/Compiler.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace WTF {
 
@@ -80,7 +82,7 @@ public:
     static constexpr size_t count = sizeof...(values);
 
     template <typename Callable>
-    static void forEach(Callable&& c)
+    static void forEach(NOESCAPE const Callable& c)
     {
         for (auto value : { values... })
             c(value);
@@ -93,7 +95,7 @@ template<typename T, typename E, E e, E... es>
 struct EnumValueChecker<T, EnumValues<E, e, es...>> {
     static constexpr bool isValidEnumForPersistence(T t)
     {
-        return (static_cast<T>(e) == t) ? true : EnumValueChecker<T, EnumValues<E, es...>>::isValidEnumForPersistence(t);
+        return (static_cast<T>(e) == t) || EnumValueChecker<T, EnumValues<E, es...>>::isValidEnumForPersistence(t);
     }
 };
 
@@ -121,12 +123,6 @@ constexpr bool isValidEnumForPersistence(bool t)
     return !t || t == 1;
 }
 
-template<typename E>
-constexpr auto enumToUnderlyingType(E e)
-{
-    return static_cast<std::underlying_type_t<E>>(e);
-}
-
 template<typename T, typename E> struct ZeroBasedContiguousEnumChecker;
 
 template<typename T, typename E, E e, E... es>
@@ -134,7 +130,7 @@ struct ZeroBasedContiguousEnumChecker<T, EnumValues<E, e, es...>> {
     template<size_t INDEX = 0>
     static constexpr bool isZeroBasedContiguousEnum()
     {
-        return (enumToUnderlyingType(e) == INDEX) ? ZeroBasedContiguousEnumChecker<T, EnumValues<E, es...>>::template isZeroBasedContiguousEnum<INDEX + 1>() : false;
+        return (std::to_underlying(e) == INDEX) ? ZeroBasedContiguousEnumChecker<T, EnumValues<E, es...>>::template isZeroBasedContiguousEnum<INDEX + 1>() : false;
     }
 };
 
@@ -170,6 +166,25 @@ template <typename, auto>
 inline constexpr bool isEnumConstexprStaticCastValid = true;
 #endif
 
+// Copies the characters returned by nameFunction() into static storage, with a null terminator
+// appended so that they can be exposed as an ASCIILiteral.
+template<std::span<const char> (*nameFunction)()>
+constexpr auto nullTerminatedNameStorage = ([] {
+    constexpr auto name = nameFunction();
+    std::array<char, name.size() + 1> storage { };
+    std::ranges::copy(name, storage.begin());
+    return storage;
+}());
+
+template<std::span<const char> (*nameFunction)()>
+constexpr ASCIILiteral nullTerminatedName()
+{
+    if constexpr (nameFunction().empty())
+        return { };
+    else
+        return ASCIILiteral::fromLiteralUnsafe(nullTerminatedNameStorage<nameFunction>.data());
+}
+
 template<typename E>
 constexpr std::span<const char> enumTypeNameImpl()
 {
@@ -193,10 +208,9 @@ constexpr std::span<const char> enumTypeNameImpl()
     return name;
 }
 template<typename E>
-constexpr std::span<const char> enumTypeName()
+constexpr ASCIILiteral enumTypeName()
 {
-    constexpr auto result = enumTypeNameImpl<std::decay_t<E>>(); // Force the span to be generated at compile time.
-    return result;
+    return nullTerminatedName<&enumTypeNameImpl<std::decay_t<E>>>();
 }
 
 template<auto V>
@@ -227,14 +241,13 @@ constexpr std::span<const char> enumNameImpl()
 }
 
 template<auto V>
-constexpr std::span<const char> enumName()
+constexpr ASCIILiteral enumName()
 {
-    constexpr auto result = enumNameImpl<V>(); // Force the span to be generated at compile time.
-    return result;
+    return nullTerminatedName<&enumNameImpl<V>>();
 }
 
 template<typename E, auto V>
-constexpr std::span<const char> enumName()
+constexpr ASCIILiteral enumName()
 {
     if constexpr (isEnumConstexprStaticCastValid<E, V>)
         return enumName<static_cast<E>(V)>();
@@ -287,7 +300,7 @@ template<typename E, size_t... Is>
 constexpr auto makeEnumNames(std::index_sequence<Is...>)
 {
     constexpr auto min = enumNamesMin<E>();
-    return std::array<std::span<const char>, sizeof...(Is)> {
+    return std::array<ASCIILiteral, sizeof...(Is)> {
         enumName<E, static_cast<std::underlying_type_t<E>>(Is) + min>()...
     };
 }
@@ -300,7 +313,7 @@ constexpr auto enumNames()
 }
 
 template<typename E>
-constexpr std::span<const char> enumName(E v)
+constexpr ASCIILiteral enumName(E v)
 {
     static_assert(std::is_enum_v<E>, "enumName can only be used with enum types.");
 
@@ -313,7 +326,7 @@ constexpr std::span<const char> enumName(E v)
 
     Underlying value = static_cast<Underlying>(v);
     if (value < min || value > max)
-        return { "enum out of range" };
+        return "enum out of range"_s;
 
     // Compute index safely using unsigned extension.
     size_t index = static_cast<size_t>(static_cast<Unsigned>(value - min));
@@ -326,7 +339,6 @@ constexpr std::span<const char> enumName(E v)
 
 } // namespace WTF
 
-using WTF::enumToUnderlyingType;
 using WTF::isValidEnum;
 using WTF::isZeroBasedContiguousEnum;
 using WTF::enumTypeName;

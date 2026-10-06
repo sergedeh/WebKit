@@ -39,10 +39,11 @@
 #include "CSSParserContext.h"
 #include "CSSPropertyParserConsumer+Font.h"
 #include "InspectorInstrumentation.h"
-#include "RenderStyle.h"
 #include "ScriptExecutionContext.h"
+#include "StyleComputedStyle.h"
 #include "StyleResolveForFont.h"
 #include "TextMetrics.h"
+#include "TextRun.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -91,7 +92,7 @@ OffscreenCanvasRenderingContext2D::~OffscreenCanvasRenderingContext2D() = defaul
 
 void OffscreenCanvasRenderingContext2D::setFont(const String& newFont)
 {
-    Ref context = *canvasBase().scriptExecutionContext();
+    Ref context = *protect(canvasBase())->scriptExecutionContext();
 
     if (newFont.isEmpty())
         return;
@@ -114,12 +115,12 @@ void OffscreenCanvasRenderingContext2D::setFont(const String& newFont)
     // relative to the default font.
     FontCascadeDescription fontDescription;
     fontDescription.setOneFamily(DefaultFontFamily);
-    fontDescription.setSpecifiedSize(DefaultFontSize);
     fontDescription.setComputedSize(DefaultFontSize);
+    fontDescription.setUsedSize(DefaultFontSize);
 
     if (auto fontCascade = Style::resolveForUnresolvedFont(*unresolvedFont, WTF::move(fontDescription), context)) {
         ASSERT(context->cssFontSelector());
-        modifiableState().font.initialize(*context->cssFontSelector(), *fontCascade);
+        modifiableState().font.initialize(protect(*context->cssFontSelector()), protect(*fontCascade));
 
         String letterSpacing;
         setLetterSpacing(std::exchange(modifiableState().letterSpacing, letterSpacing));
@@ -130,9 +131,9 @@ void OffscreenCanvasRenderingContext2D::setFont(const String& newFont)
 
 RefPtr<ImageBuffer> OffscreenCanvasRenderingContext2D::transferToImageBuffer()
 {
-    if (!canvasBase().hasCreatedImageBuffer())
-        return canvasBase().allocateImageBuffer();
-    RefPtr buffer = canvasBase().buffer();
+    if (!hasCreatedImageBuffer())
+        return allocateImageBuffer();
+    RefPtr buffer = this->buffer();
     if (!buffer)
         return nullptr;
     // As the canvas context state is stored in GraphicsContext, which is owned
@@ -144,6 +145,7 @@ RefPtr<ImageBuffer> OffscreenCanvasRenderingContext2D::transferToImageBuffer()
     if (result)
         result->flushDrawingContext();
 #endif
+    willUpdateEntireContents();
     clearCanvas();
     return result;
 }

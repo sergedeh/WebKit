@@ -31,6 +31,7 @@
 #include "HeapInlines.h"
 #include "InspectorEnvironment.h"
 #include "SamplingProfiler.h"
+#include "VMInlines.h"
 #include <wtf/Stopwatch.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -43,7 +44,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorScriptProfilerAgent);
 InspectorScriptProfilerAgent::InspectorScriptProfilerAgent(AgentContext& context)
     : InspectorAgentBase("ScriptProfiler"_s)
     , m_frontendDispatcher(makeUniqueRef<ScriptProfilerFrontendDispatcher>(context.frontendRouter))
-    , m_backendDispatcher(ScriptProfilerBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(ScriptProfilerBackendDispatcher::create(protect(context.backendDispatcher), this))
     , m_environment(context.environment)
 {
 }
@@ -60,11 +61,57 @@ void InspectorScriptProfilerAgent::willDestroyFrontendAndBackend(DisconnectReaso
     if (m_tracking) {
         m_tracking = false;
         m_activeEvaluateScript = false;
-        checkedEnvironment()->debugger()->setProfilingClient(nullptr);
+        clearProfilingClientFromAllDebuggers();
 
         // Stop sampling without processing the samples.
         stopSamplingWhenDisconnecting();
     }
+}
+
+// A single profiling client is shared by every debugger the environment covers, so nested
+// evaluation across those debuggers is not double-counted.
+void InspectorScriptProfilerAgent::installProfilingClientOnCoveredDebuggers()
+{
+    protect(m_environment)->forEachDebugger([&](JSC::Debugger& debugger) {
+        installProfilingClient(debugger);
+    });
+}
+
+void InspectorScriptProfilerAgent::installProfilingClient(JSC::Debugger& debugger)
+{
+    // A debugger holds at most one profiling client. Nothing else installs one on the debuggers
+    // this agent covers, so this only guards against installing twice into the same debugger.
+    if (debugger.hasProfilingClient())
+        return;
+
+    debugger.setProfilingClient(this);
+}
+
+void InspectorScriptProfilerAgent::installProfilingClientIfTracking(JSC::Debugger& debugger)
+{
+    if (!m_tracking)
+        return;
+
+    installProfilingClient(debugger);
+}
+
+// Uninstalling walks every debugger in the VM instead of the ones the environment currently
+// covers, because that covered set is derived from the live frame tree: a frame that leaves the
+// tree after installation is never visited again, and its debugger would keep calling into this
+// agent, which is destroyed with the inspector controller while the frame can still be alive.
+// The identity check keeps the walk from disturbing debuggers owned by another environment
+// sharing this VM.
+//
+// No lock is needed for the walk: the VM's debugger list is only modified by the Debugger
+// constructor and destructor, and like this agent they only run on a thread that already has
+// exclusive use of the VM (the main thread for pages, the worker thread for workers, the JSLock
+// holder for a JSContext).
+void InspectorScriptProfilerAgent::clearProfilingClientFromAllDebuggers()
+{
+    protect(m_environment)->vm().forEachDebugger([&](JSC::Debugger& debugger) {
+        if (debugger.hasProfilingClient(*this))
+            debugger.setProfilingClient(nullptr);
+    });
 }
 
 Protocol::ErrorStringOr<void> InspectorScriptProfilerAgent::startTracking(std::optional<bool>&& includeSamples)
@@ -74,11 +121,11 @@ Protocol::ErrorStringOr<void> InspectorScriptProfilerAgent::startTracking(std::o
 
     m_tracking = true;
 
-    auto& stopwatch = checkedEnvironment()->executionStopwatch();
+    auto& stopwatch = protect(m_environment)->executionStopwatch();
 
 #if ENABLE(SAMPLING_PROFILER)
     if (includeSamples && *includeSamples) {
-        VM& vm = checkedEnvironment()->debugger()->vm();
+        VM& vm = protect(m_environment)->debugger()->vm();
         SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(stopwatch);
 
         Locker locker { samplingProfiler.getLock() };
@@ -91,7 +138,7 @@ Protocol::ErrorStringOr<void> InspectorScriptProfilerAgent::startTracking(std::o
     UNUSED_PARAM(includeSamples);
 #endif // ENABLE(SAMPLING_PROFILER)
 
-    checkedEnvironment()->debugger()->setProfilingClient(this);
+    installProfilingClientOnCoveredDebuggers();
 
     m_frontendDispatcher->trackingStart(stopwatch.elapsedTime().seconds());
 
@@ -106,7 +153,7 @@ Protocol::ErrorStringOr<void> InspectorScriptProfilerAgent::stopTracking()
     m_tracking = false;
     m_activeEvaluateScript = false;
 
-    checkedEnvironment()->debugger()->setProfilingClient(nullptr);
+    clearProfilingClientFromAllDebuggers();
 
     trackingComplete();
 
@@ -124,25 +171,25 @@ Seconds InspectorScriptProfilerAgent::willEvaluateScript()
 
 #if ENABLE(SAMPLING_PROFILER)
     if (m_enabledSamplingProfiler) {
-        SamplingProfiler* samplingProfiler = checkedEnvironment()->debugger()->vm().samplingProfiler();
+        SamplingProfiler* samplingProfiler = protect(m_environment)->debugger()->vm().samplingProfiler();
         RELEASE_ASSERT(samplingProfiler);
         samplingProfiler->noticeCurrentThreadAsJSCExecutionThread();
     }
 #endif
 
-    return checkedEnvironment()->executionStopwatch().elapsedTime();
+    return protect(m_environment)->executionStopwatch().elapsedTime();
 }
 
 void InspectorScriptProfilerAgent::didEvaluateScript(Seconds startTime, ProfilingReason reason)
 {
     m_activeEvaluateScript = false;
 
-    Seconds endTime = checkedEnvironment()->executionStopwatch().elapsedTime();
+    Seconds endTime = protect(m_environment)->executionStopwatch().elapsedTime();
 
     addEvent(startTime, endTime, reason);
 }
 
-static Protocol::ScriptProfiler::EventType toProtocol(ProfilingReason reason)
+static Protocol::ScriptProfiler::EventType NODELETE toProtocol(ProfilingReason reason)
 {
     switch (reason) {
     case ProfilingReason::API:
@@ -210,11 +257,11 @@ static Ref<Protocol::ScriptProfiler::Samples> buildSamples(VM& vm, Vector<Sampli
 
 void InspectorScriptProfilerAgent::trackingComplete()
 {
-    auto stopwatchTimestamp = checkedEnvironment()->executionStopwatch().elapsedTime().seconds();
+    auto stopwatchTimestamp = protect(m_environment)->executionStopwatch().elapsedTime().seconds();
 
 #if ENABLE(SAMPLING_PROFILER)
     if (m_enabledSamplingProfiler) {
-        VM& vm = checkedEnvironment()->debugger()->vm();
+        VM& vm = protect(m_environment)->debugger()->vm();
         JSLockHolder lock(vm);
         DeferGC deferGC(vm); // This is required because we will have raw pointers into the heap after we releaseStackTraces().
         SamplingProfiler* samplingProfiler = vm.samplingProfiler();
@@ -243,7 +290,7 @@ void InspectorScriptProfilerAgent::stopSamplingWhenDisconnecting()
     if (!m_enabledSamplingProfiler)
         return;
 
-    VM& vm = checkedEnvironment()->debugger()->vm();
+    VM& vm = protect(m_environment)->debugger()->vm();
     JSLockHolder lock(vm);
     SamplingProfiler* samplingProfiler = vm.samplingProfiler();
     RELEASE_ASSERT(samplingProfiler);

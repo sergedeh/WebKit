@@ -46,7 +46,7 @@ ServicesController& ServicesController::singleton()
 }
 
 ServicesController::ServicesController()
-    : m_refreshQueue(adoptOSObject(dispatch_queue_create("com.apple.WebKit.ServicesController", DISPATCH_QUEUE_SERIAL)))
+    : m_refreshQueue(adoptOSObject(dispatch_queue_create("com.apple.WebKit.ServicesController", serialQueueWithAutoreleasePoolAttrSingleton())))
     , m_hasPendingRefresh(false)
     , m_hasImageServices(false)
     , m_hasSelectionServices(false)
@@ -60,9 +60,9 @@ ServicesController::ServicesController()
     };
 
     auto extensionAttributes = @{ @"NSExtensionPointName" : @"com.apple.services" };
-    m_extensionWatcher = [NSExtension beginMatchingExtensionsWithAttributes:extensionAttributes completion:refreshCallback];
+    lazyInitialize(m_extensionWatcher, retainPtr([NSExtension beginMatchingExtensionsWithAttributes:extensionAttributes completion:refreshCallback]));
     auto uiExtensionAttributes = @{ @"NSExtensionPointName" : @"com.apple.ui-services" };
-    m_uiExtensionWatcher = [NSExtension beginMatchingExtensionsWithAttributes:uiExtensionAttributes completion:refreshCallback];
+    lazyInitialize(m_uiExtensionWatcher, retainPtr([NSExtension beginMatchingExtensionsWithAttributes:uiExtensionAttributes completion:refreshCallback]));
 }
 
 static void hasCompatibleServicesForItems(dispatch_group_t group, NSArray *items, WTF::Function<void(bool)>&& completionHandler)

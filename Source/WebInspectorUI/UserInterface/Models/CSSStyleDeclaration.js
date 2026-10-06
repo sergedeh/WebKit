@@ -57,6 +57,28 @@ WI.CSSStyleDeclaration = class CSSStyleDeclaration extends WI.Object
 
     // Public
 
+    static stringIdForStyleId(styleId, {inherited, pseudoId, type, node} = {})
+    {
+        if (!styleId)
+            return "";
+
+        let result = styleId.styleSheetId + "/" + styleId.ordinal;
+
+        if (pseudoId)
+            result += ":" + pseudoId;
+
+        if (inherited !== undefined)
+            result += ":" + (inherited ? "I" : "N");
+
+        if (node)
+            result += ":" + node.id;
+
+        if (type === WI.CSSStyleDeclaration.Type.Attribute && node)
+            result += ":attribute";
+
+        return result;
+    }
+
     get initialState() { return this._initialState; }
 
     get id()
@@ -66,10 +88,7 @@ WI.CSSStyleDeclaration = class CSSStyleDeclaration extends WI.Object
 
     get stringId()
     {
-        if (this._id)
-            return this._id.styleSheetId + "/" + this._id.ordinal;
-        else
-            return "";
+        return WI.CSSStyleDeclaration.stringIdForStyleId(this._id);
     }
 
     get ownerStyleSheet()
@@ -108,11 +127,19 @@ WI.CSSStyleDeclaration = class CSSStyleDeclaration extends WI.Object
 
     get selectorEditable()
     {
-        return this._ownerRule && this._ownerRule.editable && !this._ownerRule.isImplicitlyNested && InspectorBackend.hasCommand("CSS.setRuleSelector");
+        return this._ownerRule && this._ownerRule.editable && !this._ownerRule.isImplicitlyNested;
     }
 
     get locked() { return this._locked; }
-    set locked(value) { this._locked = value; }
+
+    set locked(value) {
+        if (this._locked === value)
+            return;
+
+        this._locked = value;
+
+        this.dispatchEventToListeners(WI.CSSStyleDeclaration.Event.LockedChanged);
+    }
 
     variablesForType(type)
     {
@@ -179,8 +206,7 @@ WI.CSSStyleDeclaration = class CSSStyleDeclaration extends WI.Object
             return;
         }
 
-        // Allow updates from the backend when text matches because `properties` may contain warnings that need to be shown.
-        if (this._locked && !options.forceUpdate && text !== this._text)
+        if (this._locked && !options.forceUpdate)
             return;
 
         text = text || "";
@@ -442,8 +468,14 @@ WI.CSSStyleDeclaration = class CSSStyleDeclaration extends WI.Object
 
     newBlankProperty(propertyIndex)
     {
-        let text, name, value, priority, overridden, implicit, anonymous;
+        const text = undefined;
+        const name = undefined;
+        const value = undefined;
+        const priority = undefined;
         let enabled = true;
+        const overridden = undefined;
+        const implicit = undefined;
+        const anonymous = undefined;
         let valid = false;
         let styleSheetTextRange = this._rangeAfterPropertyAtIndex(propertyIndex - 1);
 
@@ -540,6 +572,11 @@ WI.CSSStyleDeclaration = class CSSStyleDeclaration extends WI.Object
         let groupings = this.groupings.filter((grouping) => !grouping.isMedia || grouping.text !== "all");
         let groupingsCount = groupings.length;
 
+        // A nested declarations rule has no selector of its own. Its declarations belong directly to the
+        // innermost grouping, so they must not be wrapped in a rule of their own.
+        let hasSelector = !this._ownerRule?.isImplicitlyNested;
+        let declarationDepth = groupingsCount + (hasSelector ? 1 : 0);
+
         if (options.includeGroupingsAndSelectors) {
             for (let i = groupingsCount - 1; i >= 0; --i) {
                 if (options.multiline)
@@ -549,48 +586,53 @@ WI.CSSStyleDeclaration = class CSSStyleDeclaration extends WI.Object
                 if (prefix)
                     styleText += prefix;
 
-                if (groupings[i].text)
-                    styleText += " " + groupings[i].text;
+                if (groupings[i].text) {
+                    if (prefix)
+                        styleText += " ";
+                    styleText += groupings[i].text;
+                }
                 styleText += " {";
 
-                if (options.multiline)
+                // Without a selector, the declarations follow the innermost grouping directly and
+                // provide their own leading newline.
+                if (options.multiline && (hasSelector || i))
                     styleText += "\n";
             }
 
-            if (options.multiline)
-                styleText += indentString.repeat(groupingsCount);
+            if (hasSelector) {
+                if (options.multiline)
+                    styleText += indentString.repeat(groupingsCount);
 
-            styleText += this.selectorText + " {";
+                styleText += this.selectorText + " {";
+            }
         }
 
         let properties = this._styleSheetTextRange ? this.visibleProperties : this._properties;
         if (properties.length) {
             if (options.multiline) {
-                let propertyIndent = indentString.repeat(groupingsCount + 1);
+                let propertyIndent = indentString.repeat(declarationDepth);
                 for (let property of properties)
                     styleText += "\n" + propertyIndent + property.formattedText;
 
                 styleText += "\n";
                 if (!options.includeGroupingsAndSelectors) {
                     // Indent the closing "}" for nested rules.
-                    styleText += indentString.repeat(groupingsCount);
+                    styleText += indentString.repeat(Math.max(declarationDepth - 1, 0));
                 }
             } else
                 styleText += properties.map((property) => property.formattedText).join(" ");
         }
 
         if (options.includeGroupingsAndSelectors) {
-            for (let i = groupingsCount; i > 0; --i) {
+            for (let i = declarationDepth - 1; i >= 0; --i) {
                 if (options.multiline)
                     styleText += indentString.repeat(i);
 
                 styleText += "}";
 
-                if (options.multiline)
+                if (options.multiline && i)
                     styleText += "\n";
             }
-
-            styleText += "}";
         }
 
         return styleText;
@@ -608,18 +650,19 @@ WI.CSSStyleDeclaration = class CSSStyleDeclaration extends WI.Object
     _rangeAfterPropertyAtIndex(index)
     {
         if (index < 0)
-            return this._styleSheetTextRange.collapseToStart();
+            return this._styleSheetTextRange?.collapseToStart() || null;
 
         if (index >= this.visibleProperties.length)
-            return this._styleSheetTextRange.collapseToEnd();
+            return this._styleSheetTextRange?.collapseToEnd() || null;
 
         let property = this.visibleProperties[index];
-        return property.styleSheetTextRange.collapseToEnd();
+        return property.styleSheetTextRange?.collapseToEnd() || null;
     }
 };
 
 WI.CSSStyleDeclaration.Event = {
     PropertiesChanged: "css-style-declaration-properties-changed",
+    LockedChanged: "css-style-declaration-locked-changed",
 };
 
 WI.CSSStyleDeclaration.Type = {

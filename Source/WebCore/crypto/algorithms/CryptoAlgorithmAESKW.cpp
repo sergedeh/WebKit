@@ -38,7 +38,7 @@ static constexpr auto ALG192 = "A192KW"_s;
 static constexpr auto ALG256 = "A256KW"_s;
 }
 
-static inline bool usagesAreInvalidForCryptoAlgorithmAESKW(CryptoKeyUsageBitmap usages)
+static inline bool NODELETE usagesAreInvalidForCryptoAlgorithmAESKW(CryptoKeyUsageBitmap usages)
 {
     return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt);
 }
@@ -66,7 +66,7 @@ void CryptoAlgorithmAESKW::generateKey(const CryptoAlgorithmParameters& paramete
         return;
     }
 
-    callback(WTF::move(result));
+    callback(result.releaseNonNull());
 }
 
 void CryptoAlgorithmAESKW::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)

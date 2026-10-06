@@ -26,9 +26,11 @@
 
 #include "config.h"
 #include "RenderMathMLUnderOver.h"
+#include "RenderBlockInlines.h"
 
 #if ENABLE(MATHML)
 
+#include "FontCascadeInlines.h"
 #include "MathMLElement.h"
 #include "MathMLOperatorDictionary.h"
 #include "MathMLUnderOverElement.h"
@@ -42,7 +44,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLUnderOver);
 
-RenderMathMLUnderOver::RenderMathMLUnderOver(MathMLUnderOverElement& element, RenderStyle&& style)
+RenderMathMLUnderOver::RenderMathMLUnderOver(MathMLUnderOverElement& element, Style::ComputedStyle&& style)
     : RenderMathMLScripts(Type::MathMLUnderOver, element, WTF::move(style))
 {
     ASSERT(isRenderMathMLUnderOver());
@@ -183,36 +185,37 @@ RenderBox& RenderMathMLUnderOver::over() const
 }
 
 
-void RenderMathMLUnderOver::computePreferredLogicalWidths()
+void RenderMathMLUnderOver::computeIntrinsicLogicalWidthContributions()
 {
-    ASSERT(needsPreferredLogicalWidthsUpdate());
+    ASSERT(hasInvalidContentLogicalWidths());
 
     if (!isValid()) {
-        RenderMathMLRow::computePreferredLogicalWidths();
+        RenderMathMLRow::computeIntrinsicLogicalWidthContributions();
         return;
     }
 
     if (shouldMoveLimits()) {
-        RenderMathMLScripts::computePreferredLogicalWidths();
+        RenderMathMLScripts::computeIntrinsicLogicalWidthContributions();
         return;
     }
 
-    LayoutUnit preferredWidth = base().maxPreferredLogicalWidth() + marginIntrinsicLogicalWidthForChild(base());
+    LayoutUnit preferredWidth = base().maxContentLogicalWidthContribution() + marginIntrinsicLogicalWidthForChild(base());
 
     if (scriptType() == MathMLScriptsElement::ScriptType::Under || scriptType() == MathMLScriptsElement::ScriptType::UnderOver)
-        preferredWidth = std::max(preferredWidth, under().maxPreferredLogicalWidth() + marginIntrinsicLogicalWidthForChild(under()));
+        preferredWidth = std::max(preferredWidth, under().maxContentLogicalWidthContribution() + marginIntrinsicLogicalWidthForChild(under()));
 
     if (scriptType() == MathMLScriptsElement::ScriptType::Over || scriptType() == MathMLScriptsElement::ScriptType::UnderOver)
-        preferredWidth = std::max(preferredWidth, over().maxPreferredLogicalWidth() + marginIntrinsicLogicalWidthForChild(over()));
+        preferredWidth = std::max(preferredWidth, over().maxContentLogicalWidthContribution() + marginIntrinsicLogicalWidthForChild(over()));
 
-    m_minPreferredLogicalWidth = m_maxPreferredLogicalWidth = preferredWidth;
+    m_maxContentLogicalWidthContribution = preferredWidth;
+    m_minContentLogicalWidthContribution = preferredWidth;
 
     auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
     applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
 
-    adjustPreferredLogicalWidthsForBorderAndPadding();
+    adjustContentLogicalWidthsForBorderAndPadding();
 
-    clearNeedsPreferredWidthsUpdate();
+    clearContentLogicalWidthsInvalidation();
 }
 
 LayoutUnit RenderMathMLUnderOver::horizontalOffset(const RenderBox& child) const
@@ -269,19 +272,19 @@ RenderMathMLUnderOver::VerticalParameters RenderMathMLUnderOver::verticalParamet
         if (auto* baseOperator = mathMLBlock->unembellishedOperator()) {
             if (baseOperator->hasOperatorFlag(MathMLOperatorDictionary::LargeOp)) {
                 // The base is a large operator so we read UpperLimit/LowerLimit constants from the MATH table.
-                parameters.underGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::LowerLimitGapMin);
-                parameters.overGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::UpperLimitGapMin);
-                parameters.underShiftMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::LowerLimitBaselineDropMin);
-                parameters.overShiftMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::UpperLimitBaselineRiseMin);
+                parameters.underGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::LowerLimitGapMin);
+                parameters.overGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::UpperLimitGapMin);
+                parameters.underShiftMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::LowerLimitBaselineDropMin);
+                parameters.overShiftMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::UpperLimitBaselineRiseMin);
                 parameters.useUnderOverBarFallBack = false;
                 return parameters;
             }
             if (baseOperator->isStretchy() && !baseOperator->isVertical()) {
                 // The base is a horizontal stretchy operator, so we read StretchStack constants from the MATH table.
-                parameters.underGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::StretchStackGapBelowMin);
-                parameters.overGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::StretchStackGapAboveMin);
-                parameters.underShiftMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::StretchStackBottomShiftDown);
-                parameters.overShiftMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::StretchStackTopShiftUp);
+                parameters.underGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::StretchStackGapBelowMin);
+                parameters.overGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::StretchStackGapAboveMin);
+                parameters.underShiftMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::StretchStackBottomShiftDown);
+                parameters.overShiftMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::StretchStackTopShiftUp);
                 parameters.useUnderOverBarFallBack = false;
                 return parameters;
             }
@@ -289,11 +292,11 @@ RenderMathMLUnderOver::VerticalParameters RenderMathMLUnderOver::verticalParamet
     }
 
     // By default, we just use the underbar/overbar constants.
-    parameters.underGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::UnderbarVerticalGap);
-    parameters.overGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::OverbarVerticalGap);
-    parameters.underExtraDescender = mathData->getMathConstant(primaryFont, OpenTypeMathData::UnderbarExtraDescender);
-    parameters.overExtraAscender = mathData->getMathConstant(primaryFont, OpenTypeMathData::OverbarExtraAscender);
-    parameters.accentBaseHeight = mathData->getMathConstant(primaryFont, OpenTypeMathData::AccentBaseHeight);
+    parameters.underGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::UnderbarVerticalGap);
+    parameters.overGapMin = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::OverbarVerticalGap);
+    parameters.underExtraDescender = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::UnderbarExtraDescender);
+    parameters.overExtraAscender = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::OverbarExtraAscender);
+    parameters.accentBaseHeight = mathData->getMathConstant(primaryFont, OpenTypeMathData::MathConstant::AccentBaseHeight);
     parameters.useUnderOverBarFallBack = true;
     return parameters;
 }
@@ -339,38 +342,38 @@ void RenderMathMLUnderOver::layoutBlock(RelayoutChildren relayoutChildren, Layou
     LayoutUnit verticalOffset = 0;
     if (scriptType() == MathMLScriptsElement::ScriptType::Over || scriptType() == MathMLScriptsElement::ScriptType::UnderOver) {
         verticalOffset += parameters.overExtraAscender;
-        verticalOffset += over().marginBefore();
+        verticalOffset += over().marginBefore(over().writingMode());
         over().setLocation(LayoutPoint(horizontalOffset(over()), verticalOffset));
         if (parameters.useUnderOverBarFallBack) {
             verticalOffset += over().logicalHeight();
-            verticalOffset += over().marginAfter();
+            verticalOffset += over().marginAfter(over().writingMode());
             if (hasAccent()) {
-                LayoutUnit baseAscent = ascentForChild(base()) + base().marginBefore();
+                LayoutUnit baseAscent = ascentForChild(base()) + base().marginBefore(base().writingMode());
                 if (baseAscent < parameters.accentBaseHeight)
                     verticalOffset += parameters.accentBaseHeight - baseAscent;
             } else
                 verticalOffset += parameters.overGapMin;
         } else {
-            LayoutUnit overAscent = ascentForChild(over()) + over().marginBefore();
-            verticalOffset += std::max(over().logicalHeight() + over().marginAfter() + parameters.overGapMin, overAscent + parameters.overShiftMin);
+            LayoutUnit overAscent = ascentForChild(over()) + over().marginBefore(over().writingMode());
+            verticalOffset += std::max(over().logicalHeight() + over().marginAfter(over().writingMode()) + parameters.overGapMin, overAscent + parameters.overShiftMin);
         }
     }
-    verticalOffset += base().marginBefore();
+    verticalOffset += base().marginBefore(base().writingMode());
     base().setLocation(LayoutPoint(horizontalOffset(base()), verticalOffset));
     verticalOffset += base().logicalHeight();
-    verticalOffset += base().marginAfter();
+    verticalOffset += base().marginAfter(base().writingMode());
     if (scriptType() == MathMLScriptsElement::ScriptType::Under || scriptType() == MathMLScriptsElement::ScriptType::UnderOver) {
         if (parameters.useUnderOverBarFallBack) {
             if (!hasAccentUnder())
                 verticalOffset += parameters.underGapMin;
         } else {
-            LayoutUnit underAscent = ascentForChild(under()) + under().marginBefore();
+            LayoutUnit underAscent = ascentForChild(under()) + under().marginBefore(under().writingMode());
             verticalOffset += std::max(parameters.underGapMin, parameters.underShiftMin - underAscent);
         }
-        verticalOffset += under().marginBefore();
+        verticalOffset += under().marginBefore(under().writingMode());
         under().setLocation(LayoutPoint(horizontalOffset(under()), verticalOffset));
         verticalOffset += under().logicalHeight();
-        verticalOffset += under().marginAfter();
+        verticalOffset += under().marginAfter(under().writingMode());
         verticalOffset += parameters.underExtraDescender;
     }
 
@@ -381,6 +384,8 @@ void RenderMathMLUnderOver::layoutBlock(RelayoutChildren relayoutChildren, Layou
     shiftInFlowChildren(shift, 0);
 
     adjustLayoutForBorderAndPadding();
+
+    updateLogicalHeight();
 
     layoutOutOfFlowBoxes(relayoutChildren);
 }

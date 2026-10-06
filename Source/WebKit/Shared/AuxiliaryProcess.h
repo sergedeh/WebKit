@@ -38,8 +38,13 @@
 #include <wtf/HashMap.h>
 #include <wtf/RunLoop.h>
 #include <wtf/RuntimeApplicationChecks.h>
+#include <wtf/Threading.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
+
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+#include "LogStreamIdentifier.h"
+#endif
 
 #if PLATFORM(COCOA)
 #include <wtf/RetainPtr.h>
@@ -50,6 +55,10 @@ OBJC_CLASS NSDictionary;
 
 namespace IPC {
 class SharedBufferReference;
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+class Semaphore;
+struct StreamServerConnectionHandle;
+#endif
 }
 
 namespace WebKit {
@@ -67,7 +76,7 @@ public:
 
     // disable and enable termination of the process. when disableTermination is called, the
     // process won't terminate unless a corresponding enableTermination call is made.
-    void disableTermination();
+    void NODELETE disableTermination();
     void enableTermination();
 
     void addMessageReceiver(IPC::ReceiverName, IPC::MessageReceiver&);
@@ -76,14 +85,12 @@ public:
     void removeMessageReceiver(IPC::ReceiverName);
     void removeMessageReceiver(IPC::MessageReceiver&);
     
-    template<typename RawValue>
-    void addMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase<RawValue>& destinationID, IPC::MessageReceiver& receiver)
+    void addMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase& destinationID, IPC::MessageReceiver& receiver)
     {
         addMessageReceiver(messageReceiverName, destinationID.toUInt64(), receiver);
     }
     
-    template<typename RawValue>
-    void removeMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase<RawValue>& destinationID)
+    void removeMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase& destinationID)
     {
         removeMessageReceiver(messageReceiverName, destinationID.toUInt64());
     }
@@ -100,9 +107,8 @@ public:
     static void applySandboxProfileForDaemon(const String& profilePath, const String& userDirectorySuffix);
 
     IPC::Connection* parentProcessConnection() const { return m_connection.get(); }
-    RefPtr<IPC::Connection> protectedParentProcessConnection() const { return parentProcessConnection(); }
 
-    IPC::MessageReceiverMap& messageReceiverMap() { return m_messageReceiverMap; }
+    IPC::MessageReceiverMap& messageReceiverMap() LIFETIME_BOUND { return m_messageReceiverMap; }
 
 #if PLATFORM(COCOA)
     static bool isSystemWebKit();
@@ -126,6 +132,19 @@ protected:
     virtual void initializeSandbox(const AuxiliaryProcessInitializationParameters&, SandboxInitializationParameters&);
     virtual void initializeConnection(IPC::Connection*);
 
+    // Should match the QoS this process gives its main thread, so that the IPC receive queue is
+    // not demoted below the thread it delivers messages to.
+    virtual Thread::QOS connectionReceiveQueueQOS() const { return Thread::QOS::UserInitiated; }
+
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+    void initializeLogForwarding(bool isDebugLoggingEnabled);
+#if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
+    virtual void sendCreateLogStreamToParent(IPC::Connection&, IPC::StreamServerConnectionHandle&&, LogStreamIdentifier, CompletionHandler<void()>&&) { ASSERT_NOT_REACHED(); }
+#else
+    virtual void sendCreateLogStreamToParent(IPC::Connection&, LogStreamIdentifier, CompletionHandler<void()>&&) { ASSERT_NOT_REACHED(); }
+#endif
+#endif
+
     virtual bool shouldTerminate() = 0;
     virtual void terminate();
 
@@ -146,7 +165,7 @@ protected:
     bool dispatchMessage(IPC::Connection&, IPC::Decoder&);
     bool dispatchSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
-#if OS(LINUX)
+#if OS(LINUX) && !OS(ANDROID)
     void didReceiveMemoryPressureEvent(bool isCritical);
 #endif
 
@@ -203,7 +222,7 @@ private:
 
     bool m_isInShutDown { false };
 
-    RefPtr<IPC::Connection> m_connection;
+    const RefPtr<IPC::Connection> m_connection;
     IPC::MessageReceiverMap m_messageReceiverMap;
 
     UserActivity m_processSuppressionDisabled;

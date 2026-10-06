@@ -40,24 +40,24 @@ namespace WebCore {
 class MediaPlaybackTargetCocoa final : public MediaPlaybackTarget {
 public:
     WEBCORE_EXPORT static Ref<MediaPlaybackTargetCocoa> create(RetainPtr<AVOutputContext>&&);
-
-#if PLATFORM(IOS_FAMILY) && !PLATFORM(IOS_FAMILY_SIMULATOR) && !PLATFORM(MACCATALYST)
     WEBCORE_EXPORT static Ref<MediaPlaybackTargetCocoa> create();
-#endif
 
     ~MediaPlaybackTargetCocoa();
 
-    RetainPtr<AVOutputContext> outputContext() const { return m_outputContext.get(); }
+    RetainPtr<AVOutputContext> outputContext() const { return m_outputContext; }
+
+    // MediaPlaybackTarget
+    bool supportsRemoteVideoPlayback() const final;
 
 private:
     explicit MediaPlaybackTargetCocoa(RetainPtr<AVOutputContext>&&);
 
     // MediaPlaybackTarget
     String deviceName() const final;
+    String routeName() const final;
     bool hasActiveRoute() const final;
-    bool supportsRemoteVideoPlayback() const final;
 
-    RetainPtr<AVOutputContext> m_outputContext;
+    const RetainPtr<AVOutputContext> m_outputContext;
 };
 
 } // namespace WebCore

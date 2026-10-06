@@ -43,9 +43,7 @@
 
 namespace WebCore {
 
-UserContentProvider::UserContentProvider()
-{
-}
+UserContentProvider::UserContentProvider() = default;
 
 UserContentProvider::~UserContentProvider()
 {
@@ -94,7 +92,7 @@ void UserContentProvider::invalidateInjectedStyleSheetCacheInAllFramesInAllPages
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)
-static DocumentLoader* mainDocumentLoader(DocumentLoader& loader)
+static DocumentLoader* NODELETE mainDocumentLoader(DocumentLoader& loader)
 {
     if (auto frame = loader.frame()) {
         if (frame->isMainFrame())
@@ -141,7 +139,7 @@ static ContentExtensions::ContentExtensionsBackend::RuleListFilter ruleListFilte
 
 static void applyLinkDecorationFilteringIfNeeded(ContentRuleListResults& results, Page& page, const URL& url, const DocumentLoader& initiatingDocumentLoader)
 {
-    if (RefPtr frame = initiatingDocumentLoader.frame(); !frame || !frame->isMainFrame())
+    if (auto* frame = initiatingDocumentLoader.frame(); !frame || !frame->isMainFrame())
         return;
 
     if (auto adjustedURL = page.chrome().client().applyLinkDecorationFiltering(url, LinkDecorationFilteringTrigger::Navigation); adjustedURL != url)

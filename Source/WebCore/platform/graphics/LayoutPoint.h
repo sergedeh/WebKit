@@ -39,7 +39,7 @@ namespace WebCore {
 class LayoutPoint {
 public:
     constexpr LayoutPoint() = default;
-    template<typename T, typename U> LayoutPoint(T x, U y) : m_x(x), m_y(y) { }
+    template<typename T, typename U> constexpr LayoutPoint(T x, U y) : m_x(x), m_y(y) { }
     LayoutPoint(const IntPoint& point) : m_x(point.x()), m_y(point.y()) { }
     explicit LayoutPoint(const FloatPoint& size)
         : m_x(size.x()), m_y(size.y()) { }
@@ -85,7 +85,7 @@ public:
         return { m_x * sx, m_y * sy };
     }
 
-    LayoutPoint constrainedBetween(const LayoutPoint& min, const LayoutPoint& max) const;
+    WEBCORE_EXPORT LayoutPoint constrainedBetween(const LayoutPoint& min, const LayoutPoint& max) const;
 
     LayoutPoint expandedTo(const LayoutPoint& other) const
     {
@@ -223,8 +223,8 @@ inline FloatPoint ceilPointToDevicePixels(const LayoutPoint& point, float pixelS
 inline FloatSize snapSizeToDevicePixel(const LayoutSize& size, const LayoutPoint& location, float pixelSnappingFactor)
 {
     auto snap = [&] (LayoutUnit a, LayoutUnit b) {
-        LayoutUnit fraction = b.fraction();
-        return roundToDevicePixel(fraction + a, pixelSnappingFactor) - roundToDevicePixel(fraction, pixelSnappingFactor);
+        LayoutUnit offset = WTF::isIntegral(pixelSnappingFactor) ? b.fraction() : b;
+        return roundToDevicePixel(offset + a, pixelSnappingFactor) - roundToDevicePixel(offset, pixelSnappingFactor);
     };
     return FloatSize(snap(size.width(), location.x()), snap(size.height(), location.y()));
 }
@@ -240,4 +240,3 @@ struct LayoutPointLimits {
 };
 
 } // namespace WebCore
-

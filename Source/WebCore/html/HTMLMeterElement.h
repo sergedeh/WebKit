@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2010 Nokia Corporation and/or its subsidiary(-ies).
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -33,10 +34,10 @@ class HTMLMeterElement final : public HTMLElement {
 public:
     static Ref<HTMLMeterElement> create(const QualifiedName&, Document&);
 
-    enum GaugeRegion {
-        GaugeRegionOptimum,
-        GaugeRegionSuboptimal,
-        GaugeRegionEvenLessGood
+    enum class GaugeRegion : uint8_t {
+        Optimum,
+        Suboptimal,
+        EvenLessGood
     };
 
     double min() const;
@@ -57,18 +58,23 @@ private:
     HTMLMeterElement(const QualifiedName&, Document&);
     virtual ~HTMLMeterElement();
 
-    RenderMeter* renderMeter() const;
+    RenderMeter* NODELETE renderMeter() const;
 
     bool isLabelable() const final { return true; }
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
+    bool NODELETE supportsBaseAppearance(StyleAppearance) const final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
     bool childShouldCreateRenderer(const Node&) const final;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
 
-    void didElementStateChange();
+    void appendShadowTreeForAutoAppearance(ShadowRoot&);
+    void appendShadowTreeForBaseAppearance(ShadowRoot&);
+
+    void didChangeElementValue();
     void didAddUserAgentShadowRoot(ShadowRoot&) final;
 
-    RefPtr<HTMLElement> m_valueElement;
+    WeakPtr<HTMLDivElement, WeakPtrImplWithEventTargetData> m_valueElement;
+    WeakPtr<HTMLDivElement, WeakPtrImplWithEventTargetData> m_fillElement;
 };
 
 } // namespace WebCore

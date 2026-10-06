@@ -27,31 +27,32 @@
 #include "TestSyncData.h"
 
 #include <wtf/EnumTraits.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
 void TestSyncData::update(const TestSyncSerializationData& data)
 {
-    switch (data.type) {
+    switch (static_cast<TestSyncDataType>(data.value.index())) {
     case TestSyncDataType::MainFrameURLChange:
-        mainFrameURLChange = std::get<enumToUnderlyingType(TestSyncDataType::MainFrameURLChange)>(data.value);
+        mainFrameURLChange = std::get<std::to_underlying(TestSyncDataType::MainFrameURLChange)>(data.value);
         break;
     case TestSyncDataType::IsAutofocusProcessed:
-        isAutofocusProcessed = std::get<enumToUnderlyingType(TestSyncDataType::IsAutofocusProcessed)>(data.value);
+        isAutofocusProcessed = std::get<std::to_underlying(TestSyncDataType::IsAutofocusProcessed)>(data.value);
         break;
     case TestSyncDataType::UserDidInteractWithPage:
-        userDidInteractWithPage = std::get<enumToUnderlyingType(TestSyncDataType::UserDidInteractWithPage)>(data.value);
+        userDidInteractWithPage = std::get<std::to_underlying(TestSyncDataType::UserDidInteractWithPage)>(data.value);
         break;
     case TestSyncDataType::AnotherOne:
-        anotherOne = std::get<enumToUnderlyingType(TestSyncDataType::AnotherOne)>(data.value);
+        anotherOne = std::get<std::to_underlying(TestSyncDataType::AnotherOne)>(data.value);
         break;
 #if ENABLE(DOM_AUDIO_SESSION)
     case TestSyncDataType::AudioSessionType:
-        audioSessionType = std::get<enumToUnderlyingType(TestSyncDataType::AudioSessionType)>(data.value);
+        audioSessionType = std::get<std::to_underlying(TestSyncDataType::AudioSessionType)>(data.value);
         break;
 #endif
     case TestSyncDataType::MultipleHeaders:
-        multipleHeaders = std::get<enumToUnderlyingType(TestSyncDataType::MultipleHeaders)>(data.value);
+        multipleHeaders = std::get<std::to_underlying(TestSyncDataType::MultipleHeaders)>(data.value);
         break;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -77,6 +78,52 @@ TestSyncData::TestSyncData(
 #endif
     , multipleHeaders(multipleHeaders)
 {
+}
+
+WTF::TextStream& operator<<(WTF::TextStream& ts, const TestSyncData& data)
+{
+    WTF::TextStream::GroupScope scope(ts);
+    ts << "TestSyncData"_s;
+    ts.dumpProperty("mainFrameURLChange"_s, ValueOrEllipsis(data.mainFrameURLChange));
+    ts.dumpProperty("isAutofocusProcessed"_s, ValueOrEllipsis(data.isAutofocusProcessed));
+    ts.dumpProperty("userDidInteractWithPage"_s, ValueOrEllipsis(data.userDidInteractWithPage));
+    ts.dumpProperty("anotherOne"_s, ValueOrEllipsis(data.anotherOne));
+#if ENABLE(DOM_AUDIO_SESSION)
+    ts.dumpProperty("audioSessionType"_s, ValueOrEllipsis(data.audioSessionType));
+#endif
+    ts.dumpProperty("multipleHeaders"_s, ValueOrEllipsis(data.multipleHeaders));
+    return ts;
+}
+
+WTF::TextStream& operator<<(WTF::TextStream& ts, const TestSyncSerializationData& data)
+{
+    WTF::TextStream::GroupScope scope(ts);
+    ts << "TestSyncSerializationData"_s;
+    switch (static_cast<TestSyncDataType>(data.value.index())) {
+    case TestSyncDataType::MainFrameURLChange:
+        ts.dumpProperty("mainFrameURLChange"_s, ValueOrEllipsis(std::get<std::to_underlying(TestSyncDataType::MainFrameURLChange)>(data.value)));
+        break;
+    case TestSyncDataType::IsAutofocusProcessed:
+        ts.dumpProperty("isAutofocusProcessed"_s, ValueOrEllipsis(std::get<std::to_underlying(TestSyncDataType::IsAutofocusProcessed)>(data.value)));
+        break;
+    case TestSyncDataType::UserDidInteractWithPage:
+        ts.dumpProperty("userDidInteractWithPage"_s, ValueOrEllipsis(std::get<std::to_underlying(TestSyncDataType::UserDidInteractWithPage)>(data.value)));
+        break;
+    case TestSyncDataType::AnotherOne:
+        ts.dumpProperty("anotherOne"_s, ValueOrEllipsis(std::get<std::to_underlying(TestSyncDataType::AnotherOne)>(data.value)));
+        break;
+#if ENABLE(DOM_AUDIO_SESSION)
+    case TestSyncDataType::AudioSessionType:
+        ts.dumpProperty("audioSessionType"_s, ValueOrEllipsis(std::get<std::to_underlying(TestSyncDataType::AudioSessionType)>(data.value)));
+        break;
+#endif
+    case TestSyncDataType::MultipleHeaders:
+        ts.dumpProperty("multipleHeaders"_s, ValueOrEllipsis(std::get<std::to_underlying(TestSyncDataType::MultipleHeaders)>(data.value)));
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    return ts;
 }
 
 } // namespace WebCore

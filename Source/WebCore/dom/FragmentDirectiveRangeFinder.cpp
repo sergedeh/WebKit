@@ -42,12 +42,12 @@
 #include "HTMLScriptElement.h"
 #include "HTMLStyleElement.h"
 #include "HTMLVideoElement.h"
-#include "NodeInlines.h"
+#include "ICUSearcher.h"
 #include "NodeRenderStyle.h"
 #include "NodeTraversal.h"
 #include "Position.h"
-#include "RenderStyle+GettersInlines.h"
 #include "SimpleRange.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "TextBoundaries.h"
 #include "TextIterator.h"
 
@@ -60,34 +60,34 @@ enum class BoundaryPointIsAtEnd : bool { No, Yes };
 enum class WordBounded : bool { No, Yes };
 
 // https://wicg.github.io/scroll-to-text-fragment/#search-invisible
-static bool isSearchInvisible(const Node& node)
+static bool NODELETE isSearchInvisible(const Node& node)
 {
-    if (!node.renderStyle() || node.renderStyle()->display() == DisplayType::None)
+    // display:contents has no RenderStyle but its subtree is rendered; the element type checks below still apply.
+    RefPtr element = dynamicDowncast<Element>(node);
+    bool isDisplayContents = element && element->hasDisplayContents();
+    if (!isDisplayContents && (!node.renderStyle() || node.renderStyle()->display() == Style::DisplayType::None))
         return true;
     
     // FIXME: If the node serializes as void.
-    
-    if (is<HTMLIFrameElement>(node)
-        || is<HTMLImageElement>(node)
-        || is<HTMLMeterElement>(node)
-        || is<HTMLObjectElement>(node)
-        || is<HTMLProgressElement>(node)
-        || is<HTMLStyleElement>(node)
-        || is<HTMLScriptElement>(node)
-#if ENABLE(VIDEO)
-        || is<HTMLVideoElement>(node)
-        || is<HTMLAudioElement>(node)
-#endif // ENABLE(VIDEO)
-        )
-        return true;
-    
     // FIXME: Is a select element whose multiple content attribute is absent.
-    
-    return false;
+
+    return isAnyOf<
+#if ENABLE(VIDEO)
+        HTMLVideoElement,
+        HTMLAudioElement,
+#endif // ENABLE(VIDEO)
+        HTMLIFrameElement,
+        HTMLImageElement,
+        HTMLMeterElement,
+        HTMLObjectElement,
+        HTMLProgressElement,
+        HTMLStyleElement,
+        HTMLScriptElement
+    >(node);
 }
 
 // https://wicg.github.io/scroll-to-text-fragment/#non-searchable-subtree
-static bool isNonSearchableSubtree(const Node& node)
+static bool NODELETE isNonSearchableSubtree(const Node& node)
 {
     const Node* traversingNode = &node;
     while (traversingNode) {
@@ -122,14 +122,14 @@ static bool indexIsAtWordBoundary(const String& string, unsigned index)
 }
 
 // https://wicg.github.io/scroll-to-text-fragment/#visible-text-node
-static bool isVisibleTextNode(const Node& node)
+static bool NODELETE isVisibleTextNode(const Node& node)
 {
-    if (CheckedPtr renderText = dynamicDowncast<RenderText>(node.renderer()))
+    if (auto* renderText = dynamicDowncast<RenderText>(node.renderer()))
         return renderText->style().visibility() == Visibility::Visible;
     return false;
 }
 
-static bool isVisibleTextNode(const Text& node)
+static bool NODELETE isVisibleTextNode(const Text& node)
 {
     return node.renderer() && node.renderer()->style().visibility() == Visibility::Visible;
 }
@@ -239,7 +239,7 @@ static std::optional<SimpleRange> rangeOfStringInRange(const String& query, Simp
         Vector<Ref<Text>> textNodeList;
         // FIXME: this is O^2 since treeOrder will also do traversal, optimize.
         while (currentNode && currentNode->isDescendantOf(blockAncestor) && is_lteq(treeOrder(BoundaryPoint(*currentNode, 0), searchRange.end))) {
-            if (CheckedPtr renderElement = dynamicDowncast<RenderElement>(currentNode->renderer()); renderElement && renderElement->style().isDisplayBlockLevel())
+            if (auto* renderElement = dynamicDowncast<RenderElement>(currentNode->renderer()); renderElement && renderElement->style().display().isBlockType())
                 break;
 
             if (isSearchInvisible(*currentNode)) {
@@ -305,12 +305,6 @@ static std::optional<SimpleRange> advanceRangeStartToNextNonWhitespace(SimpleRan
 
         auto string = node->textContent();
 
-        if (string.substringSharingImpl(offset, 6) == "&nbsp;"_s)
-            offset += 6;
-
-        if (string.substringSharingImpl(offset, 5) == "&nbsp"_s)
-            offset += 5;
-        
         if (!isUnicodeWhitespace(string[offset]))
             return newRange;
         offset++;

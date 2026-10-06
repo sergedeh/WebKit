@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2018-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +30,6 @@
 #include <WebCore/CSSPropertyNames.h>
 #include <WebCore/LoadedFromOpaqueSource.h>
 #include <WebCore/StyleRuleType.h>
-#include <pal/text/TextEncoding.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/Hasher.h>
 #include <wtf/URL.h>
@@ -63,31 +63,49 @@ struct CSSParserContext {
 #endif
     bool gridLanesEnabled : 1 { false };
     bool cssAppearanceBaseEnabled : 1 { false };
+    bool cssClassPrefixSelectorEnabled : 1 { false };
     bool cssPaintingAPIEnabled : 1 { false };
     bool cssTextDecorationLineErrorValues : 1 { false };
+    bool cssFlexWrapBalanceEnabled : 1 { false };
     bool cssWordBreakAutoPhraseEnabled : 1 { false };
     bool popoverAttributeEnabled : 1 { false };
-    bool sidewaysWritingModesEnabled : 1 { false };
     bool cssTextWrapPrettyEnabled : 1 { true };
-    bool thumbAndTrackPseudoElementsEnabled : 1 { false };
 #if ENABLE(SERVICE_CONTROLS)
     bool imageControlsEnabled : 1 { false };
 #endif
     bool colorLayersEnabled : 1 { false };
+    bool cssPickerPseudoElementEnabled : 1 { false };
     bool targetTextPseudoElementEnabled : 1 { false };
-    bool htmlEnhancedSelectPseudoElementsEnabled : 1 { false };
+    bool htmlEnhancedSelectEnabled : 1 { false };
     bool cssRandomFunctionEnabled : 1 { false };
+    bool cssRandomItemFunctionEnabled : 1 { false };
+    bool cssRubyDisplayTypesEnabled : 1 { false };
     bool cssTreeCountingFunctionsEnabled : 1 { false };
+    bool cssCalcSizeFunctionEnabled : 1 { false };
     bool cssURLModifiersEnabled : 1 { false };
     bool cssURLIntegrityModifierEnabled : 1 { false };
+    bool cssLinkParametersEnabled : 1 { false };
     bool cssAxisRelativePositionKeywordsEnabled : 1 { false };
     bool cssDynamicRangeLimitMixEnabled : 1 { false };
     bool cssConstrainedDynamicRangeLimitEnabled : 1 { false };
     bool cssTextTransformMathAutoEnabled : 1 { false };
+    bool cssFontSynthesisStyleObliqueOnlyEnabled : 1 { false };
     bool cssInternalAutoBaseParsingEnabled : 1 { false };
     bool webkitMediaTextTrackDisplayQuirkEnabled : 1 { false };
     bool cssMathDepthEnabled : 1 { false };
     bool openPseudoClassEnabled : 1 { false };
+    bool cssAttrSubstitutionFunctionEnabled : 1 { false };
+    bool cssScrollStateContainerQueriesEnabled : 1 { false };
+    bool cssCalcMixEnabled : 1 { false };
+    bool cssIdentFunctionEnabled : 1 { false };
+    bool cssIfFunctionEnabled : 1 { false };
+    bool cssInheritFunctionEnabled : 1 { false };
+    bool cssFontPaletteMixFunctionEnabled : 1 { false };
+    bool cssSymbolsFunctionEnabled : 1 { false };
+
+    // Enabled only for the legacy <font face> attribute: allows a numeric token within a family
+    // name (e.g. "Bodoni 72"). Regular CSS font-family parsing stays strict.
+    bool legacyFontFaceAttributeMode : 1 { false };
 
     // Settings, those affecting properties.
     CSSPropertySettings propertySettings;
@@ -97,7 +115,7 @@ struct CSSParserContext {
     CSSParserContext(const Document&, const URL& baseURL, ASCIILiteral charset = ""_s);
     CSSParserContext(const Settings&);
 
-    void setUASheetMode();
+    void NODELETE setUASheetMode();
 
     bool operator==(const CSSParserContext&) const = default;
 };

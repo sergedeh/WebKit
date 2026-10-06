@@ -36,6 +36,7 @@
 #include "DocumentInlines.h"
 #include "DocumentPage.h"
 #include "DocumentPrefetcher.h"
+#include "DocumentResourceLoader.h"
 #include "ElementInlines.h"
 #include "Event.h"
 #include "EventLoop.h"
@@ -53,6 +54,7 @@
 #include "LoadableScriptError.h"
 #include "LocalFrame.h"
 #include "MIMETypeRegistry.h"
+#include "MemoryCache.h"
 #include "ModuleFetchParameters.h"
 #include "PendingScript.h"
 #include "SVGElementTypeHelpers.h"
@@ -82,7 +84,8 @@ namespace WebCore {
 static const auto maxUserGesturePropagationTime = 1_s;
 
 ScriptElement::ScriptElement(Element& element, bool parserInserted, bool alreadyStarted)
-    : m_element(element)
+    : ActiveDOMObject(element.document())
+    , m_element(element)
     , m_parserInserted(parserInserted ? ParserInserted::Yes : ParserInserted::No)
     , m_alreadyStarted(alreadyStarted)
     , m_forceAsync(!parserInserted)
@@ -94,11 +97,11 @@ ScriptElement::ScriptElement(Element& element, bool parserInserted, bool already
     if (parserInserted) {
         Ref document = element.document();
         if (RefPtr parser = document->scriptableDocumentParser(); parser && !document->isInDocumentWrite())
-            m_startLineNumber = parser->textPosition().m_line;
+            m_startPosition = parser->textPosition();
     }
 }
 
-void ScriptElement::didFinishInsertingNode()
+void ScriptElement::postConnectionSteps()
 {
     if (m_parserInserted == ParserInserted::No)
         prepareScript(); // FIXME: Provide a real starting line number here.
@@ -134,7 +137,10 @@ void ScriptElement::handleAsyncAttribute()
 
 void ScriptElement::dispatchErrorEvent()
 {
-    protectedElement()->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    // Keep the JS wrapper alive until the end of this method.
+    Ref wrapperProtector = makePendingActivity(*this);
+
+    protect(element())->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
 static void reportSpeculationRulesError(LocalFrame& frame, const String& errorMessage)
@@ -144,14 +150,14 @@ static void reportSpeculationRulesError(LocalFrame& frame, const String& errorMe
     JSC::VM& vm = world.vm();
     JSC::JSLockHolder lock(vm);
 
-    if (auto* jsGlobalObject = frame.checkedScript()->globalObject(world)) {
+    if (auto* jsGlobalObject = protect(frame.script())->globalObject(world)) {
         auto* error = JSC::createTypeError(jsGlobalObject, errorMessage);
         LoadableScript::Error scriptError {
             LoadableScriptErrorType::Script,
             std::nullopt,
             JSC::Strong<JSC::Unknown>(vm, error)
         };
-        frame.checkedScript()->reportExceptionFromScriptError(scriptError, false);
+        protect(frame.script())->reportExceptionFromScriptError(scriptError, false);
     }
 }
 
@@ -174,7 +180,7 @@ std::optional<ScriptType> ScriptElement::determineScriptType(const String& type,
         return ScriptType::Classic; // Assume text/javascript.
 
     // Step 9. If the script block's type string is a JavaScript MIME type essence match, then set el's type to "classic".
-    if (MIMETypeRegistry::isSupportedJavaScriptMIMEType(type.trim(isASCIIWhitespace)))
+    if (MIMETypeRegistry::isSupportedJavaScriptMIMEType(StringView(type).trim(isASCIIWhitespace)))
         return ScriptType::Classic;
 
     // FIXME: XHTML spec defines "defer" attribute. But WebKit does not implement it for a long time.
@@ -223,6 +229,12 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
     String sourceText = scriptContent();
     Ref element = this->element();
     Ref context = *element->scriptExecutionContext();
+
+    // Use the script start position captured when tree building (rather than the start line number)
+    // to match other browsers.
+    if (m_startPosition.m_line > OrdinalNumber::beforeFirst() && scriptStartPosition.m_line > OrdinalNumber::beforeFirst())
+        m_startPosition.m_line = scriptStartPosition.m_line;
+
     if (context->settingsValues().trustedTypesEnabled && sourceText != m_trustedScriptText) {
         auto trustedText = trustedTypeCompliantString(TrustedType::TrustedScript, context, sourceText, is<HTMLScriptElement>(element) ? "HTMLScriptElement text"_s : "SVGScriptElement text"_s);
         if (trustedText.hasException())
@@ -297,8 +309,8 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
     case ScriptType::SpeculationRules: {
         // If the element has a source attribute, queue a task to fire an event named error at the element, and return.
         if (hasSourceAttribute()) {
-            element->protectedDocument()->checkedEventLoop()->queueTask(TaskSource::DOMManipulation, [protectedThis = Ref { *this }] {
-                protectedThis->dispatchErrorEvent();
+            queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [](auto& element) {
+                element.dispatchErrorEvent();
             });
             return false;
         }
@@ -323,11 +335,11 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
     } else if ((isClassicExternalScript || scriptType == ScriptType::Module) && !hasAsyncAttribute() && !m_forceAsync) {
         m_willExecuteInOrder = true;
         ASSERT(m_loadableScript);
-        document->protectedScriptRunner()->queueScriptForExecution(*this, *protectedLoadableScript(), ScriptRunner::IN_ORDER_EXECUTION);
+        protect(document->scriptRunner())->queueScriptForExecution(*this, *protect(loadableScript()), ScriptRunner::ExecutionType::InOrder);
     } else if (hasSourceAttribute() || scriptType == ScriptType::Module) {
         ASSERT(m_loadableScript);
         ASSERT(hasAsyncAttribute() || m_forceAsync);
-        document->protectedScriptRunner()->queueScriptForExecution(*this, *protectedLoadableScript(), ScriptRunner::ASYNC_EXECUTION);
+        protect(document->scriptRunner())->queueScriptForExecution(*this, *protect(loadableScript()), ScriptRunner::ExecutionType::Async);
     } else if (!hasSourceAttribute() && m_parserInserted == ParserInserted::Yes && !document->haveStylesheetsLoaded()) {
         ASSERT(scriptType == ScriptType::Classic || scriptType == ScriptType::ImportMap || scriptType == ScriptType::SpeculationRules);
         m_willBeParserExecuted = true;
@@ -356,7 +368,7 @@ void ScriptElement::updateTaintedOriginFromSourceURL()
     if (!page)
         return;
 
-    if (!page->requiresScriptTrackingPrivacyProtections(hasSourceAttribute() ? document->completeURL(sourceAttributeValue()) : document->url()))
+    if (!page->requiresScriptTrackingPrivacyProtections(hasSourceAttribute() ? document->encodingParseURL(sourceAttributeValue()) : document->url()))
         return;
 
     m_taintedOrigin = JSC::SourceTaintedOrigin::KnownTainted;
@@ -372,10 +384,10 @@ bool ScriptElement::requestClassicScript(const String& sourceURL)
         auto script = LoadableClassicScript::create(element->nonce(), element->attributeWithoutSynchronization(HTMLNames::integrityAttr), referrerPolicy(), fetchPriority(),
             element->attributeWithoutSynchronization(HTMLNames::crossoriginAttr), scriptCharset(), element->localName(), element->isInUserAgentShadowTree(), hasAsyncAttribute());
 
-        auto scriptURL = document->completeURL(sourceURL);
+        auto scriptURL = document->encodingParseURL(sourceURL);
         document->willLoadScriptElement(scriptURL);
 
-        if (!document->checkedContentSecurityPolicy()->allowNonParserInsertedScripts(scriptURL, URL(), m_startLineNumber, element->nonce(), script->integrity(), String(), m_parserInserted))
+        if (!protect(document->contentSecurityPolicy())->allowScriptForStrictDynamic(scriptURL, URL(), m_startPosition.m_line, element->nonce(), script->integrity(), String(), m_parserInserted))
             return false;
 
         if (script->load(document, scriptURL)) {
@@ -387,10 +399,21 @@ bool ScriptElement::requestClassicScript(const String& sourceURL)
     if (m_loadableScript)
         return true;
 
-    document->eventLoop().queueTask(TaskSource::DOMManipulation, [protectedThis = Ref { *this }] {
-        protectedThis->dispatchErrorEvent();
+    queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [](auto& element) {
+        element.dispatchErrorEvent();
     });
     return false;
+}
+
+ParserInserted ScriptElement::effectiveParserInsertedForModule(Document& document, const URL& moduleURL) const
+{
+    // A parser-inserted module script that reuses a <link rel=modulepreload> is not a new parser-inserted load.
+    if (m_parserInserted == ParserInserted::No)
+        return ParserInserted::No;
+
+    RefPtr resource = protect(document.cachedResourceLoader())->cachedResource(MemoryCache::removeFragmentIdentifierIfNeeded(moduleURL));
+    bool reusesModulePreload = (resource && resource->isLinkModulePreload());
+    return reusesModulePreload ? ParserInserted::No : ParserInserted::Yes;
 }
 
 bool ScriptElement::requestModuleScript(const String& sourceText, const TextPosition& scriptStartPosition)
@@ -413,7 +436,7 @@ bool ScriptElement::requestModuleScript(const String& sourceText, const TextPosi
             return false;
         }
 
-        auto moduleScriptRootURL = document->completeURL(sourceURL);
+        auto moduleScriptRootURL = document->encodingParseURL(sourceURL);
         if (!moduleScriptRootURL.isValid()) {
             dispatchErrorEvent();
             return false;
@@ -425,9 +448,14 @@ bool ScriptElement::requestModuleScript(const String& sourceText, const TextPosi
             integrity = AtomString { document->globalObject()->importMap().integrityForURL(moduleScriptRootURL) };
         Ref script = LoadableModuleScript::create(LoadableModuleScript::IsInline::No, nonce, integrity, referrerPolicy(), fetchPriority(), crossOriginMode,
             scriptCharset(), element->localName(), element->isInUserAgentShadowTree());
+
+        auto effectiveParserInserted = effectiveParserInsertedForModule(document, moduleScriptRootURL);
+        if (!protect(document->contentSecurityPolicy())->allowScriptForStrictDynamic(moduleScriptRootURL, URL(), m_startPosition.m_line, nonce, String(integrity), String(), effectiveParserInserted))
+            return false;
+
         m_loadableScript = script.copyRef();
         if (RefPtr frame = element->document().frame())
-            frame->checkedScript()->loadModuleScript(script, moduleScriptRootURL, script->parameters());
+            protect(frame->script())->loadModuleScript(script, moduleScriptRootURL, script->parameters());
         return true;
     }
 
@@ -439,16 +467,16 @@ bool ScriptElement::requestModuleScript(const String& sourceText, const TextPosi
     ASSERT(document->contentSecurityPolicy());
     {
         CheckedRef contentSecurityPolicy = *document->contentSecurityPolicy();
-        if (!contentSecurityPolicy->allowNonParserInsertedScripts(URL(), document->url(), m_startLineNumber, element->nonce(), script->parameters().integrity(), sourceCode.source(), m_parserInserted))
+        if (!contentSecurityPolicy->allowScriptForStrictDynamic(URL(), document->url(), m_startPosition.m_line, element->nonce(), script->parameters().integrity(), sourceCode.source(), m_parserInserted))
             return false;
 
-        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startLineNumber, sourceCode.source(), element, nonce, element->isInUserAgentShadowTree()))
+        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startPosition, sourceCode.source(), element, nonce, element->isInUserAgentShadowTree()))
             return false;
     }
 
     m_loadableScript = script.copyRef();
     if (RefPtr frame = document->frame())
-        frame->checkedScript()->loadModuleScript(script, sourceCode);
+        protect(frame->script())->loadModuleScript(script, sourceCode);
     return true;
 }
 
@@ -465,10 +493,10 @@ void ScriptElement::executeClassicScript(const ScriptSourceCode& sourceCode)
     if (!m_isExternalScript) {
         ASSERT(document->contentSecurityPolicy());
         CheckedRef contentSecurityPolicy = *document->contentSecurityPolicy();
-        if (!contentSecurityPolicy->allowNonParserInsertedScripts(URL(), document->url(), m_startLineNumber, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
+        if (!contentSecurityPolicy->allowScriptForStrictDynamic(URL(), document->url(), m_startPosition.m_line, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
             return;
 
-        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startLineNumber, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
+        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startPosition, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
             return;
     }
 
@@ -479,8 +507,8 @@ void ScriptElement::executeClassicScript(const ScriptSourceCode& sourceCode)
     IgnoreDestructiveWriteCountIncrementer ignoreDestructiveWriteCountIncrementer(m_isExternalScript ? document.ptr() : nullptr);
     CurrentScriptIncrementer currentScriptIncrementer(document, *this);
 
-    WTFBeginSignpost(this, ExecuteScriptElement, "executing classic script from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? sourceCode.url().string().utf8().data() : "inline", hasAsyncAttribute(), hasDeferAttribute());
-    frame->checkedScript()->evaluateIgnoringException(sourceCode);
+    WTFBeginSignpost(this, ExecuteScriptElement, "executing classic script from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? sourceCode.url().string().utf8() : "inline"_s, hasAsyncAttribute(), hasDeferAttribute());
+    protect(frame->script())->evaluateIgnoringException(sourceCode);
     WTFEndSignpost(this, ExecuteScriptElement);
 }
 
@@ -503,18 +531,18 @@ void ScriptElement::registerImportMap(const ScriptSourceCode& sourceCode)
     if (!m_isExternalScript) {
         ASSERT(document->contentSecurityPolicy());
         CheckedRef contentSecurityPolicy = *document->contentSecurityPolicy();
-        if (!contentSecurityPolicy->allowNonParserInsertedScripts(URL(), document->url(), m_startLineNumber, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
+        if (!contentSecurityPolicy->allowScriptForStrictDynamic(URL(), document->url(), m_startPosition.m_line, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
             return;
 
-        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startLineNumber, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
+        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startPosition, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
             return;
     }
 
     if (!frame)
         return;
 
-    WTFBeginSignpost(this, RegisterImportMap, "registering import-map from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? sourceCode.url().string().utf8().data() : "inline", hasAsyncAttribute(), hasDeferAttribute());
-    frame->checkedScript()->registerImportMap(sourceCode, document->baseURL());
+    WTFBeginSignpost(this, RegisterImportMap, "registering import-map from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? sourceCode.url().string().utf8() : "inline"_s, hasAsyncAttribute(), hasDeferAttribute());
+    protect(frame->script())->registerImportMap(sourceCode, document->baseURL());
     WTFEndSignpost(this, RegisterImportMap);
 }
 
@@ -567,7 +595,7 @@ void ScriptElement::executeScriptAndDispatchEvent(LoadableScript& loadableScript
             // When the script is "null" due to a fetch error, an error event
             // should be dispatched for the script element.
             if (std::optional<LoadableScript::ConsoleMessage> message = error->consoleMessage)
-                element().protectedDocument()->addConsoleMessage(message->source, message->level, message->message);
+                protect(element().document())->addConsoleMessage(message->source, message->level, message->message);
             dispatchErrorEvent();
             break;
         }
@@ -575,7 +603,7 @@ void ScriptElement::executeScriptAndDispatchEvent(LoadableScript& loadableScript
         // Parse error
         case LoadableScript::ErrorType::Resolve: {
             if (RefPtr frame = element().document().frame())
-                frame->checkedScript()->reportExceptionFromScriptError(error.value(), loadableScript.isModuleScript());
+                protect(frame->script())->reportExceptionFromScriptError(error.value(), loadableScript.isModuleScript());
             if (!loadableScript.isInlineModule())
                 dispatchLoadEventRespectingUserGestureIndicator();
             break;
@@ -588,7 +616,7 @@ void ScriptElement::executeScriptAndDispatchEvent(LoadableScript& loadableScript
             // not triggered during fetching. In this case, we need to report
             // the exception to the global object.
             if (RefPtr frame = element().document().frame())
-                frame->checkedScript()->reportExceptionFromScriptError(error.value(), loadableScript.isModuleScript());
+                protect(frame->script())->reportExceptionFromScriptError(error.value(), loadableScript.isModuleScript());
             break;
         }
         }
@@ -630,7 +658,7 @@ bool ScriptElement::ignoresLoadRequest() const
 
 String ScriptElement::scriptContent() const
 {
-    return TextNodeTraversal::childTextContent(protectedElement());
+    return TextNodeTraversal::childTextContent(protect(element()));
 }
 
 void ScriptElement::setTrustedScriptText(const String& text)
@@ -638,19 +666,9 @@ void ScriptElement::setTrustedScriptText(const String& text)
     m_trustedScriptText = text;
 }
 
-void ScriptElement::ref() const
-{
-    element().ref();
-}
-
-void ScriptElement::deref() const
-{
-    element().deref();
-}
-
 bool isScriptElement(Node& node)
 {
-    return is<HTMLScriptElement>(node) || is<SVGScriptElement>(node);
+    return isAnyOf<HTMLScriptElement, SVGScriptElement>(node);
 }
 
 ScriptElement* dynamicDowncastScriptElement(Element& element)
@@ -686,17 +704,17 @@ void ScriptElement::registerSpeculationRules(const ScriptSourceCode& sourceCode)
         if (!contentSecurityPolicy)
             return;
 
-        if (!contentSecurityPolicy->allowNonParserInsertedScripts(URL(), document->url(), m_startLineNumber, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
+        if (!contentSecurityPolicy->allowScriptForStrictDynamic(URL(), document->url(), m_startPosition.m_line, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
             return;
 
-        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startLineNumber, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
+        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startPosition, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
             return;
     }
 
     if (!frame)
         return;
 
-    if (frame->checkedScript()->registerSpeculationRules(element.get(), sourceCode, document->baseURL()))
+    if (protect(frame->script())->registerSpeculationRules(element.get(), sourceCode, document->baseURL()))
         document->considerSpeculationRules();
     else {
         dispatchErrorEvent();
@@ -716,7 +734,7 @@ void ScriptElement::unregisterSpeculationRules()
     if (!document->settings().speculationRulesPrefetchEnabled())
         return;
 
-    auto removedURLs = document->speculationRules()->unregisterSpeculationRules(element);
+    auto removedURLs = protect(document->speculationRules())->unregisterSpeculationRules(element);
 
     // Remove prefetched resources that were initiated by the removed rules.
     if (RefPtr frame = document->frame()) {
@@ -726,6 +744,15 @@ void ScriptElement::unregisterSpeculationRules()
     }
 
     document->considerSpeculationRules();
+}
+
+bool ScriptElement::virtualHasPendingActivity() const
+{
+    if (!m_hasRelevantLoadEventsListener)
+        return false;
+    if (!loadableScript())
+        return false;
+    return !haveFiredLoadEvent();
 }
 
 }

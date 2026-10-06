@@ -4,8 +4,8 @@
 #include "modules/bentleyottmann/include/Myers.h"
 
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkTo.h"
 #include "modules/bentleyottmann/include/Int96.h"
 
 #include <algorithm>
@@ -380,10 +380,10 @@ public:
     Event operator[](size_t i) const {
         SkASSERT(i < fEvents.size());
         auto& [y, start, endOfBegin, endOfHorizontal, endOfEnd] = fEvents[i];
-        SkSpan<const Segment> begin{&fSegmentStorage[start], SkToSizeT(endOfBegin - start)};
+        SkSpan<const Segment> begin{fSegmentStorage.data() + start, SkToSizeT(endOfBegin - start)};
         SkSpan<const Segment>
             horizontal{&fSegmentStorage[endOfBegin], SkToSizeT(endOfHorizontal - endOfBegin)};
-        SkSpan<const Segment> end{&fSegmentStorage[endOfHorizontal],
+        SkSpan<const Segment> end{fSegmentStorage.data() + endOfHorizontal,
                                   SkToSizeT(endOfEnd - endOfHorizontal)};
         return Event{y, begin, horizontal, end};
     }

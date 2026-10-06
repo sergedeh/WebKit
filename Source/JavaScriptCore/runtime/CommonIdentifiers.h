@@ -40,7 +40,6 @@
     macro(DisplayNames) \
     macro(Error) \
     macro(EvalError) \
-    macro(FinalizationRegistry) \
     macro(Function) \
     macro(Infinity) \
     macro(Intl) \
@@ -66,7 +65,6 @@
     macro(String) \
     macro(Symbol) \
     macro(Temporal) \
-    macro(WeakRef) \
     macro(__defineGetter__) \
     macro(__defineSetter__) \
     macro(__lookupGetter__) \
@@ -101,6 +99,7 @@
     macro(compilations) \
     macro(compile) \
     macro(configurable) \
+    macro(construct) \
     macro(constructor) \
     macro(count) \
     macro(counters) \
@@ -116,6 +115,7 @@
     macro(descriptions) \
     macro(detached) \
     macro(detail) \
+    macro(disambiguation) \
     macro(displayName) \
     macro(done) \
     macro(dotAll) \
@@ -231,6 +231,7 @@
     macro(numeric) \
     macro(of) \
     macro(omitPadding) \
+    macro(offset) \
     macro(opcode) \
     macro(origin) \
     macro(osrExitSites) \
@@ -438,8 +439,8 @@ namespace JSC {
         const Identifier emptyIdentifier;
         const Identifier underscoreProto;
         const Identifier useStrictIdentifier;
-        const Identifier timesIdentifier;
         const Identifier negativeOneIdentifier;
+        const Identifier usingIdentifier;
     private:
         std::unique_ptr<BuiltinNames> m_builtinNames;
 
@@ -461,7 +462,6 @@ namespace JSC {
         JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(JSC_IDENTIFIER_DECLARE_PRIVATE_WELL_KNOWN_SYMBOL_GLOBAL)
         JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_EXPLICIT_RESOURCE_MANAGEMENT_WELL_KNOWN_SYMBOL(JSC_IDENTIFIER_DECLARE_PRIVATE_WELL_KNOWN_SYMBOL_GLOBAL)
 #undef JSC_IDENTIFIER_DECLARE_PRIVATE_WELL_KNOWN_SYMBOL_GLOBAL
-        const Identifier intlLegacyConstructedSymbol;
 
 #define JSC_IDENTIFIER_DECLARE_PRIVATE_FIELD_GLOBAL(name) const Identifier name##PrivateField;
         JSC_COMMON_IDENTIFIERS_EACH_PRIVATE_FIELD(JSC_IDENTIFIER_DECLARE_PRIVATE_FIELD_GLOBAL)

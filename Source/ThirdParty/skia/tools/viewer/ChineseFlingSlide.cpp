@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Google Inc.
+ * Copyright 2017 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -10,8 +10,9 @@
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
-#include "src/base/SkRandom.h"
+#include "src/core/SkRandom.h"
 #include "src/core/SkTHash.h"
+#include "src/gpu/MaskFormat.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
 #include "tools/fonts/FontToolUtils.h"
@@ -20,11 +21,10 @@
 
 #if defined(SK_GANESH)
 #include "include/gpu/ganesh/GrDirectContext.h"
-#include "src/gpu/AtlasTypes.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
+#endif
 
 using MaskFormat = skgpu::MaskFormat;
-#endif
 
 static sk_sp<SkTypeface> chinese_typeface() {
 #ifdef SK_BUILD_FOR_ANDROID

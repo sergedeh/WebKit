@@ -119,6 +119,7 @@ MediaRecorderPrivateBackend::MediaRecorderPrivateBackend(MediaStreamPrivate& str
     : m_stream(stream)
     , m_options(options)
     , m_mimeType(options.mimeType)
+    , m_eosTimer(*this, &MediaRecorderPrivateBackend::eosTimerFired)
     , m_positionTimer([&] {
         positionUpdated();
     })
@@ -160,6 +161,7 @@ MediaRecorderPrivateBackend::MediaRecorderPrivateBackend(MediaStreamPrivate& str
 MediaRecorderPrivateBackend::~MediaRecorderPrivateBackend()
 {
     m_selectTracksCallback.reset();
+    didReachEOS();
     if (m_src)
         webkitMediaStreamSrcSignalEndOfStream(WEBKIT_MEDIA_STREAM_SRC(m_src.get()));
     m_positionTimer.stop();
@@ -208,57 +210,55 @@ void MediaRecorderPrivateBackend::stopRecording(CompletionHandler<void()>&& comp
     gst_element_get_state(m_pipeline.get(), &state, nullptr, GST_CLOCK_TIME_NONE);
     if (state != GST_STATE_VOID_PENDING && state < GST_STATE_PLAYING) {
         GST_DEBUG_OBJECT(m_pipeline.get(), "Pipeline is not in playing state, not sending EOS event");
-        m_eos = true;
         return;
     }
 
     if (!webkitMediaStreamSrcHasPrerolled(WEBKIT_MEDIA_STREAM_SRC(m_src.get()))) {
         GST_DEBUG_OBJECT(m_pipeline.get(), "Source element hasn't prerolled yet, no need to send EOS event");
-        m_eos = true;
         return;
     }
-
-    GST_DEBUG_OBJECT(m_pipeline.get(), "Flushing");
-    gst_element_send_event(m_pipeline.get(), gst_event_new_flush_start());
-    gst_element_send_event(m_pipeline.get(), gst_event_new_flush_stop(FALSE));
 
     GST_DEBUG_OBJECT(m_pipeline.get(), "Emitting EOS event(s)");
     if (!gst_element_send_event(m_pipeline.get(), gst_event_new_eos())) {
         GST_WARNING_OBJECT(m_pipeline.get(), "EOS event wasn't handled");
-        m_eos = true;
         return;
     }
 
     if (gst_app_sink_is_eos(GST_APP_SINK(m_sink.get()))) {
         GST_DEBUG_OBJECT(m_pipeline.get(), "Sink received EOS already");
-        m_eos = true;
         return;
     }
 
+    // Data fetches wait for the EOS event to reach the sink, so that they include the last fragment.
     GST_DEBUG_OBJECT(m_pipeline.get(), "Waiting for EOS event");
-    bool isEOS = false;
-    unsigned count = 0;
-    while (!isEOS) {
-        Locker lock(m_eosLock);
-        m_eosCondition.waitFor(m_eosLock, 200_ms, [weakThis = ThreadSafeWeakPtr { *this }]() -> bool {
-            if (auto protectedThis = weakThis.get())
-                return protectedThis->m_eos;
-            return true;
-        });
-        isEOS = m_eos;
-        if (count++ >= 10)
-            break;
-    }
-    // FIXME: This workaround should be removed. See also https://bugs.webkit.org/show_bug.cgi?id=293124.
-    if (count >= 10) {
-        GST_WARNING_OBJECT(m_pipeline.get(), "EOS hasn't reached the sink after 2 seconds of waiting");
-        return;
-    }
-    GST_DEBUG_OBJECT(m_pipeline.get(), "EOS event received on sink");
+    m_waitingForEOS = true;
+    // The EOS event sometimes never reaches the sink, see https://bugs.webkit.org/show_bug.cgi?id=293124.
+    m_eosTimer.startOneShot(2_s);
+}
+
+void MediaRecorderPrivateBackend::eosTimerFired()
+{
+    GST_WARNING_OBJECT(m_pipeline.get(), "EOS hasn't reached the sink after 2 seconds of waiting");
+    didReachEOS();
+}
+
+void MediaRecorderPrivateBackend::didReachEOS()
+{
+    ASSERT(isMainThread());
+    m_eosTimer.stop();
+    m_waitingForEOS = false;
+    for (auto& callback : std::exchange(m_fetchDataCallbacksPendingEOS, { }))
+        fetchData(WTF::move(callback));
 }
 
 void MediaRecorderPrivateBackend::fetchData(MediaRecorderPrivate::FetchDataCallback&& completionHandler)
 {
+    if (m_waitingForEOS) {
+        GST_DEBUG_OBJECT(m_pipeline.get(), "Deferring data fetch until EOS");
+        m_fetchDataCallbacksPendingEOS.append(WTF::move(completionHandler));
+        return;
+    }
+
     callOnMainThread([this, weakThis = ThreadSafeWeakPtr { *this }, completionHandler = WTF::move(completionHandler), mimeType = this->mimeType()]() mutable {
         auto protectedThis = weakThis.get();
         if (!protectedThis) {
@@ -323,7 +323,16 @@ GRefPtr<GstEncodingContainerProfile> MediaRecorderPrivateBackend::containerProfi
     if (scanner.isContentTypeSupported(GStreamerRegistryScanner::Configuration::Encoding, contentType, { }) == MediaPlayerEnums::SupportsType::IsNotSupported)
         return nullptr;
 
-    auto mp4Variant = isGStreamerPluginAvailable("fmp4"_s) ? "iso-fragmented"_s : "iso"_s;
+    static bool isobmffPluginFound = false;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
+        static const std::array<ASCIILiteral, 2> isobmffPluginNames = { "isobmff"_s, "fmp4"_s };
+        isobmffPluginFound = std::any_of(isobmffPluginNames.begin(), isobmffPluginNames.end(), [](auto& name) {
+            return isGStreamerPluginAvailable(name);
+        });
+    });
+
+    auto mp4Variant = isobmffPluginFound ? "iso-fragmented"_s : "iso"_s;
     StringBuilder containerCapsDescriptionBuilder;
     auto containerType = contentType.containerType();
     if (containerType.endsWith("mp4"_s))
@@ -334,9 +343,9 @@ GRefPtr<GstEncodingContainerProfile> MediaRecorderPrivateBackend::containerProfi
         containerCapsDescriptionBuilder.append(containerType);
 
     auto containerCapsDescription = containerCapsDescriptionBuilder.toString();
-    auto containerCaps = adoptGRef(gst_caps_from_string(containerCapsDescription.ascii().data()));
+    GRefPtr containerCaps = adoptGRef(gst_caps_from_string(containerCapsDescription.ascii().data()));
     GST_DEBUG("Creating container profile for caps %" GST_PTR_FORMAT, containerCaps.get());
-    auto profile = adoptGRef(gst_encoding_container_profile_new(nullptr, nullptr, containerCaps.get(), nullptr));
+    GRefPtr profile = adoptGRef(gst_encoding_container_profile_new(nullptr, nullptr, containerCaps.get(), nullptr));
 
     if (containerType.endsWith("mp4"_s)) {
         StringBuilder propertiesBuilder;
@@ -344,7 +353,7 @@ GRefPtr<GstEncodingContainerProfile> MediaRecorderPrivateBackend::containerProfi
         if (mp4Variant == "iso-fragmented"_s)
             propertiesBuilder.append("isofmp4mux,fragment-duration=100000000,write-mfra=1"_s);
         else {
-            GST_WARNING("isofmp4mux (shipped by gst-plugins-rs) is not available, falling back to mp4mux, duration on resulting file will be invalid");
+            GST_WARNING("isofmp4mux (shipped by gst-plugins-rs fmp4 (deprecated) and isobmff plugins) is not available, falling back to mp4mux, duration on resulting file will be invalid");
             propertiesBuilder.append("mp4mux,fragment-duration=1000,fragment-mode=0,streamable=0,force-create-timecode-trak=1"_s);
         }
         propertiesBuilder.append("]}"_s);
@@ -383,12 +392,12 @@ GRefPtr<GstEncodingContainerProfile> MediaRecorderPrivateBackend::containerProfi
         else if (containerType.endsWith("mp4"_s))
             audioCapsName = "audio/mpeg, mpegversion=4"_s;
         else {
-            GST_WARNING("Audio codec for %s not supported", contentType.raw().utf8().data());
+            GST_WARNING("Audio codec for %s not supported", contentType.raw().utf8());
             return nullptr;
         }
 
         RELEASE_ASSERT(!audioCapsName.isEmpty());
-        auto audioCaps = adoptGRef(gst_caps_from_string(audioCapsName.utf8().data()));
+        GRefPtr audioCaps = adoptGRef(gst_caps_from_string(audioCapsName.utf8().legacyCStringPointer()));
         GST_DEBUG("Creating audio encoding profile for caps %" GST_PTR_FORMAT, audioCaps.get());
         m_audioEncodingProfile = adoptGRef(GST_ENCODING_PROFILE(gst_encoding_audio_profile_new(audioCaps.get(), nullptr, nullptr, 1)));
 
@@ -399,7 +408,7 @@ GRefPtr<GstEncodingContainerProfile> MediaRecorderPrivateBackend::containerProfi
             // https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/4054
             auto sampleRate = audioCapsName == "audio/x-opus"_s ? 48000 : settings.sampleRate();
 
-            auto restrictionCaps = adoptGRef(gst_caps_new_simple("audio/x-raw", "rate", G_TYPE_INT, sampleRate, nullptr));
+            GRefPtr restrictionCaps = adoptGRef(gst_caps_new_simple("audio/x-raw", "rate", G_TYPE_INT, sampleRate, nullptr));
             GST_DEBUG("Setting audio restriction caps to %" GST_PTR_FORMAT, restrictionCaps.get());
             gst_encoding_profile_set_restriction(m_audioEncodingProfile.get(), restrictionCaps.leakRef());
         }
@@ -446,12 +455,10 @@ void MediaRecorderPrivateBackend::setSink(GstElement* element)
             GST_DEBUG_OBJECT(backend->m_pipeline.get(), "EOS received on sink");
             static_cast<MediaRecorderPrivateBackend*>(userData)->notifyEOS();
         },
+        // preroll
+        nullptr,
         [](GstAppSink* sink, gpointer userData) -> GstFlowReturn {
-            auto sample = adoptGRef(gst_app_sink_pull_preroll(sink));
-            return static_cast<MediaRecorderPrivateBackend*>(userData)->handleSample(sink, WTF::move(sample));
-        },
-        [](GstAppSink* sink, gpointer userData) -> GstFlowReturn {
-            auto sample = adoptGRef(gst_app_sink_pull_sample(sink));
+            GRefPtr sample = adoptGRef(gst_app_sink_pull_sample(sink));
             return static_cast<MediaRecorderPrivateBackend*>(userData)->handleSample(sink, WTF::move(sample));
         },
         // new_event
@@ -513,14 +520,14 @@ bool MediaRecorderPrivateBackend::preparePipeline()
     if (!m_pipeline)
         return false;
 
-    auto clock = adoptGRef(gst_system_clock_obtain());
+    GRefPtr clock = adoptGRef(gst_system_clock_obtain());
     gst_pipeline_use_clock(GST_PIPELINE(m_pipeline.get()), clock.get());
     gst_element_set_base_time(m_pipeline.get(), 0);
     gst_element_set_start_time(m_pipeline.get(), GST_CLOCK_TIME_NONE);
 
     registerActivePipeline(m_pipeline);
     connectSimpleBusMessageCallback(m_pipeline.get(), [recorder = ThreadSafeWeakPtr { *this }](auto message) mutable {
-        if (GST_MESSAGE_TYPE(message) != GST_MESSAGE_EOS)
+        if (GST_MESSAGE_TYPE(message) != GST_MESSAGE_EOS && GST_MESSAGE_TYPE(message) != GST_MESSAGE_ERROR)
             return;
         RefPtr self = recorder.get();
         if (!self)
@@ -543,7 +550,7 @@ bool MediaRecorderPrivateBackend::preparePipeline()
             return;
         }
 
-        String elementClass = unsafeSpan(gst_element_get_metadata(element, GST_ELEMENT_METADATA_KLASS));
+        String elementClass = String::fromLatin1(unsafeSpan(gst_element_get_metadata(element, GST_ELEMENT_METADATA_KLASS)));
         auto classifiers = elementClass.split('/');
         if (classifiers.contains("Audio"_s) && classifiers.contains("Codec"_s) && classifiers.contains("Encoder"_s))
             recorder->configureAudioEncoder(element);
@@ -566,9 +573,10 @@ void MediaRecorderPrivateBackend::processSample(GRefPtr<GstSample>&& sample)
 void MediaRecorderPrivateBackend::notifyEOS()
 {
     GST_DEBUG_OBJECT(m_pipeline.get(), "EOS received");
-    Locker lock(m_eosLock);
-    m_eos = true;
-    m_eosCondition.notifyAll();
+    callOnMainThread([weakThis = ThreadSafeWeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->didReachEOS();
+    });
 }
 
 #undef GST_CAT_DEFAULT

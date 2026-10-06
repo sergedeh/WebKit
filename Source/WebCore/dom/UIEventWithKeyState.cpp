@@ -59,6 +59,8 @@ bool UIEventWithKeyState::getModifierState(const String& keyIdentifier) const
         return metaKey();
     if (keyIdentifier == "CapsLock"_s)
         return capsLockKey();
+    if (keyIdentifier == "AltGraph"_s)
+        return altGraphKey();
     // FIXME: The specification also has Fn, FnLock, Hyper, NumLock, Super, ScrollLock, Symbol, SymbolLock.
     return false;
 }
@@ -80,7 +82,7 @@ void UIEventWithKeyState::setModifierKeys(bool ctrlKey, bool altKey, bool shiftK
 RefPtr<UIEventWithKeyState> findEventWithKeyState(Event* event)
 {
     for (RefPtr e = event; e; e = e->underlyingEvent()) {
-        if (is<KeyboardEvent>(*e) || is<MouseEvent>(*e))
+        if (isAnyOf<KeyboardEvent, MouseEvent>(*e))
             return downcast<UIEventWithKeyState>(WTF::move(e));
     }
     return nullptr;

@@ -32,7 +32,7 @@
 #import "SharedBuffer.h"
 #import <ImageIO/ImageIO.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
-#import <wtf/ListHashSet.h>
+#import <wtf/OrderedHashSet.h>
 #import <wtf/text/StringHash.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -42,7 +42,7 @@
 namespace WebCore {
 
 #if PLATFORM(MAC)
-static NSBitmapImageFileType bitmapPNGFileType()
+static NSBitmapImageFileType NODELETE bitmapPNGFileType()
 {
     return NSBitmapImageFileTypePNG;
 }
@@ -54,6 +54,7 @@ enum class ImageType {
     PNG,
     JPEG,
     GIF,
+    SVG,
 };
 
 static ImageType cocoaTypeToImageType(const String& cocoaType)
@@ -74,6 +75,8 @@ static ImageType cocoaTypeToImageType(const String& cocoaType)
         return ImageType::JPEG;
     if (cocoaType == String(UTTypeGIF.identifier))
         return ImageType::GIF;
+    if (cocoaType == String(UTTypeSVG.identifier))
+        return ImageType::SVG;
 
     return ImageType::Invalid;
 }
@@ -97,6 +100,8 @@ static ASCIILiteral imageTypeToMIMEType(ImageType type)
         return "image/jpeg"_s;
     case ImageType::GIF:
         return "image/gif"_s;
+    case ImageType::SVG:
+        return "image/svg+xml"_s;
     }
 }
 
@@ -119,6 +124,8 @@ static ASCIILiteral imageTypeToFakeFilename(ImageType type)
         return "image.jpeg"_s;
     case ImageType::GIF:
         return "image.gif"_s;
+    case ImageType::SVG:
+        return "image.svg"_s;
     }
 }
 
@@ -197,7 +204,7 @@ Vector<String> Pasteboard::typesForLegacyUnsafeBindings()
     if (cocoaTypes.isEmpty())
         return cocoaTypes;
 
-    ListHashSet<String> result;
+    OrderedHashSet<String> result;
     for (auto& cocoaType : cocoaTypes)
         addHTMLClipboardTypesForCocoaType(result, cocoaType);
 
@@ -287,7 +294,7 @@ const PasteboardCustomData& Pasteboard::readCustomData()
     return *m_customDataCache; 
 }
 
-void Pasteboard::writeCustomData(const Vector<PasteboardCustomData>& data)
+void Pasteboard::writeCustomData(const Vector<PasteboardCustomData>& data, PasteboardWriteType)
 {
     m_changeCount = platformStrategies()->pasteboardStrategy()->writeCustomData(data, name(), context());
 }

@@ -42,14 +42,14 @@ public:
 
     ~CheckPrivateBrandVariant();
 
-    const StructureSet& structureSet() const { return m_structureSet; }
-    StructureSet& structureSet() { return m_structureSet; }
+    const StructureSet& structureSet() const LIFETIME_BOUND { return m_structureSet; }
+    StructureSet& structureSet() LIFETIME_BOUND { return m_structureSet; }
 
     bool attemptToMerge(const CheckPrivateBrandVariant& other);
 
     DECLARE_VISIT_AGGREGATE;
     template<typename Visitor> void markIfCheap(Visitor&);
-    bool finalize(VM&);
+    bool isStillLive(VM&);
 
     void dump(PrintStream&) const;
     void dumpInContext(PrintStream&, DumpContext*) const;

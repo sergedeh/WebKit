@@ -6,7 +6,7 @@ list(APPEND WTF_SOURCES
     generic/WorkQueueGeneric.cpp
 
     glib/Application.cpp
-    glib/ChassisType.cpp
+    glib/FilePathWatcher.cpp
     glib/FileSystemGlib.cpp
     glib/GMallocString.cpp
     glib/GRefPtr.cpp
@@ -16,11 +16,11 @@ list(APPEND WTF_SOURCES
     glib/RunLoopGLib.cpp
     glib/Sandbox.cpp
     glib/SocketConnection.cpp
+    glib/TimeZoneGLib.cpp
     glib/URLGLib.cpp
 
     linux/CurrentProcessMemoryStatus.cpp
-    linux/MemoryFootprintLinux.cpp
-    linux/RealTimeThreads.cpp
+    linux/HighPriorityThreads.cpp
 
     posix/CPUTimePOSIX.cpp
     posix/FileHandlePOSIX.cpp
@@ -33,18 +33,32 @@ list(APPEND WTF_SOURCES
 
     unix/LanguageUnix.cpp
     unix/LoggingUnix.cpp
-    unix/MemoryPressureHandlerUnix.cpp
     unix/UniStdExtrasUnix.cpp
 )
 
+if (ANDROID)
+    list(APPEND WTF_SOURCES
+        generic/MemoryFootprintGeneric.cpp
+        generic/MemoryPressureHandlerGeneric.cpp
+    )
+else ()
+    list(APPEND WTF_SOURCES
+        linux/MemoryFootprintLinux.cpp
+
+        unix/MemoryPressureHandlerUnix.cpp
+    )
+endif ()
+
 list(APPEND WTF_PUBLIC_HEADERS
+    PlatformEnableGlib.h
+
     android/RefPtrAndroid.h
 
     glib/ActivityObserver.h
     glib/Application.h
-    glib/ChassisType.h
+    glib/FilePathWatcher.h
+    glib/GLibExtras.h
     glib/GMallocString.h
-    glib/GMutexLocker.h
     glib/GRefPtr.h
     glib/GResources.h
     glib/GSocketMonitor.h
@@ -60,8 +74,8 @@ list(APPEND WTF_PUBLIC_HEADERS
     glib/WTFGType.h
 
     linux/CurrentProcessMemoryStatus.h
+    linux/HighPriorityThreads.h
     linux/ProcessMemoryFootprint.h
-    linux/RealTimeThreads.h
 
     posix/SocketPOSIX.h
 

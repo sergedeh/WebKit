@@ -48,6 +48,16 @@ bool ResourceTimingInformation::shouldAddResourceTiming(CachedResource& resource
         && resource.options().loadedFromOpaqueSource == LoadedFromOpaqueSource::No;
 }
 
+void ResourceTimingInformation::addResourceTimingToDocument(Document& document, ResourceTiming&& resourceTiming)
+{
+    RefPtr window = document.window();
+    if (!window)
+        return;
+
+    resourceTiming.updateExposure(protect(document.securityOrigin()));
+    protect(window->performance())->addResourceTiming(WTF::move(resourceTiming));
+}
+
 void ResourceTimingInformation::addResourceTiming(CachedResource& resource, Document& document, ResourceTiming&& resourceTiming)
 {
     if (!ResourceTimingInformation::shouldAddResourceTiming(resource))
@@ -61,11 +71,11 @@ void ResourceTimingInformation::addResourceTiming(CachedResource& resource, Docu
     if (info.added == Added)
         return;
 
-    RefPtr initiatorDocument = document;
+    RefPtr initiatorDocument = &document;
     if (resource.type() == CachedResource::Type::MainResource && document.frame() && document.frame()->loader().shouldReportResourceTimingToParentFrame()) {
         initiatorDocument = document.parentDocument();
         if (initiatorDocument)
-            resourceTiming.updateExposure(initiatorDocument->protectedSecurityOrigin());
+            resourceTiming.updateExposure(protect(initiatorDocument->securityOrigin()));
     }
     if (!initiatorDocument)
         return;
@@ -76,7 +86,7 @@ void ResourceTimingInformation::addResourceTiming(CachedResource& resource, Docu
 
     resourceTiming.overrideInitiatorType(info.type);
 
-    initiatorWindow->protectedPerformance()->addResourceTiming(WTF::move(resourceTiming));
+    protect(initiatorWindow->performance())->addResourceTiming(WTF::move(resourceTiming));
 
     info.added = Added;
 }
@@ -86,20 +96,18 @@ void ResourceTimingInformation::removeResourceTiming(CachedResource& resource)
     m_initiatorMap.remove(resource);
 }
 
-void ResourceTimingInformation::storeResourceTimingInitiatorInformation(const CachedResourceHandle<CachedResource>& resource, const AtomString& initiatorType, LocalFrame* frame)
+void ResourceTimingInformation::storeResourceTimingInitiatorInformation(CachedResource& resource, const AtomString& initiatorType, LocalFrame* frame)
 {
-    ASSERT(resource.get());
-
-    if (resource->type() == CachedResource::Type::MainResource) {
+    if (resource.type() == CachedResource::Type::MainResource) {
         // <iframe>s should report the initial navigation requested by the parent document, but not subsequent navigations.
         ASSERT(frame);
         if (frame->ownerElement()) {
             InitiatorInfo info = { frame->ownerElement()->localName(), NotYetAdded };
-            m_initiatorMap.add(*resource, info);
+            m_initiatorMap.add(resource, info);
         }
     } else {
         InitiatorInfo info = { initiatorType, NotYetAdded };
-        m_initiatorMap.add(*resource, info);
+        m_initiatorMap.add(resource, info);
     }
 }
 

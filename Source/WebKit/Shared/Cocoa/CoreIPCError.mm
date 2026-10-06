@@ -82,14 +82,28 @@ RetainPtr<id> CoreIPCError::toID() const
     INJECT_VALUE(NSURLErrorFailingURLPeerTrustErrorKey, m_failingURLPeerTrustError)
     INJECT_VALUE(NSURLErrorKey, m_urlError)
     INJECT_VALUE(NSURLErrorFailingURLErrorKey, m_failingURLError)
-#if USE(NSURL_ERROR_FAILING_URL_STRING_KEY)
-    INJECT_STRING_VALUE(NSURLErrorFailingURLStringErrorKey, m_failingURLStringError)
-#endif
 
     INJECT_STRING_VALUE(NSFilePathErrorKey, m_filePathError)
 
     INJECT_STRING_VALUE(@"networkTaskDescription", m_networkTaskDescription)
     INJECT_STRING_VALUE(@"networkTaskMetricsPrivacyStance", m_networkTaskMetricsPrivacyStance)
+
+    if (m_networkResolutionReport) {
+        RetainPtr interfaces = adoptNS([[NSMutableArray alloc] initWithCapacity:m_networkResolutionReport->interfaces.size()]);
+        for (auto& [type, name] : m_networkResolutionReport->interfaces) {
+            [interfaces addObject:@{
+                @"type" : type.createNSString().get() ?: @"",
+                @"name" : name.createNSString().get() ?: @"",
+            }];
+        }
+        RetainPtr report = @{
+            @"provider" : m_networkResolutionReport->provider.createNSString().get() ?: @"",
+            @"dnsFailureReason" : m_networkResolutionReport->dnsFailureReason.createNSString().get() ?: @"",
+            @"extendedDNSErrorExtraText" : m_networkResolutionReport->extendedDNSErrorExtraText.createNSString().get() ?: @"",
+            @"interfaces" : interfaces,
+        };
+        INJECT_VALUE(@"networkResolutionReport", report)
+    }
 
     INJECT_STRING_VALUE(@"NSDescription", m_description)
 
@@ -200,14 +214,35 @@ CoreIPCError::CoreIPCError(NSError *nsError)
 
     EXTRACT_TYPED_VALUE(NSURLErrorKey, NSURL, m_urlError)
     EXTRACT_TYPED_VALUE(NSURLErrorFailingURLErrorKey, NSURL, m_failingURLError)
-#if USE(NSURL_ERROR_FAILING_URL_STRING_KEY)
-    EXTRACT_STRING_VALUE(NSURLErrorFailingURLStringErrorKey, m_failingURLStringError)
-#endif
 
     EXTRACT_STRING_VALUE(NSFilePathErrorKey, m_filePathError)
 
     EXTRACT_STRING_VALUE(@"networkTaskDescription", m_networkTaskDescription)
     EXTRACT_STRING_VALUE(@"networkTaskMetricsPrivacyStance", m_networkTaskMetricsPrivacyStance)
+
+    if (RetainPtr resolutionReport = dynamic_objc_cast<NSDictionary>([userInfo objectForKey:@"networkResolutionReport"])) {
+        NetworkResolutionReport report;
+        if (RetainPtr value = dynamic_objc_cast<NSString>([resolutionReport objectForKey:@"provider"]))
+            report.provider = value.get();
+        if (RetainPtr value = dynamic_objc_cast<NSString>([resolutionReport objectForKey:@"dnsFailureReason"]))
+            report.dnsFailureReason = value.get();
+        if (RetainPtr value = dynamic_objc_cast<NSString>([resolutionReport objectForKey:@"extendedDNSErrorExtraText"]))
+            report.extendedDNSErrorExtraText = value.get();
+        if (RetainPtr interfaces = dynamic_objc_cast<NSArray>([resolutionReport objectForKey:@"interfaces"])) {
+            for (id entry in interfaces.get()) {
+                RetainPtr interfaceDictionary = dynamic_objc_cast<NSDictionary>(entry);
+                if (!interfaceDictionary)
+                    continue;
+                NetworkResolutionReportInterface interface;
+                if (RetainPtr value = dynamic_objc_cast<NSString>([interfaceDictionary objectForKey:@"type"]))
+                    interface.type = value.get();
+                if (RetainPtr value = dynamic_objc_cast<NSString>([interfaceDictionary objectForKey:@"name"]))
+                    interface.name = value.get();
+                report.interfaces.append(WTF::move(interface));
+            }
+        }
+        m_networkResolutionReport = WTF::move(report);
+    }
 
     EXTRACT_STRING_VALUE(@"NSDescription", m_description)
 }

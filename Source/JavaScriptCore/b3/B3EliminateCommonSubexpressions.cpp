@@ -28,22 +28,25 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3BasicBlockInlines.h"
 #include "B3BlockWorklist.h"
+#include "B3BreakCriticalEdges.h"
 #include "B3Dominators.h"
 #include "B3HeapRange.h"
 #include "B3InsertionSetInlines.h"
 #include "B3MemoryValue.h"
 #include "B3MemoryValueInlines.h"
+#include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3PureCSE.h"
+#include "B3SSACalculator.h"
+#include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
-#include "B3VariableValue.h"
-#include "B3WasmStructFieldValue.h"
-#include "B3WasmStructGetValue.h"
-#include "B3WasmStructSetValue.h"
+#include "B3ValueKeyInlines.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/HashMap.h>
+#include <wtf/IndexSet.h>
 #include <wtf/ListDump.h>
 #include <wtf/RangeSet.h>
 #include <wtf/Scope.h>
@@ -66,7 +69,6 @@ static constexpr bool verbose = false;
 // in the same heap with the same inputs.
 
 using MemoryMatches = Vector<MemoryValue*, 1>;
-using WasmStructMatches = Vector<WasmStructFieldValue*, 1>;
 
 class MemoryValueMap {
 public:
@@ -81,7 +83,7 @@ public:
     }
 
     template<typename Functor>
-    void removeIf(const Functor& functor)
+    void removeIf(NOESCAPE const Functor& functor)
     {
         m_map.removeIf(
             [&] (UncheckedKeyHashMap<Value*, Matches>::KeyValuePairType& entry) -> bool {
@@ -104,7 +106,7 @@ public:
     }
 
     template<typename Functor>
-    MemoryValue* find(Value* ptr, const Functor& functor)
+    MemoryValue* find(Value* ptr, NOESCAPE const Functor& functor)
     {
         dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Looking for ", pointerDump(ptr), " in ", *this);
         if (Matches* matches = find(ptr)) {
@@ -137,71 +139,12 @@ private:
     UncheckedKeyHashMap<Value*, Matches> m_map;
 };
 
-using WasmStructFieldKey = std::tuple<Value*, uint64_t>;
-
-class WasmStructValueMap {
-public:
-    WasmStructValueMap() = default;
-
-    void add(WasmStructFieldValue* value)
-    {
-        WasmStructFieldKey key(value->child(0), value->fieldHeapKey());
-        Matches& matches = m_map.add(key, Matches()).iterator->value;
-        if (matches.contains(value))
-            return;
-        matches.append(value);
-    }
-
-    template<typename Functor>
-    void removeIf(const Functor& functor)
-    {
-        m_map.removeIf(
-            [&](UncheckedKeyHashMap<WasmStructFieldKey, Matches>::KeyValuePairType& entry) -> bool {
-                entry.value.removeAllMatching(
-                    [&](Value* value) -> bool {
-                        if (auto* field = value->as<WasmStructFieldValue>())
-                            return functor(field);
-                        return true;
-                    });
-                return entry.value.isEmpty();
-            });
-    }
-
-    template<typename Functor>
-    WasmStructFieldValue* find(Value* structPtr, uint64_t fieldHeapKey, const Functor& functor)
-    {
-        auto iter = m_map.find(WasmStructFieldKey(structPtr, fieldHeapKey));
-        if (iter == m_map.end())
-            return nullptr;
-        for (auto* candidate : iter->value) {
-            if (auto* candidateStructField = candidate->as<WasmStructFieldValue>()) {
-                if (functor(candidateStructField))
-                    return candidateStructField;
-            }
-        }
-        return nullptr;
-    }
-
-    void dump(PrintStream& out) const
-    {
-        out.print("{"_s);
-        CommaPrinter comma;
-        for (auto& entry : m_map)
-            out.print(comma, "(", pointerDump(std::get<0>(entry.key)), ",", std::get<1>(entry.key), ")=>"_s, pointerListDump(entry.value));
-        out.print("}"_s);
-    }
-
-private:
-    UncheckedKeyHashMap<WasmStructFieldKey, Matches> m_map;
-};
-
 struct ImpureBlockData {
     void dump(PrintStream& out) const
     {
         out.print(
             "{reads = ", reads, ", writes = ", writes,
             ", memoryStoresAtHead = ", memoryStoresAtHead, ", memoryValuesAtTail = ", memoryValuesAtTail,
-            ", wasmStructStoresAtHead = ", wasmStructStoresAtHead, ", wasmStructValuesAtTail = ", wasmStructValuesAtTail,
             "}");
     }
 
@@ -213,9 +156,6 @@ struct ImpureBlockData {
     MemoryValueMap memoryStoresAtHead;
     MemoryValueMap memoryValuesAtTail;
 
-    WasmStructValueMap wasmStructStoresAtHead;
-    WasmStructValueMap wasmStructValuesAtTail;
-
     // This Maps x->y in "y = WasmAddress(@x)"
     UncheckedKeyHashMap<Value*, Value*> m_candidateWasmAddressesAtTail;
 };
@@ -224,8 +164,6 @@ class CSE {
 public:
     CSE(Procedure& proc)
         : m_proc(proc)
-        , m_dominators(proc.dominators())
-        , m_impureBlockData(proc.size())
         , m_insertionSet(proc)
     {
     }
@@ -234,7 +172,13 @@ public:
     {
         dataLogIf(B3EliminateCommonSubexpressionsInternal::verbose, "B3 before CSE:\n", m_proc);
 
+        // Direct Upsilon insertion needs no critical edges.
+        breakCriticalEdges(m_proc);
+
         m_proc.resetValueOwners();
+        m_dominators = &m_proc.dominators();
+        m_impureBlockData = IndexMap<BasicBlock*, ImpureBlockData>(m_proc.size());
+        m_ssa = makeUnique<SSACalculator>(m_proc);
 
         // Summarize the impure effects of each block, and the impure values available at the end of
         // each block. This doesn't edit code yet.
@@ -243,7 +187,6 @@ public:
             for (Value* value : *block) {
                 Effects effects = value->effects();
                 MemoryValue* memory = value->as<MemoryValue>();
-                WasmStructFieldValue* wasmStructField = value->as<WasmStructFieldValue>();
 
                 if (memory) {
                     if (memory->isStore()
@@ -252,14 +195,6 @@ public:
                         && (!data.fence || !memory->hasFence()))
                         data.memoryStoresAtHead.add(memory);
                 }
-                if (wasmStructField) {
-                    if (wasmStructField->opcode() == WasmStructSet
-                        && !data.reads.overlaps(wasmStructField->range())
-                        && !data.writes.overlaps(wasmStructField->range())
-                        && !data.fence)
-                        data.wasmStructStoresAtHead.add(wasmStructField);
-                }
-
                 data.reads.add(effects.reads);
 
                 if (HeapRange writes = effects.writes)
@@ -268,9 +203,6 @@ public:
 
                 if (memory)
                     data.memoryValuesAtTail.add(memory);
-                if (wasmStructField)
-                    data.wasmStructValuesAtTail.add(wasmStructField);
-
                 if (WasmAddressValue* wasmAddress = value->as<WasmAddressValue>())
                     data.m_candidateWasmAddressesAtTail.add(wasmAddress->child(0), wasmAddress);
 
@@ -284,9 +216,36 @@ public:
         }
 
         // Perform CSE. This edits code.
-        Vector<BasicBlock*> postOrder = m_proc.blocksInPostOrder();
-        for (unsigned i = postOrder.size(); i--;) {
-            m_block = postOrder[i];
+        performCSE(nullptr);
+
+        // Re-sweep loop blocks once to catch some additional cases. In reverse-post-order the loop body hasn't been
+        // processed when we visit the header, so back-edge queries from the header miss matches that show up after the body is processed.
+        NaturalLoops& loops = m_proc.naturalLoops();
+        if (loops.numLoops()) {
+            IndexSet<BasicBlock*> loopBlocks;
+            for (unsigned i = 0; i < loops.numLoops(); ++i) {
+                const auto& loop = loops.loop(i);
+                loopBlocks.add(loop.header());
+                for (unsigned j = 0; j < loop.size(); ++j)
+                    loopBlocks.add(loop.at(j));
+            }
+            performCSE(&loopBlocks);
+        }
+
+        finalize();
+
+        dataLogIf(B3EliminateCommonSubexpressionsInternal::verbose, "B3 after CSE:\n", m_proc);
+
+        return m_changed;
+    }
+
+private:
+    void performCSE(const IndexSet<BasicBlock*>* filter)
+    {
+        for (auto* block : m_proc.blocksInPostOrder() | std::views::reverse) {
+            m_block = block;
+            if (filter && !filter->contains(m_block))
+                continue;
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "Looking at ", *m_block, ":");
 
             m_data = ImpureBlockData();
@@ -297,37 +256,102 @@ public:
             m_insertionSet.execute(m_block);
             m_impureBlockData[m_block] = m_data;
         }
+    }
 
-        // The previous pass might have requested that we insert code in some basic block other than
-        // the one that it was looking at. This inserts them.
-        for (BasicBlock* block : m_proc) {
-            for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
-                auto iter = m_sets.find(block->at(valueIndex));
-                if (iter == m_sets.end())
-                    continue;
+    void finalize()
+    {
+        if (m_pendingResolutions.isEmpty()) {
+            ASSERT(m_sets.isEmpty());
+            return;
+        }
 
-                for (Value* value : iter->value)
-                    m_insertionSet.insertValue(valueIndex + 1, value);
+        m_ssa->computePhis(
+            [&] (SSACalculator::Variable* var, BasicBlock*) -> Value* {
+                const auto& resolution = m_pendingResolutions[var->index()];
+                return m_proc.add<Value>(Phi, resolution.placeholder->type(), resolution.placeholder->origin());
+            });
+
+        for (BasicBlock* block : m_proc.blocksInPreOrder()) {
+            for (SSACalculator::Def* phiDef : m_ssa->phisForBlock(block))
+                m_insertionSet.insertValue(0, phiDef->value());
+
+            if (m_blocksWithSets.contains(block)) {
+                for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
+                    Value* value = block->at(valueIndex);
+                    if (!m_matched.contains(value))
+                        continue;
+                    auto iter = m_sets.find(value);
+                    if (iter == m_sets.end())
+                        continue;
+                    for (Value* extra : iter->value)
+                        m_insertionSet.insertValue(valueIndex + 1, extra);
+                }
             }
+
+            if (block->size()) {
+                unsigned upsilonIndex = block->size() - 1;
+                Origin upsilonOrigin = block->last()->origin();
+                for (BasicBlock* successor : block->successorBlocks()) {
+                    for (SSACalculator::Def* phiDef : m_ssa->phisForBlock(successor)) {
+                        SSACalculator::Variable* var = phiDef->variable();
+                        SSACalculator::Def* reaching = m_ssa->reachingDefAtTail(block, var);
+                        Value* upsilonChild;
+                        if (reaching)
+                            upsilonChild = reaching->value()->foldIdentity();
+                        else {
+                            // Predecessor reaches the Phi on a path with no def.
+                            upsilonChild = m_insertionSet.insertBottom(upsilonIndex, upsilonOrigin, m_pendingResolutions[var->index()].placeholder->type());
+                        }
+                        m_insertionSet.insert<UpsilonValue>(upsilonIndex, upsilonOrigin, upsilonChild, phiDef->value());
+                    }
+                }
+            }
+
             m_insertionSet.execute(block);
         }
 
-        dataLogIf(B3EliminateCommonSubexpressionsInternal::verbose, "B3 after CSE:\n", m_proc);
-
-        return m_changed;
+        for (auto& resolution : m_pendingResolutions) {
+            Value* reachingValue = nullptr;
+            for (SSACalculator::Def* phiDef : m_ssa->phisForBlock(resolution.useBlock)) {
+                if (phiDef->variable() == resolution.var) {
+                    reachingValue = phiDef->value();
+                    break;
+                }
+            }
+            if (!reachingValue) {
+                SSACalculator::Def* def = m_ssa->reachingDefAtHead(resolution.useBlock, resolution.var);
+                ASSERT(def);
+                reachingValue = def->value();
+            }
+            resolution.placeholder->replaceWithIdentity(reachingValue->foldIdentity());
+        }
     }
-    
-private:
+
     void process()
     {
         m_value->performSubstitution();
 
-        if (m_pureCSE.process(m_value, m_dominators)) {
+        if (m_pureCSE.process(m_value, *m_dominators)) {
             ASSERT(!m_value->effects().readsPinned || !m_data.writesPinned);
             ASSERT(!m_value->effects().writes);
             ASSERT(!m_value->effects().writesPinned);
             m_changed = true;
             return;
+        }
+
+        // If a WasmArrayLength is dominated by the same key's WasmArrayLength,
+        // traps-bit does not matter since dominating WasmArrayLength already ensured that
+        // traps check is already done. PureCSE already handles same-variant matches above;
+        // this queries for the opposite traps-bit variant via ValueKey lookup.
+        if (m_value->opcode() == WasmArrayLength) {
+            Kind altKind = m_value->kind();
+            altKind.setTraps(!altKind.traps());
+            ValueKey altKey(altKind, m_value->type(), m_value->child(0));
+            if (Value* match = m_pureCSE.findMatch(altKey, m_block, *m_dominators)) {
+                m_value->replaceWithIdentity(match);
+                m_changed = true;
+                return;
+            }
         }
 
         if (WasmAddressValue* wasmAddress = m_value->as<WasmAddressValue>()) {
@@ -343,35 +367,21 @@ private:
         }
 
         MemoryValue* memory = m_value->as<MemoryValue>();
-        WasmStructGetValue* structGet = m_value->as<WasmStructGetValue>();
-        WasmStructSetValue* structSet = m_value->as<WasmStructSetValue>();
 
-        // Before clobber - try to eliminate redundant operations
         if (memory && processMemoryBeforeClobber(memory))
             return;
 
-        if (structSet && processWasmStructSetBeforeClobber(structSet))
-            return;
-
-        // Clobber based on writes - this handles both MemoryValue and WasmStruct operations
         if (HeapRange writes = effects.writes)
             clobber(m_data, writes);
 
-        // After clobber - CSE and tracking
         if (memory)
             processMemoryAfterClobber(memory);
-
-        if (structGet)
-            processWasmStructGetAfterClobber(structGet);
-
-        if (structSet)
-            processWasmStructSetAfterClobber(structSet);
 
         // The reads info should be updated even the block is processed
         // since the dominated store nodes may dependent on the data
         // read from the processed block. Note that there is no need to
         // update reads info if the node is deleted.
-        m_data.reads.add(m_value->effects().reads);
+        m_data.reads.add(effects.reads);
     }
 
     // Return true if we got rid of the operation. If you changed IR in this function, you have to
@@ -425,16 +435,6 @@ private:
                 if (memory->readsMutability() == Mutability::Immutable)
                     return false;
                 return memory->range().overlaps(writes);
-            });
-
-        data.wasmStructValuesAtTail.removeIf(
-            [&](WasmStructFieldValue* value) {
-                // If field is immutable (only applies to Get), clobbering never changes the result
-                if (auto* structGet = value->as<WasmStructGetValue>()) {
-                    if (structGet->mutability() == Mutability::Immutable)
-                        return false;
-                }
-                return value->range().overlaps(writes);
             });
     }
 
@@ -629,7 +629,7 @@ private:
     }
 
     template<typename Filter>
-    bool handleStoreBeforeClobber(Value* ptr, HeapRange range, const Filter& filter)
+    bool handleStoreBeforeClobber(Value* ptr, HeapRange range, NOESCAPE const Filter& filter)
     {
         MemoryMatches matches = findMemoryValue(ptr, range, filter);
         if (matches.isEmpty())
@@ -641,7 +641,7 @@ private:
     }
 
     template<typename Filter>
-    void handleStoreAfterClobber(Value* ptr, HeapRange range, const Filter& filter)
+    void handleStoreAfterClobber(Value* ptr, HeapRange range, NOESCAPE const Filter& filter)
     {
         if (!m_value->traps() && findStoreAfterClobber(ptr, range, filter)) {
             m_value->replaceWithNop();
@@ -653,7 +653,7 @@ private:
     }
 
     template<typename Filter>
-    bool findStoreAfterClobber(Value* ptr, HeapRange range, const Filter& filter)
+    bool findStoreAfterClobber(Value* ptr, HeapRange range, NOESCAPE const Filter& filter)
     {
         if (m_value->as<MemoryValue>()->hasFence())
             return false;
@@ -706,28 +706,19 @@ private:
         return true;
     }
 
-    template<typename Filter>
-    void handleMemoryValue(Value* ptr, HeapRange range, const Filter& filter)
-    {
-        handleMemoryValue(
-            ptr, range, filter,
-            [] (MemoryValue*, Vector<Value*>&) -> Value* {
-                return nullptr;
-            });
-    }
-
     template<typename Filter, typename Replace>
     void handleMemoryValue(
-        Value* ptr, HeapRange range, const Filter& filter, const Replace& replace)
+        Value* ptr, HeapRange range, NOESCAPE const Filter& filter, NOESCAPE const Replace& replace)
     {
-        MemoryMatches matches = findMemoryValue(ptr, range, filter);
+        // FIXME: Currently we observed some performance regression in this case.
+        MemoryMatches matches = findMemoryValue(ptr, range, filter /* , m_value->as<MemoryValue>()->readsMutability() */);
         if (replaceMemoryValue(matches, replace))
             return;
         m_data.memoryValuesAtTail.add(m_value->as<MemoryValue>());
     }
 
     template<typename Replace>
-    bool replaceMemoryValue(const MemoryMatches& matches, const Replace& replace)
+    bool replaceMemoryValue(const MemoryMatches& matches, NOESCAPE const Replace& replace)
     {
         if (matches.isEmpty())
             return false;
@@ -738,7 +729,7 @@ private:
 
         if (matches.size() == 1) {
             MemoryValue* dominatingMatch = matches[0];
-            RELEASE_ASSERT(m_dominators.dominates(dominatingMatch->owner, m_block));
+            RELEASE_ASSERT(m_dominators->dominates(dominatingMatch->owner, m_block));
             
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Eliminating using ", *dominatingMatch);
             Vector<Value*> extraValues;
@@ -755,37 +746,37 @@ private:
             return true;
         }
 
-        // FIXME: It would be way better if this phase just did SSA calculation directly.
-        // Right now we're relying on the fact that CSE's position in the phase order is
-        // almost right before SSA fixup.
 
-        Variable* variable = m_proc.addVariable(m_value->type());
+        // addBottom creates a fresh Const; InsertionSet::insertBottom would
+        // alias placeholders of the same type within one block.
+        SSACalculator::Variable* var = m_ssa->newVariable();
+        Value* placeholder = m_proc.addBottom(m_value->origin(), m_value->type());
+        m_insertionSet.insertValue(m_index, placeholder);
+        dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Inserting placeholder for value: ", *placeholder);
+        m_value->replaceWithIdentity(placeholder);
 
-        VariableValue* get = m_insertionSet.insert<VariableValue>(
-            m_index, Get, m_value->origin(), variable);
-        dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Inserting get of value: ", *get);
-        m_value->replaceWithIdentity(get);
-            
         for (MemoryValue* match : matches) {
-            Vector<Value*>& sets = m_sets.add(match, Vector<Value*>()).iterator->value;
-
-            Value* value = replace(match, sets);
+            m_blocksWithSets.add(match->owner);
+            auto& extras = m_sets.add(match, Vector<Value*>()).iterator->value;
+            m_matched.add(match);
+            Value* value = replace(match, extras);
             if (!value) {
                 if (match->isStore())
                     value = match->child(0);
                 else
                     value = match;
             }
-                
-            Value* set = m_proc.add<VariableValue>(Set, m_value->origin(), variable, value);
-            sets.append(set);
+
+            m_ssa->newDef(var, match->owner, value);
         }
 
+        m_pendingResolutions.append({ placeholder, m_block, var });
+        ASSERT(var->index() == m_pendingResolutions.size() - 1);
         return true;
     }
 
     template<typename Filter>
-    MemoryMatches findMemoryValue(Value* ptr, HeapRange range, const Filter& filter)
+    MemoryMatches findMemoryValue(Value* ptr, HeapRange range, NOESCAPE const Filter& filter, Mutability readsMutability = Mutability::Mutable)
     {
         if constexpr (B3EliminateCommonSubexpressionsInternal::verbose) {
             dataLogLn(*m_value, ": looking backward for ", *ptr, "...");
@@ -802,7 +793,7 @@ private:
             return { match };
         }
 
-        if (m_data.writes.overlaps(range)) {
+        if (readsMutability != Mutability::Immutable && m_data.writes.overlaps(range)) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because of writes.");
             return { };
         }
@@ -825,7 +816,7 @@ private:
                 continue;
             }
 
-            if (data.writes.overlaps(range)) {
+            if (readsMutability != Mutability::Immutable && data.writes.overlaps(range)) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because of writes.");
                 return { };
             }
@@ -867,7 +858,7 @@ private:
 
         Value* candidateReplacement = nullptr;
         BasicBlock* dominator = nullptr;
-        m_dominators.forAllStrictDominatorsOf(m_block, [&] (BasicBlock* block) {
+        m_dominators->forAllStrictDominatorsOf(m_block, [&] (BasicBlock* block) {
             if (candidateReplacement)
                 return;
 
@@ -899,263 +890,36 @@ private:
         }
     }
 
-    void processWasmStructGetAfterClobber(WasmStructGetValue* structGet)
-    {
-        Value* structPtr = structGet->child(0);
-        HeapRange range = structGet->range();
-        uint64_t fieldHeapKey = structGet->fieldHeapKey();
-
-        dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Processing WasmStructGet: ", *structGet, " fieldHeapKey=", fieldHeapKey);
-        WasmStructMatches matches = findWasmStructValue(structPtr, range, fieldHeapKey, [&](WasmStructFieldValue*) { return true; });
-        if (replaceWasmStructValue(matches, structGet))
-            return;
-        m_data.wasmStructValuesAtTail.add(structGet);
-    }
-
-    template<typename Filter>
-    WasmStructMatches findWasmStructValue(Value* structPtr, HeapRange range, uint64_t fieldHeapKey, const Filter& filter)
-    {
-        if constexpr (B3EliminateCommonSubexpressionsInternal::verbose) {
-            dataLogLn(*m_value, ": looking backward for WasmStruct structPtr=", *structPtr, " fieldHeapKey=", fieldHeapKey);
-            dataLogLn("    Full value: ", deepDump(m_value));
-        }
-
-        // Check local block first
-        if (auto* match = m_data.wasmStructValuesAtTail.find(structPtr, fieldHeapKey, filter)) {
-            dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Found ", *match, " locally.");
-            return { match };
-        }
-
-        // Check if current block has clobbering writes
-        if (m_data.writes.overlaps(range)) {
-            dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because of writes.");
-            return { };
-        }
-
-        // Search backward through predecessors
-        BlockWorklist worklist;
-        worklist.pushAll(m_block->predecessors());
-
-        WasmStructMatches matches;
-
-        while (BasicBlock* block = worklist.pop()) {
-            dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Looking at ", *block);
-
-            ImpureBlockData& data = m_impureBlockData[block];
-
-            auto* match = data.wasmStructValuesAtTail.find(structPtr, fieldHeapKey, filter);
-            dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Considering match: ", pointerDump(match));
-            if (match && match != m_value) {
-                dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Found match: ", *match);
-                matches.append(match);
-                continue;
-            }
-
-            if (data.writes.overlaps(range)) {
-                dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because of writes.");
-                return { };
-            }
-
-            if (!block->numPredecessors()) {
-                dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because it's live at root.");
-                // This essentially proves that this is live at the prologue. That means that we
-                // cannot reliably optimize this case.
-                return { };
-            }
-
-            worklist.pushAll(block->predecessors());
-        }
-
-        dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Got matches: ", pointerListDump(matches));
-        return matches;
-    }
-
-    bool replaceWasmStructValue(const WasmStructMatches& matches, WasmStructGetValue* structGet)
-    {
-        if (matches.isEmpty())
-            return false;
-
-        dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "Eliminating ", *m_value, " due to ", pointerListDump(matches));
-
-        m_changed = true;
-
-        auto replace = [&](Value* dominatingMatch, Vector<Value*, 16>& extraValues) -> Value* {
-            if (auto* structSet = dominatingMatch->as<WasmStructSetValue>()) {
-                Value* storedValue = structSet->child(1);
-                SUPPRESS_UNCOUNTED_LOCAL const Wasm::StructType* structType = structGet->structType();
-                auto fieldType = structType->field(structGet->fieldIndex()).type;
-
-                Value* forwardedValue = storedValue;
-
-                // Handle packed types: truncate the stored value to match the field size
-                if (fieldType.is<Wasm::PackedType>()) {
-                    uint32_t mask = 0;
-                    switch (fieldType.as<Wasm::PackedType>()) {
-                    case Wasm::PackedType::I8:
-                        mask = 0xff;
-                        break;
-                    case Wasm::PackedType::I16:
-                        mask = 0xffff;
-                        break;
-                    }
-
-                    Value* maskValue = m_proc.add<Const32Value>(structGet->origin(), mask);
-                    forwardedValue = m_proc.add<Value>(BitAnd, structGet->origin(), storedValue, maskValue);
-                    extraValues.append(maskValue);
-                    extraValues.append(forwardedValue);
-                }
-
-                dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Forwarding from WasmStructSet with value: ", *forwardedValue);
-                return forwardedValue;
-            }
-
-            return dominatingMatch;
-        };
-
-        if (matches.size() == 1) {
-            auto* dominatingMatch = matches[0];
-            RELEASE_ASSERT(m_dominators.dominates(dominatingMatch->owner, m_block));
-
-            dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Eliminating using ", *dominatingMatch);
-
-            // Handle store-to-load forwarding from WasmStructSet
-
-            Vector<Value*, 16> extraValues;
-            auto* value = replace(dominatingMatch, extraValues);
-            ASSERT(value);
-            for (auto* extraValue : extraValues)
-                m_insertionSet.insertValue(m_index, extraValue);
-            m_value->replaceWithIdentity(value);
-            return true;
-        }
-
-        // Multiple matches from different paths - need SSA fixup with Variable
-        Variable* variable = m_proc.addVariable(m_value->type());
-
-        VariableValue* get = m_insertionSet.insert<VariableValue>(m_index, Get, m_value->origin(), variable);
-        dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Inserting get of value: ", *get);
-        m_value->replaceWithIdentity(get);
-
-        for (auto* match : matches) {
-            Vector<Value*>& sets = m_sets.add(match, Vector<Value*>()).iterator->value;
-            Vector<Value*, 16> extraValues;
-            auto* value = replace(match, extraValues);
-            ASSERT(value);
-            sets.appendVector(extraValues);
-            Value* set = m_proc.add<VariableValue>(Set, m_value->origin(), variable, value);
-            sets.append(set);
-        }
-
-        return true;
-    }
-
-    bool processWasmStructSetBeforeClobber(WasmStructSetValue* structSet)
-    {
-        Value* structPtr = structSet->child(0);
-        Value* value = structSet->child(1);
-        uint64_t fieldHeapKey = structSet->fieldHeapKey();
-
-        dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Processing WasmStructSet (before clobber): ", *structSet, " fieldHeapKey=", fieldHeapKey);
-
-        WasmStructMatches matches = findWasmStructValue(structPtr, structSet->range(), fieldHeapKey, [&](WasmStructFieldValue* candidate) {
-            // @a: Set(@x, field0, @z)
-            // @b: Set(@x, field0, @z) -> setting same value again.
-            if (auto* candidateSet = candidate->as<WasmStructSetValue>())
-                return candidateSet->child(1) == value;
-
-            // @a: Get(@x, field0)
-            // @b: Set(@x, field0, @a) -> setting a value loaded from the same struct's field.
-            if (auto* candidateGet = candidate->as<WasmStructGetValue>())
-                return candidateGet == value;
-
-            return false;
-        });
-        if (matches.isEmpty())
-            return false;
-
-        m_value->replaceWithNop();
-        m_changed = true;
-        return true;
-    }
-
-    void processWasmStructSetAfterClobber(WasmStructSetValue* structSet)
-    {
-        Value* structPtr = structSet->child(0);
-        HeapRange range = structSet->range();
-        uint64_t fieldHeapKey = structSet->fieldHeapKey();
-
-        dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Processing WasmStructSet (after clobber): ", *structSet, " fieldHeapKey=", fieldHeapKey);
-
-        if (!structSet->traps() && findWasmStructSetAfterClobber(structPtr, range, fieldHeapKey)) {
-            dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Forward elimination - replacing with nop");
-            m_value->replaceWithNop();
-            m_changed = true;
-            return;
-        }
-
-        m_data.wasmStructValuesAtTail.add(structSet);
-    }
-
-    bool findWasmStructSetAfterClobber(Value* structPtr, HeapRange range, uint64_t fieldHeapKey)
-    {
-        dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, *m_value, ": looking forward for WasmStructSet to structPtr=", *structPtr, " fieldHeapKey=", fieldHeapKey, "...");
-
-        // Search forward in this basic block first
-        for (unsigned index = m_index + 1; index < m_block->size(); ++index) {
-            Value* value = m_block->at(index);
-
-            if (auto* candidateSet = value->as<WasmStructSetValue>()) {
-                if (candidateSet->child(0) == structPtr
-                    && candidateSet->fieldHeapKey() == fieldHeapKey)
-                    return true;
-            }
-
-            Effects effects = value->effects();
-            if (effects.reads.overlaps(range) || effects.writes.overlaps(range))
-                return false;
-        }
-
-        if (!m_block->numSuccessors())
-            return false;
-
-        BlockWorklist worklist;
-        worklist.pushAll(m_block->successorBlocks());
-
-        while (BasicBlock* block = worklist.pop()) {
-            ImpureBlockData& data = m_impureBlockData[block];
-
-            Value* match = data.wasmStructStoresAtHead.find(structPtr, fieldHeapKey, [&](Value*) { return true; });
-            if (match && match != m_value)
-                continue;
-
-            if (data.writes.overlaps(range) || data.reads.overlaps(range))
-                return false;
-
-            if (!block->numSuccessors())
-                return false;
-
-            worklist.pushAll(block->successorBlocks());
-        }
-
-        return true;
-    }
-
     Procedure& m_proc;
 
-    Dominators& m_dominators;
+    Dominators* m_dominators { nullptr };
     PureCSE m_pureCSE;
-    
+
     IndexMap<BasicBlock*, ImpureBlockData> m_impureBlockData;
 
     ImpureBlockData m_data;
 
-    BasicBlock* m_block;
-    unsigned m_index;
-    Value* m_value;
+    BasicBlock* m_block { nullptr };
+    unsigned m_index { 0 };
+    Value* m_value { nullptr };
 
+    // Match -> extra fixup values (e.g. BitAnd masks for packed Wasm types),
+    // flushed at match site during finalize().
     UncheckedKeyHashMap<Value*, Vector<Value*>> m_sets;
+    IndexSet<Value*> m_matched;
+    // Blocks that own at least one m_sets key, so finalize() can skip whole blocks.
+    IndexSet<BasicBlock*> m_blocksWithSets;
 
     InsertionSet m_insertionSet;
+
+    std::unique_ptr<SSACalculator> m_ssa;
+
+    struct PendingResolution {
+        Value* placeholder;
+        BasicBlock* useBlock;
+        SSACalculator::Variable* var;
+    };
+    Vector<PendingResolution> m_pendingResolutions;
 
     bool m_changed { false };
 };

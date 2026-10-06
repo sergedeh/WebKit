@@ -67,7 +67,7 @@ WebXRSession* WebXRInputSource::session()
 
 void WebXRInputSource::update(double timestamp, const PlatformXR::FrameData::InputSource& source)
 {
-    RefPtr session = m_session.get();
+    RefPtr session { m_session };
     if (!session)
         return;
 
@@ -97,7 +97,7 @@ void WebXRInputSource::update(double timestamp, const PlatformXR::FrameData::Inp
         // If the XRInputSource belongs to an XRSession that has not been requested
         // with the "hand-tracking" feature descriptor, hand MUST be null.
         if (!m_hand && session->isHandTrackingEnabled())
-            m_hand = WebXRHand::create(*this);
+            lazyInitialize(m_hand, WebXRHand::create(*this));
 
         if (m_hand)
             m_hand->updateFromInputSource(source);
@@ -125,15 +125,16 @@ void WebXRInputSource::disconnect()
 
 void WebXRInputSource::pollEvents(Vector<Ref<XRInputSourceEvent>>& events)
 {
-    RefPtr session = m_session.get();
+    RefPtr session { m_session };
     if (!session)
         return;
 
     auto createEvent = [this, session](const AtomString& name) -> Ref<XRInputSourceEvent> {
-        XRInputSourceEvent::Init init;
-        init.frame = WebXRFrame::create(*session, WebXRFrame::IsAnimationFrame::No);
-        init.inputSource = RefPtr { this };
-
+        auto init = XRInputSourceEvent::Init {
+            { false, false, false },
+            WebXRFrame::create(*session, WebXRFrame::IsAnimationFrame::No),
+            protect(*this)
+        };
         return XRInputSourceEvent::create(name, WTF::move(init));
     };
 

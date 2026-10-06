@@ -27,6 +27,7 @@
 #include "config.h"
 #include "TextCheckingHelper.h"
 
+#include "AXObjectCache.h"
 #include "BoundaryPointInlines.h"
 #include "Document.h"
 #include "DocumentMarkerController.h"
@@ -243,7 +244,7 @@ auto TextCheckingHelper::findMisspelledWords(Operation operation) const -> std::
 
         int misspellingLocation = -1;
         int misspellingLength = 0;
-        checkedClient()->textChecker()->checkSpellingOfString(text, &misspellingLocation, &misspellingLength);
+        protect(m_client)->textChecker()->checkSpellingOfString(text, &misspellingLocation, &misspellingLength);
 
         int textLength = text.length();
 
@@ -337,9 +338,9 @@ auto TextCheckingHelper::findFirstMisspelledWordOrUngrammaticalPhrase(bool check
                 if (checkGrammar)
                     checkingTypes.add(TextCheckingType::Grammar);
                 VisibleSelection currentSelection;
-                if (auto* frame = paragraphRange.start.document().frame())
+                if (RefPtr frame = paragraphRange.start.document().frame())
                     currentSelection = frame->selection().selection();
-                checkTextOfParagraph(*checkedClient()->textChecker(), paragraphString, checkingTypes, results, currentSelection);
+                checkTextOfParagraph(*protect(m_client)->textChecker(), paragraphString, checkingTypes, results, currentSelection);
 
                 for (auto& result : results) {
                     if (result.type == TextCheckingType::Spelling && result.range.location >= currentStartOffset && result.range.location + result.range.length <= currentEndOffset) {
@@ -433,7 +434,7 @@ int TextCheckingHelper::findUngrammaticalPhrases(Operation operation, const Vect
         
         if (operation == Operation::MarkAll) {
             auto badGrammarRange = resolveCharacterRange(m_range, { badGrammarPhraseLocation - startOffset + detail->range.location, detail->range.length });
-            addMarker(badGrammarRange, DocumentMarkerType::Grammar, detail->userDescription);
+            addMarker(badGrammarRange, DocumentMarkerType::Grammar, DocumentMarker::GrammarData { detail->userDescription, detail->uuid });
         }
         
         // Remember this detail only if it's earlier than our current candidate (the details aren't in a guaranteed order)
@@ -459,7 +460,7 @@ auto TextCheckingHelper::findUngrammaticalPhrases(Operation operation) const -> 
         Vector<GrammarDetail> grammarDetails;
         int badGrammarPhraseLocation = -1;
         int badGrammarPhraseLength = 0;
-        checkedClient()->textChecker()->checkGrammarOfString(paragraph.text().substring(startOffset), grammarDetails, &badGrammarPhraseLocation, &badGrammarPhraseLength);
+        protect(m_client)->textChecker()->checkGrammarOfString(paragraph.text().substring(startOffset), grammarDetails, &badGrammarPhraseLocation, &badGrammarPhraseLength);
         
         if (!badGrammarPhraseLength) {
             ASSERT(badGrammarPhraseLocation == -1);
@@ -516,9 +517,9 @@ TextCheckingGuesses TextCheckingHelper::guessesForMisspelledWordOrUngrammaticalP
     if (checkGrammar)
         checkingTypes.add(TextCheckingType::Grammar);
     VisibleSelection currentSelection;
-    if (auto frame = m_range.start.document().frame())
+    if (RefPtr frame = m_range.start.document().frame())
         currentSelection = frame->selection().selection();
-    CheckedRef client = m_client.get();
+    CheckedRef client = m_client;
     checkTextOfParagraph(*client->textChecker(), paragraph.text(), checkingTypes, results, currentSelection);
 
     for (auto& result : results) {
@@ -565,11 +566,6 @@ void TextCheckingHelper::markAllUngrammaticalPhrases() const
 bool TextCheckingHelper::unifiedTextCheckerEnabled() const
 {
     return WebCore::unifiedTextCheckerEnabled(m_range.start.document().frame());
-}
-
-CheckedRef<EditorClient> TextCheckingHelper::checkedClient() const
-{
-    return m_client.get();
 }
 
 void checkTextOfParagraph(TextCheckerClient& client, StringView text, OptionSet<TextCheckingType> checkingTypes, Vector<TextCheckingResult>& results, const VisibleSelection& currentSelection)

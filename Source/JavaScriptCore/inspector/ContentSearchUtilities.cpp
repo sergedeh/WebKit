@@ -63,7 +63,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     return result.toString();
 }
 
-static inline size_t sizetExtractor(const size_t* value)
+static inline size_t NODELETE sizetExtractor(const size_t* value)
 {
     return *value;
 }
@@ -222,7 +222,7 @@ static String findMagicComment(const String& content, ASCIILiteral patternString
     if (result == offsetNoMatch)
         return String();
 
-    ASSERT(matches[2] > 0 && matches[3] > 0);
+    ASSERT(matches[2] > 0 && matches[3] >= matches[2]);
     return content.substring(matches[2], matches[3] - matches[2]);
 }
 

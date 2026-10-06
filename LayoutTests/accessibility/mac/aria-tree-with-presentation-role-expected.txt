@@ -1,21 +1,12 @@
-Release Notes
-Using Search
-Power Search
-Common Info Area
-This tests that aria trees are correctly exposed when there is role='presentation' presented.
+This test ensures an aria tree exposes its rows, and their disclosure levels, correctly when role='presentation' intervenes.
 
-On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
+PASS: tree.role === 'AXRole: AXOutline'
+PASS: tree.childrenCount === 4
+PASS: rowDescription(0) === 'AXRow level 0: Release Notes'
+PASS: rowDescription(1) === 'AXRow level 0: Using Search'
+PASS: rowDescription(2) === 'AXRow level 1: Power Search'
+PASS: rowDescription(3) === 'AXRow level 0: Common Info Area'
 
-
-AXRole: AXOutline AXValue:
-  AXRole: AXRow level: 0
-    AXRole: AXStaticText AXValue: Release Notes
-  AXRole: AXRow level: 0
-    AXRole: AXStaticText AXValue: Using Search
-  AXRole: AXRow level: 1
-    AXRole: AXStaticText AXValue: Power Search
-  AXRole: AXRow level: 0
-    AXRole: AXStaticText AXValue: Common Info Area
 PASS successfullyParsed is true
 
 TEST COMPLETE

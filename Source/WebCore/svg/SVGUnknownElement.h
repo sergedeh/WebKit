@@ -48,11 +48,11 @@ public:
 
 private:
     SVGUnknownElement(const QualifiedName& tagName, Document& document)
-        : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this), TypeFlag::IsUnknownElement)
+        : SVGElement(tagName, document, PropertyRegistry::singleton(), TypeFlag::IsUnknownElement)
     {
     }
 
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) final { return false; }
 };
 
 } // namespace WebCore

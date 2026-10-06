@@ -39,7 +39,7 @@ class InternalSettings : public InternalSettingsGenerated {
 public:
     static Ref<InternalSettings> create(Page*);
     static InternalSettings* from(Page*);
-    void hostDestroyed();
+    void NODELETE hostDestroyed();
     void resetToConsistentState();
 
     // Settings
@@ -58,10 +58,7 @@ public:
 
     using EditingBehaviorType = WebCore::EditingBehaviorType;
     ExceptionOr<void> setEditingBehavior(EditingBehaviorType);
-    
-    using StorageBlockingPolicy = WebCore::StorageBlockingPolicy;
-    ExceptionOr<void> setStorageBlockingPolicy(StorageBlockingPolicy);
-    
+
     using UserInterfaceDirectionPolicy = WebCore::UserInterfaceDirectionPolicy;
     ExceptionOr<void> setUserInterfaceDirectionPolicy(UserInterfaceDirectionPolicy);
 
@@ -72,15 +69,15 @@ public:
     ExceptionOr<void> setFontLoadTimingOverride(FontLoadTimingOverride);
 
     using ForcedAccessibilityValue = WebCore::ForcedAccessibilityValue;
-    ForcedAccessibilityValue forcedColorsAreInvertedAccessibilityValue() const;
-    void setForcedColorsAreInvertedAccessibilityValue(ForcedAccessibilityValue);
-    ForcedAccessibilityValue forcedDisplayIsMonochromeAccessibilityValue() const;
-    void setForcedDisplayIsMonochromeAccessibilityValue(ForcedAccessibilityValue);
-    ForcedAccessibilityValue forcedPrefersContrastAccessibilityValue() const;
-    void setForcedPrefersContrastAccessibilityValue(ForcedAccessibilityValue);
-    ForcedAccessibilityValue forcedPrefersReducedMotionAccessibilityValue() const;
-    void setForcedPrefersReducedMotionAccessibilityValue(ForcedAccessibilityValue);
-    ForcedAccessibilityValue forcedSupportsHighDynamicRangeValue() const;
+    ForcedAccessibilityValue NODELETE forcedColorsAreInvertedAccessibilityValue() const;
+    void NODELETE setForcedColorsAreInvertedAccessibilityValue(ForcedAccessibilityValue);
+    ForcedAccessibilityValue NODELETE forcedDisplayIsMonochromeAccessibilityValue() const;
+    void NODELETE setForcedDisplayIsMonochromeAccessibilityValue(ForcedAccessibilityValue);
+    ForcedAccessibilityValue NODELETE forcedPrefersContrastAccessibilityValue() const;
+    void NODELETE setForcedPrefersContrastAccessibilityValue(ForcedAccessibilityValue);
+    ForcedAccessibilityValue NODELETE forcedPrefersReducedMotionAccessibilityValue() const;
+    void NODELETE setForcedPrefersReducedMotionAccessibilityValue(ForcedAccessibilityValue);
+    ForcedAccessibilityValue NODELETE forcedSupportsHighDynamicRangeValue() const;
     void setForcedSupportsHighDynamicRangeValue(ForcedAccessibilityValue);
 
     ExceptionOr<void> setAllowAnimationControlsOverride(bool);
@@ -88,7 +85,7 @@ public:
     // DeprecatedGlobalSettings.
     ExceptionOr<void> setCustomPasteboardDataEnabled(bool);
 
-    bool vp9DecoderEnabled() const;
+    bool NODELETE vp9DecoderEnabled() const;
 
     ExceptionOr<void> setShouldManageAudioSessionCategory(bool);
 
@@ -126,7 +123,7 @@ private:
 
     bool isInternalSettings() const final { return true; }
 
-    Settings& settings() const;
+    Settings& NODELETE settings() const;
     static ASCIILiteral supplementName();
 
     class Backup {
@@ -146,7 +143,6 @@ private:
         Seconds m_minimumDOMTimerInterval;
         Seconds m_originalTimeWithoutMouseMovementBeforeHidingControls;
         WebCore::EditingBehaviorType m_originalEditingBehavior;
-        WebCore::StorageBlockingPolicy m_storageBlockingPolicy;
         WebCore::UserInterfaceDirectionPolicy m_userInterfaceDirectionPolicy;
         TextDirection m_systemLayoutDirection;
         WebCore::ForcedAccessibilityValue m_forcedColorsAreInvertedAccessibilityValue;

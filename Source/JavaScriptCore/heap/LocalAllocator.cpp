@@ -26,10 +26,12 @@
 #include "config.h"
 #include "LocalAllocator.h"
 
+#include "AlignedMemoryAllocator.h"
 #include "AllocatingScope.h"
 #include "FreeListInlines.h"
 #include "GCDeferralContext.h"
 #include "LocalAllocatorInlines.h"
+#include "MarkedBlockInlines.h"
 #include "Options.h"
 #include "ResourceExhaustion.h"
 #include "SuperSampler.h"
@@ -50,6 +52,20 @@ void LocalAllocator::reset()
     m_currentBlock = nullptr;
     m_lastActiveBlock = nullptr;
     m_allocationCursor = 0;
+}
+
+bool LocalAllocator::isFreeListedCell(const void* target) const
+{
+    // Because the free list describes only those cells within the block this allocator is
+    // currently allocating from, a match implies target lives in that (freelisted) block.
+    if (!m_currentBlock)
+        return false;
+    bool found = false;
+    m_freeList.forEach([&] (auto* cell) {
+        if (static_cast<const void*>(cell) == target)
+            found = true;
+    });
+    return found;
 }
 
 LocalAllocator::~LocalAllocator()
@@ -75,7 +91,7 @@ LocalAllocator::~LocalAllocator()
     RELEASE_ASSERT(ok);
 }
 
-void LocalAllocator::stopAllocating()
+void LocalAllocator::stopAllocating(MarkedBlock::Handle::StopAllocatingMode mode)
 {
     ASSERT(!m_lastActiveBlock);
     if (!m_currentBlock) {
@@ -83,7 +99,7 @@ void LocalAllocator::stopAllocating()
         return;
     }
     
-    m_currentBlock->stopAllocating(m_freeList);
+    m_currentBlock->stopAllocating(m_freeList, mode);
     m_lastActiveBlock = m_currentBlock;
     m_currentBlock = nullptr;
     m_freeList.clear();
@@ -106,7 +122,7 @@ void LocalAllocator::prepareForAllocation()
 
 void LocalAllocator::stopAllocatingForGood()
 {
-    stopAllocating();
+    stopAllocating(MarkedBlock::Handle::StopAllocatingMode::ForGood);
     reset();
 }
 
@@ -197,17 +213,23 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
     }
     
     if (Options::stealEmptyBlocksFromOtherAllocators()) {
-        if (MarkedBlock::Handle* block = m_directory->m_subspace->findEmptyBlockToSteal()) {
-            RELEASE_ASSERT(block->alignedMemoryAllocator() == m_directory->m_subspace->alignedMemoryAllocator());
-            
+        AlignedMemoryAllocator* allocator = m_directory->m_subspace->alignedMemoryAllocator();
+        if (MarkedBlock::Handle* block = allocator->findEmptyBlockToSteal()) {
+            RELEASE_ASSERT(block->alignedMemoryAllocator() == allocator);
+
             block->sweep(nullptr);
-            
+            // A block must own no WeakBlock before it changes cell size and owner: a survivor would
+            // go on reading mark bits for cells that no longer exist at those addresses. Sweeping an
+            // empty block leaves it that way, since every handle in it is reaped dead and finalized.
+            RELEASE_ASSERT(!block->weakSet().head());
+            ASSERT(!block->weakSet().isOnList());
+
             block->removeFromDirectory();
             m_directory->addBlock(block);
             return allocateIn(block, cellSize);
         }
     }
-    
+
     return nullptr;
 }
 

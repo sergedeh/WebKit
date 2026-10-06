@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if HAVE(WEBGPU_IMPLEMENTATION)
+#if HAVE(WEBGPU_IMPLEMENTATION) && ENABLE(WEBGPU)
 
 #include "WebGPUPtr.h"
 #include "WebGPUXRBinding.h"
@@ -73,7 +73,7 @@ private:
     RefPtr<XRProjectionLayer> createProjectionLayer(const XRProjectionLayerInit&) final;
     RefPtr<XRSubImage> getSubImage(XRProjectionLayer&, WebCore::WebXRFrame&, std::optional<XREye>/* = "none"*/) final;
     RefPtr<XRSubImage> getViewSubImage(XRProjectionLayer&) final;
-    TextureFormat getPreferredColorFormat() final;
+    TextureFormat NODELETE getPreferredColorFormat() final;
 
     WebGPUPtr<WGPUXRBinding> m_backing;
     const Ref<ConvertToBackingContext> m_convertToBackingContext;
@@ -85,4 +85,4 @@ SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::WebGPU::XRBindingImpl)
     static bool isType(const WebCore::WebGPU::XRBinding& xrBinding) { return xrBinding.isXRBindingImpl(); }
 SPECIALIZE_TYPE_TRAITS_END()
 
-#endif // HAVE(WEBGPU_IMPLEMENTATION)
+#endif // HAVE(WEBGPU_IMPLEMENTATION) && ENABLE(WEBGPU)

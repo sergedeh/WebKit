@@ -34,7 +34,6 @@
 #include <tuple>
 #include <type_traits>
 #include <wtf/Assertions.h>
-#include <wtf/Expected.h>
 #include <wtf/Forward.h>
 #include <wtf/HashIterators.h>
 #include <wtf/HashSet.h>
@@ -201,8 +200,8 @@ template<> struct CrossThreadCopierBase<false, false, WTF::ASCIILiteral> {
     }
 };
 
-template<typename T, typename U, typename V> struct CrossThreadCopierBase<false, false, ObjectIdentifierGeneric<T, U, V>> {
-    using Type = ObjectIdentifierGeneric<T, U, V>;
+template<typename T, typename U> struct CrossThreadCopierBase<false, false, ObjectIdentifierGeneric<T, U>> {
+    using Type = ObjectIdentifierGeneric<T, U>;
     static constexpr bool IsNeeded = false;
     static Type copy(const Type& source)
     {
@@ -253,10 +252,12 @@ template<typename T, typename HashFunctions, typename Traits, typename TableTrai
     }
 };
 
-template<typename T, typename U, typename V>
-struct CrossThreadCopierBase<false, false, HashSet<ObjectIdentifierGeneric<T, U, V>>> {
-    typedef HashSet<ObjectIdentifierGeneric<T, U, V>> Type;
+template<typename T, typename U>
+struct CrossThreadCopierBase<false, false, HashSet<ObjectIdentifierGeneric<T, U>>> {
+    using Type = HashSet<ObjectIdentifierGeneric<T, U>>;
+    static constexpr bool IsNeeded = false;
     static Type copy(const Type& identifiers) { return identifiers; }
+    static Type copy(Type&& identifiers) { return WTF::move(identifiers); }
 };
 
 // Default specialization for HashMaps of CrossThreadCopyable classes
@@ -344,8 +345,8 @@ struct CrossThreadCopierBase<false, false, void> {
     using Type = void;
 };
 
-template<typename T, typename U> struct CrossThreadCopierBase<false, false, Expected<T, U> > {
-    using Type = Expected<T, U>;
+template<typename T, typename U> struct CrossThreadCopierBase<false, false, std::expected<T, U> > {
+    using Type = std::expected<T, U>;
     static constexpr bool IsNeeded = CrossThreadCopier<std::remove_cvref_t<T>>::IsNeeded || CrossThreadCopier<std::remove_cvref_t<U>>::IsNeeded;
     static Type copy(const Type& source)
     {
@@ -355,7 +356,7 @@ template<typename T, typename U> struct CrossThreadCopierBase<false, false, Expe
             else
                 return CrossThreadCopier<T>::copy(source.value());
         }
-        return Unexpected<U>(CrossThreadCopier<U>::copy(source.error()));
+        return std::unexpected<U>(CrossThreadCopier<U>::copy(source.error()));
     }
 
     static Type copy(Type&& source)
@@ -366,7 +367,7 @@ template<typename T, typename U> struct CrossThreadCopierBase<false, false, Expe
             else
                 return CrossThreadCopier<T>::copy(WTF::move(source.value()));
         }
-        return Unexpected<U>(CrossThreadCopier<U>::copy(WTF::move(source.error())));
+        return std::unexpected<U>(CrossThreadCopier<U>::copy(WTF::move(source.error())));
     }
 };
 

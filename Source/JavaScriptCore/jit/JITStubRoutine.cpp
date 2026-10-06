@@ -40,7 +40,7 @@ void JITStubRoutine::observeZeroRefCountImpl()
 }
 
 template<typename Func>
-void JITStubRoutine::runWithDowncast(const Func& function)
+void JITStubRoutine::runWithDowncast(NOESCAPE const Func& function)
 {
     switch (m_type) {
     case Type::JITStubRoutineType:
@@ -80,11 +80,11 @@ void JITStubRoutine::observeZeroRefCount()
     });
 }
 
-bool JITStubRoutine::visitWeak(VM& vm)
+bool JITStubRoutine::reconcileWeakReferencesAtGCEnd(VM& vm)
 {
     bool result = true;
     runWithDowncast([&](auto* derived) {
-        result = derived->visitWeakImpl(vm);
+        result = derived->reconcileWeakReferencesAtGCEndImpl(vm);
     });
     return result;
 }

@@ -27,6 +27,7 @@
 #include "XSLTProcessor.h"
 
 #include "CachedResourceLoader.h"
+#include "DocumentResourceLoader.h"
 #include "DocumentSecurityOrigin.h"
 #include "FrameConsoleClient.h"
 #include "FrameDestructionObserverInlines.h"
@@ -93,7 +94,7 @@ void XSLTProcessor::parseErrorFunc(void* userData, xmlError* error)
 
 // FIXME: There seems to be no way to control the ctxt pointer for loading here, thus we have globals.
 static XSLTProcessor* globalProcessor = nullptr;
-static WeakPtr<CachedResourceLoader>& globalCachedResourceLoader()
+static WeakPtr<CachedResourceLoader>& NODELETE globalCachedResourceLoader()
 {
     static NeverDestroyed<WeakPtr<CachedResourceLoader>> globalCachedResourceLoader;
     return globalCachedResourceLoader;
@@ -120,14 +121,14 @@ static xmlDocPtr docLoaderFunc(const xmlChar* uri,
         RefPtr cachedResourceLoader = globalCachedResourceLoader().get();
 
         RefPtr cachedResourceLoaderDocument = cachedResourceLoader->document();
-        bool requestAllowed = cachedResourceLoader && cachedResourceLoader->frame() && cachedResourceLoaderDocument->protectedSecurityOrigin()->canRequest(url, OriginAccessPatternsForWebProcess::singleton());
+        bool requestAllowed = cachedResourceLoader && cachedResourceLoader->frame() && protect(cachedResourceLoaderDocument->securityOrigin())->canRequest(url, OriginAccessPatternsForWebProcess::singleton());
         if (requestAllowed) {
             FetchOptions options;
             options.mode = FetchOptions::Mode::SameOrigin;
             options.credentials = FetchOptions::Credentials::Include;
             cachedResourceLoader->frame()->loader().loadResourceSynchronously(URL { url }, ClientCredentialPolicy::MayAskClientForCredentials, options, { }, error, response, data);
             if (error.isNull())
-                requestAllowed = cachedResourceLoaderDocument->protectedSecurityOrigin()->canRequest(response.url(), OriginAccessPatternsForWebProcess::singleton());
+                requestAllowed = protect(cachedResourceLoaderDocument->securityOrigin())->canRequest(response.url(), OriginAccessPatternsForWebProcess::singleton());
             else if (data)
                 data = nullptr;
         }
@@ -143,7 +144,7 @@ static xmlDocPtr docLoaderFunc(const xmlChar* uri,
             return nullptr;
 
         FrameConsoleClient* console = nullptr;
-        if (RefPtr frame = globalProcessor->xslStylesheet()->ownerDocument()->frame())
+        if (RefPtr frame = protect(protect(globalProcessor->xslStylesheet())->ownerDocument())->frame())
             console = &frame->console();
         XMLDocumentParserScope scope(cachedResourceLoader.get(), XSLTProcessor::genericErrorFunc, XSLTProcessor::parseErrorFunc, console);
 
@@ -155,7 +156,7 @@ static xmlDocPtr docLoaderFunc(const xmlChar* uri,
         return xmlReadMemory(dataSpan.data(), static_cast<int>(dataSpan.size()), byteCast<char>(uri), nullptr, options);
     }
     case XSLT_LOAD_STYLESHEET:
-        return RefPtr { globalProcessor->xslStylesheet() }->locateStylesheetSubResource(((xsltStylesheetPtr)ctxt)->doc, uri);
+        return protect(globalProcessor->xslStylesheet())->locateStylesheetSubResource(((xsltStylesheetPtr)ctxt)->doc, uri);
     default:
         break;
     }
@@ -217,8 +218,8 @@ static MallocSpan<const char*> xsltParamArrayFromParameterMap(XSLTProcessor::Par
 
     size_t index = 0;
     for (auto& parameter : parameters) {
-        parameterArray[index++] = fastStrDup(parameter.key.utf8().data());
-        parameterArray[index++] = fastStrDup(parameter.value.utf8().data());
+        parameterArray[index++] = fastStrDup(parameter.key.utf8().legacyCStringPointer());
+        parameterArray[index++] = fastStrDup(parameter.value.utf8().legacyCStringPointer());
     }
     parameterArray[index] = nullptr;
 
@@ -243,9 +244,10 @@ static xsltStylesheetPtr xsltStylesheetPointer(RefPtr<XSLStyleSheet>& cachedStyl
 {
     if (!cachedStylesheet && stylesheetRootNode) {
         RefPtr parentNode = stylesheetRootNode->parentNode() ? stylesheetRootNode->parentNode() : stylesheetRootNode;
+        Ref doc = stylesheetRootNode->document();
         cachedStylesheet = XSLStyleSheet::createForXSLTProcessor(parentNode.get(),
-            stylesheetRootNode->document().url().string(),
-            stylesheetRootNode->document().url()); // FIXME: Should we use baseURL here?
+            doc->url().string(),
+            doc->url()); // FIXME: Should we use baseURL here?
 
         // According to Mozilla documentation, the node must be a Document node, an xsl:stylesheet or xsl:transform element.
         // But we just use text content regardless of node type.
@@ -267,7 +269,7 @@ static inline xmlDocPtr xmlDocPtrFromNode(Node& sourceNode, bool& shouldDelete)
     if (sourceIsDocument && ownerDocument->transformSource())
         sourceDoc = ownerDocument->transformSource()->platformSource();
     if (!sourceDoc) {
-        sourceDoc = xmlDocPtrForString(ownerDocument->protectedCachedResourceLoader(), serializeFragment(sourceNode, SerializedNodes::SubtreeIncludingNode),
+        sourceDoc = xmlDocPtrForString(protect(ownerDocument->cachedResourceLoader()), serializeFragment(sourceNode, SerializedNodes::SubtreeIncludingNode),
             sourceIsDocument ? ownerDocument->url().string() : String());
         shouldDelete = sourceDoc;
     }
@@ -297,14 +299,21 @@ bool XSLTProcessor::transformToString(Node& sourceNode, String& mimeType, String
 {
     Ref<Document> ownerDocument(sourceNode.document());
 
-    setXSLTLoadCallBack(docLoaderFunc, this, &ownerDocument->protectedCachedResourceLoader().get());
+    setXSLTLoadCallBack(docLoaderFunc, this, &protect(ownerDocument->cachedResourceLoader()).get());
     xsltStylesheetPtr sheet = xsltStylesheetPointer(m_stylesheet, m_stylesheetRootNode.get());
     if (!sheet) {
         setXSLTLoadCallBack(nullptr, nullptr, nullptr);
+        // Clear dangling document pointers in the stylesheet tree. When compilation
+        // fails, libxslt may have already freed imported child docs via
+        // xsltParseStylesheetImport() → xmlFreeDoc(). Without this call, child
+        // stylesheets retain dangling m_stylesheetDoc pointers that can be
+        // dereferenced if a delayed subresource later triggers parseString().
+        if (RefPtr stylesheet = m_stylesheet)
+            stylesheet->clearDocuments();
         m_stylesheet = nullptr;
         return false;
     }
-    RefPtr { m_stylesheet }->clearDocuments();
+    protect(m_stylesheet)->clearDocuments();
 
     int origXsltMaxDepth = xsltMaxDepth;
     xsltMaxDepth = 1000;

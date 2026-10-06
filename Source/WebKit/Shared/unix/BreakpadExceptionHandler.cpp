@@ -29,8 +29,6 @@
 #if ENABLE(BREAKPAD)
 
 #include <breakpad/client/linux/handler/exception_handler.h>
-#include <mutex>
-#include <signal.h>
 #include <wtf/FileSystem.h>
 #include <wtf/NeverDestroyed.h>
 
@@ -42,23 +40,23 @@ void installBreakpadExceptionHandler()
 
 #ifdef BREAKPAD_MINIDUMP_DIR
     if (breakpadMinidumpDir.isEmpty())
-        breakpadMinidumpDir = StringImpl::createFromCString(BREAKPAD_MINIDUMP_DIR);
+        breakpadMinidumpDir = String::fromUTF8(BREAKPAD_MINIDUMP_DIR);
 #endif
 
     if (breakpadMinidumpDir.isEmpty())
         return;
 
     if (FileSystem::fileType(breakpadMinidumpDir) != FileSystem::FileType::Directory) {
-        WTFLogAlways("Breakpad dir \"%s\" is not a directory, not installing handler", breakpadMinidumpDir.utf8().data());
+        SAFE_WTFLOGALWAYS("Breakpad dir \"%s\" is not a directory, not installing handler", breakpadMinidumpDir.utf8());
         return;
     }
 
-    static MainRunLoopNeverDestroyed<google_breakpad::ExceptionHandler> exceptionHandler = google_breakpad::MinidumpDescriptor(breakpadMinidumpDir.utf8().data()), nullptr,
+    static NeverDestroyed<google_breakpad::ExceptionHandler> exceptionHandler(google_breakpad::MinidumpDescriptor(breakpadMinidumpDir.utf8().legacyCStringPointer()), nullptr,
         [](const google_breakpad::MinidumpDescriptor&, void*, bool succeeded) -> bool {
             return succeeded;
         }, nullptr, true, -1);
-    });
 }
-}
+
+} // namespace WebKit
 #endif
 

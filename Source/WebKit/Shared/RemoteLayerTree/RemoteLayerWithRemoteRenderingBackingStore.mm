@@ -50,7 +50,7 @@ RemoteLayerWithRemoteRenderingBackingStore::RemoteLayerWithRemoteRenderingBackin
         return;
     }
 
-    lazyInitialize(m_bufferSet, collection->protectedLayerTreeContext()->ensureProtectedRemoteRenderingBackendProxy()->createImageBufferSet(*CheckedPtr { this }));
+    lazyInitialize(m_bufferSet, protect(protect(collection->layerTreeContext())->ensureRemoteRenderingBackendProxy())->createImageBufferSet(*CheckedPtr { this }));
 }
 
 RemoteLayerWithRemoteRenderingBackingStore::~RemoteLayerWithRemoteRenderingBackingStore()
@@ -61,7 +61,9 @@ RemoteLayerWithRemoteRenderingBackingStore::~RemoteLayerWithRemoteRenderingBacki
 
 bool RemoteLayerWithRemoteRenderingBackingStore::hasFrontBuffer() const
 {
-    return m_contentsBufferHandle || !m_cleared;
+    if (m_contentsBufferHandle)
+        return true;
+    return !m_cleared && !(m_bufferSet && m_bufferSet->remoteFrontBufferIsMissing());
 }
 
 bool RemoteLayerWithRemoteRenderingBackingStore::frontBufferMayBeVolatile() const
@@ -99,6 +101,13 @@ std::unique_ptr<ThreadSafeImageBufferSetFlusher> RemoteLayerWithRemoteRenderingB
     if (!m_bufferSet)
         return { };
     return m_bufferSet->flushFrontBufferAsync(flushType);
+}
+
+void RemoteLayerWithRemoteRenderingBackingStore::submitDrawingCommands()
+{
+    if (!m_bufferSet)
+        return;
+    return m_bufferSet->submitDrawingCommands();
 }
 
 void RemoteLayerWithRemoteRenderingBackingStore::createContextAndPaintContents()

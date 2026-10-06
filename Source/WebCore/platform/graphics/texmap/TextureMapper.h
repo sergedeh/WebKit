@@ -21,7 +21,6 @@
 
 #if USE(TEXTURE_MAPPER)
 
-#include "BitmapTexturePool.h"
 #include "ClipStack.h"
 #include "Color.h"
 #include "Damage.h"
@@ -42,7 +41,7 @@
 typedef void *EGLImage;
 
 namespace WebCore {
-
+class BitmapTexture;
 class ClipPath;
 class TextureMapperGLData;
 class TextureMapperGPUBuffer;
@@ -86,6 +85,7 @@ public:
     void drawTextureSemiPlanarYUV(const std::array<GLuint, 2>& textures, bool uvReversed, const std::array<GLfloat, 16>& yuvToRgbMatrix, OptionSet<TextureMapperFlags>, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity, TransferFunction, AllEdgesExposed = AllEdgesExposed::Yes);
     void drawTexturePackedYUV(GLuint texture, const std::array<GLfloat, 16>& yuvToRgbMatrix, OptionSet<TextureMapperFlags>, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity, TransferFunction, AllEdgesExposed = AllEdgesExposed::Yes);
     void drawTextureExternalOES(GLuint texture, OptionSet<TextureMapperFlags>, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
+    void drawTextureExternalOESYUV(GLuint texture, OptionSet<TextureMapperFlags>, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
     void drawSolidColor(const FloatRect&, const TransformationMatrix&, const Color&, bool);
     void clearColor(const Color&);
 
@@ -109,11 +109,6 @@ public:
 
     RefPtr<BitmapTexture> applyFilters(RefPtr<BitmapTexture>&, const FilterOperations&, bool defersLastPass);
 
-    WEBCORE_EXPORT Ref<BitmapTexture> acquireTextureFromPool(const IntSize&, OptionSet<BitmapTexture::Flags>);
-#if USE(GBM)
-    WEBCORE_EXPORT Ref<BitmapTexture> createTextureForImage(EGLImage, OptionSet<BitmapTexture::Flags>);
-#endif
-
 #if USE(GRAPHICS_LAYER_WC)
     WEBCORE_EXPORT void releaseUnusedTexturesNow();
 #endif
@@ -122,12 +117,12 @@ public:
 
 #if ENABLE(DAMAGE_TRACKING)
     void setDamage(const std::optional<Damage>& damage) { m_damage = damage; }
-    const std::optional<Damage>& damage() const { return m_damage; }
+    const std::optional<Damage>& damage() const LIFETIME_BOUND { return m_damage; }
 #endif
 
 private:
     bool isInMaskMode() const { return m_isMaskMode; }
-    const TransformationMatrix& patternTransform() const { return m_patternTransform; }
+    const TransformationMatrix& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
 
     enum class Direction { X, Y };
 
@@ -152,7 +147,6 @@ private:
 
     void updateProjectionMatrix();
 
-    BitmapTexturePool m_texturePool;
     bool m_isMaskMode { false };
     TransformationMatrix m_patternTransform;
     WrapMode m_wrapMode { WrapMode::Stretch };

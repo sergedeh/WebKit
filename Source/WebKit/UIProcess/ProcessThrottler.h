@@ -117,7 +117,7 @@ public:
 
     using Activity = ProcessThrottlerActivity;
 
-    void ref() const;
+    void NODELETE ref() const;
     void deref() const;
 
     using ForegroundActivity = Activity;
@@ -127,8 +127,8 @@ public:
     Ref<Activity> backgroundActivity(ASCIILiteral name);
     Ref<Activity> quietBackgroundActivity(ASCIILiteral name);
 
-    static bool isValidBackgroundActivity(const Activity*);
-    static bool isValidForegroundActivity(const Activity*);
+    static bool NODELETE isValidBackgroundActivity(const Activity*);
+    static bool NODELETE isValidForegroundActivity(const Activity*);
 
     using TimedActivity = ProcessThrottlerTimedActivity;
 
@@ -141,6 +141,9 @@ public:
     bool isSuspended() const { return m_isConnectedToProcess && !m_assertion; }
     ProcessThrottleState currentState() const { return m_state; }
     bool isHoldingNearSuspendedAssertion() const { return m_assertion && m_assertion->type() == ProcessAssertionType::NearSuspended; }
+    std::optional<ProcessAssertionType> assertionTypeForTesting() const { return m_assertion ? std::optional { m_assertion->type() } : std::nullopt; }
+
+    void setShouldBackgroundActivitiesUseIdleJetsamBand(bool);
 
     void invalidateAllActivitiesAndDropAssertion();
 
@@ -148,11 +151,11 @@ private:
     friend class ProcessThrottlerActivity;
     friend WTF::TextStream& operator<<(WTF::TextStream&, const ProcessThrottler&);
 
-    ProcessThrottleState expectedThrottleState();
+    ProcessThrottleState NODELETE expectedThrottleState();
     void updateThrottleStateIfNeeded(ASCIILiteral);
     void updateThrottleStateNow();
-    void setAssertionType(ProcessAssertionType);
     void setThrottleState(ProcessThrottleState);
+    void acquireAssertion(ProcessAssertionType);
     void prepareToSuspendTimeoutTimerFired();
     void dropNearSuspendedAssertionTimerFired();
     void prepareToDropLastAssertionTimeoutTimerFired();
@@ -163,7 +166,7 @@ private:
     void removeActivity(Activity&);
     void invalidateAllActivities();
     String assertionName(ProcessAssertionType) const;
-    ProcessAssertionType assertionTypeForState(ProcessThrottleState);
+    ProcessAssertionType NODELETE assertionTypeForState(ProcessThrottleState);
 
     void uiAssertionWillExpireImminently();
     void assertionWasInvalidated();
@@ -184,10 +187,15 @@ private:
     WeakHashSet<Activity> m_foregroundActivities;
     WeakHashSet<Activity> m_backgroundActivities;
     std::optional<uint64_t> m_pendingRequestToSuspendID;
+#if USE(RUNNINGBOARD)
     ProcessThrottleState m_state { ProcessThrottleState::Suspended };
+#else
+    ProcessThrottleState m_state { ProcessThrottleState::Foreground };
+#endif
     bool m_shouldDropNearSuspendedAssertionAfterDelay { false };
     const bool m_shouldTakeUIBackgroundAssertion { false };
     bool m_shouldTakeNearSuspendedAssertion { true };
+    bool m_shouldBackgroundActivitiesUseIdleJetsamBand { false };
     bool m_allowsActivities { true };
     bool m_isConnectedToProcess { false };
 };

@@ -55,7 +55,7 @@ public:
     void legibleMediaSelectionOptionsChanged(const Vector<WebCore::MediaSelectionOption>&, uint64_t) final;
     void audioMediaSelectionIndexChanged(uint64_t) final;
     void legibleMediaSelectionIndexChanged(uint64_t) final;
-    void externalPlaybackChanged(bool, WebCore::PlaybackSessionModel::ExternalPlaybackTargetType, const String&) final { }
+    void externalPlaybackChanged(bool, WebCore::PlaybackSessionModel::ExternalPlaybackTargetType, const String&, const String&) final { }
     void setPlayerIdentifier(std::optional<WebCore::MediaPlayerIdentifier>) final;
     void wirelessVideoPlaybackDisabledChanged(bool) final { }
     void mutedChanged(bool) final;
@@ -76,7 +76,7 @@ private:
     PlaybackSessionInterfaceLMK(WebCore::PlaybackSessionModel&);
 
     RetainPtr<WKSLinearMediaPlayer> m_player;
-    RetainPtr<WKLinearMediaPlayerDelegate> m_playerDelegate;
+    const RetainPtr<WKLinearMediaPlayerDelegate> m_playerDelegate;
     const Ref<WebCore::NowPlayingMetadataObserver> m_nowPlayingMetadataObserver;
     WebCore::VideoReceiverEndpoint m_videoReceiverEndpoint;
 };

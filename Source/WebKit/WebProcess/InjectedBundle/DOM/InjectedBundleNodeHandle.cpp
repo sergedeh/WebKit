@@ -31,6 +31,7 @@
 #include "WebImage.h"
 #include "WebLocalFrameLoaderClient.h"
 #include <JavaScriptCore/APICast.h>
+#include <JavaScriptCore/JSCellInlines.h>
 #include <WebCore/DocumentPage.h>
 #include <WebCore/DocumentView.h>
 #include <WebCore/FrameDestructionObserverInlines.h>
@@ -69,7 +70,7 @@ using namespace HTMLNames;
 
 using DOMNodeHandleCache = WeakHashMap<Node, WeakRef<InjectedBundleNodeHandle>, WeakPtrImplWithEventTargetData>;
 
-static DOMNodeHandleCache& domNodeHandleCache()
+static DOMNodeHandleCache& NODELETE domNodeHandleCache()
 {
     static NeverDestroyed<DOMNodeHandleCache> cache;
     return cache;
@@ -108,7 +109,7 @@ Ref<InjectedBundleNodeHandle> InjectedBundleNodeHandle::create(Node& node)
 }
 
 InjectedBundleNodeHandle::InjectedBundleNodeHandle(Node& node)
-    : ActiveDOMObject(node.document())
+    : ActiveDOMObject(protect(node.document()))
     , m_node(&node)
 {
 }
@@ -124,17 +125,12 @@ Node* InjectedBundleNodeHandle::coreNode()
     return m_node.get();
 }
 
-RefPtr<Node> InjectedBundleNodeHandle::protectedCoreNode()
-{
-    return m_node.get();
-}
-
 RefPtr<InjectedBundleNodeHandle> InjectedBundleNodeHandle::document()
 {
     if (!m_node)
         return nullptr;
 
-    return getOrCreate(m_node->protectedDocument());
+    return getOrCreate(protect(m_node->document()));
 }
 
 // Additional DOM Operations
@@ -154,10 +150,10 @@ IntRect InjectedBundleNodeHandle::absoluteBoundingRect(bool* isReplaced)
     if (!m_node)
         return { };
 
-    return protectedCoreNode()->pixelSnappedAbsoluteBoundingRect(isReplaced);
+    return protect(coreNode())->pixelSnappedAbsoluteBoundingRect(isReplaced);
 }
 
-static RefPtr<WebImage> imageForRect(LocalFrameView* frameView, const IntRect& paintingRect, const std::optional<float>& bitmapWidth, SnapshotOptions options)
+static RefPtr<WebImage> imageForRect(LocalFrameView* frameView, Node* nodeToDraw, const IntRect& paintingRect, const std::optional<float>& bitmapWidth, SnapshotOptions options)
 {
     if (paintingRect.isEmpty())
         return nullptr;
@@ -178,7 +174,7 @@ static RefPtr<WebImage> imageForRect(LocalFrameView* frameView, const IntRect& p
     if (bitmapSize.isEmpty())
         return nullptr;
 
-    auto snapshot = WebImage::create(bitmapSize, snapshotOptionsToImageOptions(options), DestinationColorSpace::SRGB());
+    auto snapshot = WebImage::create(bitmapSize, snapshotOptionsToImageOptions(options), ColorSpace::SRGB());
     if (!snapshot->context())
         return nullptr;
 
@@ -201,7 +197,7 @@ static RefPtr<WebImage> imageForRect(LocalFrameView* frameView, const IntRect& p
 
     auto oldPaintBehavior = frameView->paintBehavior();
     frameView->setPaintBehavior(paintBehavior);
-    frameView->paintContentsForSnapshot(graphicsContext, paintingRect, shouldPaintSelection, LocalFrameView::DocumentCoordinates);
+    frameView->paintContentsForSnapshot(graphicsContext, paintingRect, nodeToDraw, shouldPaintSelection, LocalFrameView::DocumentCoordinates);
     frameView->setPaintBehavior(oldPaintBehavior);
 
     return snapshot;
@@ -220,7 +216,7 @@ RefPtr<WebImage> InjectedBundleNodeHandle::renderedImage(SnapshotOptions options
     if (!frameView)
         return nullptr;
 
-    m_node->protectedDocument()->updateLayout();
+    protect(m_node->document())->updateLayout();
 
     CheckedPtr renderer = m_node->renderer();
     if (!renderer)
@@ -231,22 +227,19 @@ RefPtr<WebImage> InjectedBundleNodeHandle::renderedImage(SnapshotOptions options
         paintingRect = renderer->absoluteBoundingBoxRectIgnoringTransforms();
     else {
         LayoutRect topLevelRect;
-        paintingRect = snappedIntRect(renderer->paintingRootRect(topLevelRect));
+        paintingRect = snappedIntRect(renderer->subtreePaintRootRect(topLevelRect));
     }
 
-    frameView->setNodeToDraw(m_node.get());
-    RefPtr image = imageForRect(frameView.get(), paintingRect, bitmapWidth, options);
-    frameView->setNodeToDraw(0);
-
-    return image;
+    return imageForRect(frameView.get(), protect(m_node), paintingRect, bitmapWidth, options);
 }
 
 RefPtr<InjectedBundleRangeHandle> InjectedBundleNodeHandle::visibleRange()
 {
     if (!m_node)
         return nullptr;
-    VisiblePosition start = firstPositionInNode(m_node.get());
-    VisiblePosition end = lastPositionInNode(m_node.get());
+    Ref node = *m_node;
+    VisiblePosition start = firstPositionInNode(node);
+    VisiblePosition end = lastPositionInNode(node);
     return createHandle(makeSimpleRange(start, end));
 }
 
@@ -423,8 +416,8 @@ bool InjectedBundleNodeHandle::isSelectElement() const
 
 bool InjectedBundleNodeHandle::isSelectableTextNode() const
 {
-    if (CheckedPtr renderText = dynamicDowncast<RenderText>(m_node->renderer()))
-        return renderText->checkedStyle()->usedUserSelect() != UserSelect::None;
+    if (auto* renderText = dynamicDowncast<RenderText>(m_node->renderer()))
+        return renderText->style().usedUserSelect() != UserSelect::None;
     return false;
 }
 
@@ -434,7 +427,7 @@ RefPtr<InjectedBundleNodeHandle> InjectedBundleNodeHandle::htmlTableCellElementC
     if (!tableCell)
         return nullptr;
 
-    return getOrCreate(tableCell->protectedCellAbove().get());
+    return getOrCreate(protect(tableCell->cellAbove()).get());
 }
 
 RefPtr<WebFrame> InjectedBundleNodeHandle::documentFrame()
@@ -452,11 +445,11 @@ RefPtr<WebFrame> InjectedBundleNodeHandle::documentFrame()
 
 RefPtr<WebFrame> InjectedBundleNodeHandle::htmlIFrameElementContentFrame()
 {
-    RefPtr iframeElement = dynamicDowncast<HTMLIFrameElement>(m_node.get());
+    auto* iframeElement = dynamicDowncast<HTMLIFrameElement>(m_node.get());
     if (!iframeElement)
         return nullptr;
 
-    RefPtr frame = iframeElement->contentFrame();
+    auto* frame = iframeElement->contentFrame();
     if (!frame)
         return nullptr;
 

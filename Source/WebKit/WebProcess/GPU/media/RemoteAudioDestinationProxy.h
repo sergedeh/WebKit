@@ -36,6 +36,10 @@
 #include <wtf/CrossThreadQueue.h>
 #include <wtf/MediaTime.h>
 
+namespace WTF {
+class Thread;
+}
+
 #if PLATFORM(COCOA)
 #include "SharedCARingBuffer.h"
 #endif
@@ -77,7 +81,7 @@ private:
     // GPUProcessConnection::Client.
     void gpuProcessConnectionDidClose(GPUProcessConnection&) final;
 
-    uint32_t totalFrameCount() const;
+    uint32_t NODELETE totalFrameCount() const;
 
 #if PLATFORM(IOS_FAMILY)
     void setSceneIdentifier(const String&) final;
@@ -104,7 +108,7 @@ private:
     String m_sceneIdentifier;
 #endif
 
-    RefPtr<Thread> m_renderThread;
+    RefPtr<WTF::Thread> m_renderThread;
     RefPtr<WebCore::SharedMemory> m_frameCount;
     uint32_t m_lastFrameCount { 0 };
     std::atomic<bool> m_shouldStopThread { false };

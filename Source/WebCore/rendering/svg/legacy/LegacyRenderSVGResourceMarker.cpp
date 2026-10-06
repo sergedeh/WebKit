@@ -23,6 +23,7 @@
 
 #include "config.h"
 #include "LegacyRenderSVGResourceMarker.h"
+#include "LegacyRenderSVGModelObjectInlines.h"
 
 #include "GraphicsContext.h"
 #include "LegacyRenderSVGResourceMarkerInlines.h"
@@ -34,7 +35,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGResourceMarker);
 
-LegacyRenderSVGResourceMarker::LegacyRenderSVGResourceMarker(SVGMarkerElement& element, RenderStyle&& style)
+LegacyRenderSVGResourceMarker::LegacyRenderSVGResourceMarker(SVGMarkerElement& element, Style::ComputedStyle&& style)
     : LegacyRenderSVGResourceContainer(Type::LegacySVGResourceMarker, element, WTF::move(style))
 {
 }
@@ -95,7 +96,7 @@ std::optional<float> LegacyRenderSVGResourceMarker::angle() const
 
 AffineTransform LegacyRenderSVGResourceMarker::markerTransformation(const FloatPoint& origin, float autoAngle, float strokeWidth) const
 {
-    bool useStrokeWidth = protectedMarkerElement()->markerUnits() == SVGMarkerUnitsType::StrokeWidth;
+    bool useStrokeWidth = protect(markerElement())->markerUnits() == SVGMarkerUnitsType::StrokeWidth;
 
     AffineTransform transform;
     transform.translate(origin);
@@ -132,7 +133,7 @@ AffineTransform LegacyRenderSVGResourceMarker::markerContentTransformation(const
 
 AffineTransform LegacyRenderSVGResourceMarker::viewportTransform() const
 {
-    return protectedMarkerElement()->viewBoxToViewTransform(m_viewport.width(), m_viewport.height());
+    return protect(markerElement())->viewBoxToViewTransform(m_viewport.width(), m_viewport.height());
 }
 
 void LegacyRenderSVGResourceMarker::calcViewport()

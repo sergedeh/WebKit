@@ -26,7 +26,9 @@
 #include "absl/base/config.h"
 #include "absl/base/internal/raw_logging.h"
 #include "absl/base/nullability.h"
-#include "absl/strings/internal/resize_uninitialized.h"
+#include "absl/base/optimization.h"
+#include "absl/base/throw_delegate.h"
+#include "absl/strings/internal/append_and_overwrite.h"
 #include "absl/strings/resize_and_overwrite.h"
 #include "absl/strings/string_view.h"
 
@@ -53,11 +55,26 @@ inline char* absl_nonnull Append(char* absl_nonnull out, const AlphaNum& x) {
   return after;
 }
 
-inline void STLStringAppendUninitializedAmortized(std::string* dest,
-                                                  size_t to_append) {
-  strings_internal::AppendUninitializedTraits<std::string>::Append(dest,
-                                                                   to_append);
+// Safely adds size_t values, throwing std::length_error if overflow occurs.
+inline size_t SafeAdd(size_t a, size_t b) {
+  const uint64_t sum = static_cast<uint64_t>(a) + b;
+  if (ABSL_PREDICT_FALSE(sum > (std::numeric_limits<size_t>::max)())) {
+    ThrowStdLengthError("absl string append length overflow");
+  }
+  return static_cast<size_t>(sum);
 }
+
+inline size_t SafeAdd(std::initializer_list<size_t> sizes) {
+  uint64_t sum = 0;
+  for (size_t size : sizes) {
+    sum += size;
+  }
+  if (ABSL_PREDICT_FALSE(sum > (std::numeric_limits<size_t>::max)())) {
+    ThrowStdLengthError("absl string append length overflow");
+  }
+  return static_cast<size_t>(sum);
+}
+
 }  // namespace
 
 std::string StrCat(const AlphaNum& a, const AlphaNum& b) {
@@ -165,49 +182,52 @@ std::string CatPieces(std::initializer_list<absl::string_view> pieces) {
 
 void AppendPieces(std::string* absl_nonnull dest,
                   std::initializer_list<absl::string_view> pieces) {
-  size_t old_size = dest->size();
   size_t to_append = 0;
   for (absl::string_view piece : pieces) {
     ASSERT_NO_OVERLAP(*dest, piece);
-    to_append += piece.size();
+    to_append = SafeAdd(to_append, piece.size());
   }
-  STLStringAppendUninitializedAmortized(dest, to_append);
-
-  char* const begin = &(*dest)[0];
-  char* out = begin + old_size;
-  for (absl::string_view piece : pieces) {
-    const size_t this_size = piece.size();
-    if (this_size != 0) {
-      memcpy(out, piece.data(), this_size);
-      out += this_size;
-    }
-  }
-  assert(out == begin + dest->size());
+  StringAppendAndOverwrite(*dest, to_append,
+                           [&pieces](char* const buf, size_t buf_size) {
+                             char* out = buf;
+                             for (absl::string_view piece : pieces) {
+                               const size_t this_size = piece.size();
+                               if (this_size != 0) {
+                                 memcpy(out, piece.data(), this_size);
+                                 out += this_size;
+                               }
+                             }
+                             assert(out == buf + buf_size);
+                             return buf_size;
+                           });
 }
 
 }  // namespace strings_internal
 
 void StrAppend(std::string* absl_nonnull dest, const AlphaNum& a) {
   ASSERT_NO_OVERLAP(*dest, a);
-  std::string::size_type old_size = dest->size();
-  STLStringAppendUninitializedAmortized(dest, a.size());
-  char* const begin = &(*dest)[0];
-  char* out = begin + old_size;
-  out = Append(out, a);
-  assert(out == begin + dest->size());
+  strings_internal::StringAppendAndOverwrite(
+      *dest, a.size(), [&a](char* const buf, size_t buf_size) {
+        char* out = buf;
+        out = Append(out, a);
+        assert(out == buf + buf_size);
+        return buf_size;
+      });
 }
 
 void StrAppend(std::string* absl_nonnull dest, const AlphaNum& a,
                const AlphaNum& b) {
   ASSERT_NO_OVERLAP(*dest, a);
   ASSERT_NO_OVERLAP(*dest, b);
-  std::string::size_type old_size = dest->size();
-  STLStringAppendUninitializedAmortized(dest, a.size() + b.size());
-  char* const begin = &(*dest)[0];
-  char* out = begin + old_size;
-  out = Append(out, a);
-  out = Append(out, b);
-  assert(out == begin + dest->size());
+  strings_internal::StringAppendAndOverwrite(
+      *dest, SafeAdd(a.size(), b.size()),
+      [&a, &b](char* const buf, size_t buf_size) {
+        char* out = buf;
+        out = Append(out, a);
+        out = Append(out, b);
+        assert(out == buf + buf_size);
+        return buf_size;
+      });
 }
 
 void StrAppend(std::string* absl_nonnull dest, const AlphaNum& a,
@@ -215,14 +235,16 @@ void StrAppend(std::string* absl_nonnull dest, const AlphaNum& a,
   ASSERT_NO_OVERLAP(*dest, a);
   ASSERT_NO_OVERLAP(*dest, b);
   ASSERT_NO_OVERLAP(*dest, c);
-  std::string::size_type old_size = dest->size();
-  STLStringAppendUninitializedAmortized(dest, a.size() + b.size() + c.size());
-  char* const begin = &(*dest)[0];
-  char* out = begin + old_size;
-  out = Append(out, a);
-  out = Append(out, b);
-  out = Append(out, c);
-  assert(out == begin + dest->size());
+  strings_internal::StringAppendAndOverwrite(
+      *dest, SafeAdd({a.size(), b.size(), c.size()}),
+      [&a, &b, &c](char* const buf, size_t buf_size) {
+        char* out = buf;
+        out = Append(out, a);
+        out = Append(out, b);
+        out = Append(out, c);
+        assert(out == buf + buf_size);
+        return buf_size;
+      });
 }
 
 void StrAppend(std::string* absl_nonnull dest, const AlphaNum& a,
@@ -231,16 +253,17 @@ void StrAppend(std::string* absl_nonnull dest, const AlphaNum& a,
   ASSERT_NO_OVERLAP(*dest, b);
   ASSERT_NO_OVERLAP(*dest, c);
   ASSERT_NO_OVERLAP(*dest, d);
-  std::string::size_type old_size = dest->size();
-  STLStringAppendUninitializedAmortized(
-      dest, a.size() + b.size() + c.size() + d.size());
-  char* const begin = &(*dest)[0];
-  char* out = begin + old_size;
-  out = Append(out, a);
-  out = Append(out, b);
-  out = Append(out, c);
-  out = Append(out, d);
-  assert(out == begin + dest->size());
+  strings_internal::StringAppendAndOverwrite(
+      *dest, SafeAdd({a.size(), b.size(), c.size(), d.size()}),
+      [&a, &b, &c, &d](char* const buf, size_t buf_size) {
+        char* out = buf;
+        out = Append(out, a);
+        out = Append(out, b);
+        out = Append(out, c);
+        out = Append(out, d);
+        assert(out == buf + buf_size);
+        return buf_size;
+      });
 }
 
 ABSL_NAMESPACE_END

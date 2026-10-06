@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StylePolygonFunction.h"
 
+#include "AcceleratedEffectPolygonFunction.h"
 #include "FloatRect.h"
 #include "GeometryUtilities.h"
 #include "Path.h"
@@ -39,7 +40,7 @@ namespace Style {
 
 struct PolygonPathPolicy : TinyLRUCachePolicy<Vector<FloatPoint>, WebCore::Path> {
 public:
-    static bool isKeyNull(const Vector<FloatPoint>& points)
+    static bool NODELETE isKeyNull(const Vector<FloatPoint>& points)
     {
         return !points.size();
     }
@@ -58,12 +59,12 @@ static const WebCore::Path& cachedPolygonPath(const Vector<FloatPoint>& points)
 
 // MARK: - Path
 
-WebCore::Path PathComputation<Polygon>::operator()(const Polygon& value, const FloatRect& boundingBox)
+WebCore::Path PathComputation<Polygon>::operator()(const Polygon& value, const FloatRect& boundingBox, ZoomFactor zoom)
 {
     auto boundingLocation = boundingBox.location();
     auto boundingSize = boundingBox.size();
     auto points = value.vertices.value.map([&](const auto& vertex) {
-        return evaluate<FloatPoint>(vertex, boundingSize, Style::ZoomNeeded { }) + boundingLocation;
+        return evaluate<FloatPoint>(vertex, boundingSize, zoom) + boundingLocation;
     });
     return cachedPolygonPath(points);
 }
@@ -90,6 +91,22 @@ auto Blending<Polygon>::blend(const Polygon& a, const Polygon& b, const Blending
         .vertices = WebCore::Style::blend(a.vertices, b.vertices, context),
     };
 }
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+AcceleratedEffectPolygonFunction Evaluation<PolygonFunction, AcceleratedEffectPolygonFunction>::operator()(const PolygonFunction& value, const FloatSize& containingBlockSize, ZoomFactor zoom)
+{
+    return {
+        .fillRule = windRule(value),
+        .vertices = WTF::map(value->vertices, [&](auto& vertex) -> FloatPoint {
+            return evaluate<FloatPoint>(vertex, containingBlockSize, zoom);
+        }),
+    };
+}
+
+#endif
 
 } // namespace Style
 } // namespace WebCore

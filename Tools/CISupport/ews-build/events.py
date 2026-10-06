@@ -1,4 +1,4 @@
-# Copyright (C) 2019-2025 Apple Inc. All rights reserved.
+# Copyright (C) 2019-2026 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -42,6 +42,11 @@ from .utils import load_password, get_custom_suffix
 
 custom_suffix = get_custom_suffix()
 
+# Configuration for local commit classes loading
+USE_LOCAL_COMMIT_CLASSES = load_password('USE_LOCAL_COMMIT_CLASSES', default=False)
+COMMIT_CLASSES_PATH = load_password('COMMIT_CLASSES_PATH', default='commit_classes.json')
+DEBUG_EWS_EVENTS = load_password('DEBUG_EWS_EVENTS', default=False)
+
 
 class Events(service.BuildbotService):
 
@@ -49,7 +54,7 @@ class Events(service.BuildbotService):
     MAX_GITHUB_DESCRIPTION = 140
     STEPS_TO_REPORT = [
         'analyze-api-tests-results', 'analyze-compile-webkit-results', 'analyze-jsc-tests-results',
-        'analyze-layout-tests-results', 'configuration', 'checkout-pull-request', 'apply-patch',
+        'analyze-layout-tests-results', 'configuration', 'checkout-pull-request',
         'compile-webkit', 'compile-webkit-without-change', 'compile-jsc', 'compile-jsc-without-change',
         'layout-tests', 'layout-tests-repeat-failures', 're-run-layout-tests',
         'run-layout-tests-without-change', 'layout-tests-repeat-failures-without-change',
@@ -57,14 +62,14 @@ class Events(service.BuildbotService):
         'run-api-tests', 'run-api-tests-without-change', 're-run-api-tests',
         'scan-build', 'find-unexpected-results', 'display-safer-cpp-results',
         'jscore-test', 'jscore-test-without-change',
-        'add-reviewer-to-commit-message', 'commit-patch', 'push-commit-to-webkit-repo', 'canonicalize-commit',
+        'add-reviewer-to-commit-message', 'push-commit-to-webkit-repo', 'canonicalize-commit',
         'build-webkit-org-unit-tests', 'buildbot-check-config', 'buildbot-check-config-for-build-webkit', 'buildbot-check-config-for-ews',
         'ews-unit-tests', 'resultsdbpy-unit-tests',
         'upload-built-product', 'upload-test-results',
         'bindings-tests', 'check-webkit-style',
-        'webkitperl-tests', 're-run-webkitperl-tests', 'webkitpy-tests'
+        'webkitperl-tests', 'webkitpy-tests'
     ]
-    QUEUES_TO_SKIP_REPORTING = ['__Janitor', 'Safe-Merge-Queue']
+    QUEUES_TO_SKIP_REPORTING = load_password('QUEUES_TO_SKIP_REPORTING', default=['__Janitor', 'Safe-Merge-Queue'])
 
     def __init__(self, master_hostname, type_prefix='', name='Events'):
         """
@@ -84,6 +89,9 @@ class Events(service.BuildbotService):
         if load_password('EWS_API_KEY'):
             data['EWS_API_KEY'] = load_password('EWS_API_KEY')
 
+        if DEBUG_EWS_EVENTS:
+            log.msg('Sending data to EWS')
+
         TwistedAdditions.request(
             url=self.EVENT_SERVER_ENDPOINT,
             type=b'POST',
@@ -93,6 +101,9 @@ class Events(service.BuildbotService):
 
     def sendDataToGitHub(self, repository, sha, data, user=None):
         username, access_token = GitHub.credentials(user=user)
+
+        if DEBUG_EWS_EVENTS:
+            log.msg(f'Sending data to GitHub for {sha}')
 
         data['description'] = data.get('description', '')
         if len(data['description']) > self.MAX_GITHUB_DESCRIPTION:
@@ -140,7 +151,7 @@ class Events(service.BuildbotService):
             "type": self.type_prefix + "build",
             "status": "started",
             "hostname": self.master_hostname,
-            "change_id": self.extractProperty(build, 'github.head.sha') or self.extractProperty(build, 'patch_id'),
+            "change_id": self.extractProperty(build, 'github.head.sha'),
             "pr_author": self.extractProperty(build, 'github.head.user.login'),
             "pr_number": self.extractProperty(build, 'github.number') or -1,
             "pr_project": self.extractProperty(build, 'project') or '',
@@ -205,7 +216,7 @@ class Events(service.BuildbotService):
             "type": self.type_prefix + "build",
             "status": "finished",
             "hostname": self.master_hostname,
-            "change_id": self.extractProperty(build, 'github.head.sha') or self.extractProperty(build, 'patch_id'),
+            "change_id": self.extractProperty(build, 'github.head.sha'),
             "pr_author": self.extractProperty(build, 'github.head.user.login'),
             "pr_number": self.extractProperty(build, 'github.number') or -1,
             "pr_project": self.extractProperty(build, 'project') or '',
@@ -403,19 +414,26 @@ class GitHubEventHandlerNoEdits(GitHubEventHandler):
             return defer.returnValue(cls._commit_classes)
 
         try:
-            response = yield TwistedAdditions.request(
-                url=cls.COMMIT_CLASSES_URL,
-                type=b'GET',
-                timeout=60,
-                logger=log.msg,
-            )
-            if not response or response.status_code // 100 != 2:
-                log.msg(f'Failed to fetch metadata/commit_classes.json from network with status code {response.status_code}')
-            else:
-                cls._commit_classes = [CommitClassifier(**node) for node in response.json()]
+            if USE_LOCAL_COMMIT_CLASSES:
+                # Local file mode
+                with open(COMMIT_CLASSES_PATH, 'r') as f:
+                    cls._commit_classes = [CommitClassifier(**node) for node in json.load(f)]
                 cls._last_commit_classes_refresh = current_time
+            else:
+                # Network fetch mode
+                response = yield TwistedAdditions.request(
+                    url=cls.COMMIT_CLASSES_URL,
+                    type=b'GET',
+                    timeout=60,
+                    logger=log.msg,
+                )
+                if not response or response.status_code // 100 != 2:
+                    log.msg(f'Failed to fetch metadata/commit_classes.json from network with status code {response.status_code if response else "no response"}')
+                else:
+                    cls._commit_classes = [CommitClassifier(**node) for node in response.json()]
+                    cls._last_commit_classes_refresh = current_time
         except Exception as e:
-            log.msg('Exception while fetching metadata/commit_classes.json from network')
+            log.msg('Exception while loading metadata/commit_classes.json')
             log.msg(f'    {e}')
 
         return defer.returnValue(cls._commit_classes)

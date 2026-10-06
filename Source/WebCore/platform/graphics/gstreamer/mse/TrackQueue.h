@@ -67,14 +67,14 @@ private:
     // If we had no queue, the main thread would have to be awaken for every frame. On the other hand, if the
     // queue had unlimited size WebKit would end up requesting flushes more often than necessary when frames
     // in the future are re-appended. As a sweet spot between these extremes we choose to allow enqueueing a
-    // few seconds worth of samples.
+    // couple hundred milliseconds worth of samples.
 
     // `isReadyForMoreSamples` follows the classical two water levels strategy: initially it's true until the
     // high water level is reached, then it becomes false until the queue drains down to the low water level
     // and the cycle repeats. This way we avoid stalls and minimize context switches.
 
-    static const GstClockTime s_durationEnqueuedHighWaterLevel = 5 * GST_SECOND;
-    static const GstClockTime s_durationEnqueuedLowWaterLevel = 2 * GST_SECOND;
+    static const GstClockTime s_durationEnqueuedHighWaterLevel = 200 * GST_MSECOND;
+    static const GstClockTime s_durationEnqueuedLowWaterLevel = 100 * GST_MSECOND;
 
     GstClockTime durationEnqueued() const;
     void checkLowLevel();
@@ -83,6 +83,10 @@ private:
     Deque<GRefPtr<GstMiniObject>> m_queue;
     LowLevelHandler m_lowLevelCallback;
     NotEmptyHandler m_notEmptyCallback;
+
+#if GST_CHECK_VERSION(1, 22, 0)
+    ASCIICString m_id;
+#endif
 };
 
 }

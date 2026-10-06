@@ -21,12 +21,16 @@
 
 #pragma once
 
-#include <JavaScriptCore/ConcurrentJSLock.h>
 #include <JavaScriptCore/MatchResult.h>
 #include <JavaScriptCore/RegExpKey.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/Yarr.h>
+#include <JavaScriptCore/YarrErrorCode.h>
+#include <wtf/Atomics.h>
+#include <wtf/BitSet.h>
+#include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
+#include <wtf/ThreadSafeLazyUniquePtr.h>
 #include <wtf/text/WTFString.h>
 
 #if ENABLE(YARR_JIT)
@@ -35,8 +39,20 @@
 
 namespace JSC {
 
+namespace Yarr {
+struct YarrPattern;
+}
+
 struct RegExpRepresentation;
 class VM;
+
+// Where a first-character fast-fail filter reads the byte it tests.
+enum class FirstCharacterFilterPosition : uint8_t {
+    // Reads input[0]. Sound only when every match must begin at index 0.
+    AtStart,
+    // Reads input[lastIndex]. Sound only for a sticky pattern.
+    AtLastIndex,
+};
 
 class RegExp final : public JSCell {
     friend class CachedRegExp;
@@ -52,17 +68,23 @@ public:
     JS_EXPORT_PRIVATE static RegExp* create(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     static void destroy(JSCell*);
     static size_t estimatedSize(JSCell*, VM&);
+    DECLARE_VISIT_CHILDREN;
     JS_EXPORT_PRIVATE static void dumpToStream(const JSCell*, PrintStream&);
     void dumpSimpleName(PrintStream&) const;
 
+    static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(RegExp, m_flags); }
+    static constexpr ptrdiff_t offsetOfMinimumSize() { return OBJECT_OFFSETOF(RegExp, m_minimumSize); }
+    static constexpr uint16_t globalOrStickyFlagsMask = OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::Sticky }.toRaw();
+
     OptionSet<Yarr::Flags> flags() const { return m_flags; }
+    unsigned minimumSize() const { return m_minimumSize; }
 #define JSC_DEFINE_REGEXP_FLAG_ACCESSOR(key, name, lowerCaseName, index) bool lowerCaseName() const { return m_flags.contains(Yarr::Flags::name); }
     JSC_REGEXP_FLAGS(JSC_DEFINE_REGEXP_FLAG_ACCESSOR)
 #undef JSC_DEFINE_REGEXP_FLAG_ACCESSOR
     bool globalOrSticky() const { return global() || sticky(); }
     bool eitherUnicode() const { return unicode() || unicodeSets(); }
 
-    const String& pattern() const { return m_patternString; }
+    const String& pattern() const LIFETIME_BOUND { return m_patternString; }
 
     bool isValid() const { return !Yarr::hasError(m_constructionErrorCode); }
     ASCIILiteral errorMessage() const { return Yarr::errorMessage(m_constructionErrorCode); }
@@ -70,21 +92,22 @@ public:
     void reset()
     {
         m_state = NotCompiled;
+        m_minimumSize = 0;
         m_constructionErrorCode = Yarr::ErrorCode::NoError;
     }
 
-    JS_EXPORT_PRIVATE int match(JSGlobalObject*, StringView, unsigned startOffset, Vector<int>& ovector);
+    JS_EXPORT_PRIVATE int match(JSGlobalObject*, StringView, unsigned startOffset, std::span<int> ovector);
 
     // Returns false if we couldn't run the regular expression for any reason.
-    bool matchConcurrently(VM&, StringView, unsigned startOffset, int& position, Vector<int>& ovector);
+    bool matchConcurrently(VM&, StringView, unsigned startOffset, int& position, std::span<int> ovector);
     
     JS_EXPORT_PRIVATE MatchResult match(JSGlobalObject*, StringView, unsigned startOffset);
 
     bool matchConcurrently(VM&, StringView, unsigned startOffset, MatchResult&);
 
     // Call these versions of the match functions if you're desperate for performance.
-    template<typename VectorType, Yarr::MatchFrom thread = Yarr::MatchFrom::VMThread>
-    int matchInline(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, VectorType& ovector);
+    template<Yarr::MatchFrom thread = Yarr::MatchFrom::VMThread>
+    int matchInline(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, std::span<int> ovector);
     template<Yarr::MatchFrom thread = Yarr::MatchFrom::VMThread>
     MatchResult matchInline(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset);
     
@@ -95,25 +118,29 @@ public:
         return (numSubpatterns() + 1) * 2;
     }
 
-    int offsetVectorSize() const
-    {
-        if (!hasNamedCaptures())
-            return offsetVectorBaseForNamedCaptures();
-        return offsetVectorBaseForNamedCaptures() + m_rareData->m_numDuplicateNamedCaptureGroups;
-    }
+    int offsetVectorSize() const { return m_ovector.size(); }
+
+    std::span<int> ovectorSpan() { return m_ovector.mutableSpan(); }
 
     bool hasNamedCaptures() const
     {
         return m_rareData && !m_rareData->m_captureGroupNames.isEmpty();
     }
 
-    String getCaptureGroupNameForSubpatternId(unsigned i) const
+    bool hasDuplicateNamedCaptureGroups() const
+    {
+        return m_rareData && m_rareData->m_numDuplicateNamedCaptureGroups;
+    }
+
+    const AtomString& getCaptureGroupNameForSubpatternId(unsigned i) const
     {
         if (!i || !m_rareData || m_rareData->m_captureGroupNames.isEmpty())
-            return String();
+            return nullAtom();
         ASSERT(m_rareData);
         return m_rareData->m_captureGroupNames[i];
     }
+
+    Structure* ensureGroupsStructure(VM&, JSGlobalObject*);
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     template <typename Offsets>
@@ -165,16 +192,25 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         return m_regExpJITCode.get();
     }
+
+    Yarr::YarrCodeBlock* getRegExpJITCodeBlockConcurrently()
+    {
+        return m_regExpJITCode.get();
+    }
 #endif
 
     bool hasValidAtom() const { return !m_atom.isNull(); }
-    const String& atom() const { return m_atom; }
+    const String& atom() const LIFETIME_BOUND { return m_atom; }
     Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
+
+    const WTF::BitSet<256>* firstCharacterBitmap(FirstCharacterFilterPosition);
 
 private:
     friend class RegExpCache;
     RegExp(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreation(VM&);
+
+    void updateMetadataFromPattern(Yarr::YarrPattern&);
 
     static RegExp* createWithoutCaching(VM&, const String&, OptionSet<Yarr::Flags>);
 
@@ -198,23 +234,19 @@ private:
 #endif
 
 #if ENABLE(YARR_JIT)
-    Yarr::YarrCodeBlock& ensureRegExpJITCode()
-    {
-        if (!m_regExpJITCode)
-            m_regExpJITCode = makeUnique<Yarr::YarrCodeBlock>(this);
-        return *m_regExpJITCode.get();
-    }
+    Yarr::YarrCodeBlock& ensureRegExpJITCode();
 #endif
 
     struct RareData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RareData);
         unsigned m_numDuplicateNamedCaptureGroups;
-        Vector<String> m_captureGroupNames;
+        FixedVector<AtomString> m_captureGroupNames;
 
         // This first element of the RHS vector is the subpatternId in the non-duplicate case.
         // For the duplicate case, the first element is the namedCaptureGroupId.
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
+        WriteBarrierStructureID m_cachedGroupsStructureID;
     };
 
     String m_patternString;
@@ -224,11 +256,14 @@ private:
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     unsigned m_numSubpatterns { 0 };
+    unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;
 #if ENABLE(YARR_JIT)
     std::unique_ptr<Yarr::YarrCodeBlock> m_regExpJITCode;
 #endif
     std::unique_ptr<RareData> m_rareData;
+    FixedVector<int> m_ovector;
+    mutable ThreadSafeLazyUniquePtr<const WTF::BitSet<256>> m_firstCharacterBitmap;
 #if ENABLE(REGEXP_TRACING)
     double m_rtMatchOnlyTotalSubjectStringLen { 0.0 };
     double m_rtMatchTotalSubjectStringLen { 0.0 };

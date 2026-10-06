@@ -42,9 +42,7 @@
 
 #import <pal/spi/cocoa/AVKitSPI.h>
 #import <pal/cf/CoreMediaSoftLink.h>
-
-SOFTLINK_AVKIT_FRAMEWORK()
-SOFT_LINK_CLASS_OPTIONAL(AVKit, AVLegibleMediaOptionsMenuController)
+#import <pal/cocoa/AVKitSoftLink.h>
 #endif
 
 using namespace WebCore;
@@ -66,7 +64,7 @@ static const UIMenuIdentifier WKCaptionStyleMenuSystemSettingsIdentifier = @"WKC
 + (instancetype)menuController
 {
 #if HAVE(AVLEGIBLEMEDIAOPTIONSMENUCONTROLLER)
-    if (AVKitLibrary() && getAVLegibleMediaOptionsMenuControllerClassSingleton())
+    if (PAL::isAVKitFrameworkAvailable() && PAL::getAVLegibleMediaOptionsMenuControllerClassSingleton())
         return [[[_WKCaptionStyleMenuControllerAVKit alloc] init] autorelease];
 #endif
     return [[[super alloc] init] autorelease];
@@ -77,7 +75,7 @@ static const UIMenuIdentifier WKCaptionStyleMenuSystemSettingsIdentifier = @"WKC
     if (!(self = [super init]))
         return nil;
 
-    self.savedActiveProfileID = CaptionUserPreferencesMediaAF::platformActiveProfileID().createNSString().autorelease();
+    self.savedActiveProfileID = protect(CaptionUserPreferencesMediaAF::platformActiveProfileID().createNSString().autorelease()).get();
     [self rebuildMenu];
 
     return self;
@@ -101,13 +99,13 @@ static const UIMenuIdentifier WKCaptionStyleMenuSystemSettingsIdentifier = @"WKC
             if (auto strongSelf = weakSelf.get())
                 [strongSelf profileActionSelected:profileID];
         });
-        UIAction *profileAction = [UIAction actionWithTitle:title.createNSString().get() image:nil identifier:profileID.createNSString().get() handler:profileSelectedHandler.get()];
-        profileAction.attributes = UIMenuElementAttributesKeepsMenuPresented;
+        RetainPtr profileAction = [UIAction actionWithTitle:title.createNSString().get() image:nil identifier:profileID.createNSString().get() handler:profileSelectedHandler.get()];
+        profileAction.get().attributes = UIMenuElementAttributesKeepsMenuPresented;
 
-        if ([profileID.createNSString().autorelease() isEqualToString:self.savedActiveProfileID])
-            profileAction.state = UIMenuElementStateOn;
+        if ([protect(profileID.createNSString().autorelease()) isEqualToString:self.savedActiveProfileID])
+            profileAction.get().state = UIMenuElementStateOn;
 
-        [profileElements addObject:profileAction];
+        [profileElements addObject:profileAction.get()];
     }
     auto *profileGroup = [UIMenu menuWithTitle:@"" image:nil identifier:WKCaptionStyleMenuProfileGroupIdentifier options:UIMenuOptionsDisplayInline children:profileElements];
 
@@ -194,15 +192,15 @@ static bool menuHasMenuAncestor(UIMenu *targetMenu, UIMenu *ancestorMenu)
 - (void)profileActionSelected:(const WTF::String&)profileID
 {
     for (UIMenuElement *childMenu in [_menu children]) {
-        auto *childAction = dynamic_objc_cast<UIAction>(childMenu);
+        RetainPtr childAction = dynamic_objc_cast<UIAction>(childMenu);
         if (!childAction)
             continue;
 
-        String childActionIdentifier = childAction.identifier;
-        childAction.state = profileID == childActionIdentifier ? UIMenuElementStateOn : UIMenuElementStateOff;
+        String childActionIdentifier = childAction.get().identifier;
+        childAction.get().state = profileID == childActionIdentifier ? UIMenuElementStateOn : UIMenuElementStateOff;
     }
 
-    self.savedActiveProfileID = profileID.createNSString().autorelease();
+    self.savedActiveProfileID = protect(profileID.createNSString().autorelease()).get();
     CaptionUserPreferencesMediaAF::setActiveProfileID(WTF::String(self.savedActiveProfileID));
 
     // UIMenu does not have the ability to notify clients when a submenu opens or closes.
@@ -214,13 +212,15 @@ static bool menuHasMenuAncestor(UIMenu *targetMenu, UIMenu *ancestorMenu)
 - (void)systemCaptionStyleSettingsActionSelected:(UIAction *)action
 {
     NSURL *settingsURL = [NSURL URLWithString:@"App-prefs:ACCESSIBILITY"];
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     if ([[UIApplication sharedApplication] canOpenURL:settingsURL])
+    ALLOW_DEPRECATED_DECLARATIONS_END
         [[UIApplication sharedApplication] openURL:settingsURL options:@{ } completionHandler:nil];
 }
 
 - (void)notifyMenuWillOpen
 {
-    self.savedActiveProfileID = CaptionUserPreferencesMediaAF::platformActiveProfileID().createNSString().autorelease();
+    self.savedActiveProfileID = protect(CaptionUserPreferencesMediaAF::platformActiveProfileID().createNSString().autorelease()).get();
 
     if (auto delegate = self.delegate)
         [delegate captionStyleMenuWillOpen:self.menu];
@@ -259,13 +259,8 @@ static bool menuHasMenuAncestor(UIMenu *targetMenu, UIMenu *ancestorMenu)
 #pragma mark - Internal
 - (void)setPreviewProfileID:(NSString *)profileID
 {
-    if (profileID) {
-        CaptionUserPreferencesMediaAF::setActiveProfileID(WTF::String(profileID));
-        return;
-    }
-
-    if (self.savedActiveProfileID && self.savedActiveProfileID.length > 0)
-        CaptionUserPreferencesMediaAF::setActiveProfileID(WTF::String(self.savedActiveProfileID));
+    if (auto delegate = self.delegate; delegate && [delegate respondsToSelector:@selector(captionStyleMenu:setPreviewProfileID:)])
+        [delegate captionStyleMenu:self.menu setPreviewProfileID:profileID];
 }
 @end
 

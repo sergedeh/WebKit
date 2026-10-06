@@ -34,7 +34,6 @@
 #import "WebCoreThreadRun.h"
 #import <CoreLocation/CoreLocation.h>
 #import <numbers>
-#import <objc/objc-runtime.h>
 #import <pal/spi/cocoa/CoreMotionSPI.h>
 #import <wtf/MathExtras.h>
 #import <wtf/SoftLinking.h>
@@ -68,8 +67,8 @@ static const double kGravity = 9.80665;
 
 + (WebCoreMotionManager *)sharedManager
 {
-    static WebCoreMotionManager *sharedMotionManager = [[WebCoreMotionManager alloc] init];
-    return sharedMotionManager;
+    static NeverDestroyed<RetainPtr<WebCoreMotionManager>> sharedMotionManager = adoptNS([[WebCoreMotionManager alloc] init]);
+    return sharedMotionManager.get();
 }
 
 - (id)init

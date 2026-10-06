@@ -76,8 +76,8 @@ public:
     void updateValues();
 
     FloatSize visibleSize() const;
-    bool useDarkAppearance() const;
-    ScrollbarWidth scrollbarWidthStyle() const;
+    bool NODELETE useDarkAppearance() const;
+    ScrollbarWidth NODELETE scrollbarWidthStyle() const;
 
     struct Values {
         float value;
@@ -114,7 +114,7 @@ public:
 
     NSScrollerImpPair *scrollerImpPair() const { return m_scrollerImpPair.get(); }
     void ensureOnMainThreadWithProtectedThis(Function<void(ScrollerPairMac&)>&&);
-    RefPtr<ScrollingTreeScrollingNode> protectedNode() const { return m_scrollingNode; }
+    RefPtr<ScrollingTreeScrollingNode> node() const { return m_scrollingNode.get(); }
 
     bool mouseInContentArea() const { return m_mouseInContentArea; }
 
@@ -130,13 +130,13 @@ private:
 
     ScrollbarHoverState m_scrollbarHoverState;
 
-    const UniqueRef<ScrollerMac> m_verticalScroller;
-    const UniqueRef<ScrollerMac> m_horizontalScroller;
+    const Ref<ScrollerMac> m_verticalScroller;
+    const Ref<ScrollerMac> m_horizontalScroller;
 
     std::optional<FloatPoint> m_lastScrollOffset;
 
     RetainPtr<NSScrollerImpPair> m_scrollerImpPair;
-    RetainPtr<WebScrollerImpPairDelegateMac> m_scrollerImpPairDelegate;
+    const RetainPtr<WebScrollerImpPairDelegateMac> m_scrollerImpPairDelegate;
 
     ScrollbarWidth m_scrollbarWidth { ScrollbarWidth::Auto };
     std::atomic<bool> m_usingPresentationValues { false };

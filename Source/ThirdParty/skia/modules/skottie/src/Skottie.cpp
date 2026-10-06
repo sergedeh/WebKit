@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Google Inc.
+ * Copyright 2017 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -13,10 +13,10 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkStream.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTPin.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTPin.h"
+#include "include/private/SkTo.h"
 #include "modules/jsonreader/SkJSONReader.h"
 #include "modules/skottie/include/ExternalLayer.h"
 #include "modules/skottie/include/SkottieProperty.h"
@@ -45,10 +45,6 @@
 #include <memory>
 #include <ratio>
 #include <utility>
-
-#if !defined(SK_DISABLE_LEGACY_SHAPER_FACTORY)
-#include "modules/skshaper/utils/FactoryHelpers.h"
-#endif
 
 namespace sksg {
 class Color;
@@ -414,11 +410,7 @@ sk_sp<Animation> Animation::Builder::make(const char* data, size_t data_len) {
         return nullptr;
     }
 
-#if defined(SK_DISABLE_LEGACY_SHAPER_FACTORY)
     auto factory = fShapingFactory ? fShapingFactory : ::SkShapers::Primitive::Factory();
-#else
-    auto factory = fShapingFactory ? fShapingFactory : ::SkShapers::BestAvailable();
-#endif
     SkASSERT(resolvedProvider);
     internal::AnimationBuilder builder(std::move(resolvedProvider), fFontMgr,
                                        std::move(fPropertyObserver),

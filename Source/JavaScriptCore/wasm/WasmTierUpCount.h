@@ -69,12 +69,12 @@ public:
     static int32_t loopIncrement() { return Options::omgTierUpCounterIncrementForLoop(); }
     static int32_t functionEntryIncrement() { return Options::omgTierUpCounterIncrementForEntry(); }
 
-    SegmentedVector<TriggerReason, 16>& osrEntryTriggers() { return m_osrEntryTriggers; }
-    Vector<uint32_t>& outerLoops() { return m_outerLoops; }
-    Lock& getLock() { return m_lock; }
+    SegmentedVector<TriggerReason, 16>& osrEntryTriggers() LIFETIME_BOUND { return m_osrEntryTriggers; }
+    Vector<uint32_t>& outerLoops() LIFETIME_BOUND { return m_outerLoops; }
+    Lock& getLock() LIFETIME_BOUND { return m_lock; }
 
     OSREntryData& addOSREntryData(FunctionCodeIndex functionIndex, uint32_t loopIndex, StackMap&&);
-    OSREntryData& osrEntryData(uint32_t loopIndex);
+    OSREntryData& NODELETE osrEntryData(uint32_t loopIndex);
 
     void optimizeAfterWarmUp(FunctionCodeIndex functionIndex)
     {

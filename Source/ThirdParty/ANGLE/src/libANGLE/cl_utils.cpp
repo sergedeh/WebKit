@@ -9,6 +9,7 @@
 
 #include "common/PackedCLEnums_autogen.h"
 #include "libANGLE/renderer/CLExtensions.h"
+#include "libANGLE/renderer/Format.h"
 
 namespace cl
 {
@@ -184,6 +185,45 @@ bool IsValidImageFormat(const cl_image_format *imageFormat, const rx::CLExtensio
     return true;
 }
 
+// TODO: Move this to CLDeviceVk where we can decide which would be right mapping of formats based
+// on device cap. https://anglebug.com/529852962
+angle::FormatID GetImageAngleFormat(cl_image_format format)
+{
+    switch (format.image_channel_order)
+    {
+        case CL_A:
+        {
+            return angle::Format::CLAFormatToID(format.image_channel_data_type);
+        }
+        case CL_R:
+        case CL_LUMINANCE:
+        case CL_INTENSITY:
+            return angle::Format::CLRFormatToID(format.image_channel_data_type);
+        case CL_RG:
+            return angle::Format::CLRGFormatToID(format.image_channel_data_type);
+        case CL_RGB:
+            return angle::Format::CLRGBFormatToID(format.image_channel_data_type);
+        case CL_RGBA:
+        case CL_ARGB:
+            return angle::Format::CLRGBAFormatToID(format.image_channel_data_type);
+        case CL_BGRA:
+            return angle::Format::CLBGRAFormatToID(format.image_channel_data_type);
+        case CL_sRGBA:
+            return angle::Format::CLsRGBAFormatToID(format.image_channel_data_type);
+        case CL_DEPTH:
+            return angle::Format::CLDEPTHFormatToID(format.image_channel_data_type);
+        case CL_DEPTH_STENCIL:
+            return angle::Format::CLDEPTHSTENCILFormatToID(format.image_channel_data_type);
+        default:
+            return angle::FormatID::NONE;
+    }
+}
+
+bool IsDepthOrder(cl_channel_order channelOrder)
+{
+    return channelOrder == CL_DEPTH || channelOrder == CL_DEPTH_STENCIL;
+}
+
 bool IsImageType(cl::MemObjectType type)
 {
     return (type >= cl::MemObjectType::Image2D && type <= cl::MemObjectType::Image1D_Buffer);
@@ -212,6 +252,11 @@ bool Is2DImage(cl::MemObjectType type)
 bool Is1DImage(cl::MemObjectType type)
 {
     return (type >= cl::MemObjectType::Image1D && type <= cl::MemObjectType::Image1D_Buffer);
+}
+
+bool Is1DImageBuffer(cl::MemObjectType type)
+{
+    return type == cl::MemObjectType::Image1D_Buffer;
 }
 
 cl::Extents GetExtentFromDescriptor(cl::ImageDescriptor desc)

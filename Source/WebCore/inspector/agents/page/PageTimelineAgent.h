@@ -34,6 +34,7 @@
 namespace WebCore {
 
 class Page;
+class RenderElement;
 class RunLoopObserver;
 
 class PageTimelineAgent final : public InspectorTimelineAgent, public CanMakeWeakPtr<PageTimelineAgent>, public CanMakeCheckedPtr<PageTimelineAgent> {
@@ -41,6 +42,8 @@ class PageTimelineAgent final : public InspectorTimelineAgent, public CanMakeWea
     WTF_MAKE_TZONE_ALLOCATED(PageTimelineAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PageTimelineAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     PageTimelineAgent(PageAgentContext&);
     ~PageTimelineAgent();
 
@@ -48,19 +51,20 @@ public:
     Inspector::Protocol::ErrorStringOr<void> setAutoCaptureEnabled(bool) override;
 
     // InspectorInstrumentation
-    void didInvalidateLayout();
+    void willInvalidateLayout(const RenderObject&);
+    void didScheduleLayout(const RenderElement&);
     void willLayout();
-    void didLayout(const Vector<FloatQuad>&);
+    void didLayout(const RenderElement&, const Vector<FloatQuad>&);
     void willComposite();
-    void didComposite();
+    void didComposite(const LocalFrame&);
     void willPaint();
     void didPaint(RenderObject&, const LayoutRect&);
     void willRecalculateStyle();
-    void didRecalculateStyle();
-    void didScheduleStyleRecalculation();
+    void didRecalculateStyle(Document&);
+    void didScheduleStyleRecalculation(Document&);
     void mainFrameStartedLoading();
     void mainFrameNavigated();
-    void didCompleteRenderingFrame();
+    void didCompleteRenderingFrame(const LocalFrame&);
 
 private:
     bool enabled() const override;
@@ -75,6 +79,9 @@ private:
 
     void captureScreenshot();
 
+    Inspector::Protocol::DOM::NodeId nodeIdForDocument(Document&) const;
+    Inspector::Protocol::DOM::NodeId nodeIdForRenderer(const RenderObject&) const;
+
     WeakRef<Page> m_inspectedPage;
 
     bool m_autoCaptureEnabled { false };
@@ -83,7 +90,6 @@ private:
 
 #if PLATFORM(COCOA)
     std::unique_ptr<WebCore::RunLoopObserver> m_frameStartObserver;
-    std::unique_ptr<WebCore::RunLoopObserver> m_frameStopObserver;
     int m_runLoopNestingLevel { 0 };
 #elif USE(GLIB_EVENT_LOOP)
     RefPtr<RunLoop::EventObserver> m_runLoopObserver;

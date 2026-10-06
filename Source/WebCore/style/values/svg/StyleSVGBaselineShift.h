@@ -24,18 +24,14 @@
 
 #pragma once
 
-#include <WebCore/StyleLengthWrapper.h>
+#include <WebCore/StylePrimitiveNumeric.h>
 
 namespace WebCore {
 namespace Style {
 
-struct SVGBaselineShiftLength : LengthWrapperBase<LengthPercentage<>> {
-    using Base::Base;
-};
-
 // <'baseline-shift'> = baseline | sub | super | <length-percentage>
 struct SVGBaselineShift {
-    using Length = SVGBaselineShiftLength;
+    using LengthPercentage = Style::LengthPercentage<>;
 
     SVGBaselineShift(CSS::Keyword::Baseline keyword)
         : m_value { keyword }
@@ -52,18 +48,18 @@ struct SVGBaselineShift {
     {
     }
 
-    SVGBaselineShift(Length&& length)
-        : m_value { WTF::move(length) }
+    SVGBaselineShift(LengthPercentage&& value)
+        : m_value { WTF::move(value) }
     {
     }
 
     bool isBaseline() const { return WTF::holdsAlternative<CSS::Keyword::Baseline>(m_value); }
     bool isSub() const { return WTF::holdsAlternative<CSS::Keyword::Sub>(m_value); }
     bool isSuper() const { return WTF::holdsAlternative<CSS::Keyword::Super>(m_value); }
-    bool isLength() const { return WTF::holdsAlternative<Length>(m_value); }
-    std::optional<Length> tryLength() const { return isLength() ? std::make_optional(std::get<Length>(m_value)) : std::nullopt; }
+    bool isLengthPercentage() const { return WTF::holdsAlternative<LengthPercentage>(m_value); }
+    std::optional<LengthPercentage> tryLengthPercentage() const { return isLengthPercentage() ? std::make_optional(std::get<LengthPercentage>(m_value)) : std::nullopt; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -73,7 +69,7 @@ struct SVGBaselineShift {
 private:
     friend struct Blending<SVGBaselineShift>;
 
-    Variant<CSS::Keyword::Baseline, CSS::Keyword::Sub, CSS::Keyword::Super, SVGBaselineShiftLength> m_value;
+    Variant<CSS::Keyword::Baseline, CSS::Keyword::Sub, CSS::Keyword::Super, LengthPercentage> m_value;
 };
 
 // MARK: - Conversion
@@ -83,7 +79,7 @@ template<> struct CSSValueConversion<SVGBaselineShift> { auto operator()(Builder
 // MARK: - Blending
 
 template<> struct Blending<SVGBaselineShift> {
-    auto canBlend(const SVGBaselineShift&, const SVGBaselineShift&) -> bool;
+    bool NODELETE canBlend(const SVGBaselineShift&, const SVGBaselineShift&);
     auto requiresInterpolationForAccumulativeIteration(const SVGBaselineShift&, const SVGBaselineShift&) -> bool;
     auto blend(const SVGBaselineShift&, const SVGBaselineShift&, const BlendingContext&) -> SVGBaselineShift;
 };
@@ -91,5 +87,4 @@ template<> struct Blending<SVGBaselineShift> {
 } // namespace Style
 } // namespace WebCore
 
-DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::SVGBaselineShiftLength)
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::SVGBaselineShift)

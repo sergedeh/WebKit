@@ -22,7 +22,8 @@
 
 #include "FrameDestructionObserverInlines.h"
 #include "JSCSSStyleSheet.h"
-#include "JSDOMConvert.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertSequences.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWindowCustom.h"
 #include "JSHTMLDocument.h"
@@ -84,22 +85,22 @@ void setAdoptedStyleSheetsOnTreeScope(TreeScope& treeScope, JSC::JSGlobalObject&
 
 void JSDocument::setAdoptedStyleSheets(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    setAdoptedStyleSheetsOnTreeScope(wrapped(), lexicalGlobalObject, value);
+    setAdoptedStyleSheetsOnTreeScope(protect(wrapped()), lexicalGlobalObject, value);
 }
 
 template<typename Visitor>
-void JSDocument::visitAdditionalChildren(Visitor& visitor)
+void JSDocument::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    // This may get called on the GC thread so we cannot ref this object.
+    // This may get called on a GC thread so we cannot ref this object.
     SUPPRESS_UNCOUNTED_ARG addWebCoreOpaqueRoot(visitor, static_cast<ScriptExecutionContext&>(wrapped()));
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSDocument);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSDocument);
 
 void JSDocument::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     Base::analyzeHeap(cell, analyzer);
-    auto* thisObject = jsCast<JSDocument*>(cell);
+    auto* thisObject = downcast<JSDocument>(cell);
     analyzer.setLabelForCell(cell, thisObject->wrapped().url().string());
 }
 

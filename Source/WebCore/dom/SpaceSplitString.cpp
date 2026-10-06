@@ -63,18 +63,15 @@ static inline void tokenizeSpaceSplitString(TokenProcessor& tokenProcessor, Stri
         tokenizeSpaceSplitString(tokenProcessor, string.span16());
 }
 
-bool SpaceSplitStringData::containsAll(SpaceSplitStringData& other)
+bool SpaceSplitStringData::containsAll(const SpaceSplitStringData& other) const
 {
     if (this == &other)
         return true;
 
-    unsigned otherSize = other.m_size;
-    unsigned i = 0;
-    do {
-        if (!contains(other[i]))
+    for (auto& token : other) {
+        if (!contains(token))
             return false;
-        ++i;
-    } while (i < otherSize);
+    }
     return true;
 }
 
@@ -88,7 +85,7 @@ struct SpaceSplitStringTableKeyTraits : public HashTraits<AtomString>
 
 typedef HashMap<AtomString, SpaceSplitStringData*, AtomStringHash, SpaceSplitStringTableKeyTraits> SpaceSplitStringTable;
 
-static SpaceSplitStringTable& spaceSplitStringTable()
+static SpaceSplitStringTable& NODELETE spaceSplitStringTable()
 {
     static NeverDestroyed<SpaceSplitStringTable> table;
     return table;
@@ -113,7 +110,7 @@ public:
     }
 
     template <typename TokenCharacterType>
-    bool processToken(std::span<const TokenCharacterType> characters)
+    bool NODELETE processToken(std::span<const TokenCharacterType> characters)
     {
         if (characters.size() == m_referenceLength && equal(m_referenceCharacters, characters)) {
             m_referenceStringWasFound = true;
@@ -122,7 +119,7 @@ public:
         return true;
     }
 
-    bool referenceStringWasFound() const { return m_referenceStringWasFound; }
+    bool NODELETE referenceStringWasFound() const { return m_referenceStringWasFound; }
 
 private:
     const ReferenceCharacterType* m_referenceCharacters;
@@ -131,7 +128,7 @@ private:
 };
 
 template <typename ValueCharacterType>
-static bool spaceSplitStringContainsValueInternal(StringView spaceSplitString, StringView value)
+static bool NODELETE spaceSplitStringContainsValueInternal(StringView spaceSplitString, StringView value)
 {
     TokenIsEqualToCharactersTokenProcessor<ValueCharacterType> tokenProcessor(value.span<ValueCharacterType>().data(), value.length());
     tokenizeSpaceSplitString(tokenProcessor, spaceSplitString);
@@ -153,13 +150,13 @@ class TokenCounter {
 public:
     TokenCounter() : m_tokenCount(0) { }
 
-    template<typename CharacterType> bool processToken(std::span<const CharacterType>)
+    template<typename CharacterType> bool NODELETE processToken(std::span<const CharacterType>)
     {
         ++m_tokenCount;
         return true;
     }
 
-    unsigned tokenCount() const { return m_tokenCount; }
+    unsigned NODELETE tokenCount() const { return m_tokenCount; }
 
 private:
     unsigned m_tokenCount;
@@ -183,7 +180,7 @@ public:
         return true;
     }
 
-    const AtomString* nextMemoryBucket() const { return m_memoryBucket.data(); }
+    const AtomString* NODELETE nextMemoryBucket() const { return m_memoryBucket.data(); }
 
 private:
     const AtomString& m_keyString;
@@ -196,7 +193,7 @@ inline Ref<SpaceSplitStringData> SpaceSplitStringData::create(const AtomString& 
 
     RELEASE_ASSERT(tokenCount < (std::numeric_limits<unsigned>::max() - sizeof(SpaceSplitStringData)) / sizeof(AtomString));
     size_t sizeToAllocate = sizeof(SpaceSplitStringData) + tokenCount * sizeof(AtomString);
-    auto* rawPointer = static_cast<SpaceSplitStringData*>(fastMalloc(sizeToAllocate));
+    SUPPRESS_UNCOUNTED_LOCAL auto* rawPointer = static_cast<SpaceSplitStringData*>(fastMalloc(sizeToAllocate));
 
     new (NotNull, rawPointer) SpaceSplitStringData(keyString, tokenCount);
     Ref spaceSplitStringData = adoptRef(*rawPointer);
@@ -224,8 +221,12 @@ RefPtr<SpaceSplitStringData> SpaceSplitStringData::create(const AtomString& keyS
     tokenizeSpaceSplitString(tokenCounter, keyString);
     unsigned tokenCount = tokenCounter.tokenCount();
 
-    if (!tokenCount)
+    if (!tokenCount) {
+        // The input was whitespace-only, so there is nothing to cache. Remove the entry we just
+        // added, otherwise the table would retain the key string for the lifetime of the process.
+        spaceSplitStringTable().remove(addResult.iterator);
         return nullptr;
+    }
 
     RefPtr<SpaceSplitStringData> spaceSplitStringData = create(keyString, tokenCount);
     addResult.iterator->value = spaceSplitStringData.get();

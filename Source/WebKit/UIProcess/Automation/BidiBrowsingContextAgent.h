@@ -35,6 +35,7 @@
 #include <cstdint>
 #include <optional>
 #include <wtf/Forward.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
@@ -44,23 +45,28 @@ struct FrameTreeNodeData;
 class WebAutomationSession;
 class WebPageProxy;
 
-class BidiBrowsingContextAgent final : public Inspector::BidiBrowsingContextBackendDispatcherHandler {
+class BidiBrowsingContextAgent final : public Inspector::BidiBrowsingContextBackendDispatcherHandler, public RefCountedAndCanMakeWeakPtr<BidiBrowsingContextAgent> {
     WTF_MAKE_TZONE_ALLOCATED(BidiBrowsingContextAgent);
 public:
-    BidiBrowsingContextAgent(WebAutomationSession&, Inspector::BackendDispatcher&);
+    static Ref<BidiBrowsingContextAgent> create(WebAutomationSession&, Inspector::BackendDispatcher&);
     ~BidiBrowsingContextAgent() override;
 
     // Inspector::BidiBrowsingContextDispatcherHandler methods.
     void activate(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, Inspector::CommandCallback<void>&&) override;
+    void captureScreenshot(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, const String& optionalOrigin, RefPtr<JSON::Object>&& optionalFormat, RefPtr<JSON::Object>&& optionalClip, RefPtr<JSON::Object>&& optionalImageSize, Inspector::CommandCallback<String>&&) override;
     void close(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, std::optional<bool>&& optionalPromptUnload, Inspector::CommandCallback<void>&&) override;
     void create(Inspector::Protocol::BidiBrowsingContext::CreateType, const Inspector::Protocol::BidiBrowsingContext::BrowsingContext& optionalReferenceContext, std::optional<bool>&& optionalBackground, const String& optionalUserContext, Inspector::CommandCallback<String>&&) override;
     void getTree(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext& optionalRoot, std::optional<double>&& optionalMaxDepth, Inspector::CommandCallback<Ref<JSON::ArrayOf<Inspector::Protocol::BidiBrowsingContext::Info>>>&&) override;
     void handleUserPrompt(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, std::optional<bool>&& optionalShouldAccept, const String& userText, Inspector::CommandCallback<void>&&) override;
-    void navigate(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, const String& url, std::optional<Inspector::Protocol::BidiBrowsingContext::ReadinessState>&&, Inspector::CommandCallbackOf<String, Inspector::Protocol::BidiBrowsingContext::NavigationID>&&) override;
+    void locateNodes(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, Ref<JSON::Object>&& locator, std::optional<double>&& optionalMaxNodeCount, RefPtr<JSON::Object>&& optionalSerializationOptions, RefPtr<JSON::Array>&& optionalStartNodes, Inspector::CommandCallback<Ref<JSON::ArrayOf<Inspector::Protocol::BidiScript::RemoteValue>>>&&) override;
+    void navigate(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, const String& url, const String& /* BidiBrowsingContext.ReadinessState */ optionalWait, Inspector::CommandCallbackOf<String, Inspector::Protocol::BidiBrowsingContext::NavigationID>&&) override;
     void reload(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, std::optional<bool>&& optionalIgnoreCache, std::optional<Inspector::Protocol::BidiBrowsingContext::ReadinessState>&& optionalWait, Inspector::CommandCallbackOf<String, Inspector::Protocol::BidiBrowsingContext::NavigationID>&&) override;
     void traverseHistory(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, int delta, Inspector::CommandCallback<void>&&) override;
+    void setViewport(const Inspector::Protocol::BidiBrowsingContext::BrowsingContext&, RefPtr<JSON::Object>&&, std::optional<double>&&, RefPtr<JSON::Array>&&, Inspector::CommandCallback<void>&&) override;
 
 private:
+    BidiBrowsingContextAgent(WebAutomationSession&, Inspector::BackendDispatcher&);
+
     enum class IncludeParentID: bool { No, Yes };
 
     void getNextTree(Vector<Ref<WebPageProxy>>&&, Ref<JSON::ArrayOf<Inspector::Protocol::BidiBrowsingContext::Info>>, std::optional<uint64_t> maxDepth, Inspector::CommandCallback<Ref<JSON::ArrayOf<Inspector::Protocol::BidiBrowsingContext::Info>>>&&);
@@ -68,7 +74,7 @@ private:
     Inspector::Protocol::BidiBrowsingContext::BrowsingContext getBrowsingContextID(const WebCore::FrameIdentifier&) const;
 
     WeakPtr<WebAutomationSession> m_session;
-    Ref<Inspector::BidiBrowsingContextBackendDispatcher> m_browsingContextDomainDispatcher;
+    const Ref<Inspector::BidiBrowsingContextBackendDispatcher> m_browsingContextDomainDispatcher;
 };
 
 } // namespace WebKit

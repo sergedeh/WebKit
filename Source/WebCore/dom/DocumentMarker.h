@@ -23,6 +23,7 @@
 #include <WebCore/DictationContext.h>
 #include <WebCore/SimpleRange.h>
 #include <wtf/Forward.h>
+#include <wtf/Markable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Platform.h>
 #include <wtf/UUID.h>
@@ -99,6 +100,9 @@ enum class DocumentMarkerType : uint32_t {
     WritingToolsTextSuggestion = 1 << 16,
 #endif
     TransparentContent = 1 << 17,
+    DictationStreamingOpacity = 1 << 18,
+    // FIXME(172843016)
+    ActiveTextMatch = 1 << 19,
 };
 
 // A range of a node within a document that is "marked", such as the range of a misspelled word.
@@ -139,7 +143,16 @@ public:
 
     struct TransparentContentData {
         RefPtr<Node> node;
-        WTF::UUID uuid;
+        Markable<WTF::UUID> uuid;
+    };
+
+    struct DictationStreamingOpacityData {
+        float opacity { 0 };
+    };
+
+    struct GrammarData {
+        String description;
+        String uuid;
     };
 
     using Data = Variant<
@@ -157,6 +170,8 @@ public:
         , WritingToolsTextSuggestionData // WritingToolsTextSuggestion
 #endif
         , TransparentContentData // TransparentContent
+        , DictationStreamingOpacityData // DictationStreamingOpacity
+        , GrammarData // Grammar
     >;
 
     DocumentMarker(DocumentMarkerType, OffsetRange, Data&& = { });
@@ -167,7 +182,7 @@ public:
 
     String description() const;
 
-    const Data& data() const { return m_data; }
+    const Data& data() const LIFETIME_BOUND { return m_data; }
     void clearData() { m_data = String { }; }
 
     // Offset modifications are done by DocumentMarkerController.
@@ -211,6 +226,8 @@ constexpr auto DocumentMarker::allMarkers() -> OptionSet<DocumentMarkerType>
         DocumentMarkerType::WritingToolsTextSuggestion,
 #endif
         DocumentMarkerType::TransparentContent,
+        DocumentMarkerType::DictationStreamingOpacity,
+        DocumentMarkerType::ActiveTextMatch,
     };
 }
 
@@ -232,9 +249,12 @@ inline String DocumentMarker::description() const
     if (auto* description = std::get_if<String>(&m_data))
         return *description;
 
+    if (auto* data = std::get_if<DocumentMarker::GrammarData>(&m_data))
+        return data->description;
+
 #if ENABLE(WRITING_TOOLS)
     if (auto* data = std::get_if<DocumentMarker::WritingToolsTextSuggestionData>(&m_data))
-        return makeString("('"_s, data->originalText, "', state: "_s, enumToUnderlyingType(data->state), ')');
+        return makeString("('"_s, data->originalText, "', state: "_s, std::to_underlying(data->state), ')');
 #endif
 
     return emptyString();

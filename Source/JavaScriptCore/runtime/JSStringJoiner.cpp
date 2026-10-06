@@ -58,7 +58,7 @@ template<typename CharacterType>
 static inline void appendStringToData(std::span<CharacterType>& data, int32_t value)
 {
     if constexpr (std::is_same_v<CharacterType, Latin1Character>) {
-        auto result = std::to_chars(std::bit_cast<char*>(data.data()), std::bit_cast<char*>(data.data() + data.size()), value);
+        auto result = std::to_chars(std::bit_cast<char*>(data.data()), std::bit_cast<char*>(std::to_address(data.end())), value);
         ASSERT(result.ec != std::errc::value_too_large);
         skip(data, result.ptr - std::bit_cast<char*>(data.data()));
     } else {
@@ -180,7 +180,7 @@ static inline String joinStrings(const JSStringJoiner::Entries& strings, std::sp
     return result;
 }
 
-template<typename OutputCharacterType, typename SeparatorCharacterType>
+template<IndexingType indexingShape, typename OutputCharacterType, typename SeparatorCharacterType>
 static inline String joinStrings(JSGlobalObject* globalObject, const WriteBarrier<Unknown>* strings, unsigned size, std::span<const SeparatorCharacterType> separator, unsigned joinedLength)
 {
     VM& vm = globalObject->vm();
@@ -196,44 +196,31 @@ static inline String joinStrings(JSGlobalObject* globalObject, const WriteBarrie
         return { };
     }
 
-    switch (separator.size()) {
-    case 0: {
-        for (unsigned i = 0; i < size; ++i) {
-            JSValue value = strings[i].get();
+    auto appendValue = [&](JSValue value) {
+        if constexpr (indexingShape == ContiguousShape) {
             if (value.isString()) {
-                auto view = asString(value)->view(globalObject);
-                RETURN_IF_EXCEPTION(scope, String());
-                appendStringToData(data, view);
-            } else {
-                ASSERT(value.isInt32());
-                appendStringToData(data, value.asInt32());
+                JSString* string = asString(value);
+                unsigned length = string->length();
+                string->resolveToBuffer(data.first(length));
+                data = data.subspan(length);
+                return;
             }
         }
+        ASSERT(value.isInt32());
+        appendStringToData(data, value.asInt32());
+    };
+
+    switch (separator.size()) {
+    case 0: {
+        for (unsigned i = 0; i < size; ++i)
+            appendValue(strings[i].get());
         break;
     }
     default: {
-        JSValue value = strings[0].get();
-        if (value.isString()) {
-            auto view = asString(value)->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, String());
-            appendStringToData(data, view);
-        } else {
-            ASSERT(value.isInt32());
-            appendStringToData(data, value.asInt32());
-        }
-
+        appendValue(strings[0].get());
         for (unsigned i = 1; i < size; ++i) {
-            JSValue value = strings[i].get();
-            if (value.isString()) {
-                auto view = asString(value)->view(globalObject);
-                RETURN_IF_EXCEPTION(scope, String());
-                appendStringToData(data, separator);
-                appendStringToData(data, view);
-            } else {
-                ASSERT(value.isInt32());
-                appendStringToData(data, separator);
-                appendStringToData(data, value.asInt32());
-            }
+            appendStringToData(data, separator);
+            appendValue(strings[i].get());
         }
         break;
     }
@@ -296,6 +283,7 @@ JSString* JSStringJoiner::joinImpl(JSGlobalObject* globalObject)
     return jsString(vm, WTF::move(result));
 }
 
+template<IndexingType indexingShape>
 JSString* JSOnlyStringsAndInt32sJoiner::joinImpl(JSGlobalObject* globalObject, const WriteBarrier<Unknown>* data, unsigned length)
 {
     VM& vm = globalObject->vm();
@@ -314,18 +302,21 @@ JSString* JSOnlyStringsAndInt32sJoiner::joinImpl(JSGlobalObject* globalObject, c
 
     String result;
     if (m_isAll8Bit)
-        result = joinStrings<Latin1Character>(globalObject, data, length, m_separator.span8(), totalLength);
+        result = joinStrings<indexingShape, Latin1Character>(globalObject, data, length, m_separator.span8(), totalLength);
     else {
         if (m_separator.is8Bit())
-            result = joinStrings<char16_t>(globalObject, data, length, m_separator.span8(), totalLength);
+            result = joinStrings<indexingShape, char16_t>(globalObject, data, length, m_separator.span8(), totalLength);
         else
-            result = joinStrings<char16_t>(globalObject, data, length, m_separator.span16(), totalLength);
+            result = joinStrings<indexingShape, char16_t>(globalObject, data, length, m_separator.span16(), totalLength);
     }
 
     RETURN_IF_EXCEPTION(scope, { });
 
     return jsString(vm, WTF::move(result));
 }
+
+template JSString* JSOnlyStringsAndInt32sJoiner::joinImpl<Int32Shape>(JSGlobalObject*, const WriteBarrier<Unknown>*, unsigned);
+template JSString* JSOnlyStringsAndInt32sJoiner::joinImpl<ContiguousShape>(JSGlobalObject*, const WriteBarrier<Unknown>*, unsigned);
 
 } // namespace JSC
 

@@ -111,7 +111,7 @@ public:
             return;
 
         m_channel = makeUnique<FrontendChannel>(identifier(), connectionType, m_handler);
-        Ref { m_page.get() }->protectedInspectorController()->connectFrontend(*m_channel);
+        m_page->inspectorController().connectFrontend(*m_channel);
     }
 
     void disconnect() override
@@ -119,13 +119,13 @@ public:
         if (!m_channel)
             return;
 
-        Ref { m_page.get() }->protectedInspectorController()->disconnectFrontend(*m_channel);
+        m_page->inspectorController().disconnectFrontend(*m_channel);
         m_channel = nullptr;
     }
 
     void sendMessageToTargetBackend(const String& message) override
     {
-        Ref { m_page.get() }->protectedInspectorController()->dispatchMessageFromFrontend(message);
+        m_page->inspectorController().dispatchMessageFromFrontend(message);
     }
 
 private:
@@ -166,7 +166,7 @@ public:
             return;
 
         m_channel = makeUnique<FrontendChannel>(identifier(), connectionType, m_handler);
-        Ref { m_frame.get() }->protectedInspectorController()->connectFrontend(*m_channel);
+        m_frame.get().inspectorController().connectFrontend(*m_channel);
     }
 
     void disconnect() override
@@ -174,13 +174,13 @@ public:
         if (!m_channel)
             return;
 
-        Ref { m_frame.get() }->protectedInspectorController()->disconnectFrontend(*m_channel);
+        m_frame.get().inspectorController().disconnectFrontend(*m_channel);
         m_channel = nullptr;
     }
 
     void sendMessageToTargetBackend(const String& message) override
     {
-        Ref { m_frame.get() }->protectedInspectorController()->dispatchMessageFromFrontend(message);
+        m_frame.get().inspectorController().dispatchMessageFromFrontend(message);
     }
 
 private:
@@ -189,10 +189,13 @@ private:
     FrontendChannel::MessageHandler m_handler;
 };
 
-class EmptyBrowserAgent final : public Inspector::InspectorAgentBase, public Inspector::BrowserBackendDispatcherHandler {
+class EmptyBrowserAgent final : public Inspector::InspectorAgentBase, public Inspector::BrowserBackendDispatcherHandler, public CanMakeCheckedPtr<EmptyBrowserAgent> {
     WTF_MAKE_NONCOPYABLE(EmptyBrowserAgent);
     WTF_MAKE_TZONE_ALLOCATED(EmptyBrowserAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(EmptyBrowserAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     explicit EmptyBrowserAgent(Inspector::BackendDispatcher& backendDispatcher)
         : Inspector::InspectorAgentBase("Browser"_s)
         , m_backendDispatcher(Inspector::BrowserBackendDispatcher::create(backendDispatcher, this))
@@ -266,7 +269,7 @@ void LegacyWebPageInspectorController::willDestroyPage(const WebCore::Page& page
 
 void LegacyWebPageInspectorController::addTarget(std::unique_ptr<Inspector::InspectorTarget>&& target)
 {
-    checkedTargetAgent()->targetCreated(*target);
+    protect(targetAgent())->targetCreated(*target);
     m_targets.set(target->identifier(), WTF::move(target));
 }
 
@@ -276,7 +279,7 @@ void LegacyWebPageInspectorController::removeTarget(const String& targetID)
     if (it == m_targets.end())
         return;
 
-    checkedTargetAgent()->targetDestroyed(CheckedRef { *it->value });
+    protect(targetAgent())->targetDestroyed(protect(*it->value));
     m_targets.remove(it);
 }
 
@@ -319,5 +322,5 @@ void LegacyWebPageInspectorController::dispatchMessageFromFrontend(const String&
 
 void LegacyWebPageInspectorController::sendMessageToInspectorFrontend(const String& targetID, const String& message)
 {
-    checkedTargetAgent()->sendMessageFromTargetToFrontend(targetID, message);
+    protect(targetAgent())->sendMessageFromTargetToFrontend(targetID, message);
 }

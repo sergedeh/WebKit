@@ -25,21 +25,22 @@
 
 #pragma once
 
-#include "CSSPrimitiveValue.h"
+#include "CSSPrimitiveNumericTypes.h"
 #include "CSSValue.h"
 #include <wtf/Function.h>
 
 namespace WebCore {
 
-class StyleImage;
-
 namespace Style {
 class BuilderState;
+class Image;
 }
 
 class CSSCrossfadeValue final : public CSSValue {
 public:
-    static Ref<CSSCrossfadeValue> create(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Ref<CSSPrimitiveValue>&& percentageValue, bool isPrefixed = false);
+    using Progress = CSS::NumberOrPercentageResolvedToNumber<CSS::ClosedUnitRangeClampBoth, CSS::ClosedPercentageRangeClampBoth>;
+
+    static Ref<CSSCrossfadeValue> create(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Progress&&, bool isPrefixed);
 
     ~CSSCrossfadeValue();
 
@@ -49,7 +50,7 @@ public:
     String customCSSText(const CSS::SerializationContext&) const;
     bool isPrefixed() const { return m_isPrefixed; }
 
-    RefPtr<StyleImage> createStyleImage(const Style::BuilderState&) const;
+    RefPtr<Style::Image> createStyleImage(const Style::BuilderState&) const;
 
     IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>& func) const
     {
@@ -57,17 +58,15 @@ public:
             return IterationStatus::Done;
         if (func(m_toValueOrNone.get()) == IterationStatus::Done)
             return IterationStatus::Done;
-        if (func(m_percentageValue.get()) == IterationStatus::Done)
-            return IterationStatus::Done;
         return IterationStatus::Continue;
     }
 
 private:
-    CSSCrossfadeValue(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Ref<CSSPrimitiveValue>&& percentageValue, bool isPrefixed);
+    CSSCrossfadeValue(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Progress&&, bool isPrefixed);
 
     const Ref<CSSValue> m_fromValueOrNone;
     const Ref<CSSValue> m_toValueOrNone;
-    const Ref<CSSPrimitiveValue> m_percentageValue;
+    const Progress m_progress;
     bool m_isPrefixed;
 };
 

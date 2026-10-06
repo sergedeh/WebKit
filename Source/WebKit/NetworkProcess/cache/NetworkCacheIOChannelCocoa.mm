@@ -33,12 +33,13 @@
 #import <sys/stat.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/darwin/DispatchExtras.h>
+#import <wtf/posix/POSIXExtras.h>
 #import <wtf/text/CString.h>
 
 namespace WebKit {
 namespace NetworkCache {
 
-static long dispatchQueueIdentifier(WorkQueue::QOS qos)
+static long NODELETE dispatchQueueIdentifier(WorkQueue::QOS qos)
 {
     switch (qos) {
     case WorkQueue::QOS::UserInteractive:
@@ -62,7 +63,7 @@ IOChannel::IOChannel(const String& filePath, Type type, std::optional<WorkQueue:
     switch (type) {
     case Type::Create:
         // We don't want to truncate any existing file (with O_TRUNC) as another thread might be mapping it.
-        unlink(path.data());
+        posixUnlink(path);
         oflag = O_RDWR | O_CREAT | O_NONBLOCK;
         mode = S_IRUSR | S_IWUSR;
         dispatchQOS = qos.value_or(WorkQueue::QOS::Background);
@@ -78,7 +79,7 @@ IOChannel::IOChannel(const String& filePath, Type type, std::optional<WorkQueue:
         dispatchQOS = qos.value_or(WorkQueue::QOS::Default);
     }
 
-    int fd = ::open(path.data(), oflag, mode);
+    int fd = posixOpen(path, oflag, mode);
     m_dispatchIO = adoptOSObject(dispatch_io_create(DISPATCH_IO_RANDOM, fd, globalDispatchQueueSingleton(dispatchQueueIdentifier(dispatchQOS), 0), [fd](int) {
         close(fd);
     }));
@@ -96,7 +97,7 @@ IOChannel::~IOChannel()
 void IOChannel::read(size_t offset, size_t size, Ref<WTF::WorkQueueBase>&& queue, Function<void(Data&&, int error)>&& completionHandler)
 {
     bool didCallCompletionHandler = false;
-    dispatch_io_read(m_dispatchIO.get(), offset, size, queue->protectedDispatchQueue().get(), makeBlockPtr([protectedThis = Ref { *this }, queue, completionHandler = WTF::move(completionHandler), didCallCompletionHandler](bool done, dispatch_data_t fileData, int error) mutable {
+    dispatch_io_read(m_dispatchIO.get(), offset, size, protect(queue->dispatchQueue()).get(), makeBlockPtr([protectedThis = Ref { *this }, queue, completionHandler = WTF::move(completionHandler), didCallCompletionHandler](bool done, dispatch_data_t fileData, int error) mutable {
         ASSERT_UNUSED(done, done || !didCallCompletionHandler);
         if (didCallCompletionHandler)
             return;
@@ -110,7 +111,7 @@ void IOChannel::read(size_t offset, size_t size, Ref<WTF::WorkQueueBase>&& queue
 void IOChannel::write(size_t offset, const Data& data, Ref<WTF::WorkQueueBase>&& queue, Function<void(int error)>&& completionHandler)
 {
     RetainPtr dispatchData = data.dispatchData();
-    dispatch_io_write(m_dispatchIO.get(), offset, dispatchData.get(), queue->protectedDispatchQueue().get(), makeBlockPtr([protectedThis = Ref { *this }, queue, completionHandler = WTF::move(completionHandler)](bool done, dispatch_data_t, int error) mutable {
+    dispatch_io_write(m_dispatchIO.get(), offset, dispatchData.get(), protect(queue->dispatchQueue()).get(), makeBlockPtr([protectedThis = Ref { *this }, queue, completionHandler = WTF::move(completionHandler)](bool done, dispatch_data_t, int error) mutable {
         if (!done) {
             RELEASE_LOG_ERROR(NetworkCacheStorage, "IOChannel::write only part of data is written.");
             return;

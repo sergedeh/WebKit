@@ -98,7 +98,7 @@ void AudioMediaStreamTrackRendererCocoa::setVolume(float volume)
     ASSERT(isMainThread());
 
     AudioMediaStreamTrackRenderer::setVolume(volume);
-    if (auto source = m_registeredDataSource)
+    if (auto* source = m_registeredDataSource.get())
         source->setVolume(volume);
 }
 
@@ -106,12 +106,15 @@ void AudioMediaStreamTrackRendererCocoa::reset()
 {
     ASSERT(isMainThread());
 
-    if (auto source = m_registeredDataSource)
+    if (auto* source = m_registeredDataSource.get())
         source->recomputeSampleOffset();
 }
 
 void AudioMediaStreamTrackRendererCocoa::setAudioOutputDevice(const String& deviceID)
 {
+    if (m_deviceID == deviceID)
+        return;
+
     auto registeredDataSource = m_registeredDataSource;
 
     setRegisteredDataSource(nullptr);
@@ -136,13 +139,15 @@ void AudioMediaStreamTrackRendererCocoa::setRegisteredDataSource(RefPtr<AudioSam
     if (!m_registeredDataSource)
         return;
 
+    AudioMediaStreamTrackRendererUnit::singleton().setLastDeviceUsed(m_deviceID);
+
     source->setLogger(logger(), logIdentifier());
     source->setVolume(volume());
     rendererUnit().addResetObserver(m_deviceID, m_resetObserver);
     rendererUnit().addSource(m_deviceID, *source);
 }
 
-static unsigned pollSamplesCount()
+static unsigned NODELETE pollSamplesCount()
 {
 #if USE(LIBWEBRTC)
     return LibWebRTCAudioModule::PollSamplesCount + 1;

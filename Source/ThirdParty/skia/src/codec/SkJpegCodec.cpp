@@ -18,8 +18,8 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkTypes.h"
 #include "include/core/SkYUVAInfo.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkTemplates.h"
 #include "modules/skcms/skcms.h"
 #include "src/codec/SkCodecPriv.h"
 #include "src/codec/SkJpegConstants.h"
@@ -34,7 +34,7 @@
 #endif  // SK_CODEC_DECODES_JPEG_GAINMAPS
 
 #include <array>
-#include <csetjmp>
+#include <setjmp.h>
 #include <cstring>
 #include <utility>
 
@@ -82,7 +82,7 @@ enum class SaveMarkers : bool {
 static std::tuple<SkCodec::Result, std::unique_ptr<JpegDecoderMgr>> read_header(
         SkStream* stream, SaveMarkers saveMarkers) {
     // Create a JpegDecoderMgr to own all of the decompress information
-    std::unique_ptr<JpegDecoderMgr> decoderMgr(new JpegDecoderMgr(stream));
+    auto decoderMgr = std::make_unique<JpegDecoderMgr>(stream);
 
     // libjpeg errors will be caught and reported here
     skjpeg_error_mgr::AutoPushJmpBuf jmp(decoderMgr->errorMgr());
@@ -274,6 +274,12 @@ bool SkJpegCodec::onRewind() {
         return fDecoderMgr->returnFalse("onRewind");
     }
     SkASSERT(decoderMgr);
+
+    if ((int) decoderMgr->dinfo()->image_width != this->getEncodedInfo().width() ||
+        (int) decoderMgr->dinfo()->image_height != this->getEncodedInfo().height()) {
+        return fDecoderMgr->returnFailure("onRewind: dimensions changed", kInternalError);
+    }
+
     fDecoderMgr = std::move(decoderMgr);
 
     fSwizzler.reset(nullptr);

@@ -65,7 +65,7 @@ public:
     LoadStatus status() const;
 
     using ReadyPromise = DOMPromiseProxyWithResolveCallback<IDLInterface<FontFaceSet>>;
-    ReadyPromise& ready() { return m_readyPromise.get(); }
+    ReadyPromise& ready() LIFETIME_BOUND { return m_readyPromise.get(); }
     void documentDidFinishLoading();
 
     CSSFontFaceSet& backing() { return m_backing; }
@@ -76,7 +76,7 @@ public:
         RefPtr<FontFace> next();
 
     private:
-        Ref<FontFaceSet> m_target;
+        const Ref<FontFaceSet> m_target;
         size_t m_index { 0 }; // FIXME: There needs to be a mechanism to handle when fonts are added or removed from the middle of the FontFaceSet.
     };
     Iterator createIterator(ScriptExecutionContext*) { return Iterator(*this); }
@@ -108,16 +108,15 @@ private:
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::FontFaceSet; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
     // Callback for ReadyPromise.
-    FontFaceSet& readyPromiseResolve();
+    FontFaceSet& NODELETE readyPromiseResolve();
 
     const Ref<CSSFontFaceSet> m_backing;
-    HashMap<RefPtr<FontFace>, Vector<Ref<PendingPromise>>> m_pendingPromises;
+    HashMap<Ref<FontFace>, Vector<Ref<PendingPromise>>> m_pendingPromises;
     UniqueRef<ReadyPromise> m_readyPromise;
 
     bool m_isDocumentLoaded { true };

@@ -52,7 +52,7 @@ public:
     WEBCORE_EXPORT ScrollingStateTree(ScrollingStateTree&&);
     WEBCORE_EXPORT ~ScrollingStateTree();
 
-    WEBCORE_EXPORT RefPtr<ScrollingStateFrameScrollingNode> rootStateNode() const;
+    WEBCORE_EXPORT RefPtr<ScrollingStateFrameScrollingNode> NODELETE rootStateNode() const;
     WEBCORE_EXPORT RefPtr<ScrollingStateNode> stateNodeForID(std::optional<ScrollingNodeID>) const;
 
     ScrollingNodeID createUnparentedNode(ScrollingNodeType, ScrollingNodeID);
@@ -62,10 +62,12 @@ public:
     void detachAndDestroySubtree(std::optional<ScrollingNodeID>);
     void clear();
 
+    void setAllPropertiesChanged();
+
     // Copies the current tree state and clears the changed properties mask in the original.
     WEBCORE_EXPORT std::unique_ptr<ScrollingStateTree> commit(LayerRepresentation::Type preferredLayerRepresentation);
 
-    WEBCORE_EXPORT void attachDeserializedNodes();
+    WEBCORE_EXPORT void NODELETE attachDeserializedNodes();
 
     WEBCORE_EXPORT void setHasChangedProperties(bool = true);
     bool hasChangedProperties() const { return m_hasChangedProperties; }
@@ -76,7 +78,7 @@ public:
     unsigned scrollingNodeCount() const { return m_scrollingNodeCount; }
 
     using StateNodeMap = HashMap<ScrollingNodeID, Ref<ScrollingStateNode>>;
-    const StateNodeMap& nodeMap() const { return m_stateNodeMap; }
+    const StateNodeMap& nodeMap() const LIFETIME_BOUND { return m_stateNodeMap; }
 
     LayerRepresentation::Type preferredLayerRepresentation() const { return m_preferredLayerRepresentation; }
     void setPreferredLayerRepresentation(LayerRepresentation::Type representation) { m_preferredLayerRepresentation = representation; }

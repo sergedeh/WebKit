@@ -33,13 +33,36 @@
 #include <wtf/Hasher.h>
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/ZippedRange.h>
+#include <wtf/text/RapidHash.h>
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringImpl.h>
-#include <wtf/text/WYHash.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 
-template <typename CachedType>
+class FontCascade;
+
+struct TextShapingContext {
+    bool hasKerningOrLigatures { false };
+    bool hasWordSpacingOrLetterSpacing { false };
+    bool hasTextSpacing { false };
+
+    TextShapingContext(const FontCascade&);
+};
+
+namespace TextMeasurementCacheDefaults {
+static constexpr int minInterval = -3; // A cache hit pays for about 3 cache misses.
+static constexpr int maxInterval = 20; // Sampling at this interval has almost no overhead.
+static constexpr unsigned maxSize = 500000; // Just enough to guard against pathological growth.
+static constexpr unsigned maxTextLength = 64; // Maximum text length for SmallStringKey.
+}
+
+template <typename CachedType,
+    int InitialInterval = TextMeasurementCacheDefaults::maxInterval,
+    int MinInterval = TextMeasurementCacheDefaults::minInterval,
+    int MaxInterval = TextMeasurementCacheDefaults::maxInterval,
+    unsigned MaxSize = TextMeasurementCacheDefaults::maxSize,
+    unsigned MaxTextLength = TextMeasurementCacheDefaults::maxTextLength>
 class TextMeasurementCache {
 private:
     // Used to optimize small strings as hash table keys. Avoids malloc'ing an out-of-line StringImpl.
@@ -62,10 +85,10 @@ private:
                 copySmallCharacters(std::span { m_characters }, string.span8());
             else
                 copySmallCharacters(std::span { m_characters }, string.span16());
-            m_hashAndLength = WYHash::computeHashAndMaskTop8Bits(std::span<const char16_t> { m_characters }.first(s_capacity)) | (length << 24);
+            m_hashAndLength = RapidHash::computeHashAndMaskTop8Bits(std::span<const char16_t> { m_characters }.first(length)) | (length << 24);
         }
 
-        const char16_t* characters() const { return m_characters.data(); }
+        const char16_t* characters() const LIFETIME_BOUND { return m_characters.data(); }
         unsigned length() const { return m_hashAndLength >> 24; }
         unsigned hash() const { return m_hashAndLength & 0x00ffffffU; }
 
@@ -74,10 +97,15 @@ private:
         // Empty and deleted values have lengths that are not equal to any valid length.
         static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
 
-        friend bool operator==(const SmallStringKey&, const SmallStringKey&) = default;
+        friend bool operator==(const SmallStringKey& a, const SmallStringKey& b)
+        {
+            if (a.m_hashAndLength != b.m_hashAndLength)
+                return false;
+            return a.isHashTableEmptyValue() || a.isHashTableDeletedValue() || equal(std::span { a.m_characters }.first(a.length()), std::span { b.m_characters }.first(b.length()));
+        }
 
     private:
-        static constexpr unsigned s_capacity = 16;
+        static constexpr unsigned s_capacity = MaxTextLength;
         static constexpr unsigned s_deletedValueLength = s_capacity + 1;
 
         template<typename CharacterType>
@@ -104,20 +132,23 @@ private:
 
 public:
     TextMeasurementCache()
-        : m_interval(s_maxInterval)
-        , m_countdown(m_interval)
+        : m_interval(InitialInterval)
+        , m_countdown(InitialInterval)
     {
     }
 
-    CachedType* add(StringView text, const CachedType& entry)
+    CachedType* add(StringView text, CachedType&& entry)
     {
+        if (!isMainThread())
+            return nullptr;
+
         unsigned length = text.length();
 
         // Do not allow length = 0. This allows SmallStringKey empty-value-is-zero.
         if (!length) [[unlikely]]
             return nullptr;
 
-        if (length > SmallStringKey::capacity())
+        if (length > MaxTextLength)
             return nullptr;
 
         if (m_countdown > 0) {
@@ -125,36 +156,42 @@ public:
             return nullptr;
         }
 
-        return addSlowCase(text, entry);
+        return addSlowCase(text, WTF::move(entry));
     }
 
-    CachedType* add(const TextRun& run, const CachedType& entry, bool hasKerningOrLigatures, bool hasWordSpacingOrLetterSpacing, bool hasTextSpacing)
+    CachedType* add(const TextRun& run, CachedType&& entry, TextShapingContext shapingContext)
     {
-        // The width cache is not really profitable unless we're doing expensive glyph transformations.
-        if (!hasKerningOrLigatures)
-            return nullptr;
-        // Word spacing and letter spacing can change the width of a word.
-        if (hasWordSpacingOrLetterSpacing)
-            return nullptr;
-        // If we allow tabs and a tab occurs inside a word, the width of the word varies based on its position on the line.
-        if (run.allowTabs())
-            return nullptr;
-        // width calculation with text-spacing depends on context of adjacent characters.
-        if (hasTextSpacing && invalidateCacheForTextSpacing(run))
+        if (!isMainThread())
             return nullptr;
 
-        return add(run.text(), entry);
+        // The width cache is not really profitable unless we're doing expensive glyph transformations.
+        if (!shapingContext.hasKerningOrLigatures)
+            return nullptr;
+        // Word spacing and letter spacing can change the width of a word.
+        if (shapingContext.hasWordSpacingOrLetterSpacing)
+            return nullptr;
+        // If a tab occurs inside a word, the width of the word varies based on its position on the line.
+        if (run.allowTabs() && run.text().contains(tabCharacter))
+            return nullptr;
+        // width calculation with text-spacing depends on context of adjacent characters.
+        if (shapingContext.hasTextSpacing && invalidateCacheForTextSpacing(run))
+            return nullptr;
+
+        return add(run.text(), WTF::move(entry));
     }
 
     void clear()
     {
+        ASSERT(isMainThread());
         m_singleCharMap.clear();
         m_map.clear();
     }
 
+    bool isEmpty() const { return m_singleCharMap.isEmpty() && m_map.isEmpty(); }
+
 private:
 
-    CachedType* addSlowCase(StringView text, const CachedType& entry)
+    CachedType* addSlowCase(StringView text, CachedType&& entry)
     {
         if (MemoryPressureHandler::singleton().isUnderMemoryPressure())
             return nullptr;
@@ -166,27 +203,27 @@ private:
             // The map use 0 for empty key, thus we do +1 here to avoid conflicting against empty key.
             // This is fine since the key is uint32_t while character is char16_t. So +1 never causes overflow.
             uint32_t character = text[0];
-            auto addResult = m_singleCharMap.fastAdd(character + 1, entry);
+            auto addResult = m_singleCharMap.fastAdd(character + 1, WTF::move(entry));
             isNewEntry = addResult.isNewEntry;
             value = &addResult.iterator->value;
         } else {
-            auto addResult = m_map.fastAdd(text, entry);
+            auto addResult = m_map.fastAdd(text, WTF::move(entry));
             isNewEntry = addResult.isNewEntry;
             value = &addResult.iterator->value;
         }
 
         // Cache hit: ramp up by sampling the next few words.
         if (!isNewEntry) {
-            m_interval = s_minInterval;
+            m_interval = MinInterval;
             return value;
         }
 
         // Cache miss: ramp down by increasing our sampling interval.
-        if (m_interval < s_maxInterval)
+        if (m_interval < MaxInterval)
             ++m_interval;
         m_countdown = m_interval;
 
-        if ((m_singleCharMap.size() + m_map.size()) < s_maxSize)
+        if ((m_singleCharMap.size() + m_map.size()) < MaxSize)
             return value;
 
         // No need to be fancy: we're just trying to avoid pathological growth.
@@ -202,7 +239,7 @@ private:
             return true;
         const auto& text = textRun.textAsString();
         for (unsigned index = 0; index < text.length(); ++index) {
-            if (TextSpacing::isIdeograph(text.characterAt(index))) {
+            if (TextSpacing::isIdeograph(text.codeUnitAt(index))) {
                 m_hasSeenIdeograph = true;
                 clear();
                 return true;
@@ -214,10 +251,6 @@ private:
 
     using Map = HashMap<SmallStringKey, CachedType, DefaultHash<SmallStringKey>, SmallStringKeyHashTraits>;
     using SingleCharMap = HashMap<uint32_t, CachedType, DefaultHash<uint32_t>, HashTraits<uint32_t>>;
-
-    static constexpr int s_minInterval = -3; // A cache hit pays for about 3 cache misses.
-    static constexpr int s_maxInterval = 20; // Sampling at this interval has almost no overhead.
-    static constexpr unsigned s_maxSize = 500000; // Just enough to guard against pathological growth.
 
     int m_interval;
     int m_countdown;

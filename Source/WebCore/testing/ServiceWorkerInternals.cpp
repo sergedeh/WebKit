@@ -26,8 +26,13 @@
 #include "config.h"
 #include "ServiceWorkerInternals.h"
 
+#include "ColorSpace.h"
 #include "FetchEvent.h"
 #include "FetchRequest.h"
+#include "GraphicsClient.h"
+#include "ImageBuffer.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertInterface.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSFetchResponse.h"
 #include "NotificationPayload.h"
@@ -37,6 +42,7 @@
 #include "ServiceWorkerClient.h"
 #include "ServiceWorkerGlobalScope.h"
 #include "ServiceWorkerRegistration.h"
+#include <JavaScriptCore/HeapCellInlines.h>
 #include <wtf/ProcessID.h>
 
 namespace WebCore {
@@ -103,7 +109,7 @@ void ServiceWorkerInternals::schedulePushSubscriptionChangeEvent(PushSubscriptio
 
 void ServiceWorkerInternals::waitForFetchEventToFinish(FetchEvent& event, DOMPromiseDeferred<IDLInterface<FetchResponse>>&& promise)
 {
-    event.onResponse([promise = WTF::move(promise), event = Ref { event }] (auto&& result) mutable {
+    event.onResponse([promise = WTF::move(promise), event = Ref { event }] (std::expected<Ref<FetchResponse>, std::optional<ResourceError>>&& result) mutable {
         if (!result.has_value()) {
             String description;
             if (auto& error = result.error())
@@ -172,7 +178,7 @@ void ServiceWorkerInternals::lastNavigationWasAppInitiated(Ref<DeferredPromise>&
                 if (!protectedThis || !protectedThis->m_lastNavigationWasAppInitiatedPromise)
                     return;
 
-                protectedThis->m_lastNavigationWasAppInitiatedPromise->resolve<IDLBoolean>(appInitiated);
+                protect(protectedThis->m_lastNavigationWasAppInitiatedPromise)->resolve<IDLBoolean>(appInitiated);
                 protectedThis->m_lastNavigationWasAppInitiatedPromise = nullptr;
             }, WorkerRunLoop::defaultMode());
         }
@@ -207,6 +213,25 @@ void ServiceWorkerInternals::enableConsoleMessageReporting(ScriptExecutionContex
 void ServiceWorkerInternals:: logReportedConsoleMessage(ScriptExecutionContext& context, const String& value)
 {
     downcast<ServiceWorkerGlobalScope>(context).addConsoleMessage(MessageSource::Storage, MessageLevel::Info, value, 0);
+}
+
+String ServiceWorkerInternals::effectiveRenderingModeOfNewlyCreatedAcceleratedCanvasBuffer(ScriptExecutionContext& context)
+{
+    // Mirrors Internals::getEffectiveRenderingModeOfNewlyCreatedAcceleratedImageBuffer, but uses the worker's
+    // own GraphicsClient and RenderingPurpose::Canvas.
+    auto* graphicsClient = context.graphicsClient();
+    if (!graphicsClient)
+        return "no-client"_s;
+
+    RefPtr imageBuffer = ImageBuffer::create({ 100, 100 }, RenderingMode::Accelerated, RenderingPurpose::Canvas, 1, ColorSpace::SRGB(), PixelFormat::BGRA8, graphicsClient);
+    if (!imageBuffer)
+        return "none"_s;
+    auto renderingMode = imageBuffer->getEffectiveRenderingModeForTesting();
+    if (!renderingMode)
+        return "none"_s;
+    if (*renderingMode != RenderingMode::Accelerated)
+        return "unaccelerated"_s;
+    return imageBuffer->isRemoteImageBufferProxy() ? "remote"_s : "local-iosurface"_s;
 }
 
 } // namespace WebCore

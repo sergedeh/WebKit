@@ -27,6 +27,7 @@
 
 #include <WebCore/EventTarget.h>
 
+#include <wtf/HashSet.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RefPtr.h>
@@ -58,7 +59,7 @@ private:
     UndoManager(Document&);
 
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
-    HashSet<RefPtr<UndoItem>> m_items;
+    HashSet<Ref<UndoItem>> m_items;
 };
 
 } // namespace WebCore

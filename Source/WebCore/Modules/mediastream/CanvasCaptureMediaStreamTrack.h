@@ -35,11 +35,14 @@
 #include <wtf/TypeCasts.h>
 #include <wtf/WeakPtr.h>
 
+#if USE(GSTREAMER)
+#include "GRefPtrGStreamer.h"
+#endif
+
 namespace WebCore {
 
 class Document;
 class HTMLCanvasElement;
-class Image;
 
 class CanvasCaptureMediaStreamTrack final : public MediaStreamTrack {
     WTF_MAKE_TZONE_ALLOCATED(CanvasCaptureMediaStreamTrack);
@@ -73,7 +76,7 @@ private:
         Source(HTMLCanvasElement&, std::optional<double>&&);
 
         // CanvasObserver overrides.
-        void canvasChanged(CanvasBase&, const FloatRect&) final;
+        void canvasContentsWillChange(CanvasBase&, const FloatRect&) final;
         void canvasResized(CanvasBase&) final;
         void canvasDestroyed(CanvasBase&) final;
 
@@ -88,7 +91,8 @@ private:
         void settingsDidChange(OptionSet<RealtimeMediaSourceSettings::Flag>) final;
         void scheduleCaptureCanvas();
         void captureCanvas();
-        void requestFrameTimerFired();
+        void NODELETE requestFrameTimerFired();
+        CaptureDevice::DeviceType deviceType() const final { return CaptureDevice::DeviceType::Canvas; }
 
         bool m_shouldEmitFrame { true };
         std::optional<double> m_frameRequestRate;
@@ -96,9 +100,8 @@ private:
         Timer m_captureCanvasTimer;
         std::optional<RealtimeMediaSourceSettings> m_currentSettings;
         WeakPtr<HTMLCanvasElement, WeakPtrImplWithEventTargetData> m_canvas;
-        RefPtr<Image> m_currentImage;
 #if USE(GSTREAMER)
-        MediaTime m_presentationTimeStamp { MediaTime::zeroTime() };
+        GRefPtr<GstClock> m_clock;
 #endif
     };
 

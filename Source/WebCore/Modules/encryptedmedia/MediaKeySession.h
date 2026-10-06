@@ -77,8 +77,8 @@ public:
 
     bool isClosed() const { return m_closed; }
 
-    const String& sessionId() const;
-    double expiration() const;
+    const String& NODELETE sessionId() const;
+    double NODELETE expiration() const;
     Ref<MediaKeyStatusMap> keyStatuses() const;
 
     void generateRequest(const AtomString&, const BufferSource&, Ref<DeferredPromise>&&);
@@ -90,17 +90,19 @@ public:
     using ClosedPromise = DOMPromiseProxy<IDLUndefined>;
     ClosedPromise& closed() { return m_closedPromise.get(); }
 
-    const Vector<std::pair<CDMKeyID, MediaKeyStatus>>& statuses() const { return m_statuses; }
+    const Vector<std::pair<CDMKeyID, MediaKeyStatus>>& statuses() const LIFETIME_BOUND { return m_statuses; }
 
     unsigned internalInstanceSessionObjectRefCount() const { return m_instanceSession->refCount(); }
+
+    bool hasSecurityOrigin(const String&) const;
 
 private:
     MediaKeySession(Document&, WeakPtr<MediaKeys>&&, MediaKeySessionType, bool useDistinctiveIdentifier, Ref<CDM>&&, Ref<CDMInstanceSession>&&);
     void enqueueMessage(MediaKeyMessageType, const SharedBuffer&);
-    void updateExpiration(double);
+    void NODELETE updateExpiration(double);
     void sessionClosed();
     String mediaKeysStorageDirectory() const;
-    CDMKeyGroupingStrategy keyGroupingStrategy() const;
+    CDMKeyGroupingStrategy NODELETE keyGroupingStrategy() const;
 
     // CDMInstanceSessionClient
     void updateKeyStatuses(CDMInstanceSessionClient::KeyStatusVector&&) override;
@@ -110,12 +112,12 @@ private:
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const override { return EventTargetInterfaceType::MediaKeySession; }
-    ScriptExecutionContext* scriptExecutionContext() const override;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const override;
     void refEventTarget() override { ref(); }
     void derefEventTarget() override { deref(); }
 
     // ActiveDOMObject
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
     void stop() final;
 
     // DisplayChangedObserver
@@ -125,7 +127,7 @@ private:
     // LoggerHelper
     const Logger& logger() const { return m_logger; }
     ASCIILiteral logClassName() const { return "MediaKeySession"_s; }
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& NODELETE logChannel() const;
     uint64_t logIdentifier() const { return m_logIdentifier; }
 
     const Ref<const Logger> m_logger;

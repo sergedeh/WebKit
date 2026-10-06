@@ -137,7 +137,6 @@ void EntryPointRewriter::checkReturnType()
                     SourceSpan::empty(),
                     AST::Identifier::make(returnStructName),
                     AST::StructureMember::List(structType->structure.members()),
-                    AST::Attribute::List { },
                     role
                 );
                 m_shaderModule.append(m_shaderModule.declarations(), returnStruct);
@@ -146,6 +145,7 @@ void EntryPointRewriter::checkReturnType()
                     AST::Identifier::make(returnStructName)
                 );
                 returnType.m_inferredType = m_shaderModule.types().structType(returnStruct);
+                returnType.m_evaluation = namedTypeName->evaluation();
                 m_shaderModule.replace(*namedTypeName, returnType);
             };
 
@@ -180,7 +180,6 @@ void EntryPointRewriter::checkReturnType()
         SourceSpan::empty(),
         AST::Identifier::make(returnStructName),
         AST::StructureMember::List({ member }),
-        AST::Attribute::List { },
         role
     );
     m_shaderModule.append(m_shaderModule.declarations(), returnStruct);
@@ -189,6 +188,7 @@ void EntryPointRewriter::checkReturnType()
         AST::Identifier::make(returnStructName)
     );
     returnType.m_inferredType = m_shaderModule.types().structType(returnStruct);
+    returnType.m_evaluation = m_function.maybeReturnType()->evaluation();
 
     if (namedTypeName)
         m_shaderModule.replace(*namedTypeName, returnType);
@@ -230,7 +230,6 @@ void EntryPointRewriter::constructInputStruct()
         SourceSpan::empty(),
         AST::Identifier::make(m_structTypeName),
         WTF::move(structMembers),
-        AST::Attribute::List { },
         role
     );
     m_shaderModule.append(m_shaderModule.declarations(), structure);

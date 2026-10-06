@@ -40,7 +40,7 @@
 
 class WebResourceLoadScheduler;
 
-WebResourceLoadScheduler& webResourceLoadScheduler();
+CheckedRef<WebResourceLoadScheduler> webResourceLoadScheduler();
 
 class WebResourceLoadScheduler final : public WebCore::LoaderStrategy {
     WTF_MAKE_TZONE_ALLOCATED(WebResourceLoadScheduler);
@@ -62,7 +62,7 @@ public:
     void suspendPendingRequests() final;
     void resumePendingRequests() final;
 
-    void startPingLoad(WebCore::LocalFrame&, WebCore::ResourceRequest&, const WebCore::HTTPHeaderMap&, const WebCore::FetchOptions&, WebCore::ContentSecurityPolicyImposition, PingLoadCompletionHandler&&) final;
+    bool startKeepAliveLoadForWebKitLegacy(WebCore::FrameLoader&, const WebCore::ResourceRequest&, const WebCore::ResourceLoaderOptions&, CompletionHandler<void(const WebCore::ResourceError&, const WebCore::ResourceResponse&)>&&) final;
 
     void preconnectTo(WebCore::FrameLoader&, WebCore::ResourceRequest&&, WebCore::StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&&) final;
 
@@ -71,7 +71,7 @@ public:
     bool isSerialLoadingEnabled() const { return m_isSerialLoadingEnabled; }
     void setSerialLoadingEnabled(bool b) { m_isSerialLoadingEnabled = b; }
 
-    void schedulePluginStreamLoad(WebCore::LocalFrame&, WebCore::NetscapePlugInStreamLoaderClient&, WebCore::ResourceRequest&&, CompletionHandler<void(RefPtr<WebCore::NetscapePlugInStreamLoader>&&)>&&);
+    void schedulePluginStreamLoad(WebCore::LocalFrame&, WebCore::NetscapePlugInStreamLoaderClient&, WebCore::ResourceRequest&&, WebCore::FetchOptions::Destination, CompletionHandler<void(RefPtr<WebCore::NetscapePlugInStreamLoader>&&)>&&);
 
     bool isOnLine() const final;
     void addOnlineStateChangeListener(WTF::Function<void(bool)>&&) final;
@@ -88,6 +88,7 @@ private:
 
     WebCore::ResourceError cancelledError(const WebCore::ResourceRequest&) const final;
     WebCore::ResourceError blockedError(const WebCore::ResourceRequest&) const final;
+    bool isBlockedError(const WebCore::ResourceError&) const final;
     WebCore::ResourceError blockedByContentBlockerError(const WebCore::ResourceRequest&) const final;
     WebCore::ResourceError cannotShowURLError(const WebCore::ResourceRequest&) const final;
     WebCore::ResourceError interruptedForPolicyChangeError(const WebCore::ResourceRequest&) const final;
@@ -98,6 +99,7 @@ private:
     WebCore::ResourceError fileDoesNotExistError(const WebCore::ResourceResponse&) const final;
     WebCore::ResourceError httpsUpgradeRedirectLoopError(const WebCore::ResourceRequest&) const final;
     WebCore::ResourceError httpNavigationWithHTTPSOnlyError(const WebCore::ResourceRequest&) const final;
+    bool isHttpNavigationWithHTTPSOnlyError(const WebCore::ResourceError&) const final;
     WebCore::ResourceError pluginWillHandleLoadError(const WebCore::ResourceResponse&) const final;
 
     bool isSuspendingPendingRequests() const { return !!m_suspendPendingRequestsCount; }
@@ -111,18 +113,18 @@ private:
         HostInformation(const String&, unsigned);
         ~HostInformation();
         
-        const String& name() const { return m_name; }
+        const String& name() const LIFETIME_BOUND { return m_name; }
         void schedule(WebCore::ResourceLoader*, WebCore::ResourceLoadPriority = WebCore::ResourceLoadPriority::VeryLow);
         void addLoadInProgress(WebCore::ResourceLoader*);
         void remove(WebCore::ResourceLoader*);
-        bool hasRequests() const;
+        bool NODELETE hasRequests() const;
         bool limitRequests(WebCore::ResourceLoadPriority) const;
 
         typedef Deque<RefPtr<WebCore::ResourceLoader>> RequestQueue;
         RequestQueue& requestsPending(WebCore::ResourceLoadPriority priority) { return m_requestsPending[priorityToIndex(priority)]; }
 
     private:
-        static unsigned priorityToIndex(WebCore::ResourceLoadPriority);
+        static unsigned NODELETE priorityToIndex(WebCore::ResourceLoadPriority);
 
         std::array<RequestQueue, WebCore::resourceLoadPriorityCount> m_requestsPending;
         typedef HashSet<RefPtr<WebCore::ResourceLoader>> RequestMap;
@@ -148,3 +150,7 @@ private:
     unsigned m_suspendPendingRequestsCount;
     bool m_isSerialLoadingEnabled;
 };
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebResourceLoadScheduler)
+    static bool isType(const WebCore::LoaderStrategy&) { return true; }
+SPECIALIZE_TYPE_TRAITS_END()

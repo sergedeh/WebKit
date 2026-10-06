@@ -14,9 +14,9 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypeface.h"
-#include "include/private/base/SkFixed.h"
-#include "include/private/base/SkNoncopyable.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SkFixed.h"
+#include "include/private/SkNoncopyable.h"
+#include "include/private/SkTemplates.h"
 
 #include <memory>
 #include <utility>
@@ -86,9 +86,11 @@ class SkFontDescriptor : SkNoncopyable {
 public:
     SkFontDescriptor();
     // Does not affect ownership of SkStream.
-    static bool Deserialize(SkStream*, SkFontDescriptor* result);
+    static bool Deserialize(SkStream*,
+                            SkFontDescriptor* result,
+                            SkTypeface::SkTypefaceStreamSanitizerProc sanitizer);
 
-    void serialize(SkWStream*) const;
+    bool serialize(SkWStream*) const;
 
     SkFontStyle getStyle() const { return fStyle; }
     void setStyle(SkFontStyle style) { fStyle = style; }
@@ -113,6 +115,8 @@ public:
     const SkFontArguments::Palette::Override* getPaletteEntryOverrides() const {
         return fPaletteEntryOverrides.get();
     }
+    bool getSyntheticBold() const { return fSyntheticBold; }
+    bool getSyntheticOblique() const { return fSyntheticOblique; }
     SkTypeface::FactoryId getFactoryId() {
         return fFactoryId;
     }
@@ -129,6 +133,8 @@ public:
         fPaletteEntryOverrideCount = paletteEntryOverrideCount;
         return fPaletteEntryOverrides.reset(paletteEntryOverrideCount);
     }
+    void setSyntheticBold(bool bold) { fSyntheticBold = bold; }
+    void setSyntheticOblique(bool oblique) { fSyntheticOblique = oblique; }
     void setFactoryId(SkTypeface::FactoryId factoryId) {
         fFactoryId = factoryId;
     }
@@ -139,7 +145,9 @@ public:
             .setVariationDesignPosition({this->getVariation(),this->getVariationCoordinateCount()})
             .setPalette({this->getPaletteIndex(),
                          this->getPaletteEntryOverrides(),
-                         this->getPaletteEntryOverrideCount()});
+                         this->getPaletteEntryOverrideCount()})
+            .setSyntheticBold(fSyntheticBold)
+            .setSyntheticOblique(fSyntheticOblique);
     }
     static SkFontStyle::Width SkFontStyleWidthForWidthAxisValue(SkScalar width);
     static SkScalar SkFontWidthAxisValueForStyleWidth(int width);
@@ -159,6 +167,8 @@ private:
     int fPaletteIndex = 0;
     int fPaletteEntryOverrideCount = 0;
     skia_private::AutoTMalloc<SkFontArguments::Palette::Override> fPaletteEntryOverrides;
+    bool fSyntheticBold = false;
+    bool fSyntheticOblique = false;
     SkTypeface::FactoryId fFactoryId = 0;
 };
 

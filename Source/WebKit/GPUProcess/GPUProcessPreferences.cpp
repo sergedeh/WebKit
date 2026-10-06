@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 20220-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,6 +38,11 @@ namespace WebKit {
 
 void GPUProcessPreferences::copyEnabledWebPreferences(const WebPreferences& webPreferences)
 {
+#if PLATFORM(COCOA)
+    if (auto timeout = webPreferences.mediaResourceLoadTimeoutForTesting())
+        mediaResourceLoadTimeoutForTesting = timeout;
+#endif
+
 #if ENABLE(VP9)
     if (webPreferences.vp9DecoderEnabled())
         vp9DecoderEnabled = true;

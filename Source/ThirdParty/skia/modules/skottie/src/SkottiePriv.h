@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Google Inc.
+ * Copyright 2018 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -8,6 +8,7 @@
 #ifndef SkottiePriv_DEFINED
 #define SkottiePriv_DEFINED
 
+#include "include/core/SkFontArguments.h"
 #include "include/core/SkRefCnt.h"
 #include "modules/skottie/include/Skottie.h"
 
@@ -20,8 +21,8 @@
 #include "modules/skottie/include/SlotManager.h"
 #include "modules/skottie/src/animator/Animator.h"
 #include "modules/skottie/src/text/Font.h"
-#include "src/base/SkUTF.h"
 #include "src/core/SkTHash.h"
+#include "src/core/SkUTF.h"
 
 #include "modules/skshaper/include/SkShaper_factory.h"
 
@@ -82,12 +83,15 @@ public:
     AnimationInfo parse(const skjson::ObjectValue&);
 
     struct FontInfo {
+        using VariationInstance = std::vector<SkFontArguments::VariationPosition::Coordinate>;
+
         SkString            fFamily,
                             fStyle,
                             fPath;
         SkScalar            fAscentPct;
         sk_sp<SkTypeface>   fTypeface;
         CustomFont::Builder fCustomFontBuilder;
+        VariationInstance   fVariation;
 
         bool matches(const char family[], const char style[]) const;
     };

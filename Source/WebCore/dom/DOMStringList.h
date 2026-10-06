@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "WebCoreOpaqueRoot.h"
 #include <wtf/RefCounted.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -54,10 +55,10 @@ public:
 
     // Implements the IDL.
     size_t length() const { return m_strings.size(); }
-    String item(unsigned index) const;
-    bool contains(const String& str) const;
+    String NODELETE item(unsigned index) const;
+    bool NODELETE contains(const String&) const;
 
-    operator const Vector<String>&() const { return m_strings; }
+    operator const Vector<String>&() const LIFETIME_BOUND { return m_strings; }
 
 private:
     DOMStringList() = default;
@@ -68,5 +69,7 @@ private:
 
     Vector<String> m_strings;
 };
+
+inline WebCoreOpaqueRoot root(DOMStringList* list) { return WebCoreOpaqueRoot { list }; }
 
 } // namespace WebCore

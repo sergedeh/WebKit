@@ -28,6 +28,10 @@
 #include "APIObject.h"
 #include <wtf/text/WTFString.h>
 
+namespace WebKit {
+enum class ContentWorldOption : uint8_t;
+}
+
 namespace API {
 
 class ContentWorldConfiguration : public ObjectImpl<Object::Type::ContentWorldConfiguration> {
@@ -39,29 +43,31 @@ public:
 
     Ref<ContentWorldConfiguration> copy() const;
 
-    const WTF::String& name() const;
+    const WTF::String& NODELETE name() const LIFETIME_BOUND;
     void setName(WTF::String&&);
 
-    bool allowAccessToClosedShadowRoots() const;
-    void setAllowAccessToClosedShadowRoots(bool);
+    bool NODELETE allowAccessToClosedShadowRoots() const;
+    void NODELETE setAllowAccessToClosedShadowRoots(bool);
 
-    bool allowAutofill() const;
-    void setAllowAutofill(bool);
+    bool NODELETE allowAutofill() const;
+    void NODELETE setAllowAutofill(bool);
 
-    bool allowElementUserInfo() const;
-    void setAllowElementUserInfo(bool);
+    bool NODELETE allowElementUserInfo() const;
+    void NODELETE setAllowElementUserInfo(bool);
 
-    bool disableLegacyBuiltinOverrides() const;
-    void setDisableLegacyBuiltinOverrides(bool);
+    bool NODELETE disableLegacyBuiltinOverrides() const;
+    void NODELETE setDisableLegacyBuiltinOverrides(bool);
 
-    bool allowJSHandleCreation() const;
-    void setAllowJSHandleCreation(bool);
+    bool NODELETE allowJSHandleCreation() const;
+    void NODELETE setAllowJSHandleCreation(bool);
 
-    bool allowNodeSerialization() const;
-    void setAllowNodeSerialization(bool);
+    bool NODELETE allowNodeSnapshotCreation() const;
+    void NODELETE setAllowNodeSnapshotCreation(bool);
 
-    bool isInspectable() const;
-    void setInspectable(bool);
+    bool NODELETE isInspectable() const;
+    void NODELETE setInspectable(bool);
+
+    OptionSet<WebKit::ContentWorldOption> NODELETE optionSet() const;
 
 private:
     struct Data {
@@ -73,7 +79,7 @@ private:
         bool allowElementUserInfo : 1 { false };
         bool disableLegacyBuiltinOverrides : 1 { false };
         bool allowJSHandleCreation : 1 { false };
-        bool allowNodeSerialization : 1 { false };
+        bool allowNodeSnapshotCreation : 1 { false };
         bool inspectable : 1 { true };
     };
 

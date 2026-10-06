@@ -23,14 +23,10 @@
 #include "config.h"
 #include "SVGAltGlyphElement.h"
 
-#include "RenderInline.h"
 #include "RenderSVGTSpan.h"
-#include "SVGAltGlyphDefElement.h"
 #include "SVGElementInlines.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGGlyphElement.h"
 #include "SVGNames.h"
-#include "XLinkNames.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -38,7 +34,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGAltGlyphElement);
 
 inline SVGAltGlyphElement::SVGAltGlyphElement(const QualifiedName& tagName, Document& document)
-    : SVGTextPositioningElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGTextPositioningElement(tagName, document, PropertyRegistry::singleton())
     , SVGURIReference(this)
 {
     ASSERT(hasTagName(SVGNames::altGlyphTag));
@@ -74,23 +70,9 @@ bool SVGAltGlyphElement::childShouldCreateRenderer(const Node& child) const
     return child.isTextNode();
 }
 
-RenderPtr<RenderElement> SVGAltGlyphElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGAltGlyphElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderSVGTSpan>(*this, WTF::move(style));
-}
-
-bool SVGAltGlyphElement::hasValidGlyphElements(Vector<String>& glyphNames) const
-{
-    // No need to support altGlyph referencing another node inside a shadow tree.
-    auto target = targetElementFromIRIString(getAttribute(SVGNames::hrefAttr, XLinkNames::hrefAttr), document());
-
-    if (is<SVGGlyphElement>(target.element)) {
-        glyphNames.append(target.identifier);
-        return true;
-    }
-    
-    RefPtr altGlyphDefElement = downcast<SVGAltGlyphDefElement>(target.element.get());
-    return altGlyphDefElement && altGlyphDefElement->hasValidGlyphElements(glyphNames);
 }
 
 }

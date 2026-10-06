@@ -37,6 +37,7 @@
 #include "AudioFileReader.h"
 #include "AudioUtilities.h"
 #include "ExceptionOr.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "ScriptWrappableInlines.h"
 #include "WebCoreOpaqueRoot.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -192,22 +193,22 @@ ExceptionOr<JSC::JSValue> AudioBuffer::getChannelData(JSDOMGlobalObject& globalO
 
     if (globalObject.worldIsNormal()) {
         if (!m_channelWrappers[channelIndex])
-            m_channelWrappers[channelIndex].set(globalObject.vm(), wrapper(), constructJSArray());
+            m_channelWrappers[channelIndex].set(globalObject, wrapper(), constructJSArray());
         return m_channelWrappers[channelIndex].getValue();
     }
     return constructJSArray();
 }
 
 template<typename Visitor>
-void AudioBuffer::visitChannelWrappers(Visitor& visitor)
+void AudioBuffer::visitChannelWrappersInGCThread(Visitor& visitor)
 {
     Locker locker { m_channelsLock };
     for (auto& channelWrapper : m_channelWrappers)
-        channelWrapper.visit(visitor);
+        channelWrapper.visitInGCThread(visitor);
 }
 
-template void AudioBuffer::visitChannelWrappers(JSC::AbstractSlotVisitor&);
-template void AudioBuffer::visitChannelWrappers(JSC::SlotVisitor&);
+template void AudioBuffer::visitChannelWrappersInGCThread(JSC::AbstractSlotVisitor&);
+template void AudioBuffer::visitChannelWrappersInGCThread(JSC::SlotVisitor&);
 
 RefPtr<Float32Array> AudioBuffer::channelData(unsigned channelIndex)
 {

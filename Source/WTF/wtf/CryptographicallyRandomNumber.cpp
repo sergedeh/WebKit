@@ -32,7 +32,6 @@
 #include <wtf/CryptographicallyRandomNumber.h>
 
 #include <array>
-#include <mutex>
 #include <ranges>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -62,14 +61,14 @@ public:
     void randomValues(std::span<uint8_t>);
 
 private:
-    inline void addRandomData(std::span<const uint8_t, 128>);
+    inline void NODELETE addRandomData(std::span<const uint8_t, 128>) WTF_REQUIRES_LOCK(m_lock);
     void stir() WTF_REQUIRES_LOCK(m_lock);
     void stirIfNeeded() WTF_REQUIRES_LOCK(m_lock);
-    inline uint8_t getByte() WTF_REQUIRES_LOCK(m_lock);
+    inline uint8_t NODELETE getByte() WTF_REQUIRES_LOCK(m_lock);
 
     Lock m_lock;
-    ARC4Stream m_stream;
-    int m_count { 0 };
+    ARC4Stream m_stream WTF_GUARDED_BY_LOCK(m_lock);
+    int m_count WTF_GUARDED_BY_LOCK(m_lock) { 0 };
 };
 
 ARC4Stream::ARC4Stream()
@@ -147,7 +146,7 @@ void ARC4RandomNumberGenerator::randomValues(std::span<uint8_t> buffer)
     }
 }
 
-ARC4RandomNumberGenerator& sharedRandomNumberGenerator()
+ARC4RandomNumberGenerator& NODELETE sharedRandomNumberGenerator()
 {
     static NeverDestroyed<ARC4RandomNumberGenerator> randomNumberGenerator;
     return randomNumberGenerator;

@@ -70,8 +70,8 @@ private:
 
     void drawImageBuffer(WebCore::ImageBuffer&, const WebCore::FloatRect& destination, const WebCore::FloatRect& source, WebCore::ImagePaintingOptions) override;
     void drawFilteredImageBuffer(WebCore::ImageBuffer*, const WebCore::FloatRect&, WebCore::Filter&, WebCore::FilterResults&) override;
-    void drawNativeImage(WebCore::NativeImage&, const WebCore::FloatRect&, const WebCore::FloatRect&, WebCore::ImagePaintingOptions) override;
-    void drawPattern(WebCore::NativeImage&, const WebCore::FloatRect&, const WebCore::FloatRect&, const WebCore::AffineTransform&, const WebCore::FloatPoint&, const WebCore::FloatSize&, WebCore::ImagePaintingOptions) override;
+    void drawNativeImage(const WebCore::NativeImage&, const WebCore::FloatRect&, const WebCore::FloatRect&, WebCore::ImagePaintingOptions) override;
+    void drawPattern(const WebCore::NativeImage&, const WebCore::FloatRect&, const WebCore::FloatRect&, const WebCore::AffineTransform&, const WebCore::FloatPoint&, const WebCore::FloatSize&, WebCore::ImagePaintingOptions) override;
 
     void drawRect(const WebCore::FloatRect&, float) override;
     void drawLine(const WebCore::FloatPoint&, const WebCore::FloatPoint&) override;
@@ -79,8 +79,8 @@ private:
     void drawDotsForDocumentMarker(const WebCore::FloatRect&, WebCore::DocumentMarkerLineStyle) override;
     void drawEllipse(const WebCore::FloatRect&) override;
 
-    void drawFocusRing(const WebCore::Path&, float outlineWidth, const WebCore::Color&) override;
-    void drawFocusRing(const Vector<WebCore::FloatRect>&, float outlineOffset, float outlineWidth, const WebCore::Color&) override;
+    void drawFocusRing(const WebCore::Path&, float outlineWidth, const WebCore::Color&, float zoomFactor) override;
+    void drawFocusRing(const Vector<WebCore::FloatRect>&, float outlineWidth, const WebCore::Color&, float zoomFactor) override;
 
     void save(WebCore::GraphicsContextState::Purpose = WebCore::GraphicsContextState::Purpose::SaveRestore) override;
     void restore(WebCore::GraphicsContextState::Purpose = WebCore::GraphicsContextState::Purpose::SaveRestore) override;
@@ -104,7 +104,7 @@ private:
     WebCore::IntRect clipBounds() const override;
     void clipToImageBuffer(WebCore::ImageBuffer&, const WebCore::FloatRect&) override;
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const WebCore::VideoFrame&, const WebCore::FloatRect& destination, WebCore::ImageOrientation, bool shouldDiscardAlpha) override;
+    void drawVideoFrame(const WebCore::VideoFrame&, const WebCore::FloatRect& destination, WebCore::ShouldDiscardAlpha, WebCore::ImagePaintingOptions) override;
 #endif
 
     void applyDeviceScaleFactor(float) override;

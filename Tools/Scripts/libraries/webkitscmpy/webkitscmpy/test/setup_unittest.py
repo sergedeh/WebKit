@@ -74,10 +74,8 @@ Setup succeeded!
             captured.root.log.getvalue(),
             '''Saving GitHub credentials in system credential store...
 GitHub credentials saved via Keyring!
-https://github.example.com/WebKit/WebKit is public, enabling secret scanning on fork
 Verifying user owned fork...
 Created a private fork of 'WebKit' belonging to 'username'!
-Enabled secret scanning on https://github.example.com/username/WebKit!
 ''',
         )
 
@@ -233,10 +231,8 @@ Setting git editor for {repository}...
 Using the default git editor for this repository
 Saving GitHub credentials in system credential store...
 GitHub credentials saved via Keyring!
-https://github.example.com/WebKit/WebKit is public, enabling secret scanning on fork
 Verifying user owned fork...
 Created a private fork of 'WebKit' belonging to 'username'!
-Enabled secret scanning on https://github.example.com/username/WebKit!
 Adding forked remote as 'fork'...
 Added remote 'fork'
 Fetching 2 remotes...
@@ -244,6 +240,37 @@ Fetching 2 remotes...
     Fetching origin...
 Fetched 2 remotes!
 '''.format(repository=self.path),
+        )
+
+    def test_fetch_failure(self):
+        self.maxDiff = None
+        stderr = (
+            "remote: The 'apple' organization has enabled or enforced SAML SSO.\n"
+            "remote: To access this repository, visit https://github.com/orgs/apple/sso?authorization_request=REDACTED and try your request again.\n"
+            "fatal: unable to access 'https://github.com/apple/WebKit.git/': The requested URL returned error: 403\n"
+            "error: could not fetch apple\n"
+        )
+        with OutputCapture() as captured, mocks.local.Git(self.path) as repo, mocks.local.Svn():
+            repo.add_remote('apple')
+            with wkmocks.Subprocess(wkmocks.Subprocess.Route(
+                repo.executable, 'fetch', '--prune', '--quiet', 'apple',
+                completion=wkmocks.ProcessCompletion(returncode=1, stderr=stderr),
+            )):
+                self.assertEqual(1, program.main(
+                    args=('setup', '--defaults'),
+                    path=self.path,
+                ))
+
+        self.assertEqual(
+            captured.root.log.getvalue(),
+            '''Fetching 2 remotes...
+    Failed to fetch 'apple':
+        remote: The 'apple' organization has enabled or enforced SAML SSO.
+        remote: To access this repository, visit https://github.com/orgs/apple/sso?authorization_request=REDACTED and try your request again.
+        fatal: unable to access 'https://github.com/apple/WebKit.git/': The requested URL returned error: 403
+        error: could not fetch apple
+Fetched 1 remote!
+''',
         )
 
     def test_commit_message(self):

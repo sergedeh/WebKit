@@ -50,7 +50,9 @@ XRDeviceProxy::XRDeviceProxy(XRDeviceInfo&& deviceInfo, PlatformXRSystemProxy& x
     m_supportsOrientationTracking = deviceInfo.supportsOrientationTracking;
     m_recommendedResolution = deviceInfo.recommendedResolution;
     m_minimumNearClipPlane = deviceInfo.minimumNearClipPlane;
-
+#if ENABLE(WEBXR_LAYERS)
+    m_maxRenderLayers = deviceInfo.maxRenderLayers;
+#endif
     if (!deviceInfo.vrFeatures.contains(SessionFeature::WebGPU))
         deviceInfo.vrFeatures.append(SessionFeature::WebGPU);
 #if ENABLE(WEBXR_LAYERS)
@@ -69,14 +71,20 @@ XRDeviceProxy::XRDeviceProxy(XRDeviceInfo&& deviceInfo, PlatformXRSystemProxy& x
 
 void XRDeviceProxy::sessionDidEnd()
 {
-    if (trackingAndRenderingClient())
-        trackingAndRenderingClient()->sessionDidEnd();
+    if (RefPtr client = trackingAndRenderingClient())
+        client->sessionDidEnd();
 }
 
 void XRDeviceProxy::updateSessionVisibilityState(PlatformXR::VisibilityState visibilityState)
 {
-    if (trackingAndRenderingClient())
-        trackingAndRenderingClient()->updateSessionVisibilityState(visibilityState);
+    if (RefPtr client = trackingAndRenderingClient())
+        client->updateSessionVisibilityState(visibilityState);
+}
+
+void XRDeviceProxy::sessionDidInitializeRendering(uint32_t width, uint32_t height, uint32_t arrayLength)
+{
+    if (RefPtr client = trackingAndRenderingClient())
+        client->sessionDidInitializeRendering(width, height, arrayLength);
 }
 
 void XRDeviceProxy::initializeTrackingAndRendering(const WebCore::SecurityOriginData& securityOriginData, PlatformXR::SessionMode sessionMode, const PlatformXR::Device::FeatureList& requestedFeatures, std::optional<WebCore::XRCanvasConfiguration>&& init)
@@ -98,8 +106,8 @@ void XRDeviceProxy::initializeTrackingAndRendering(const WebCore::SecurityOrigin
         if (!protectedThis)
             return;
 
-        if (trackingAndRenderingClient())
-            trackingAndRenderingClient()->sessionDidInitializeInputSources({ });
+        if (RefPtr client = trackingAndRenderingClient())
+            client->sessionDidInitializeInputSources({ });
     });
 }
 
@@ -134,13 +142,21 @@ void XRDeviceProxy::requestFrame(std::optional<PlatformXR::RequestData>&& reques
         callback({ });
 }
 
-std::optional<PlatformXR::LayerHandle> XRDeviceProxy::createLayerProjection(uint32_t width, uint32_t height, bool alpha)
+std::optional<PlatformXR::LayerInfo> XRDeviceProxy::createLayerProjection(uint32_t width, uint32_t height, bool alpha)
 {
     RefPtr xrSystem = m_xrSystem.get();
     return xrSystem ? xrSystem->createLayerProjection(width, height, alpha) : std::nullopt;
 }
 
-void XRDeviceProxy::submitFrame(Vector<PlatformXR::Device::Layer>&& layers)
+#if ENABLE(WEBXR_LAYERS)
+std::optional<PlatformXR::LayerInfo> XRDeviceProxy::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout)
+{
+    RefPtr xrSystem = m_xrSystem.get();
+    return xrSystem ? xrSystem->createCompositionLayer(type, size, layout) : std::nullopt;
+}
+#endif
+
+void XRDeviceProxy::submitFrame(Vector<PlatformXR::DeviceLayer>&& layers)
 {
     if (RefPtr xrSystem = m_xrSystem.get()) {
 #if USE(OPENXR)

@@ -27,8 +27,13 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
+#include "Protected.h"
 #include "WebExtensionError.h"
-#include <JavaScriptCore/JSBase.h>
+#if PLATFORM(COCOA)
+#include <JavaScriptCore/JavaScriptCore.h>
+#else
+#include <JavaScriptCore/JavaScript.h>
+#endif
 #include <wtf/Function.h>
 #include <wtf/JSONValues.h>
 #include <wtf/Markable.h>
@@ -44,7 +49,7 @@ namespace WebKit {
 
 class WebFrame;
 
-Ref<JSON::Array> filterObjects(const JSON::Array&, WTF::Function<bool(const JSON::Value&)>&& lambda);
+Ref<JSON::Array> filterObjects(const JSON::Array&, NOESCAPE const WTF::Function<bool(const JSON::Value&)>&);
 
 Vector<String> makeStringVector(const JSON::Array&);
 
@@ -55,20 +60,55 @@ RefPtr<JSON::Object> jsonWithLowercaseKeys(RefPtr<JSON::Object>);
 RefPtr<JSON::Object> mergeJSON(RefPtr<JSON::Object>, RefPtr<JSON::Object>);
 
 /// Returns a concatenated error string that combines the provided information into a single, descriptive message.
-String toErrorString(const String& callingAPIName, const String& sourceKey, String underlyingErrorString, ...);
+String toErrorString(const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString);
 
 /// Returns an error for Expected results in CompletionHandler.
-template<typename... Args>
-Unexpected<WebExtensionError> toWebExtensionError(const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString, Args&&... args)
+inline std::unexpected<WebExtensionError> toWebExtensionError(const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString)
 {
-    return makeUnexpected(toErrorString(callingAPIName, sourceKey, underlyingErrorString, std::forward<Args>(args)...));
+    return makeUnexpected(toErrorString(callingAPIName, sourceKey, underlyingErrorString));
 }
 
 /// Returns an error object that combines the provided information into a single, descriptive message.
 JSObjectRef toJSError(JSContextRef, const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString);
 
 /// Serializes large data to JSON chunks to avoid StringBuilder overflow.
-void serializeToMultipleJSONStrings(Ref<JSON::Object>, Function<void(String&&)>&&);
+void serializeToMultipleJSONStrings(Ref<JSON::Object>, NOESCAPE const Function<void(String&&)>&);
+
+enum class UseNullValue : bool { No, Yes };
+
+template<typename T>
+JSValueRef toWebAPI(JSContextRef context, const std::optional<T>& result, UseNullValue useNull = UseNullValue::Yes)
+{
+    if (!result)
+        return useNull == UseNullValue::Yes ? JSValueMakeNull(context) : JSValueMakeUndefined(context);
+    return toWebAPI(context, result.value());
+}
+
+template <typename T>
+JSObjectRef toWebAPI(JSContextRef context, const Vector<T>& data)
+{
+    if (data.isEmpty())
+        return JSObjectMakeArray(context, 0, nullptr, nullptr);
+
+    auto globalContext = JSContextGetGlobalContext(context);
+    Vector<Protected<JSValueRef>> convertedData;
+    for (auto& value : data)
+        convertedData.append(Protected(globalContext, toWebAPI(context, value)));
+
+    auto rawData = convertedData.map([](const Protected<JSValueRef>& ptr) {
+        return ptr.get();
+    });
+
+    JSObjectRef array = JSObjectMakeArray(context, rawData.size(), rawData.span().data(), nullptr);
+    return array;
+}
+
+bool validateDictionary(RefPtr<JSON::Value> dictionary, const String& sourceKey, Vector<String> requiredKeys, HashMap<String, JSON::Value::Type> keyTypes, String& outExceptionString);
+
+/// Returns a rejected Promise object that combines the provided information into a single, descriptive error message.
+JSObjectRef toJSRejectedPromise(JSContextRef, const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString);
+
+void callAfterRandomDelay(Function<void()>&&);
 
 #ifdef __OBJC__
 
@@ -92,9 +132,6 @@ bool validateDictionary(NSDictionary<NSString *, id> *, NSString *sourceKey, NSA
 /// If the object is valid, returns `YES`. Otherwise returns `NO` and sets `outExceptionString` to a message describing what validation failed.
 bool validateObject(NSObject *, NSString *sourceKey, id valueTypes, NSString **outExceptionString);
 
-/// Returns a rejected Promise object that combines the provided information into a single, descriptive error message.
-JSObjectRef toJSRejectedPromise(JSContextRef, NSString *callingAPIName, NSString *sourceKey, NSString *underlyingErrorString);
-
 NSString *toWebAPI(NSLocale *);
 
 /// Returns the storage size of a string.
@@ -105,8 +142,6 @@ size_t storageSizeOf(NSDictionary<NSString *, NSString *> *);
 
 /// Returns true if the size of any item in the dictionary exceeds the given quota.
 bool anyItemsExceedQuota(NSDictionary *, size_t quota, NSString **outKeyWithError = nullptr);
-
-enum class UseNullValue : bool { No, Yes };
 
 template<typename T>
 id toWebAPI(const std::optional<T>& result, UseNullValue useNull = UseNullValue::Yes)
@@ -139,7 +174,7 @@ inline NSNumber *toWebAPI(size_t index)
 
 #endif // __OBJC__
 
-Markable<WTF::UUID> toDocumentIdentifier(WebFrame&);
+Markable<WTF::UUID> NODELETE toDocumentIdentifier(WebFrame&);
 
 } // namespace WebKit
 

@@ -97,19 +97,19 @@ JSC_DEFINE_HOST_FUNCTION(constructWeakMap, (JSGlobalObject* globalObject, CallFr
 
         if (canPerformFastSet) {
             if (!canBeHeldWeakly(key)) [[unlikely]] {
-                throwTypeError(asObject(adderFunction)->globalObject(), scope, WeakMapInvalidKeyError);
+                throwTypeError(asObject(adderFunction)->realm(), scope, WeakMapInvalidKeyError);
                 return;
             }
             weakMap->set(vm, key.asCell(), value);
             return;
         }
 
-        MarkedArgumentBuffer arguments;
-        arguments.append(key);
-        arguments.append(value);
-        ASSERT(!arguments.hasOverflowed());
+        auto arguments = WTF::toArray<EncodedJSValue>({
+            JSValue::encode(key),
+            JSValue::encode(value),
+        });
         scope.release();
-        call(globalObject, adderFunction, adderFunctionCallData, weakMap, arguments);
+        call(globalObject, adderFunction, adderFunctionCallData, weakMap, ArgList { arguments.data(), arguments.size() });
     });
 
     return JSValue::encode(weakMap);

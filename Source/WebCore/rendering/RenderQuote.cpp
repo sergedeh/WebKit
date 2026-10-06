@@ -212,7 +212,7 @@ static constexpr std::array quoteTable {
     QuotesForLanguage { "zu"_span,         0, 0x201c, 0x201d, 0x2018, 0x2019 },
 };
 
-RenderQuote::RenderQuote(Document& document, RenderStyle&& style, QuoteType quote)
+RenderQuote::RenderQuote(Document& document, Style::ComputedStyle&& style, QuoteType quote)
     : RenderInline(Type::Quote, document, WTF::move(style))
     , m_type(quote)
     , m_text(emptyString())
@@ -235,7 +235,7 @@ void RenderQuote::willBeRemovedFromTree()
     RenderInline::willBeRemovedFromTree();
 }
 
-void RenderQuote::styleDidChange(Style::Difference diff, const RenderStyle* oldStyle)
+void RenderQuote::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderInline::styleDidChange(diff, oldStyle);
     if (diff >= Style::DifferenceResult::Layout) {
@@ -434,14 +434,14 @@ static StringImpl* stringForQuoteCharacter(char16_t character)
 
 static inline StringImpl* quotationMarkString()
 {
-    static StringImpl* quotationMarkString = stringForQuoteCharacter(quotationMark);
-    return quotationMarkString;
+    static NeverDestroyed<Ref<StringImpl>> quotationMarkString { *stringForQuoteCharacter(quotationMark) };
+    return quotationMarkString->ptr();
 }
 
 static inline StringImpl* apostropheString()
 {
-    static StringImpl* apostropheString = stringForQuoteCharacter(apostrophe);
-    return apostropheString;
+    static NeverDestroyed<Ref<StringImpl>> apostropheString { *stringForQuoteCharacter(apostrophe) };
+    return apostropheString->ptr();
 }
 
 void RenderQuote::updateTextRenderer(RenderTreeBuilder& builder)
@@ -451,11 +451,11 @@ void RenderQuote::updateTextRenderer(RenderTreeBuilder& builder)
     if (m_text == text)
         return;
     m_text = text;
-    if (auto* renderText = dynamicDowncast<RenderTextFragment>(lastChild())) {
+    if (CheckedPtr renderText = dynamicDowncast<RenderTextFragment>(lastChild())) {
         renderText->setContentString(m_text);
         return;
     }
-    builder.attach(*this, createRenderer<RenderTextFragment>(document(), m_text));
+    builder.attach(*this, createRenderer<RenderTextFragment>(protect(document()), m_text));
 }
 
 String RenderQuote::computeText() const
@@ -473,7 +473,7 @@ String RenderQuote::computeText() const
     case QuoteType::CloseQuote:
         if (!style().quotes().isAuto())
             return isOpenQuote ? style().quotes().openQuote(m_depth).impl() : style().quotes().closeQuote(m_depth).impl();
-        if (const auto* quotes = quotesForLanguage(Style::toPlatform(style().computedLocale())))
+        if (const auto* quotes = quotesForLanguage(Style::toPlatform(style().usedLocale())))
             return stringForQuoteCharacter(isOpenQuote ? (m_depth ? quotes->open2 : quotes->open1) : (m_depth ? quotes->close2 : quotes->close1));
         // FIXME: Should the default be the quotes for "en" rather than straight quotes?
         // (According to https://html.spec.whatwg.org/multipage/rendering.html#quotes, the answer is "yes".)

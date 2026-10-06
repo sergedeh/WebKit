@@ -38,7 +38,7 @@
 #include "RenderSVGShape.h"
 #include "RenderSVGText.h"
 #include "SVGClipPathElement.h"
-#include "SVGLayerTransformComputation.h"
+#include "SVGTransformComputation.h"
 
 namespace WebCore {
 
@@ -47,8 +47,34 @@ SVGBoundingBoxComputation::SVGBoundingBoxComputation(const RenderLayerModelObjec
 {
 }
 
+void SVGBoundingBoxComputation::recomputeTransformDependentBoundingBoxes(const RenderLayerModelObject& renderer, bool& dirty, FloatRect& objectBoundingBox, Markable<FloatRect>& strokeBoundingBox, bool* objectBoundingBoxValid)
+{
+    if (!dirty)
+        return;
+    // Clear before recomputing so any re-entrant read sees a consistent state.
+    dirty = false;
+
+    SVGBoundingBoxComputation boundingBoxComputation(renderer);
+    objectBoundingBox = boundingBoxComputation.computeDecoratedBoundingBox(objectBoundingBoxDecoration, objectBoundingBoxValid);
+    strokeBoundingBox = std::nullopt;
+}
+
 FloatRect SVGBoundingBoxComputation::computeDecoratedBoundingBox(const SVGBoundingBoxComputation::DecorationOptions& options, bool* boundingBoxValid) const
 {
+    // A viewport-establishing container (inner <svg>, <marker>) contributes its viewport rectangle
+    // (cached in overridenObjectBoundingBoxWithoutTransformations()) to an ancestor's bounding box,
+    // not its descendant geometry. This follows from viewport establishment, independent of overflow,
+    // and keeps the ancestor's recursion consistent with the box the container reports for itself.
+    if (options.contains(DecorationOption::IgnoreTransformations)) {
+        if (CheckedPtr container = dynamicDowncast<RenderSVGContainer>(m_renderer.get())) {
+            if (auto overriden = container->overridenObjectBoundingBoxWithoutTransformations()) {
+                if (boundingBoxValid)
+                    *boundingBoxValid = true;
+                return *overriden;
+            }
+        }
+    }
+
     // SVG2: Bounding boxes algorithm (https://svgwg.org/svg2-draft/coords.html#BoundingBoxes)
 
     // The following algorithm defines how to compute a bounding box for a given element. The inputs to the algorithm are:
@@ -63,17 +89,17 @@ FloatRect SVGBoundingBoxComputation::computeDecoratedBoundingBox(const SVGBoundi
     // - a shape (RenderSVGShape)
     // - a text content element (RenderSVGText or RenderSVGInline)
     // - an "a" element within a text content element (-> creates RenderSVGInline)
-    if (is<RenderSVGShape>(m_renderer) || is<RenderSVGText>(m_renderer) || is<RenderSVGInline>(m_renderer))
+    if (isAnyOf<RenderSVGShape, RenderSVGText, RenderSVGInline>(m_renderer))
         return handleShapeOrTextOrInline(options, boundingBoxValid);
 
     // - a container element (RenderSVGRoot / RenderSVGContainer)
     // - "use" (RenderSVGTransformableContainer)
-    if (is<RenderSVGRoot>(m_renderer) || is<RenderSVGContainer>(m_renderer))
+    if (isAnyOf<RenderSVGRoot, RenderSVGContainer>(m_renderer))
         return handleRootOrContainer(options, boundingBoxValid);
 
     // - "foreignObject"
     // - "image"
-    if (is<RenderSVGForeignObject>(m_renderer) || is<RenderSVGImage>(m_renderer))
+    if (isAnyOf<RenderSVGForeignObject, RenderSVGImage>(m_renderer))
         return handleForeignObjectOrImage(options, boundingBoxValid);
 
     ASSERT_NOT_REACHED();
@@ -135,20 +161,38 @@ FloatRect SVGBoundingBoxComputation::handleShapeOrTextOrInline(const SVGBounding
 FloatRect SVGBoundingBoxComputation::handleRootOrContainer(const SVGBoundingBoxComputation::DecorationOptions& options, bool* boundingBoxValid) const
 {
     auto transformationMatrixFromChild = [&](const RenderLayerModelObject& child) -> std::optional<AffineTransform> {
-        if (!child.isTransformed() || !child.hasLayer())
+        if (!child.isTransformed())
             return std::nullopt;
 
         ASSERT(child.isSVGLayerAwareRenderer());
         ASSERT(!child.isRenderSVGRoot());
 
-        auto transform = SVGLayerTransformComputation(child).computeAccumulatedTransform(m_renderer.ptr(), TransformState::TrackSVGCTMMatrix);
+        auto transform = SVGTransformComputation(child).computeAccumulatedTransform(m_renderer.ptr(), TransformState::TrackSVGCTMMatrix, StopAtRendererTransform::Exclude);
         return transform.isIdentity() ? std::nullopt : std::make_optional(WTF::move(transform));
     };
 
-    auto uniteBoundingBoxRespectingValidity = [] (bool& boxValid, FloatRect& box, const RenderLayerModelObject& child, const FloatRect& childBoundingBox) {
-        auto* containerChild = dynamicDowncast<RenderSVGContainer>(child);
-        bool isBoundingBoxValid = !containerChild || containerChild->isObjectBoundingBoxValid();
-        if (!isBoundingBoxValid)
+    // https://svgwg.org/svg2-draft/coords.html#BoundingBoxes
+    auto hasValidBoundingBoxForContainer = [] (const RenderLayerModelObject& object) {
+        if (auto* shape = dynamicDowncast<RenderSVGShape>(object))
+            return !shape->isRenderingDisabled();
+
+        if (auto* text = dynamicDowncast<RenderSVGText>(object))
+            return text->isObjectBoundingBoxValid();
+
+        if (auto* container = dynamicDowncast<RenderSVGContainer>(object))
+            return container->isObjectBoundingBoxValid();
+
+        if (auto* foreignObject = dynamicDowncast<RenderSVGForeignObject>(object))
+            return foreignObject->isObjectBoundingBoxValid();
+
+        if (auto* image = dynamicDowncast<RenderSVGImage>(object))
+            return image->isObjectBoundingBoxValid();
+
+        return false;
+    };
+
+    auto uniteBoundingBoxRespectingValidity = [hasValidBoundingBoxForContainer] (bool& boxValid, FloatRect& box, const RenderLayerModelObject& child, const FloatRect& childBoundingBox) {
+        if (!hasValidBoundingBoxForContainer(child))
             return;
 
         if (boxValid) {
@@ -164,6 +208,9 @@ FloatRect SVGBoundingBoxComputation::handleRootOrContainer(const SVGBoundingBoxC
     FloatRect box;
     bool boxValid = false;
 
+    auto optionsForChildren = options;
+    optionsForChildren.remove(DecorationOption::IgnoreViewportClip);
+
     // 2. Let parent be the container element if it is one, or the root of the "use" element's shadow tree otherwise.
 
     // 3. For each descendant graphics element child of parent:
@@ -177,7 +224,7 @@ FloatRect SVGBoundingBoxComputation::handleRootOrContainer(const SVGBoundingBoxC
             continue;
 
         SVGBoundingBoxComputation childBoundingBoxComputation(child);
-        auto childBox = childBoundingBoxComputation.computeDecoratedBoundingBox(options);
+        auto childBox = childBoundingBoxComputation.computeDecoratedBoundingBox(optionsForChildren);
         if (options.contains(DecorationOption::OverrideBoxWithFilterBoxForChildren) && is<RenderSVGContainer>(child)) {
             DecorationOptions optionsForChild = { DecorationOption::OverrideBoxWithFilterBox };
             if (options.contains(DecorationOption::CalculateFastRepaintRect))
@@ -205,15 +252,13 @@ FloatRect SVGBoundingBoxComputation::handleRootOrContainer(const SVGBoundingBoxC
     //      system space that contains the intersection of box and the rectangle specified by clip. (TODO!)
     adjustBoxForClippingAndEffects(options, box, { DecorationOption::OverrideBoxWithFilterBox });
 
-    if (options.contains(DecorationOption::IncludeClippers) && m_renderer->hasNonVisibleOverflow()) {
-        ASSERT(m_renderer->hasLayer());
-
+    if (options.contains(DecorationOption::IncludeClippers) && !options.contains(DecorationOption::IgnoreViewportClip) && m_renderer->hasNonVisibleOverflow()) {
         ASSERT(is<RenderSVGViewportContainer>(m_renderer) || is<RenderSVGResourceMarker>(m_renderer) || is<RenderSVGRoot>(m_renderer));
 
         LayoutRect overflowClipRect;
-        if (CheckedPtr svgModelObject = dynamicDowncast<RenderSVGModelObject>(m_renderer.get()))
-            overflowClipRect = svgModelObject->overflowClipRect(svgModelObject->currentSVGLayoutLocation());
-        else if (CheckedPtr box = dynamicDowncast<RenderBox>(m_renderer.get()))
+        if (CheckedPtr svgModelObject = dynamicDowncast<RenderSVGModelObject>(m_renderer.get())) {
+            overflowClipRect = svgModelObject->overflowClipRect(LayoutPoint());
+        } else if (CheckedPtr box = dynamicDowncast<RenderBox>(m_renderer.get()))
             overflowClipRect = box->overflowClipRect(box->location());
         else {
             ASSERT_NOT_REACHED();
@@ -258,7 +303,7 @@ void SVGBoundingBoxComputation::adjustBoxForClippingAndEffects(const SVGBounding
     }
 
     if (includeFilter) {
-        if (auto* referencedFilterRenderer = m_renderer->svgFilterResourceFromStyle()) {
+        if (CheckedPtr referencedFilterRenderer = m_renderer->svgFilterResourceFromStyle()) {
             auto repaintRectCalculation = options.contains(DecorationOption::CalculateFastRepaintRect) ? RepaintRectCalculation::Fast : RepaintRectCalculation::Accurate;
 
             auto resourceRect = referencedFilterRenderer->resourceBoundingBox(m_renderer, repaintRectCalculation);
@@ -289,21 +334,31 @@ void SVGBoundingBoxComputation::adjustBoxForClippingAndEffects(const SVGBounding
     }
 
     if (options.contains(DecorationOption::IncludeOutline))
-        box.inflate(m_renderer->outlineStyleForRepaint().usedOutlineSize());
+        box.inflate(m_renderer->outlineStyleForRepaint().usedOutlineSize(m_renderer->outlineStyleForRepaint().usedZoomForLength(), m_renderer->outlineStyleForRepaint().deviceScaleFactor()));
+}
+
+static LayoutRect computeVisualOverflowRectWithOptions(const RenderLayerModelObject& renderer, SVGBoundingBoxComputation::DecorationOptions extraOptions)
+{
+    auto options = SVGBoundingBoxComputation::repaintBoundingBoxDecoration | SVGBoundingBoxComputation::DecorationOption::IncludeOutline | extraOptions;
+    if (is<RenderSVGContainer>(renderer))
+        options = options | SVGBoundingBoxComputation::DecorationOption::UseFilterBoxOnEmptyRect;
+    auto decoratedBoundingBox = SVGBoundingBoxComputation::computeDecoratedBoundingBox(renderer, options);
+    if (decoratedBoundingBox.isEmpty())
+        return { };
+
+    auto visualOverflowRect = enclosingLayoutRect(decoratedBoundingBox);
+    visualOverflowRect.moveBy(-renderer.nominalSVGLayoutLocation());
+    return visualOverflowRect;
 }
 
 LayoutRect SVGBoundingBoxComputation::computeVisualOverflowRect(const RenderLayerModelObject& renderer)
 {
-    DecorationOptions options = repaintBoundingBoxDecoration | DecorationOption::IncludeOutline | DecorationOption::IgnoreTransformations;
-    if (is<RenderSVGContainer>(renderer))
-        options = options | DecorationOption::UseFilterBoxOnEmptyRect;
-    auto repaintBoundingBoxWithoutTransformations = computeDecoratedBoundingBox(renderer, options);
-    if (repaintBoundingBoxWithoutTransformations.isEmpty())
-        return { };
+    return computeVisualOverflowRectWithOptions(renderer, { });
+}
 
-    auto visualOverflowRect = enclosingLayoutRect(repaintBoundingBoxWithoutTransformations);
-    visualOverflowRect.moveBy(-renderer.nominalSVGLayoutLocation());
-    return visualOverflowRect;
+LayoutRect SVGBoundingBoxComputation::computeVisualOverflowRectIgnoringViewportClip(const RenderLayerModelObject& renderer)
+{
+    return computeVisualOverflowRectWithOptions(renderer, DecorationOption::IgnoreViewportClip);
 }
 
 }

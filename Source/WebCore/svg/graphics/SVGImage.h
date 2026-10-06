@@ -27,6 +27,7 @@
 #pragma once
 
 #include <WebCore/Image.h>
+#include <WebCore/StyleLinkParameters.h>
 #include <WebCore/Timer.h>
 #include <wtf/URL.h>
 
@@ -36,10 +37,10 @@ class Element;
 class ImageBuffer;
 class LocalFrameView;
 class Page;
-class RenderBox;
+class RenderObject;
+class RenderReplaced;
 class SVGSVGElement;
 class SVGImageChromeClient;
-class SVGImageForContainer;
 class Settings;
 
 class SVGImage final : public Image {
@@ -48,11 +49,10 @@ public:
     WEBCORE_EXPORT static void tryCreateFromData(std::span<const uint8_t>, CompletionHandler<void(RefPtr<SVGImage>&&)>&&);
     WEBCORE_EXPORT static bool isDataDecodable(const Settings&, std::span<const uint8_t>);
 
-    RenderBox* embeddedContentBox() const;
-    LocalFrameView* frameView() const;
-    RefPtr<LocalFrameView> protectedFrameView() const;
+    RenderReplaced* embeddedSVGRoot() const;
+    LocalFrameView* NODELETE frameView() const;
 
-    bool isSVGImage() const final { return true; }
+    bool NODELETE isSVGImage() const final { return true; }
 
     void subresourcesAreFinished(Document*, CompletionHandler<void()>&&) final;
 
@@ -60,36 +60,28 @@ public:
 
     bool renderingTaintsOrigin() const final;
 
-    bool hasRelativeWidth() const final;
-    bool hasRelativeHeight() const final;
-
-    // Start the animation from the beginning.
     void startAnimation() final;
-    // Resume the animation from where it was last stopped.
-    void resumeAnimation();
     void stopAnimation() final;
     void resetAnimation() final;
     bool isAnimating() const final;
 
-    void scheduleStartAnimation();
-
     Page* internalPage() { return m_page.get(); }
     WEBCORE_EXPORT RefPtr<SVGSVGElement> rootElement() const;
 
-    RefPtr<NativeImage> nativeImage(const FloatSize&, const DestinationColorSpace& = DestinationColorSpace::SRGB());
+    FloatSize resolvedIntrinsicSize(float density = 1.0f) const;
+
+    RefPtr<NativeImage> nativeImage(const FloatSize&, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr, ImagePaintingOptions = { });
 
 private:
     friend class SVGImageChromeClient;
-    friend class SVGImageForContainer;
 
     virtual ~SVGImage();
 
     String filenameExtension() const final;
 
-    void setContainerSize(const FloatSize&) final;
+    void setContainerSize(const FloatSize&);
     IntSize containerSize() const;
-    bool usesContainerSize() const final { return true; }
-    void computeIntrinsicDimensions(float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio) final;
+    NaturalDimensions unorientedNaturalDimensions() const final;
 
     void reportApproximateMemoryCost() const;
     EncodedDataStatus dataChanged(bool allDataReceived) final;
@@ -101,17 +93,30 @@ private:
     bool currentFrameIsComplete() const final { return !!m_page; }
 
     bool hasHDRContent() const final;
-    RefPtr<NativeImage> nativeImage(const DestinationColorSpace& = DestinationColorSpace::SRGB()) final;
+
+    RefPtr<NativeImage> nativeImage(ConcreteObjectSize, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr) final;
+    RefPtr<NativeImage> currentNativeImage(ConcreteObjectSize, const ImageDrawingExtras* = nullptr) final;
+    RefPtr<NativeImage> currentPreTransformedNativeImage(ConcreteObjectSize, ImageOrientation = ImageOrientation::Orientation::FromImage, const ImageDrawingExtras* = nullptr) final;
 
     void startAnimationTimerFired();
 
     WEBCORE_EXPORT explicit SVGImage(ImageObserver*);
-    ImageDrawResult draw(GraphicsContext&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { }) final;
-    ImageDrawResult drawForContainer(GraphicsContext&, const FloatSize containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions = { });
-    void drawPatternForContainer(GraphicsContext&, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, const FloatRect&, ImagePaintingOptions = { });
+    ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) final;
+    void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) final;
+
+    void applyFragmentURL(const URL&);
+    void applyLinkParameters(const Style::LinkParameters&);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    void applyInvertContent(InvertContent);
+#endif
 
     RefPtr<Page> m_page;
     FloatSize m_intrinsicSize;
+
+    Style::LinkParameters m_appliedLinkParameters;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    bool m_fallbackInvertContent { false };
+#endif
 
     Timer m_startAnimationTimer;
 };

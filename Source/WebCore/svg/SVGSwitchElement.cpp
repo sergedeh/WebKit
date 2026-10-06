@@ -35,7 +35,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGSwitchElement);
 
 inline SVGSwitchElement::SVGSwitchElement(const QualifiedName& tagName, Document& document)
-    : SVGGraphicsElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGGraphicsElement(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(SVGNames::switchTag));
 }
@@ -58,7 +58,7 @@ bool SVGSwitchElement::childShouldCreateRenderer(const Node& child) const
     return false;
 }
 
-RenderPtr<RenderElement> SVGSwitchElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGSwitchElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGTransformableContainer>(*this, WTF::move(style));

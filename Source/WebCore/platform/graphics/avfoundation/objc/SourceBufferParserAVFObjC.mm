@@ -32,7 +32,9 @@
 #import "AVAssetTrackUtilities.h"
 #import "AVStreamDataParserMIMETypeCache.h"
 #import "AudioTrackPrivateMediaSourceAVFObjC.h"
+#import "ContentType.h"
 #import "FourCC.h"
+#import "ISOBMFFPreParser.h"
 #import "MediaDescription.h"
 #import "MediaSample.h"
 #import "MediaSampleAVFObjC.h"
@@ -82,7 +84,7 @@
     ASSERT(parent);
     _parent = parent;
     _parser = parser;
-    [_parser setDelegate:self];
+    [protect(_parser) setDelegate:self];
     return self;
 }
 
@@ -90,13 +92,13 @@
 
 - (void)dealloc
 {
-    [_parser setDelegate:nil];
+    [protect(_parser) setDelegate:nil];
     [super dealloc];
 }
 
 - (void)invalidate
 {
-    [_parser setDelegate:nil];
+    [protect(_parser) setDelegate:nil];
     _parser = nullptr;
 }
 
@@ -187,7 +189,7 @@ private:
             return emptyString();
         FourCC originalCodec = PAL::softLink_CoreMedia_CMFormatDescriptionGetMediaSubType(description);
         CFStringRef originalFormatKey = PAL::canLoad_CoreMedia_kCMFormatDescriptionExtension_ProtectedContentOriginalFormat() ? PAL::kCMFormatDescriptionExtension_ProtectedContentOriginalFormat : CFSTR("CommonEncryptionOriginalFormat");
-        if (auto originalFormat = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(description, originalFormatKey)))
+        if (RetainPtr originalFormat = dynamic_cf_cast<CFNumberRef>(PAL::CMFormatDescriptionGetExtension(description, originalFormatKey)))
             CFNumberGetValue(originalFormat, kCFNumberSInt32Type, &originalCodec.value);
         return String::fromLatin1(originalCodec.string().data());
     }
@@ -201,13 +203,9 @@ private:
 
 MediaPlayerEnums::SupportsType SourceBufferParserAVFObjC::isContentTypeSupported(const ContentType& type)
 {
-    // Check that AVStreamDataParser is in a functional state.
-    if (!PAL::getAVStreamDataParserClassSingleton() || !adoptNS([PAL::allocAVStreamDataParserInstance() init]))
-        return MediaPlayerEnums::SupportsType::IsNotSupported;
-
     String extendedType = type.raw();
     String outputCodecs = type.parameter(ContentType::codecsParameter());
-    if (!outputCodecs.isEmpty() && [PAL::getAVStreamDataParserClassSingleton() respondsToSelector:@selector(outputMIMECodecParameterForInputMIMECodecParameter:)]) {
+    if (!outputCodecs.isEmpty()) {
         outputCodecs = [PAL::getAVStreamDataParserClassSingleton() outputMIMECodecParameterForInputMIMECodecParameter:outputCodecs.createNSString().get()];
         extendedType = makeString(type.containerType(), "; codecs=\""_s, outputCodecs, "\""_s);
     }
@@ -215,15 +213,35 @@ MediaPlayerEnums::SupportsType SourceBufferParserAVFObjC::isContentTypeSupported
     return AVStreamDataParserMIMETypeCache::singleton().canDecodeType(extendedType);
 }
 
-SourceBufferParserAVFObjC::SourceBufferParserAVFObjC(const MediaSourceConfiguration& configuration)
+static std::unique_ptr<ISOBMFFPreParser> makePreParserIfNeeded(const ContentType& contentType, AVStreamDataParser* parser, SourceBufferParserAVFObjC& parserOwner)
+{
+    auto containerType = contentType.containerType();
+    if (!equalLettersIgnoringASCIICase(containerType, "video/mp4"_s) && !equalLettersIgnoringASCIICase(containerType, "audio/mp4"_s))
+        return nullptr;
+    return makeUnique<ISOBMFFPreParser>(
+        [parser = RetainPtr { parser }](Ref<const SharedBuffer>&& buffer, SourceBufferParser::AppendFlags flags) {
+            RetainPtr nsData = buffer->createNSData();
+            if (flags == SourceBufferParser::AppendFlags::Discontinuity)
+                [parser appendStreamData:nsData.get() withFlags:AVStreamDataParserStreamDataDiscontinuity];
+            else
+                [parser appendStreamData:nsData.get()];
+        },
+        [weakParser = ThreadSafeWeakPtr { parserOwner }](auto&& edits) {
+            if (RefPtr protectedParser = weakParser.get())
+                protectedParser->setEmptyEditOffsetsFromInitSegment(WTF::move(edits));
+        });
+}
+
+SourceBufferParserAVFObjC::SourceBufferParserAVFObjC(const ContentType& contentType, const MediaSourceConfiguration& configuration)
     : m_parser(adoptNS([PAL::allocAVStreamDataParserInstance() init]))
     , m_configuration(configuration)
+    , m_preParser(makePreParserIfNeeded(contentType, m_parser.get(), *this))
 {
     m_delegate = adoptNS([[WebAVStreamDataParserWithKeySpecifierListener alloc] initWithParser:m_parser.get() parent:this]);
 
 #if USE(MEDIAPARSERD)
     if ([m_parser.get() respondsToSelector:@selector(setPreferSandboxedParsing:)])
-        [m_parser.get() setPreferSandboxedParsing:!m_configuration.demuxInProcess];
+        [m_parser.get() setPreferSandboxedParsing:NO];
 #endif
 }
 
@@ -234,15 +252,27 @@ SourceBufferParserAVFObjC::~SourceBufferParserAVFObjC()
     [m_delegate invalidate];
 }
 
-Expected<void, PlatformMediaError> SourceBufferParserAVFObjC::appendData(Ref<const SharedBuffer>&& segment, AppendFlags flags)
+std::expected<void, PlatformMediaError> SourceBufferParserAVFObjC::appendData(Ref<const SharedBuffer>&& segment, AppendFlags)
 {
     INFO_LOG_IF_POSSIBLE(LOGIDENTIFIER);
-    RetainPtr nsData = segment->createNSData();
-    if (m_parserStateWasReset || flags == AppendFlags::Discontinuity)
-        [m_parser appendStreamData:nsData.get() withFlags:AVStreamDataParserStreamDataDiscontinuity];
-    else
-        [m_parser appendStreamData:nsData.get()];
-    m_parserStateWasReset = false;
+
+    AppendFlags flags = AppendFlags::None;
+    if (m_parserStateWasReset) {
+        flags = AppendFlags::Discontinuity;
+        m_parserStateWasReset = false;
+    }
+
+    if (m_preParser) {
+        auto result = m_preParser->appendData(WTF::move(segment), flags);
+        if (!result)
+            return result;
+    } else {
+        RetainPtr nsData = segment->createNSData();
+        if (flags == AppendFlags::Discontinuity)
+            [m_parser appendStreamData:nsData.get() withFlags:AVStreamDataParserStreamDataDiscontinuity];
+        else
+            [m_parser appendStreamData:nsData.get()];
+    }
 
     if (m_lastErrorCode)
         return makeUnexpected(PlatformMediaError::ParsingError);
@@ -259,6 +289,9 @@ void SourceBufferParserAVFObjC::resetParserState()
 {
     INFO_LOG_IF_POSSIBLE(LOGIDENTIFIER);
     m_parserStateWasReset = true;
+    m_emptyEditOffsetForTrackID.clear();
+    if (m_preParser)
+        m_preParser->reset();
 }
 
 void SourceBufferParserAVFObjC::invalidate()
@@ -336,11 +369,19 @@ void SourceBufferParserAVFObjC::didProvideMediaDataForTrackID(TrackID trackID, C
 {
     INFO_LOG_IF_POSSIBLE(LOGIDENTIFIER, "trackID = ", trackID, ", mediaType = ", mediaType);
     UNUSED_PARAM(flags);
-    m_callOnClientThreadCallback([this, protectedThis = Ref { *this }, sampleBuffer = retainPtr(sampleBuffer), trackID, mediaType = mediaType] {
+
+    MediaTime emptyEditOffset;
+    if (auto it = m_emptyEditOffsetForTrackID.find(trackID); it != m_emptyEditOffsetForTrackID.end())
+        emptyEditOffset = it->value;
+
+    m_callOnClientThreadCallback([this, protectedThis = Ref { *this }, sampleBuffer = retainPtr(sampleBuffer), trackID, mediaType = mediaType, emptyEditOffset] {
         if (!m_didProvideMediaDataCallback)
             return;
 
         auto mediaSample = MediaSampleAVFObjC::create(sampleBuffer.get(), trackID);
+
+        if (emptyEditOffset.isValid() && emptyEditOffset > MediaTime::zeroTime())
+            mediaSample->offsetTimestampsBy(emptyEditOffset);
 
         if (mediaSample->isHomogeneous()) {
             m_didProvideMediaDataCallback(WTF::move(mediaSample), trackID, mediaType);
@@ -350,6 +391,17 @@ void SourceBufferParserAVFObjC::didProvideMediaDataForTrackID(TrackID trackID, C
         for (auto& sample : mediaSample->divideIntoHomogeneousSamples())
             m_didProvideMediaDataCallback(WTF::move(sample), trackID, mediaType);
     });
+}
+
+void SourceBufferParserAVFObjC::setEmptyEditOffsetsFromInitSegment(Vector<ISOBMFFTrackInfoParser::TrackEditInfo>&& edits)
+{
+    m_emptyEditOffsetForTrackID.clear();
+    for (auto& edit : edits) {
+        if (!edit.emptyEditOffset.isValid() || edit.emptyEditOffset <= MediaTime::zeroTime())
+            continue;
+        ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, "applying empty-edit shift, trackID = ", edit.trackID, ", offset = ", edit.emptyEditOffset);
+        m_emptyEditOffsetForTrackID.set(edit.trackID, edit.emptyEditOffset);
+    }
 }
 
 void SourceBufferParserAVFObjC::willProvideContentKeyRequestInitializationDataForTrackID(uint64_t trackID)

@@ -451,7 +451,7 @@ TEST_P(FramebufferMultiviewTest, IncompleteViewTargetsLayered)
     glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, otherTexLayered, 0, 3,
                                      2);
     ASSERT_GL_NO_ERROR();
-    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_VIEW_TARGETS_OVR,
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT,
                      glCheckFramebufferStatus(GL_FRAMEBUFFER));
 
     // Test that framebuffer is complete when the number of views, base view index and layouts are
@@ -753,13 +753,14 @@ TEST_P(FramebufferMultiviewTest, NegativeMultisampledFramebufferTest)
     ANGLE_SKIP_TEST_IF(!requestMultiviewExtension());
 
     ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_texture_storage_multisample_2d_array"));
-    // GL_TEXTURE_2D_MULTISAMPLE_ARRAY_OES is valid when GL_ANGLE_multiview_multisample is enabled.
+    // GL_TEXTURE_2D_MULTISAMPLE_ARRAY_OES is valid for glFramebufferTextureMultiviewOVR when
+    // GL_ANGLE_multiview_multisample is enabled.
     // The ANGLE_multiview_multisample extension depends on both OVR_multiview and
     // OES_texture_storage_multisample_2d_array. Its only function is allowing multisample 2D array
     // textures to be used with multiview framebuffers.
     ANGLE_SKIP_TEST_IF(IsGLExtensionEnabled("GL_ANGLE_multiview_multisample"));
 
-    // We don't enable OVR_multiview2_multisample
+    // We don't enable ANGLE_multiview2_multisample
 
     GLTexture multisampleTexture;
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE_ARRAY_OES, multisampleTexture);
@@ -769,8 +770,137 @@ TEST_P(FramebufferMultiviewTest, NegativeMultisampledFramebufferTest)
     glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, multisampleTexture, 0, 0,
                                      2);
     // From the extension spec: "An INVALID_OPERATION error is generated if texture is not zero, and
-    // does not name an existing texture object of type TEXTURE_2D_ARRAY."
+    // does not name an existing texture object of type TEXTURE_2D_ARRAY or
+    // TEXTURE_2D_MULTISAMPLE_ARRAY_OES"
     EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+}
+
+// Test that deferred depth clear for a multiview framebuffer is applied to all layers.
+TEST_P(FramebufferMultiviewTest, DeferredDepthClear)
+{
+    ANGLE_SKIP_TEST_IF(!requestMultiviewExtension());
+    constexpr size_t kWidth  = 4;
+    constexpr size_t kHeight = 4;
+    constexpr GLint kLayers  = 4;
+
+    constexpr char kGLSLVersion[]       = "#version 300 es\n";
+    const std::string mvExtensionEnable = "#extension " + extensionName() + " : require\n";
+    const std::string mvLayerCountIn = "layout(num_views = " + std::to_string(kLayers) + ") in;\n";
+
+    constexpr char kVSBody[] = R"(
+void main() {
+  float x = float(gl_VertexID & 1) * 2.0 - 1.0;
+  float y = float(gl_VertexID & 2) - 1.0;
+  gl_Position = vec4(x, y, 0.0, 1.0);
+})";
+
+    constexpr char kFSBody[] = R"(
+precision highp float;
+precision highp sampler2DArray;
+uniform sampler2DArray depthTex;
+uniform float layerIdx;
+out vec4 outColor;
+
+void main() {
+  float depthValue = texture(depthTex, vec3(0.5, 0.5, layerIdx)).r;
+  outColor = vec4(depthValue, depthValue, depthValue, 1.0);
+})";
+
+    // Program that samples from the depth texture and uses it to draw.
+    std::string vsDepth;
+    vsDepth.append(kGLSLVersion);
+    vsDepth.append(kVSBody);
+
+    std::string fs;
+    fs.append(kGLSLVersion);
+    fs.append(kFSBody);
+
+    ANGLE_GL_PROGRAM(drawDepthProgram, vsDepth.c_str(), fs.c_str());
+
+    // Program that samples from the depth texture and draws to a multiview FBO.
+    std::string vsMultiview;
+    vsMultiview.append(kGLSLVersion);
+    vsMultiview.append(mvExtensionEnable);
+    vsMultiview.append(mvLayerCountIn);
+    vsMultiview.append(kVSBody);
+
+    ANGLE_GL_PROGRAM(mvProgram, vsMultiview.c_str(), fs.c_str());
+
+    // Initialize the depth texture layers and clear.
+    GLTexture depthTex;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, depthTex);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_DEPTH_COMPONENT24, kWidth, kHeight, kLayers);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    GLFramebuffer initFBO;
+    glBindFramebuffer(GL_FRAMEBUFFER, initFBO);
+    for (GLint i = 0; i < kLayers; i++)
+    {
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthTex, 0, i);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+        glViewport(0, 0, kWidth, kHeight);
+        glClearDepthf(0.8f);
+        glClear(GL_DEPTH_BUFFER_BIT);
+    }
+
+    // Initialize a color texture to draw to using the depth values.
+    GLTexture readTex;
+    glBindTexture(GL_TEXTURE_2D, readTex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kWidth, kHeight);
+
+    GLFramebuffer readFBO;
+    glBindFramebuffer(GL_FRAMEBUFFER, readFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, readTex, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glViewport(0, 0, kWidth, kHeight);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_SCISSOR_TEST);
+
+    // Use the initialized depth value to draw to a color texture to check the value in all layers.
+    glUseProgram(drawDepthProgram);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, depthTex);
+    glUniform1i(glGetUniformLocation(drawDepthProgram, "depthTex"), 0);
+    for (size_t i = 0; i < kLayers; i++)
+    {
+        glUniform1f(glGetUniformLocation(drawDepthProgram, "layerIdx"), static_cast<float>(i));
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor(204, 204, 204, 255));
+    }
+
+    // Initialize a multiview FBO using the depth texture above, and clear it to a different value.
+    GLFramebuffer mvFBO;
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mvFBO);
+    glFramebufferTextureMultiviewOVR(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthTex, 0, 0,
+                                     kLayers);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_DRAW_FRAMEBUFFER);
+    glViewport(0, 0, kWidth, kHeight);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_SCISSOR_TEST);
+
+    glClearDepthf(0.4f);
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    // Draw to the multiview FBO while sampling from the depth value of one of the layers.
+    glUseProgram(mvProgram);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, depthTex);
+    glUniform1i(glGetUniformLocation(mvProgram, "depthTex"), 0);
+    glUniform1f(glGetUniformLocation(mvProgram, "layerIdx"), 0.0f);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // Draw to the color texture again by sampling from each layer of the depth texture to make sure
+    // the new clear value has been applied to all layers.
+    glUseProgram(drawDepthProgram);
+    glBindFramebuffer(GL_FRAMEBUFFER, readFBO);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, depthTex);
+    glUniform1i(glGetUniformLocation(drawDepthProgram, "depthTex"), 0);
+    for (size_t i = 0; i < kLayers; i++)
+    {
+        glUniform1f(glGetUniformLocation(drawDepthProgram, "layerIdx"), static_cast<float>(i));
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor(102, 102, 102, 255));
+    }
 }
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(FramebufferMultiviewTest);

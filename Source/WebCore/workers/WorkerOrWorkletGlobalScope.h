@@ -34,6 +34,7 @@
 
 namespace WebCore {
 
+class ContentSecurityPolicyResponseHeaders;
 class EventLoopTaskGroup;
 class ScriptModuleLoader;
 class WorkerEventLoop;
@@ -62,11 +63,12 @@ public:
     JSC::VM* vmIfExists() const final;
     WorkerInspectorController& inspectorController() const { return m_inspectorController; }
 
-    ScriptModuleLoader& moduleLoader() { return m_moduleLoader; }
+    ScriptModuleLoader& moduleLoader() LIFETIME_BOUND { return m_moduleLoader; }
 
     // ScriptExecutionContext.
     EventLoopTaskGroup& eventLoop() final;
     bool isContextThread() const final;
+    bool isEventLoopGroupStoppedPermanently() const final;
     void postTask(Task&&) final; // Executes the task on context's thread asynchronously.
     std::optional<PAL::SessionID> sessionID() const final { return m_sessionID; }
 
@@ -90,6 +92,8 @@ public:
 
 protected:
     WorkerOrWorkletGlobalScope(WorkerThreadType, PAL::SessionID, Ref<JSC::VM>&&, ReferrerPolicy, WorkerOrWorkletThread*, std::optional<uint64_t>, OptionSet<AdvancedPrivacyProtections>, std::optional<ScriptExecutionContextIdentifier> = std::nullopt);
+
+    void applyContentSecurityPolicyResponseHeaders(const ContentSecurityPolicyResponseHeaders&);
 
     // ScriptExecutionContext.
     bool isJSExecutionForbidden() const final;

@@ -1,26 +1,6 @@
 [
   {
-    "name": "BazelBuild-all_tests-debug-linux_x64"
-  },
-  {
-    "name": "BazelBuild-all_tests-release-linux_x64",
-    "cq_config": {}
-  },
-  {
-    "name": "BazelBuild-android_math_test-for_android_arm64_release-linux_x64"
-  },
-  {
     "name": "BazelBuild-core-release-linux_x64"
-  },
-  {
-    "name": "BazelBuild-cpu_8888_benchmark_android_test-for_android_arm64_release-linux_x64"
-  },
-  {
-    "name": "BazelBuild-dm-debug-linux_x64",
-    "cq_config": {}
-  },
-  {
-    "name": "BazelBuild-dm-release-linux_x64"
   },
   {
     "name": "BazelBuild-fontations-release-linux_x64"
@@ -36,9 +16,6 @@
     "name": "BazelBuild-ganesh_gl-release-linux_x64"
   },
   {
-    "name": "BazelBuild-hello_bazel_world_android_test-for_android_arm64_release-linux_x64"
-  },
-  {
     "name": "BazelBuild-modules_canvaskit-ck_full_webgl2_debug-linux_x64",
     "cq_config": {}
   },
@@ -46,20 +23,22 @@
     "name": "BazelBuild-use_ganesh_gl-for_windows_x64_release-windows_x64"
   },
   {
-    "name": "BazelBuild-viewer-debug-linux_x64",
-    "cq_config": {}
+    "name": "BazelBuild-viewer-debug-linux_x64"
+  },
+  {
+    "name": "BazelBuild-viewer-for_windows_x64_release-windows_x64"
   },
   {
     "name": "BazelBuild-viewer-release-linux_x64"
   },
   {
-    "name": "BazelTest-cpu_tests-all_go_tests-linux_rbe-linux_x64"
+    "name": "BazelBuild-viewer-release-mac_arm64"
   },
   {
-    "name": "BazelTest-cpu_tests-all_tests-cpu_only_debug_rbe-linux_x64",
-    "cq_config": {
-      "experimental": true
-    }
+    "name": "BazelBuild-viewer-release-mac_x64"
+  },
+  {
+    "name": "BazelTest-cpu_tests-all_go_tests-linux_rbe-linux_x64"
   },
   {
     "name": "BazelTest-external_client-decode_everything-default-linux_x64"
@@ -87,10 +66,6 @@
   },
   {
     "name": "BazelTest-external_client-use_ganesh_vulkan-default-linux_x64"
-  },
-  {
-    "name": "BazelTest-external_client-use_graphite_native_vulkan-default-linux_x64",
-    "cq_config": {}
   },
   {
     "name": "BazelTest-external_client-use_skresources-default-linux_x64"
@@ -196,7 +171,13 @@
     "name": "Build-Mac-Clang-arm64-Release-Graphite_Dawn_Metal"
   },
   {
+    "name": "Build-Mac-Clang-arm64-Release-Graphite_Dawn_Metal_TestDrawListLayer"
+  },
+  {
     "name": "Build-Mac-Clang-arm64-Release-Graphite_Native_Metal"
+  },
+  {
+    "name": "Build-Mac-Clang-arm64-Release-Graphite_Native_Metal_TestDrawListLayer"
   },
   {
     "name": "Build-Mac-Clang-arm64-Release-Metal"
@@ -283,6 +264,9 @@
     "name": "Build-Mac-Clang-x86_64-Release-Graphite_Native_Metal"
   },
   {
+    "name": "Build-Mac-Clang-x86_64-Release-Graphite_Native_Metal_TestDrawListLayer"
+  },
+  {
     "name": "Build-Mac-Clang-x86_64-Release-Metal"
   },
   {
@@ -356,11 +340,11 @@
     "name": "Build-Ubuntu24.04-Clang-arm64-Debug-Android_Graphite_Dawn_Vulkan"
   },
   {
-    "name": "Build-Ubuntu24.04-Clang-arm64-Debug-Android_Graphite_Native_HWASAN"
-  },
-  {
     "name": "Build-Ubuntu24.04-Clang-arm64-Debug-Android_Graphite_Native_Vulkan",
     "cq_config": {}
+  },
+  {
+    "name": "Build-Ubuntu24.04-Clang-arm64-Debug-Android_Graphite_Native_Vulkan_HWASAN"
   },
   {
     "name": "Build-Ubuntu24.04-Clang-arm64-Debug-Android_HWASAN"
@@ -389,7 +373,13 @@
     }
   },
   {
+    "name": "Build-Ubuntu24.04-Clang-arm64-Release-Android_Graphite_Dawn_Vulkan_TestDrawListLayer"
+  },
+  {
     "name": "Build-Ubuntu24.04-Clang-arm64-Release-Android_Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Build-Ubuntu24.04-Clang-arm64-Release-Android_Graphite_Native_Vulkan_TestDrawListLayer"
   },
   {
     "name": "Build-Ubuntu24.04-Clang-arm64-Release-Android_Vulkan"
@@ -465,13 +455,16 @@
     "cq_config": {}
   },
   {
+    "name": "Build-Ubuntu24.04-Clang-x86_64-Debug-ICU4X"
+  },
+  {
+    "name": "Build-Ubuntu24.04-Clang-x86_64-Debug-RustALL"
+  },
+  {
     "name": "Build-Ubuntu24.04-Clang-x86_64-Debug-RustPNG"
   },
   {
     "name": "Build-Ubuntu24.04-Clang-x86_64-Debug-SK_USE_DISCARDABLE_SCALEDIMAGECACHE"
-  },
-  {
-    "name": "Build-Ubuntu24.04-Clang-x86_64-Debug-SafeStack"
   },
   {
     "name": "Build-Ubuntu24.04-Clang-x86_64-Debug-Static"
@@ -553,7 +546,7 @@
     "name": "Build-Ubuntu24.04-Clang-x86_64-Release-NoDEPS"
   },
   {
-    "name": "Build-Ubuntu24.04-Clang-x86_64-Release-SKNX_NO_SIMD"
+    "name": "Build-Ubuntu24.04-Clang-x86_64-Release-SKVX_DISABLE_SIMD"
   },
   {
     "name": "Build-Ubuntu24.04-Clang-x86_64-Release-SK_CPU_LIMIT_SSE2"
@@ -602,10 +595,16 @@
     "name": "Build-Ubuntu24.04-EMCC-wasm-Debug-CanvasKit_CPU"
   },
   {
+    "name": "Build-Ubuntu24.04-EMCC-wasm-Debug-StandaloneWasm"
+  },
+  {
     "name": "Build-Ubuntu24.04-EMCC-wasm-Release-CanvasKit"
   },
   {
     "name": "Build-Ubuntu24.04-EMCC-wasm-Release-CanvasKit_CPU"
+  },
+  {
+    "name": "Build-Ubuntu24.04-EMCC-wasm-Release-StandaloneWasm"
   },
   {
     "name": "Build-Win-Clang-arm64-Debug"
@@ -776,12 +775,6 @@
     "cq_config": {}
   },
   {
-    "name": "BuildStats-Ubuntu24.04-Clang-x86_64-Release"
-  },
-  {
-    "name": "BuildStats-Ubuntu24.04-Clang-x86_64-Release-Vulkan"
-  },
-  {
     "name": "Canary-Android"
   },
   {
@@ -885,13 +878,13 @@
     "name": "Perf-Android-Clang-GalaxyS24-GPU-Adreno750-arm64-Release-All-Android_Vulkan"
   },
   {
+    "name": "Perf-Android-Clang-GalaxyS25Plus-GPU-Adreno830-arm64-Release-All-Android"
+  },
+  {
+    "name": "Perf-Android-Clang-GalaxyS25Plus-GPU-Adreno830-arm64-Release-All-Android_Vulkan"
+  },
+  {
     "name": "Perf-Android-Clang-GalaxyS7_G930FD-GPU-MaliT880-arm64-Release-All-Android"
-  },
-  {
-    "name": "Perf-Android-Clang-GalaxyS9-GPU-MaliG72-arm64-Release-All-Android"
-  },
-  {
-    "name": "Perf-Android-Clang-GalaxyS9-GPU-MaliG72-arm64-Release-All-Android_Vulkan"
   },
   {
     "name": "Perf-Android-Clang-JioNext-CPU-SnapdragonQM215-arm-Release-All-Android"
@@ -912,25 +905,10 @@
     "name": "Perf-Android-Clang-MotoG73-GPU-BXM_8_256-arm64-Release-All-Android"
   },
   {
-    "name": "Perf-Android-Clang-Nexus7-GPU-Tegra3-arm-Release-All-Android"
-  },
-  {
     "name": "Perf-Android-Clang-P30-GPU-MaliG76-arm64-Release-All-Android"
   },
   {
     "name": "Perf-Android-Clang-P30-GPU-MaliG76-arm64-Release-All-Android_Vulkan"
-  },
-  {
-    "name": "Perf-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Release-All-Android"
-  },
-  {
-    "name": "Perf-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Release-All-Android_Graphite_Dawn_Vulkan"
-  },
-  {
-    "name": "Perf-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Release-All-Android_Graphite_Native_Vulkan"
-  },
-  {
-    "name": "Perf-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Release-All-Android_Vulkan"
   },
   {
     "name": "Perf-Android-Clang-Pixel3a-GPU-Adreno615-arm64-Release-All-Android"
@@ -960,6 +938,9 @@
     "name": "Perf-Android-Clang-Pixel5-GPU-Adreno620-arm64-Release-All-Android_Graphite_Native_Vulkan"
   },
   {
+    "name": "Perf-Android-Clang-Pixel5-GPU-Adreno620-arm64-Release-All-Android_Graphite_Native_Vulkan_TestDrawListLayer"
+  },
+  {
     "name": "Perf-Android-Clang-Pixel5-GPU-Adreno620-arm64-Release-All-Android_Vulkan"
   },
   {
@@ -972,7 +953,13 @@
     "name": "Perf-Android-Clang-Pixel6-GPU-MaliG78-arm64-Release-All-Android_Graphite_Dawn_Vulkan"
   },
   {
+    "name": "Perf-Android-Clang-Pixel6-GPU-MaliG78-arm64-Release-All-Android_Graphite_Dawn_Vulkan_TestDrawListLayer"
+  },
+  {
     "name": "Perf-Android-Clang-Pixel6-GPU-MaliG78-arm64-Release-All-Android_Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Perf-Android-Clang-Pixel6-GPU-MaliG78-arm64-Release-All-Android_Graphite_Native_Vulkan_TestDrawListLayer"
   },
   {
     "name": "Perf-Android-Clang-Pixel6-GPU-MaliG78-arm64-Release-All-Android_Vulkan"
@@ -987,7 +974,13 @@
     "name": "Perf-Android-Clang-Pixel7-GPU-MaliG710-arm64-Release-All-Android_Graphite_Dawn_Vulkan"
   },
   {
+    "name": "Perf-Android-Clang-Pixel7-GPU-MaliG710-arm64-Release-All-Android_Graphite_Dawn_Vulkan_TestDrawListLayer"
+  },
+  {
     "name": "Perf-Android-Clang-Pixel7-GPU-MaliG710-arm64-Release-All-Android_Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Perf-Android-Clang-Pixel7-GPU-MaliG710-arm64-Release-All-Android_Graphite_Native_Vulkan_TestDrawListLayer"
   },
   {
     "name": "Perf-Android-Clang-Pixel7-GPU-MaliG710-arm64-Release-All-Android_Vulkan"
@@ -1014,7 +1007,13 @@
     "name": "Perf-Android-Clang-Pixel9-GPU-MaliG715-arm64-Release-All-Android_Graphite_Dawn_Vulkan"
   },
   {
+    "name": "Perf-Android-Clang-Pixel9-GPU-MaliG715-arm64-Release-All-Android_Graphite_Dawn_Vulkan_TestDrawListLayer"
+  },
+  {
     "name": "Perf-Android-Clang-Pixel9-GPU-MaliG715-arm64-Release-All-Android_Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Perf-Android-Clang-Pixel9-GPU-MaliG715-arm64-Release-All-Android_Graphite_Native_Vulkan_TestDrawListLayer"
   },
   {
     "name": "Perf-Android-Clang-Pixel9-GPU-MaliG715-arm64-Release-All-Android_Vulkan"
@@ -1029,19 +1028,19 @@
     "name": "Perf-ChromeOS-Clang-Cherry-GPU-MaliG57-arm64-Release-All"
   },
   {
+    "name": "Perf-ChromeOS-Clang-Corsola-GPU-MaliG52-arm64-Release-All"
+  },
+  {
     "name": "Perf-ChromeOS-Clang-Guybrush-GPU-RadeonVega3-x86_64-Release-All"
   },
   {
     "name": "Perf-ChromeOS-Clang-Octopus-GPU-IntelUHDGraphics600-x86_64-Release-All"
   },
   {
+    "name": "Perf-ChromeOS-Clang-Rauru-GPU-MT8196-arm64-Release-All"
+  },
+  {
     "name": "Perf-ChromeOS-Clang-Trogdor-GPU-Adreno618-arm64-Release-All"
-  },
-  {
-    "name": "Perf-Mac11-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Release-All-Graphite_Native_Metal"
-  },
-  {
-    "name": "Perf-Mac11-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Release-All-Metal"
   },
   {
     "name": "Perf-Mac13-Clang-MacBookPro15.3-GPU-AppleM3-arm64-Debug-All"
@@ -1071,6 +1070,9 @@
     "name": "Perf-Mac14-Clang-MacMini9.1-GPU-AppleM1-arm64-Release-All-Graphite_Dawn_Metal"
   },
   {
+    "name": "Perf-Mac14-Clang-MacMini9.1-GPU-AppleM1-arm64-Release-All-Graphite_Dawn_Metal_TestDrawListLayer"
+  },
+  {
     "name": "Perf-Mac14-Clang-MacMini9.1-GPU-AppleM1-arm64-Release-All-Graphite_Native_Metal",
     "cq_config": {
       "location_regexes": [
@@ -1080,6 +1082,9 @@
     }
   },
   {
+    "name": "Perf-Mac14-Clang-MacMini9.1-GPU-AppleM1-arm64-Release-All-Graphite_Native_Metal_TestDrawListLayer"
+  },
+  {
     "name": "Perf-Mac15-Clang-MacBookPro15.1-CPU-AppleIntel-x86_64-Release-All"
   },
   {
@@ -1087,6 +1092,9 @@
   },
   {
     "name": "Perf-Mac15-Clang-MacBookPro15.1-GPU-IntelUHDGraphics630-x86_64-Release-All-Graphite_Native_Metal"
+  },
+  {
+    "name": "Perf-Mac15-Clang-MacBookPro15.1-GPU-IntelUHDGraphics630-x86_64-Release-All-Graphite_Native_Metal_TestDrawListLayer"
   },
   {
     "name": "Perf-Mac15-Clang-MacBookPro15.1-GPU-IntelUHDGraphics630-x86_64-Release-All-Metal"
@@ -1149,33 +1157,6 @@
     "name": "Perf-Ubuntu24.04-Clang-NUC5PPYH-GPU-IntelHD405-x86_64-Release-All-Vulkan"
   },
   {
-    "name": "Perf-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Release-All"
-  },
-  {
-    "name": "Perf-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-ANGLE"
-  },
-  {
-    "name": "Perf-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan"
-  },
-  {
-    "name": "Perf-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All"
-  },
-  {
-    "name": "Perf-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_D3D11"
-  },
-  {
-    "name": "Perf-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_D3D12"
-  },
-  {
-    "name": "Perf-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_Vulkan"
-  },
-  {
-    "name": "Perf-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Native_Vulkan"
-  },
-  {
-    "name": "Perf-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan"
-  },
-  {
     "name": "Perf-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-ANGLE"
   },
   {
@@ -1185,16 +1166,28 @@
     "name": "Perf-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-Graphite_Dawn_D3D12"
   },
   {
-    "name": "Perf-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-Graphite_Dawn_Vulkan"
+    "name": "Perf-Win11-Clang-FalconRAK-GPU-IntelArcB570-x86_64-Debug-All-ANGLE"
   },
   {
-    "name": "Perf-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-Graphite_Native_Vulkan"
+    "name": "Perf-Win11-Clang-FalconRAK-GPU-IntelArcB570-x86_64-Debug-All-Graphite_Dawn_D3D11"
   },
   {
-    "name": "Perf-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-Vulkan"
+    "name": "Perf-Win11-Clang-FalconRAK-GPU-IntelArcB570-x86_64-Debug-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Perf-Win11-Clang-FalconRAK-GPU-IntelArcB570-x86_64-Debug-All-Vulkan"
   },
   {
     "name": "Perf-Win11-Clang-GCE-CPU-AVX2-x86_64-Release-All"
+  },
+  {
+    "name": "Perf-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Release-All"
+  },
+  {
+    "name": "Perf-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-ANGLE"
+  },
+  {
+    "name": "Perf-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan"
   },
   {
     "name": "Perf-Win11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-ANGLE"
@@ -1212,10 +1205,16 @@
     "name": "Perf-Win11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-Vulkan"
   },
   {
-    "name": "Perf-Win11-Clang-NUC5i7RYH-GPU-IntelIris6100-x86_64-Release-All-ANGLE"
+    "name": "Perf-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Release-All-ANGLE"
   },
   {
-    "name": "Perf-Win11-Clang-NUC5i7RYH-GPU-IntelIris6100-x86_64-Release-All-Graphite_Dawn_D3D11"
+    "name": "Perf-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Release-All-Graphite_Dawn_D3D11"
+  },
+  {
+    "name": "Perf-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Release-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Perf-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Release-All-Vulkan"
   },
   {
     "name": "Perf-Win11-Clang-NUC6i5SYK-GPU-IntelIris540-x86_64-Release-All-ANGLE"
@@ -1260,10 +1259,46 @@
     "name": "Perf-Win11-Clang-NUCD34010WYKH-GPU-IntelHD4400-x86_64-Release-All-Graphite_Dawn_D3D11"
   },
   {
+    "name": "Perf-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-ANGLE"
+  },
+  {
+    "name": "Perf-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-Graphite_Dawn_D3D11"
+  },
+  {
+    "name": "Perf-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-Graphite_Dawn_D3D12"
+  },
+  {
+    "name": "Perf-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-Graphite_Dawn_Vulkan"
+  },
+  {
+    "name": "Perf-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Perf-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-Vulkan"
+  },
+  {
     "name": "Perf-Win11-Clang-ThinkCenter-GPU-RadeonVega8-x86_64-Release-All-ANGLE"
   },
   {
     "name": "Perf-Win11-Clang-ThinkCenter-GPU-RadeonVega8-x86_64-Release-All-Graphite_Dawn_D3D11"
+  },
+  {
+    "name": "Perf-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All"
+  },
+  {
+    "name": "Perf-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_D3D11"
+  },
+  {
+    "name": "Perf-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_D3D12"
+  },
+  {
+    "name": "Perf-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_Vulkan"
+  },
+  {
+    "name": "Perf-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Perf-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan"
   },
   {
     "name": "Perf-iOS-Clang-iPadPro-GPU-PowerVRGT7800-arm64-Release-All"
@@ -1338,25 +1373,28 @@
     "name": "Test-Android-Clang-GalaxyS24-GPU-Adreno750-arm64-Release-All-Android_Vulkan"
   },
   {
+    "name": "Test-Android-Clang-GalaxyS25Plus-CPU-Adreno830-arm64-Release-All-Android_NativeFonts_AndroidNDKFonts"
+  },
+  {
+    "name": "Test-Android-Clang-GalaxyS25Plus-GPU-Adreno830-arm64-Debug-All-Android"
+  },
+  {
+    "name": "Test-Android-Clang-GalaxyS25Plus-GPU-Adreno830-arm64-Debug-All-Android_Graphite_Native_Vulkan_Protected"
+  },
+  {
+    "name": "Test-Android-Clang-GalaxyS25Plus-GPU-Adreno830-arm64-Debug-All-Android_Vulkan"
+  },
+  {
+    "name": "Test-Android-Clang-GalaxyS25Plus-GPU-Adreno830-arm64-Release-All-Android"
+  },
+  {
+    "name": "Test-Android-Clang-GalaxyS25Plus-GPU-Adreno830-arm64-Release-All-Android_Vulkan"
+  },
+  {
     "name": "Test-Android-Clang-GalaxyS7_G930FD-GPU-MaliT880-arm64-Debug-All-Android"
   },
   {
     "name": "Test-Android-Clang-GalaxyS7_G930FD-GPU-MaliT880-arm64-Release-All-Android"
-  },
-  {
-    "name": "Test-Android-Clang-GalaxyS9-GPU-MaliG72-arm64-Debug-All-Android"
-  },
-  {
-    "name": "Test-Android-Clang-GalaxyS9-GPU-MaliG72-arm64-Debug-All-Android_Protected"
-  },
-  {
-    "name": "Test-Android-Clang-GalaxyS9-GPU-MaliG72-arm64-Debug-All-Android_Vulkan"
-  },
-  {
-    "name": "Test-Android-Clang-GalaxyS9-GPU-MaliG72-arm64-Release-All-Android"
-  },
-  {
-    "name": "Test-Android-Clang-GalaxyS9-GPU-MaliG72-arm64-Release-All-Android_Vulkan"
   },
   {
     "name": "Test-Android-Clang-JioNext-GPU-Adreno308-arm-Debug-All-Android"
@@ -1369,12 +1407,6 @@
   },
   {
     "name": "Test-Android-Clang-MotoG73-GPU-BXM_8_256-arm64-Release-All-Android"
-  },
-  {
-    "name": "Test-Android-Clang-Nexus7-GPU-Tegra3-arm-Debug-All-Android"
-  },
-  {
-    "name": "Test-Android-Clang-Nexus7-GPU-Tegra3-arm-Release-All-Android"
   },
   {
     "name": "Test-Android-Clang-P30-GPU-MaliG76-arm64-Debug-All-Android"
@@ -1393,24 +1425,6 @@
   },
   {
     "name": "Test-Android-Clang-P30-GPU-MaliG76-arm64-Release-All-Android_Vulkan"
-  },
-  {
-    "name": "Test-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Debug-All-Android"
-  },
-  {
-    "name": "Test-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Debug-All-Android_Graphite_Native_Vulkan_Protected"
-  },
-  {
-    "name": "Test-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Release-All-Android"
-  },
-  {
-    "name": "Test-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Release-All-Android_Graphite_Dawn_Vulkan"
-  },
-  {
-    "name": "Test-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Release-All-Android_Graphite_Native_Vulkan"
-  },
-  {
-    "name": "Test-Android-Clang-Pixel10-GPU-IMG_DXT_48_1536-arm64-Release-All-Android_Vulkan"
   },
   {
     "name": "Test-Android-Clang-Pixel3a-GPU-Adreno615-arm64-Debug-All-Android"
@@ -1452,7 +1466,7 @@
     "name": "Test-Android-Clang-Pixel4a-CPU-Snapdragon730G-arm64-Debug-All-Android_HWASAN"
   },
   {
-    "name": "Test-Android-Clang-Pixel4a-GPU-Adreno618-arm64-Debug-All-Android_Graphite_Native_HWASAN"
+    "name": "Test-Android-Clang-Pixel4a-GPU-Adreno618-arm64-Debug-All-Android_Graphite_Native_Vulkan_HWASAN"
   },
   {
     "name": "Test-Android-Clang-Pixel4a-GPU-Adreno618-arm64-Debug-All-Android_HWASAN"
@@ -1556,13 +1570,24 @@
     "name": "Test-Android-Clang-Pixel9-GPU-MaliG715-arm64-Release-All-Android_Graphite_Native_Vulkan",
     "cq_config": {
       "location_regexes": [
+        "tools/gpu/vk/.*",
         "(tests|src/gpu)/graphite/.*",
         "src/sksl/generated/.*"
       ]
     }
   },
   {
-    "name": "Test-Android-Clang-Pixel9-GPU-MaliG715-arm64-Release-All-Android_Vulkan"
+    "name": "Test-Android-Clang-Pixel9-GPU-MaliG715-arm64-Release-All-Android_Graphite_Native_Vulkan_AvoidDepth"
+  },
+  {
+    "name": "Test-Android-Clang-Pixel9-GPU-MaliG715-arm64-Release-All-Android_Vulkan",
+    "cq_config": {
+      "location_regexes": [
+        "tools/gpu/vk/.*",
+        "(tests|src/gpu)/ganesh/.*",
+        "src/sksl/generated/.*"
+      ]
+    }
   },
   {
     "name": "Test-Android12-Clang-Pixel5-GPU-Adreno620-arm64-Debug-All-Android"
@@ -1589,6 +1614,12 @@
     "name": "Test-ChromeOS-Clang-Cherry-GPU-MaliG57-arm64-Release-All"
   },
   {
+    "name": "Test-ChromeOS-Clang-Corsola-GPU-MaliG52-arm64-Debug-All"
+  },
+  {
+    "name": "Test-ChromeOS-Clang-Corsola-GPU-MaliG52-arm64-Release-All"
+  },
+  {
     "name": "Test-ChromeOS-Clang-Guybrush-GPU-RadeonVega3-x86_64-Debug-All"
   },
   {
@@ -1601,25 +1632,16 @@
     "name": "Test-ChromeOS-Clang-Octopus-GPU-IntelUHDGraphics600-x86_64-Release-All"
   },
   {
+    "name": "Test-ChromeOS-Clang-Rauru-GPU-MT8196-arm64-Debug-All"
+  },
+  {
+    "name": "Test-ChromeOS-Clang-Rauru-GPU-MT8196-arm64-Release-All"
+  },
+  {
     "name": "Test-ChromeOS-Clang-Trogdor-GPU-Adreno618-arm64-Debug-All"
   },
   {
     "name": "Test-ChromeOS-Clang-Trogdor-GPU-Adreno618-arm64-Release-All"
-  },
-  {
-    "name": "Test-Mac11-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Debug-All-Graphite_Native_Metal"
-  },
-  {
-    "name": "Test-Mac11-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Debug-All-Metal"
-  },
-  {
-    "name": "Test-Mac11-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Debug-All-Metal_ColorSpaces"
-  },
-  {
-    "name": "Test-Mac11-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Release-All-Metal"
-  },
-  {
-    "name": "Test-Mac11-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Release-All-Metal_ColorSpaces"
   },
   {
     "name": "Test-Mac13-Clang-MacBookPro15.3-GPU-AppleM3-arm64-Debug-All"
@@ -1848,14 +1870,14 @@
     "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Debug-All-OldestSupportedSkpVersion"
   },
   {
-    "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Debug-All-RustPNG",
+    "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Debug-All-RustALL",
     "cq_config": {}
   },
   {
-    "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Debug-All-SK_USE_DISCARDABLE_SCALEDIMAGECACHE"
+    "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Debug-All-RustPNG"
   },
   {
-    "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Debug-All-SafeStack"
+    "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Debug-All-SK_USE_DISCARDABLE_SCALEDIMAGECACHE"
   },
   {
     "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Debug-All-Wuffs"
@@ -1879,7 +1901,7 @@
     "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Release-All-MSAN"
   },
   {
-    "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Release-All-SKNX_NO_SIMD"
+    "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Release-All-SKVX_DISABLE_SIMD"
   },
   {
     "name": "Test-Ubuntu24.04-Clang-GCE-CPU-AVX2-x86_64-Release-All-SK_CPU_LIMIT_SSE2"
@@ -1947,18 +1969,15 @@
     "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-PreAbandonGpuContext"
   },
   {
-    "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-Vulkan",
-    "cq_config": {}
+    "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-Vulkan"
   },
   {
     "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Release-All",
     "cq_config": {}
   },
   {
-    "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-DDL3_TSAN"
-  },
-  {
-    "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Native_Vulkan"
+    "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Native_Vulkan",
+    "cq_config": {}
   },
   {
     "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Native_Vulkan_TestPrecompile",
@@ -1977,16 +1996,19 @@
     "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-SK_USE_PADDED_BLUR_UPSCALE"
   },
   {
-    "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan"
+    "name": "Test-Ubuntu24.04-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan",
+    "cq_config": {
+      "location_regexes": [
+        "tools/gpu/vk/.*",
+        "tests/ganesh/.*"
+      ]
+    }
   },
   {
     "name": "Test-Ubuntu24.04-Clang-NUC11TZi5-CPU-AVX2-x86_64-Release-All"
   },
   {
     "name": "Test-Ubuntu24.04-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Debug-All"
-  },
-  {
-    "name": "Test-Ubuntu24.04-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Debug-All-ASAN_Vulkan"
   },
   {
     "name": "Test-Ubuntu24.04-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Debug-All-DDL3_ASAN_Vulkan"
@@ -2002,9 +2024,6 @@
   },
   {
     "name": "Test-Ubuntu24.04-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-TSAN_Graphite_Native_Vulkan"
-  },
-  {
-    "name": "Test-Ubuntu24.04-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-TSAN_Vulkan"
   },
   {
     "name": "Test-Ubuntu24.04-Clang-NUC5PPYH-GPU-IntelHD405-x86_64-Debug-All"
@@ -2044,117 +2063,16 @@
     }
   },
   {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-ANGLE"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-BonusConfigs"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-GpuTess"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-ReleaseAndAbandonGpuContext"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-Vulkan"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Release-All"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-ANGLE"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-BonusConfigs"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-ReleaseAndAbandonGpuContext"
-  },
-  {
-    "name": "Test-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Direct3D"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Graphite_Dawn_D3D11",
-    "cq_config": {
-      "location_regexes": [
-        "(tests|src/gpu)/graphite/.*",
-        "src/sksl/generated/.*",
-        "bazel/external/dawn/*",
-        "DEPS"
-      ]
-    }
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Graphite_Dawn_D3D12"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Graphite_Dawn_Vulkan"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Graphite_Native_Vulkan"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Vulkan"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Direct3D"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_D3D11"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_D3D12"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_Vulkan"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Native_Vulkan"
-  },
-  {
-    "name": "Test-Win10-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan"
-  },
-  {
     "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Debug-All-ANGLE"
   },
   {
     "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Debug-All-Graphite_Dawn_D3D11"
   },
   {
-    "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Debug-All-Graphite_Dawn_Vulkan"
-  },
-  {
-    "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Debug-All-Graphite_Native_Vulkan"
-  },
-  {
-    "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Debug-All-Vulkan"
-  },
-  {
     "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-ANGLE"
   },
   {
     "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-Graphite_Dawn_D3D11"
-  },
-  {
-    "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-Graphite_Dawn_Vulkan"
-  },
-  {
-    "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-Graphite_Native_Vulkan"
-  },
-  {
-    "name": "Test-Win11-Clang-AlphaR2-GPU-RadeonR9M470X-x86_64-Release-All-Vulkan"
   },
   {
     "name": "Test-Win11-Clang-Dell3930-GPU-GTX1660-x86_64-Debug-All-ANGLE"
@@ -2187,6 +2105,18 @@
     "name": "Test-Win11-Clang-Dell3930-GPU-GTX1660-x86_64-Release-All-Vulkan"
   },
   {
+    "name": "Test-Win11-Clang-FalconRAK-GPU-IntelArcB570-x86_64-Debug-All-ANGLE"
+  },
+  {
+    "name": "Test-Win11-Clang-FalconRAK-GPU-IntelArcB570-x86_64-Debug-All-Graphite_Dawn_D3D11"
+  },
+  {
+    "name": "Test-Win11-Clang-FalconRAK-GPU-IntelArcB570-x86_64-Debug-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Test-Win11-Clang-FalconRAK-GPU-IntelArcB570-x86_64-Debug-All-Vulkan"
+  },
+  {
     "name": "Test-Win11-Clang-GCE-CPU-AVX2-x86-Debug-All"
   },
   {
@@ -2209,6 +2139,39 @@
     "cq_config": {}
   },
   {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-ANGLE"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-BonusConfigs"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-GpuTess"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-ReleaseAndAbandonGpuContext"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Debug-All-Vulkan"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Release-All"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-ANGLE"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-BonusConfigs"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-ReleaseAndAbandonGpuContext"
+  },
+  {
+    "name": "Test-Win11-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan"
+  },
+  {
     "name": "Test-Win11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Debug-All-ANGLE"
   },
   {
@@ -2224,9 +2187,6 @@
     "name": "Test-Win11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Debug-All-Vulkan"
   },
   {
-    "name": "Test-Win11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-ANGLE"
-  },
-  {
     "name": "Test-Win11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-Graphite_Dawn_D3D11"
   },
   {
@@ -2239,16 +2199,25 @@
     "name": "Test-Win11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-Vulkan"
   },
   {
-    "name": "Test-Win11-Clang-NUC5i7RYH-GPU-IntelIris6100-x86_64-Debug-All-ANGLE"
+    "name": "Test-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Debug-All-ANGLE"
   },
   {
-    "name": "Test-Win11-Clang-NUC5i7RYH-GPU-IntelIris6100-x86_64-Debug-All-Graphite_Dawn_D3D11"
+    "name": "Test-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Debug-All-Graphite_Dawn_D3D11"
   },
   {
-    "name": "Test-Win11-Clang-NUC5i7RYH-GPU-IntelIris6100-x86_64-Release-All-ANGLE"
+    "name": "Test-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Debug-All-Graphite_Native_Vulkan"
   },
   {
-    "name": "Test-Win11-Clang-NUC5i7RYH-GPU-IntelIris6100-x86_64-Release-All-Graphite_Dawn_D3D11"
+    "name": "Test-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Debug-All-Vulkan"
+  },
+  {
+    "name": "Test-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Release-All-Graphite_Dawn_D3D11"
+  },
+  {
+    "name": "Test-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Release-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Test-Win11-Clang-NUC13Pro-GPU-IntelArc140V-x86_64-Release-All-Vulkan"
   },
   {
     "name": "Test-Win11-Clang-NUC6i5SYK-GPU-IntelIris540-x86_64-Debug-All-ANGLE"
@@ -2338,6 +2307,36 @@
     "name": "Test-Win11-Clang-NUCD34010WYKH-GPU-IntelHD4400-x86_64-Release-All-Graphite_Dawn_D3D11"
   },
   {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Debug-All-ANGLE"
+  },
+  {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Debug-All-Graphite_Dawn_D3D11"
+  },
+  {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Debug-All-Graphite_Dawn_Vulkan"
+  },
+  {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Debug-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Debug-All-Vulkan"
+  },
+  {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-ANGLE"
+  },
+  {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-Graphite_Dawn_D3D11"
+  },
+  {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-Graphite_Dawn_Vulkan"
+  },
+  {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Test-Win11-Clang-OptiPlex7010-GPU-IntelUHDGraphics770-x86_64-Release-All-Vulkan"
+  },
+  {
     "name": "Test-Win11-Clang-ThinkCenter-GPU-RadeonVega8-x86_64-Debug-All-ANGLE"
   },
   {
@@ -2360,6 +2359,56 @@
   },
   {
     "name": "Test-Win11-MSVC-GCE-CPU-AVX2-x86_64-Release-All"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Direct3D"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Graphite_Dawn_D3D11",
+    "cq_config": {
+      "location_regexes": [
+        "(tests|src/gpu)/graphite/.*",
+        "src/sksl/generated/.*",
+        "bazel/external/dawn/*",
+        "DEPS"
+      ]
+    }
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Graphite_Dawn_D3D12"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Graphite_Dawn_Vulkan"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Debug-All-Vulkan"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Direct3D"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_D3D11"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_D3D12"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Dawn_Vulkan"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Graphite_Native_Vulkan"
+  },
+  {
+    "name": "Test-Win11-MSVC-Golo-GPU-QuadroP400-x86_64-Release-All-Vulkan"
   },
   {
     "name": "Test-iOS-Clang-iPadPro-GPU-PowerVRGT7800-arm64-Debug-All"

@@ -27,10 +27,10 @@
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
 
-#include <WebCore/ActiveDOMObject.h>
-#include <WebCore/EventTarget.h>
-#include <WebCore/EventTargetInterfaces.h>
-#include <WebCore/WebCoreOpaqueRoot.h>
+#include "ActiveDOMObject.h"
+#include "EventTarget.h"
+#include "EventTargetInterfaces.h"
+#include "WebCoreOpaqueRoot.h"
 #include <wtf/HashMap.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/Ref.h>
@@ -63,7 +63,7 @@ public:
     void cancelWatchAvailability(std::optional<int32_t> id, Ref<DeferredPromise>&&);
     void prompt(Ref<DeferredPromise>&&);
 
-    bool hasAvailabilityCallbacks() const;
+    bool NODELETE hasAvailabilityCallbacks() const;
     void availabilityChanged(bool);
     void playbackTargetPickerWasDismissed();
     void shouldPlayToRemoteTargetChanged(bool);
@@ -76,21 +76,21 @@ public:
     };
     State state() const { return m_state; }
 
-    void invalidate();
+    void NODELETE invalidate();
 
-    WebCoreOpaqueRoot opaqueRootConcurrently() const;
-    Node* ownerNode() const;
+    WebCoreOpaqueRoot opaqueRoot() const final;
+    Node* NODELETE ownerNode() const;
 
 private:
     explicit RemotePlayback(HTMLMediaElement&);
 
     void setState(State);
-    void establishConnection();
+    void NODELETE establishConnection();
     void disconnect();
 
     // EventTarget.
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::RemotePlayback; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
@@ -100,7 +100,7 @@ private:
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const { return m_logger.get(); }
     uint64_t logIdentifier() const { return m_logIdentifier; }
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& NODELETE logChannel() const;
     ASCIILiteral logClassName() const { return "RemotePlayback"_s; }
 
     const Ref<const Logger> m_logger;
@@ -114,8 +114,6 @@ private:
     CallbackMap m_callbackMap;
 
     using PromiseVector = Vector<Ref<DeferredPromise>>;
-    PromiseVector m_availabilityPromises;
-    PromiseVector m_cancelAvailabilityPromises;
     PromiseVector m_promptPromises;
     State m_state { State::Disconnected };
     bool m_available { false };

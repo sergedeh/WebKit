@@ -37,6 +37,7 @@
 #include <WebCore/FloatPoint.h>
 #include <WebCore/TextTrack.h>
 #include <WebCore/Timer.h>
+#include <wtf/LoggerHelper.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
@@ -45,7 +46,13 @@ class HTMLDivElement;
 class VTTCueBox;
 class VTTScanner;
 
-class WEBCORE_EXPORT VTTRegion final : public RefCounted<VTTRegion>, public ContextDestructionObserver {
+class WEBCORE_EXPORT VTTRegion final
+    : public RefCounted<VTTRegion>
+    , public ContextDestructionObserver
+#if !RELEASE_LOG_DISABLED
+    , private LoggerHelper
+#endif
+{
 public:
     static Ref<VTTRegion> create(ScriptExecutionContext& context)
     {
@@ -58,14 +65,14 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    const String& id() const { return m_id; }
+    const String& id() const LIFETIME_BOUND { return m_id; }
     void setId(const String&);
 
     double width() const { return m_width; }
     ExceptionOr<void> setWidth(double);
 
     unsigned lines() const { return m_lines; }
-    void setLines(unsigned);
+    void NODELETE setLines(unsigned);
 
     double regionAnchorX() const { return m_regionAnchor.x(); }
     ExceptionOr<void> setRegionAnchorX(double);
@@ -81,11 +88,11 @@ public:
 
     enum class ScrollSetting : bool { EmptyString, Up };
     ScrollSetting scroll() const { return m_scroll; }
-    void setScroll(const ScrollSetting);
+    void NODELETE setScroll(const ScrollSetting);
 
-    void updateParametersFromRegion(const VTTRegion&);
+    void NODELETE updateParametersFromRegion(const VTTRegion&);
 
-    const String& regionSettings() const { return m_settings; }
+    const String& regionSettings() const LIFETIME_BOUND { return m_settings; }
     void setRegionSettings(const String&);
 
     HTMLDivElement& getDisplayTree();
@@ -95,6 +102,13 @@ public:
     void willRemoveTextTrackCueBox(VTTCueBox*);
 
     void cueStyleChanged() { m_recalculateStyles = true; }
+
+#if !RELEASE_LOG_DISABLED
+    ASCIILiteral logClassName() const final;
+    const Logger& logger() const final;
+    uint64_t logIdentifier() const final;
+    WTFLogChannel& logChannel() const final;
+#endif
 
 private:
     VTTRegion(ScriptExecutionContext&);
@@ -116,13 +130,13 @@ private:
         Scroll
     };
 
-    RegionSetting scanSettingName(VTTScanner&);
+    RegionSetting NODELETE scanSettingName(VTTScanner&);
 
     void parseSettingValue(RegionSetting, VTTScanner&);
 
     static const AtomString& textTrackCueContainerScrollingClass();
 
-    RefPtr<Document> protectedDocument() const;
+    Document* NODELETE document() const;
 
     String m_id;
     String m_settings;
@@ -151,6 +165,11 @@ private:
     Timer m_scrollTimer;
 
     bool m_recalculateStyles { true };
+
+#if !RELEASE_LOG_DISABLED
+    mutable RefPtr<Logger> m_logger;
+    mutable uint64_t m_logIdentifier { 0 };
+#endif
 };
 
 } // namespace WebCore

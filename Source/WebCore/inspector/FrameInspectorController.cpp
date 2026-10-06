@@ -32,8 +32,15 @@
 
 #include "CommonVM.h"
 #include "DocumentPage.h"
+#include "FrameCSSAgent.h"
 #include "FrameConsoleAgent.h"
+#include "FrameDOMAgent.h"
+#include "FrameDOMStorageAgent.h"
+#include "FrameDebugger.h"
+#include "FrameDebuggerAgent.h"
 #include "FrameInlines.h"
+#include "FrameRuntimeAgent.h"
+#include "FrameWorkerAgent.h"
 #include "InspectorInstrumentation.h"
 #include "InspectorWebAgentBase.h"
 #include "InstrumentingAgents.h"
@@ -44,11 +51,14 @@
 #include "Settings.h"
 #include "WebInjectedScriptHost.h"
 #include "WebInjectedScriptManager.h"
+#include <JavaScriptCore/Debugger.h>
 #include <JavaScriptCore/InspectorAgentBase.h>
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/InspectorFrontendRouter.h>
+#include <JavaScriptCore/InspectorScriptProfilerAgent.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/Strong.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -62,15 +72,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(FrameInspectorController);
 FrameInspectorController::FrameInspectorController(LocalFrame& frame, PageInspectorController& parentPageController)
     : m_frame(frame)
     , m_instrumentingAgents(InstrumentingAgents::create(*this, parentPageController.instrumentingAgents()))
-    , m_injectedScriptManager(parentPageController.injectedScriptManager())
+    , m_injectedScriptManager(WebInjectedScriptManager::create(*this, WebInjectedScriptHost::create()))
     , m_frontendRouter(FrontendRouter::create())
     , m_backendDispatcher(BackendDispatcher::create(m_frontendRouter.copyRef(), &parentPageController.backendDispatcher()))
     , m_executionStopwatch(Stopwatch::create())
 {
-    auto agentContext = frameAgentContext();
-    UniqueRef consoleAgent = makeUniqueRef<FrameConsoleAgent>(agentContext);
-    m_instrumentingAgents->setWebConsoleAgent(consoleAgent.ptr());
-    m_agents.append(WTF::move(consoleAgent));
+    if (frame.settings().siteIsolationEnabled())
+        createConsoleAgent();
 }
 
 FrameInspectorController::~FrameInspectorController()
@@ -92,7 +100,7 @@ FrameAgentContext FrameInspectorController::frameAgentContext()
 {
     AgentContext baseContext = {
         *this,
-        m_injectedScriptManager,
+        m_injectedScriptManager.get(),
         m_frontendRouter.get(),
         m_backendDispatcher
     };
@@ -106,12 +114,52 @@ FrameAgentContext FrameInspectorController::frameAgentContext()
     };
 }
 
+// For the main frame, the siteIsolationEnabled setting is loaded separately after the creation of the LocalFrame
+// and thus this controller.
+void FrameInspectorController::siteIsolationFirstEnabled()
+{
+    createConsoleAgent();
+}
+
+void FrameInspectorController::createConsoleAgent()
+{
+    if (m_didCreateConsoleAgent)
+        return;
+
+    auto context = frameAgentContext();
+    UniqueRef consoleAgent = makeUniqueRef<FrameConsoleAgent>(context);
+    m_instrumentingAgents->setWebConsoleAgent(protect(consoleAgent).ptr());
+    m_agents.append(WTF::move(consoleAgent));
+    m_didCreateConsoleAgent = true;
+}
+
 void FrameInspectorController::createLazyAgents()
 {
     if (m_didCreateLazyAgents)
         return;
 
     m_didCreateLazyAgents = true;
+
+    RefPtr frame = m_frame.get();
+    if (!frame)
+        return;
+
+    if (!frame->settings().siteIsolationEnabled())
+        return;
+
+    // Create debugger before agents that depend on it.
+    lazyInitialize(m_debugger, makeUnique<FrameDebugger>(*frame));
+
+    if (CheckedPtr scriptProfilerAgent = m_instrumentingAgents->persistentScriptProfilerAgent())
+        scriptProfilerAgent->installProfilingClientIfTracking(*m_debugger);
+
+    auto context = frameAgentContext();
+    m_agents.append(makeUniqueRef<FrameDebuggerAgent>(context));
+    m_agents.append(makeUniqueRef<FrameDOMAgent>(context));
+    m_agents.append(makeUniqueRef<FrameDOMStorageAgent>(context));
+    m_agents.append(makeUniqueRef<FrameRuntimeAgent>(context));
+    m_agents.append(makeUniqueRef<FrameCSSAgent>(context));
+    m_agents.append(makeUniqueRef<FrameWorkerAgent>(context));
 }
 
 void FrameInspectorController::connectFrontend(Inspector::FrontendChannel& frontendChannel, bool isAutomaticInspection, bool immediatelyPause)
@@ -119,7 +167,7 @@ void FrameInspectorController::connectFrontend(Inspector::FrontendChannel& front
     UNUSED_PARAM(isAutomaticInspection);
     UNUSED_PARAM(immediatelyPause);
 
-    if (RefPtr page = m_frame->page())
+    if (auto* page = m_frame->page())
         page->settings().setDeveloperExtrasEnabled(true);
 
     bool connectedFirstFrontend = !m_frontendRouter->hasFrontends();
@@ -172,7 +220,7 @@ void FrameInspectorController::dispatchMessageFromFrontend(const String& message
 
 bool FrameInspectorController::developerExtrasEnabled() const
 {
-    RefPtr page = m_frame->page();
+    auto* page = m_frame->page();
     return page && page->settings().developerExtrasEnabled();
 }
 
@@ -180,7 +228,7 @@ bool FrameInspectorController::canAccessInspectedScriptState(JSC::JSGlobalObject
 {
     JSLockHolder lock(lexicalGlobalObject);
 
-    auto* inspectedWindow = jsDynamicCast<JSDOMWindow*>(lexicalGlobalObject);
+    auto* inspectedWindow = dynamicDowncast<JSDOMWindow>(lexicalGlobalObject);
     if (!inspectedWindow)
         return false;
 
@@ -209,7 +257,13 @@ Stopwatch& FrameInspectorController::executionStopwatch() const
 
 JSC::Debugger* FrameInspectorController::debugger()
 {
-    // FIXME <https://webkit.org/b/298909> Add Debugger support for frame targets.
+    return m_debugger.get();
+}
+
+JSC::Debugger* FrameInspectorController::attachedDebugger() const
+{
+    if (m_debugger && m_debugger->isAttachedToFrame())
+        return m_debugger.get();
     return nullptr;
 }
 

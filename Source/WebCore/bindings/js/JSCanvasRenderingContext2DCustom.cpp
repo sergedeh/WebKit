@@ -30,16 +30,16 @@ bool JSCanvasRenderingContext2DOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC
     if (reason) [[unlikely]]
         *reason = "Canvas is opaque root"_s;
 
-    JSCanvasRenderingContext2D* jsCanvasRenderingContext = JSC::jsCast<JSCanvasRenderingContext2D*>(handle.slot()->asCell());
+    JSCanvasRenderingContext2D* jsCanvasRenderingContext = downcast<JSCanvasRenderingContext2D>(handle.slot()->asCell());
     return containsWebCoreOpaqueRoot(visitor, jsCanvasRenderingContext->wrapped().canvas());
 }
 
 template<typename Visitor>
-void JSCanvasRenderingContext2D::visitAdditionalChildren(Visitor& visitor)
+void JSCanvasRenderingContext2D::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     addWebCoreOpaqueRoot(visitor, wrapped().canvas());
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSCanvasRenderingContext2D);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSCanvasRenderingContext2D);
 
 } // namespace WebCore

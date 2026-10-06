@@ -32,14 +32,14 @@ class RenderDeprecatedFlexibleBox final : public RenderBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderDeprecatedFlexibleBox);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderDeprecatedFlexibleBox);
 public:
-    RenderDeprecatedFlexibleBox(Element&, RenderStyle&&);
+    RenderDeprecatedFlexibleBox(Element&, Style::ComputedStyle&&);
     virtual ~RenderDeprecatedFlexibleBox();
 
     Element& element() const { return downcast<Element>(nodeForNonAnonymous()); }
 
     ASCIILiteral renderName() const override;
 
-    void styleWillChange(Style::Difference, const RenderStyle& newStyle) override;
+    void styleWillChange(Style::Difference, const Style::ComputedStyle& newStyle) override;
 
     void layoutBlock(RelayoutChildren, LayoutUnit pageHeight = 0_lu) override;
     void layoutHorizontalBox(RelayoutChildren);
@@ -50,13 +50,13 @@ public:
     bool canDropAnonymousBlockChild() const override { return false; }
 
 private:
-    void computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const override;
-    void computePreferredLogicalWidths() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
+    void computeIntrinsicLogicalWidthContributions() override;
     void layoutSingleClampedFlexItem();
     bool hasClampingAndNoFlexing() const;
 
     LayoutUnit allowedChildFlex(RenderBox* child, bool expanding, unsigned group);
-    void placeChild(RenderBox* child, const LayoutPoint& location, LayoutSize* childLayoutDelta = nullptr);
+    void NODELETE placeChild(RenderBox* child, const LayoutPoint& location, LayoutSize* childLayoutDelta = nullptr);
 
     bool hasMultipleLines() const { return style().boxLines() == BoxLines::Multiple; }
     bool isVertical() const { return style().boxOrient() == BoxOrient::Vertical; }

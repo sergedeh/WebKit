@@ -23,6 +23,7 @@
 
 #include "APIError.h"
 #include "WebKitPrivate.h"
+#include <wtf/glib/GLibExtras.h>
 
 using namespace WebCore;
 
@@ -35,7 +36,7 @@ using namespace WebCore;
  */
 GQuark webkit_network_error_quark()
 {
-    return g_quark_from_string(API::Error::webKitNetworkErrorDomain().utf8().data());
+    return gQuarkFromString(API::Error::webKitNetworkErrorDomain().utf8());
 }
 
 /**
@@ -47,7 +48,7 @@ GQuark webkit_network_error_quark()
  */
 GQuark webkit_policy_error_quark()
 {
-    return g_quark_from_string(API::Error::webKitPolicyErrorDomain().utf8().data());
+    return gQuarkFromString(API::Error::webKitPolicyErrorDomain().utf8());
 }
 
 /**
@@ -59,7 +60,7 @@ GQuark webkit_policy_error_quark()
  */
 GQuark webkit_plugin_error_quark()
 {
-    return g_quark_from_string(API::Error::webKitPluginErrorDomain().utf8().data());
+    return gQuarkFromString(API::Error::webKitPluginErrorDomain().utf8());
 }
 
 /**
@@ -71,7 +72,7 @@ GQuark webkit_plugin_error_quark()
  */
 GQuark webkit_download_error_quark()
 {
-    return g_quark_from_string(API::Error::webKitDownloadErrorDomain().utf8().data());
+    return gQuarkFromString(API::Error::webKitDownloadErrorDomain().utf8());
 }
 
 #if PLATFORM(GTK)
@@ -84,7 +85,7 @@ GQuark webkit_download_error_quark()
  */
 GQuark webkit_print_error_quark()
 {
-    return g_quark_from_string(API::Error::webKitPrintErrorDomain().utf8().data());
+    return gQuarkFromString(API::Error::webKitPrintErrorDomain().utf8());
 }
 #endif
 
@@ -126,6 +127,20 @@ GQuark webkit_web_extension_error_quark()
 {
     return g_quark_from_static_string("WebKitWebExtensionError");
 }
+
+/**
+ * webkit_web_extension_context_error_quark:
+ *
+ * Gets the quark for the domain of Web Extension Context errors.
+ *
+ * Returns: web extension context error domain.
+ *
+ * Since: 2.56
+ */
+GQuark webkit_web_extension_context_error_quark()
+{
+    return g_quark_from_static_string("WebKitWebExtensionContextError");
+}
 #endif
 
 /**
@@ -157,7 +172,7 @@ G_DEFINE_QUARK(WebKitUserContentFilterError, webkit_user_content_filter_error)
  *
  * Gets the quark for the domain of media errors.
  *
- * Returns: media error domin.
+ * Returns: media error domain.
  *
  * Since: 2.40
  */

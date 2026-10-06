@@ -56,6 +56,9 @@ public:
     bool allowsLinkPreview() const { return boolTestRunnerFeatureValue("allowsLinkPreview"); }
     bool appHighlightsEnabled() const { return boolTestRunnerFeatureValue("appHighlightsEnabled"); }
     bool allowTestOnlyIPC() const { return boolTestRunnerFeatureValue("allowTestOnlyIPC"); }
+    bool allowTestOnlyMockContentFilterIPC() const { return boolTestRunnerFeatureValue("allowTestOnlyMockContentFilterIPC"); }
+    bool allowTestOnlyOriginAccessAllowListIPC() const { return boolTestRunnerFeatureValue("allowTestOnlyOriginAccessAllowListIPC"); }
+    bool blockThirdPartyStorage() const { return boolTestRunnerFeatureValue("blockThirdPartyStorage"); }
     bool dumpJSConsoleLogInStdErr() const { return boolTestRunnerFeatureValue("dumpJSConsoleLogInStdErr"); }
     bool editable() const { return boolTestRunnerFeatureValue("editable"); }
     bool enableInAppBrowserPrivacy() const { return boolTestRunnerFeatureValue("enableInAppBrowserPrivacy"); }
@@ -73,6 +76,7 @@ public:
     bool shouldPresentPopovers() const { return boolTestRunnerFeatureValue("shouldPresentPopovers"); }
     bool shouldShowSpellCheckingDots() const { return boolTestRunnerFeatureValue("spellCheckingDots"); }
     bool shouldShowTouches() const { return boolTestRunnerFeatureValue("shouldShowTouches"); }
+    bool shouldShowCursor() const { return boolTestRunnerFeatureValue("shouldShowCursor"); }
     bool shouldShowWindow() const { return boolTestRunnerFeatureValue("shouldShowWindow"); }
     bool textInteractionEnabled() const { return boolTestRunnerFeatureValue("textInteractionEnabled"); }
     bool useCharacterSelectionGranularity() const { return boolTestRunnerFeatureValue("useCharacterSelectionGranularity"); }
@@ -95,6 +99,9 @@ public:
     bool enableMetalShaderValidation() const { return boolTestRunnerFeatureValue("enableMetalShaderValidation"); }
     bool pageTopColorSamplingEnabled() const { return boolTestRunnerFeatureValue("pageTopColorSamplingEnabled"); }
     bool enhancedSecurityEnabled() const { return boolTestRunnerFeatureValue("enhancedSecurityEnabled"); }
+    bool globalPrivacyControl() const { return boolTestRunnerFeatureValue("globalPrivacyControl"); }
+    bool shouldDumpResourceLoadCallbacks() const { return boolTestRunnerFeatureValue("dumpResourceLoadCallbacks"); }
+    std::string resourceResponseMIMETypesToDump() const { return stringTestRunnerFeatureValue("dumpResourceResponseMIMETypes"); }
 
     double contentInsetTop() const { return doubleTestRunnerFeatureValue("contentInset.top"); }
     double obscuredInsetTop() const { return doubleTestRunnerFeatureValue("obscuredInset.top"); }
@@ -106,10 +113,13 @@ public:
     uint16_t insecureUpgradePort() const { return uint16TestRunnerFeatureValue("insecureUpgradePort"); };
     uint16_t secureUpgradePort() const { return uint16TestRunnerFeatureValue("secureUpgradePort"); };
     std::string additionalSupportedImageTypes() const { return stringTestRunnerFeatureValue("additionalSupportedImageTypes"); }
+    // Drives the fake _WKTranslationDelegate in TestRunnerWKWebView. See its announcementTranslationMode.
+    std::string announcementTranslationMode() const { return stringTestRunnerFeatureValue("announcementTranslationMode"); }
     std::string applicationBundleIdentifier() const { return stringTestRunnerFeatureValue("applicationBundleIdentifier"); }
     std::string applicationManifest() const { return stringTestRunnerFeatureValue("applicationManifest"); }
     std::string contentMode() const { return stringTestRunnerFeatureValue("contentMode"); }
     std::string contentSecurityPolicyExtensionMode() const { return stringTestRunnerFeatureValue("contentSecurityPolicyExtensionMode"); }
+    std::string displayedTranslationLocale() const { return stringTestRunnerFeatureValue("displayedTranslationLocale"); }
     std::string dragInteractionPolicy() const { return stringTestRunnerFeatureValue("dragInteractionPolicy"); }
     std::string focusStartsInputSessionPolicy() const { return stringTestRunnerFeatureValue("focusStartsInputSessionPolicy"); }
     std::string jscOptions() const { return stringTestRunnerFeatureValue("jscOptions"); }

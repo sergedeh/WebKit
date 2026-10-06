@@ -29,11 +29,8 @@
 
 #include "RemoteGPUProxy.h"
 #include "WebGPUIdentifier.h"
+#include <WebCore/PlatformXR.h>
 #include <WebCore/WebGPUXRProjectionLayer.h>
-
-namespace PlatformXR {
-struct FrameData;
-}
 
 namespace WebCore {
 class ImageBuffer;
@@ -71,9 +68,9 @@ private:
     RemoteXRProjectionLayerProxy& operator=(const RemoteXRProjectionLayerProxy&) = delete;
     RemoteXRProjectionLayerProxy& operator=(RemoteXRProjectionLayerProxy&&) = delete;
 
-    uint32_t textureWidth() const final;
-    uint32_t textureHeight() const final;
-    uint32_t textureArrayLength() const final;
+    uint32_t colorTextureWidth() const final;
+    uint32_t colorTextureHeight() const final;
+    uint32_t colorTextureArrayLength() const final;
 
     bool ignoreDepthValues() const final;
     std::optional<float> fixedFoveation() const final;
@@ -84,18 +81,23 @@ private:
     // WebXRLayer
 #if PLATFORM(COCOA)
     void startFrame(size_t frameIndex, MachSendRight&&, MachSendRight&&, MachSendRight&&, size_t reusableTextureIndex, PlatformXR::RateMapDescription&&) final;
-#endif
     void endFrame() final;
+#else
+    void startFrame(PlatformXR::FrameData&) final { RELEASE_ASSERT_NOT_REACHED(); }
+    void endFrame(PlatformXR::DeviceLayer&) final;
+#endif
+
+    bool allColorTexturesAreBound() const final { RELEASE_ASSERT_NOT_REACHED(); return false; }
 
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().protectedStreamClientConnection()->send(WTF::move(message), backing());
+        return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
     template<typename T>
     [[nodiscard]] IPC::Connection::SendSyncResult<T> sendSync(T&& message)
     {
-        return root().protectedStreamClientConnection()->sendSync(WTF::move(message), backing());
+        return protect(root().streamClientConnection())->sendSync(std::forward<T>(message), backing());
     }
 
     bool isRemoteXRProjectionLayerProxy() const final { return true; }

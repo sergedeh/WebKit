@@ -34,18 +34,22 @@
 #include "RenderBlockFlow.h"
 #include "RenderFragmentContainer.h"
 #include <wtf/InlineWeakPtr.h>
+#include <wtf/WeakHashMap.h>
 #include <wtf/WeakListHashSet.h>
 
 namespace WebCore {
 
 class CurrentRenderFragmentContainerMaintainer;
 class RenderFragmentedFlow;
-class RenderStyle;
 class RenderFragmentContainer;
 
 typedef SingleThreadWeakListHashSet<RenderFragmentContainer> RenderFragmentContainerList;
 typedef Vector<InlineWeakPtr<RenderLayer>> RenderLayerList;
 typedef PODIntervalTree<LayoutUnit, SingleThreadWeakPtr<RenderFragmentContainer>> FragmentIntervalTree;
+
+namespace Style {
+class ComputedStyle;
+}
 
 // RenderFragmentedFlow is used to collect all the render objects that participate in a
 // flow thread. It will also help in doing the layout. However, it will not render
@@ -70,7 +74,7 @@ public:
 
     virtual void addFragmentToThread(RenderFragmentContainer*) = 0;
     void removeFragmentFromThread(RenderFragmentContainer&);
-    const RenderFragmentContainerList& renderFragmentContainerList() const { return m_fragmentList; }
+    const RenderFragmentContainerList& renderFragmentContainerList() const LIFETIME_BOUND { return m_fragmentList; }
 
     void updateLogicalWidth() final;
     LogicalExtentComputedValues computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop) const override;
@@ -81,13 +85,13 @@ public:
     virtual void fragmentChangedWritingMode(RenderFragmentContainer*) { }
 
     void validateFragments();
-    void invalidateFragments(MarkingBehavior = MarkContainingBlockChain);
+    void invalidateFragments(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain);
     bool hasValidFragmentInfo() const { return !m_fragmentsInvalidated && !m_fragmentList.isEmptyIgnoringNullReferences(); }
     
     // Called when a descendant box's layout is finished and it has been positioned within its container.
     virtual void fragmentedFlowDescendantBoxLaidOut(RenderBox*) { }
 
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
     void repaintRectangleInFragments(const LayoutRect&) const;
 
@@ -120,7 +124,7 @@ public:
     virtual void setFragmentRangeForBox(const RenderBox&, RenderFragmentContainer*, RenderFragmentContainer*);
     bool getFragmentRangeForBox(const RenderBox&, RenderFragmentContainer*& startFragment, RenderFragmentContainer*& endFragment) const;
     bool computedFragmentRangeForBox(const RenderBox&, RenderFragmentContainer*& startFragment, RenderFragmentContainer*& endFragment) const;
-    bool hasCachedFragmentRangeForBox(const RenderBox&) const;
+    bool NODELETE hasCachedFragmentRangeForBox(const RenderBox&) const;
 
     // Check if the object is in fragment and the fragment is part of this flow thread.
     bool objectInFlowFragment(const RenderObject*, const RenderFragmentContainer*) const;
@@ -150,12 +154,12 @@ public:
     LayoutRect mapFromFragmentedFlowToLocal(const RenderBox*, const LayoutRect&) const;
     LayoutRect mapFromLocalToFragmentedFlow(const RenderBox*, const LayoutRect&) const;
 
-    void flipForWritingModeLocalCoordinates(LayoutRect&) const;
+    void NODELETE flipForWritingModeLocalCoordinates(LayoutRect&) const;
 
     // Used to estimate the maximum height of the flow thread.
     static LayoutUnit maxLogicalHeight() { return LayoutUnit::max() / 2; }
 
-    bool fragmentInRange(const RenderFragmentContainer* targetFragment, const RenderFragmentContainer* startFragment, const RenderFragmentContainer* endFragment) const;
+    bool NODELETE fragmentInRange(const RenderFragmentContainer* targetFragment, const RenderFragmentContainer* startFragment, const RenderFragmentContainer* endFragment) const;
 
     bool absoluteQuadsForBox(Vector<FloatQuad>&, bool*, const RenderBox&) const;
 
@@ -164,7 +168,7 @@ public:
     void layout() override;
 
     void setCurrentFragmentMaintainer(CurrentRenderFragmentContainerMaintainer* currentFragmentMaintainer) { m_currentFragmentMaintainer = currentFragmentMaintainer; }
-    RenderFragmentContainer* currentFragment() const;
+    RenderFragmentContainer* NODELETE currentFragment() const;
 
     bool cachedEnclosingFragmentedFlowNeedsUpdate() const override { return false; }
 
@@ -177,7 +181,7 @@ private:
     bool requiresLayer() const final { return true; }
 
 protected:
-    RenderFragmentedFlow(Type, Document&, RenderStyle&&);
+    RenderFragmentedFlow(Type, Document&, Style::ComputedStyle&&);
 
     RenderFragmentedFlow* locateEnclosingFragmentedFlow() const override { return const_cast<RenderFragmentedFlow*>(this); }
 
@@ -192,7 +196,7 @@ protected:
     void updateFragmentsFragmentedFlowPortionRect();
     bool shouldRepaint(const LayoutRect&) const;
 
-    bool getFragmentRangeForBoxFromCachedInfo(const RenderBox&, RenderFragmentContainer*& startFragment, RenderFragmentContainer*& endFragment) const;
+    bool NODELETE getFragmentRangeForBoxFromCachedInfo(const RenderBox&, RenderFragmentContainer*& startFragment, RenderFragmentContainer*& endFragment) const;
 
     void removeRenderBoxFragmentInfo(const RenderBox&);
 

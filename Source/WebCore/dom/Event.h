@@ -28,6 +28,7 @@
 #include <WebCore/EventInterfaces.h>
 #include <WebCore/EventOptions.h>
 #include <WebCore/ScriptWrappable.h>
+#include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TypeCasts.h>
@@ -73,17 +74,15 @@ public:
 
     bool isInitialized() const { return m_isInitialized; }
 
-    const AtomString& type() const { return m_type; }
+    const AtomString& type() const LIFETIME_BOUND { return m_type; }
     void setType(const AtomString& type) { m_type = type; }
 
     enum EventInterfaceType interfaceType() const { return static_cast<enum EventInterfaceType>(m_eventInterface); }
 
     EventTarget* target() const { return m_target.get(); }
-    RefPtr<EventTarget> protectedTarget() const;
     void setTarget(RefPtr<EventTarget>&&);
 
     EventTarget* currentTarget() const { return m_currentTarget.get(); }
-    RefPtr<EventTarget> protectedCurrentTarget() const;
     void setCurrentTarget(RefPtr<EventTarget>&&, std::optional<bool> isInShadowTree = std::nullopt);
     bool currentTargetIsInShadowTree() const { return m_currentTargetIsInShadowTree; }
 
@@ -97,7 +96,7 @@ public:
     DOMHighResTimeStamp timeStampForBindings(ScriptExecutionContext&) const;
     MonotonicTime timeStamp() const { return m_createTime; }
 
-    void setEventPath(const EventPath&);
+    void NODELETE setEventPath(const EventPath&);
     Vector<Ref<EventTarget>> composedPath(JSC::JSGlobalObject&) const;
 
     void stopPropagation() { m_propagationStopped = true; }
@@ -111,13 +110,14 @@ public:
 
     virtual bool isBeforeTextInsertedEvent() const { return false; }
     virtual bool isMouseEvent() const { return false; }
+    virtual bool isProgressEvent() const { return false; }
     virtual bool isUIEvent() const { return false; }
     virtual bool isUIEventWithKeyState() const { return false; }
 
     bool propagationStopped() const { return m_propagationStopped || m_immediatePropagationStopped; }
     bool immediatePropagationStopped() const { return m_immediatePropagationStopped; }
 
-    void resetBeforeDispatch();
+    void NODELETE resetBeforeDispatch();
     void resetAfterDispatch();
 
     bool defaultPrevented() const { return m_wasCanceled; }
@@ -149,8 +149,9 @@ public:
     bool isAutofillEvent() { return m_isAutofillEvent; }
     void setIsAutofillEvent() { m_isAutofillEvent = true; }
 
-    bool isShadowRootAttachedEvent() { return m_isShadowRootAttachedEvent; }
-    void setIsShadowRootAttachedEvent() { m_isShadowRootAttachedEvent = true; }
+    bool isTrustedForBindings() const { return m_isTrusted || m_isTrustedForBindingsOnly; }
+
+    template<typename Visitor> void visitInGCThread(Visitor&);
 
 protected:
     explicit Event(enum EventInterfaceType, IsTrusted = IsTrusted::No);
@@ -178,10 +179,10 @@ private:
     unsigned m_defaultHandled : 1;
     unsigned m_isDefaultEventHandlerIgnored : 1;
     unsigned m_isTrusted : 1;
+    unsigned m_isTrustedForBindingsOnly : 1;
     unsigned m_isExecutingPassiveEventListener : 1;
     unsigned m_currentTargetIsInShadowTree : 1;
     unsigned m_isAutofillEvent : 1;
-    unsigned m_isShadowRootAttachedEvent : 1;
 
     unsigned m_eventPhase : 2;
 
@@ -191,7 +192,7 @@ private:
 
     unsigned m_eventInterface : 7 { 0 };
 
-    // 8-bits left.
+    Lock m_targetLock;
 
     AtomString m_type;
 
@@ -229,7 +230,7 @@ inline void Event::setCancelBubble(bool cancel)
         m_propagationStopped = true;
 }
 
-WTF::TextStream& operator<<(WTF::TextStream&, const Event&);
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const Event&);
 
 } // namespace WebCore
 

@@ -32,7 +32,6 @@
 #include "ISOProtectionSystemSpecificHeaderBox.h"
 #include "NotImplemented.h"
 #include "SharedBuffer.h"
-#include <JavaScriptCore/DataView.h>
 #include <wtf/JSONValues.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/Base64.h>
@@ -130,7 +129,7 @@ std::optional<Vector<std::unique_ptr<ISOProtectionSystemSpecificHeaderBox>>> Ini
     unsigned offset = 0;
     Vector<std::unique_ptr<ISOProtectionSystemSpecificHeaderBox>> psshBoxes;
 
-    auto view = JSC::DataView::create(buffer.tryCreateArrayBuffer(), offset, buffer.size());
+    auto view = buffer.span();
     while (auto optionalBoxType = ISOBox::peekBox(view, offset)) {
         auto& boxTypeName = optionalBoxType.value().first;
         auto& boxSize = optionalBoxType.value().second;
@@ -159,6 +158,32 @@ std::optional<Vector<std::unique_ptr<ISOProtectionSystemSpecificHeaderBox>>> Ini
 
     return psshBoxes;
 }
+
+#if HAVE(FAIRPLAYSTREAMING_CENC_INITDATA)
+RefPtr<SharedBuffer> InitDataRegistry::extractFairPlayPsshFromCenc(const SharedBuffer& buffer)
+{
+    if (buffer.size() >= kCencMaxBoxSize)
+        return nullptr;
+
+    auto view = buffer.span();
+    unsigned offset = 0;
+    while (auto optionalBoxType = ISOBox::peekBox(view, offset)) {
+        auto& [boxTypeName, boxSize] = optionalBoxType.value();
+        if (boxTypeName != ISOProtectionSystemSpecificHeaderBox::boxTypeName())
+            return nullptr;
+        if (boxSize > buffer.size() - offset)
+            return nullptr;
+
+        auto systemID = ISOProtectionSystemSpecificHeaderBox::peekSystemID(view, offset);
+        if (systemID == ISOFairPlayStreamingPsshBox::fairPlaySystemID())
+            return SharedBuffer::create(buffer.makeContiguous()->span().subspan(offset, static_cast<size_t>(boxSize)));
+
+        offset += static_cast<unsigned>(boxSize);
+    }
+
+    return nullptr;
+}
+#endif
 
 std::optional<CDMKeyIDs> InitDataRegistry::extractKeyIDsCenc(const SharedBuffer& buffer)
 {

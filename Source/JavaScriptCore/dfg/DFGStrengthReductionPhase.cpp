@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -20,7 +20,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
@@ -46,7 +46,6 @@
 #include "WasmCallingConvention.h"
 #include "WebAssemblyFunction.h"
 #include <cstdlib>
-#include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace DFG {
@@ -82,7 +81,7 @@ public:
     }
 
 private:
-    static bool foldPurifyNaN(Edge& edge)
+    static bool NODELETE foldPurifyNaN(Edge& edge)
     {
         if (edge->op() == PurifyNaN) {
             edge = edge->child1();
@@ -91,7 +90,7 @@ private:
         return false;
     }
 
-    static bool foldPurifyNaNOnBinary(Node* node)
+    static bool NODELETE foldPurifyNaNOnBinary(Node* node)
     {
         bool result = false;
         if (node->isBinaryUseKind(DoubleRepUse)) {
@@ -101,7 +100,7 @@ private:
         return result;
     }
 
-    static bool foldPurifyNaNOnUnary(Node* node)
+    static bool NODELETE foldPurifyNaNOnUnary(Node* node)
     {
         if (node->child1().useKind() == DoubleRepUse)
             return foldPurifyNaN(node->child1());
@@ -222,9 +221,7 @@ private:
                     child2.setNode(m_node->child1().node());
                     m_changed = true;
                     break;
-#if USE(JSVALUE64)
                 case Int52RepUse:
-#endif
                 case Int32Use:
                     // For integers, we can only convert compatible modes.
                     // ArithAdd does handle do negative zero check for example.
@@ -285,24 +282,34 @@ private:
             if (foldPurifyNaNOnBinary(m_node))
                 m_changed = true;
 
-            // On Integers
-            // In: ArithMod(ArithMod(x, const1), const2)
-            // Out: Identity(ArithMod(x, const1))
-            //     if const1 <= const2.
-            if (m_node->binaryUseKind() == Int32Use
-                && m_node->child2()->isInt32Constant()
-                && m_node->child1()->op() == ArithMod
-                && m_node->child1()->binaryUseKind() == Int32Use
-                && m_node->child1()->child2()->isInt32Constant()) {
+            if (m_node->isBinaryInt32UseKind()) {
+                if (m_node->child2()->isInt32Constant()) {
+                    int32_t const2 = m_node->child2()->asInt32();
+                    if (m_node->arithMode() == Arith::CheckOverflow) {
+                        if (const2 != 0 && const2 != -1) {
+                            m_node->setArithMode(Arith::Unchecked);
+                            m_changed = true;
+                        }
+                    }
 
-                int32_t const1 = m_node->child1()->child2()->asInt32();
-                int32_t const2 = m_node->child2()->asInt32();
+                    // On Integers
+                    // In: ArithMod(ArithMod(x, const1), const2)
+                    // Out: Identity(ArithMod(x, const1))
+                    //     if const1 <= const2.
+                    if (m_node->child1()->op() == ArithMod
+                        && m_node->child1()->binaryUseKind() == Int32Use
+                        && m_node->child1()->child2()->isInt32Constant()) {
+                        int32_t const1 = m_node->child1()->child2()->asInt32();
 
-                if (const1 == INT_MIN || const2 == INT_MIN)
-                    break; // std::abs(INT_MIN) is undefined.
+                        if (const1 == INT_MIN || const2 == INT_MIN)
+                            break; // std::abs(INT_MIN) is undefined.
 
-                if (std::abs(const1) <= std::abs(const2))
-                    convertToIdentityOverChild1();
+                        if (std::abs(const1) <= std::abs(const2)) {
+                            convertToIdentityOverChild1();
+                            break;
+                        }
+                    }
+                }
             }
             break;
         }
@@ -662,11 +669,16 @@ private:
         }
 
         case GetArrayLength: {
-            if (m_node->arrayMode().type() == Array::Generic
-                || m_node->arrayMode().type() == Array::String) {
+            if (m_node->arrayMode().type() == Array::Generic || m_node->arrayMode().type() == Array::String) {
                 String string = m_node->child1()->tryGetString(m_graph);
                 if (!!string) {
                     m_graph.convertToConstant(m_node, jsNumber(string.length()));
+                    m_changed = true;
+                    break;
+                }
+
+                if (JSString* jsString = m_node->child1()->dynamicCastConstant<JSString*>()) {
+                    m_graph.convertToConstant(m_node, jsNumber(jsString->length()));
                     m_changed = true;
                     break;
                 }
@@ -685,8 +697,10 @@ private:
 
         case GetGlobalObject: {
             if (JSObject* object = m_node->child1()->dynamicCastConstant<JSObject*>()) {
-                m_graph.convertToConstant(m_node, object->globalObject());
-                m_changed = true;
+                if (JSGlobalObject* globalObject = object->realmMayBeNull()) {
+                    m_graph.convertToConstant(m_node, globalObject);
+                    m_changed = true;
+                }
                 break;
             }
             break;
@@ -714,6 +728,9 @@ private:
 
             auto* regExp = vm().regExpCache()->lookup(vm(), pattern, flags.value());
             if (!regExp)
+                break;
+
+            if (!regExp->isValid())
                 break;
 
             m_node->convertToNewRegExp(m_graph.freezeStrong(regExp), m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(0), UntypedUse));
@@ -744,17 +761,19 @@ private:
 
             Node* regExpObjectNode = nullptr;
             RegExp* regExp = nullptr;
+            JSGlobalObject* regExpRealm = nullptr;
             bool regExpObjectNodeIsConstant = false;
             if (m_node->op() == RegExpExec || m_node->op() == RegExpTest || m_node->op() == RegExpMatchFast || m_node->op() == RegExpSearch) {
                 regExpObjectNode = m_node->child2().node();
                 if (RegExpObject* regExpObject = regExpObjectNode->dynamicCastConstant<RegExpObject*>()) {
-                    JSGlobalObject* globalObject = regExpObject->globalObject();
+                    JSGlobalObject* globalObject = regExpObject->realm();
                     if (globalObject->isRegExpRecompiled()) {
                         dataLogLnIf(verbose, "Giving up because RegExp recompile happens.");
                         break;
                     }
                     m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
                     regExp = regExpObject->regExp();
+                    regExpRealm = globalObject;
                     regExpObjectNodeIsConstant = true;
                 } else if (regExpObjectNode->op() == NewRegExp) {
                     JSGlobalObject* globalObject = m_graph.globalObjectFor(regExpObjectNode->origin.semantic);
@@ -764,6 +783,7 @@ private:
                     }
                     m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
                     regExp = regExpObjectNode->castOperand<RegExp*>();
+                    regExpRealm = globalObject;
                 } else {
                     dataLogLnIf(verbose, "Giving up because the regexp is unknown.");
                     break;
@@ -801,6 +821,7 @@ private:
             ASSERT(m_node->op() != RegExpMatchFast);
 
             bool needLastIndexTypeCheck = false;
+            bool stickyRuntimeLastIndex = false;
             auto insertLastIndexTypeCheckIfNecessary = [&](NodeOrigin origin) {
                 if (needLastIndexTypeCheck) {
                     ASSERT(m_node->op() != RegExpExecNonGlobalOrSticky);
@@ -822,7 +843,11 @@ private:
                     if (otherNode == regExpObjectNode) {
                         if (regExpObjectNodeIsConstant)
                             break;
-                        lastIndex = 0;
+                        // NewRegExp's child1 is the initial lastIndex. Bytecode emits it as 0, but
+                        // ObjectAllocationSinking materializes it with the tracked lastIndex value.
+                        ASSERT(regExpObjectNode->op() == NewRegExp);
+                        if (regExpObjectNode->child1()->isInt32Constant() && regExpObjectNode->child1()->asInt32() >= 0)
+                            lastIndex = regExpObjectNode->child1()->asUInt32();
                         break;
                     }
                     if (otherNode->op() == SetRegExpObjectLastIndex
@@ -839,9 +864,18 @@ private:
                     // We cannot statically prove lastIndex. But still there is a chance.
                     // If RegExp is not global and not sticky, then only thing we care is ToIntegerOrInfinity(regExp.lastIndex).
                     // Thus, we can emit Int32Use check to protect further when conversion happens.
-                    if (regExp->globalOrSticky()) {
+                    if (regExp->global()) {
                         dataLogLnIf(verbose, "Giving up because the last index is not known.");
                         break;
+                    }
+
+                    if (regExp->sticky()) {
+                        // Sticky (non-global) RegExpExec does not need to prove its value here.
+                        if (m_node->op() != RegExpExec) {
+                            dataLogLnIf(verbose, "Giving up because the last index is not known.");
+                            break;
+                        }
+                        stickyRuntimeLastIndex = true;
                     }
 
                     if (m_graph.hasExitSite(m_node->origin.semantic, BadType)) {
@@ -860,7 +894,7 @@ private:
                 }
             }
 
-            if (!regExp->globalOrSticky())
+            if (!regExp->globalOrSticky() || m_node->op() == RegExpSearch)
                 lastIndex = 0;
 
             auto foldToConstant = [&] {
@@ -917,16 +951,13 @@ private:
 
                 FrozenValue* globalObjectFrozenValue = m_graph.freeze(globalObject);
 
-                if (regExpObjectNode && regExpObjectNode->op() == NewRegExp && regExpObjectNode->child1()->isInt32Constant())
-                    lastIndex = regExpObjectNode->child1()->asUInt32();
-
                 MatchResult result;
-                Vector<int> ovector;
+                Vector<int> ovector(regExp->offsetVectorSize());
                 // We have to call the kind of match function that the main thread would have called.
                 // Otherwise, we might not have the desired Yarr code compiled, and the match will fail.
                 if (m_node->op() == RegExpExec || m_node->op() == RegExpExecNonGlobalOrSticky) {
                     int position;
-                    if (!regExp->matchConcurrently(vm(), string, lastIndex, position, ovector)) {
+                    if (!regExp->matchConcurrently(vm(), string, lastIndex, position, ovector.mutableSpan())) {
                         dataLogLnIf(verbose, "Giving up because match failed.");
                         return false;
                     }
@@ -943,6 +974,7 @@ private:
 
                 m_changed = true;
 
+                bool wasSearch = m_node->op() == RegExpSearch;
                 NodeOrigin origin = m_node->origin;
 
                 m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, origin, m_node->children.justChecks());
@@ -958,8 +990,9 @@ private:
                         resultArray.append(string.substring(result.start, result.end - result.start));
                         for (unsigned i = 1; i <= regExp->numSubpatterns(); ++i) {
                             int start = ovector[2 * i];
-                            if (start >= 0)
-                                resultArray.append(string.substring(start, ovector[2 * i + 1] - start));
+                            int end = ovector[2 * i + 1];
+                            if (start >= 0 && end >= start)
+                                resultArray.append(string.substring(start, end - start));
                             else
                                 resultArray.append(String());
                         }
@@ -1051,7 +1084,28 @@ private:
                 // Because SetRegExpObjectLastIndex may exit and it clobbers exit state, we do that
                 // first.
 
-                if (regExp->globalOrSticky()) {
+                if (wasSearch) {
+                    ASSERT(regExpObjectNode);
+                    ASSERT(regExpRealm);
+                    WatchpointSet& lastIndexWritableWatchpointSet = regExpRealm->regExpLastIndexWritableWatchpointSet();
+                    if (lastIndexWritableWatchpointSet.isStillValid())
+                        m_graph.watchpoints().addLazily(lastIndexWritableWatchpointSet);
+                    else {
+                        // The watchpoint has already fired, so guard at runtime instead: storing
+                        // lastIndex back to itself is a no-op when it is writable, and exits when
+                        // it is not, so that @@search throws the TypeError the spec requires.
+                        Node* lastIndexNode = m_insertionSet.insertNode(
+                            m_nodeIndex, SpecNone, GetRegExpObjectLastIndex, origin,
+                            Edge(regExpObjectNode, RegExpObjectUse));
+                        m_insertionSet.insertNode(
+                            m_nodeIndex, SpecNone, SetRegExpObjectLastIndex, origin,
+                            OpInfo(false),
+                            Edge(regExpObjectNode, RegExpObjectUse),
+                            Edge(lastIndexNode, UntypedUse));
+
+                        origin = origin.withInvalidExit();
+                    }
+                } else if (regExp->globalOrSticky()) {
                     ASSERT(regExpObjectNode);
                     m_insertionSet.insertNode(
                         m_nodeIndex, SpecNone, SetRegExpObjectLastIndex, origin,
@@ -1089,15 +1143,11 @@ private:
                 return true;
             };
 
-#if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
             auto convertTestToTestInline = [&] {
                 if (m_node->op() != RegExpTest)
                     return false;
 
                 if (regExp->globalOrSticky())
-                    return false;
-
-                if (regExp->eitherUnicode())
                     return false;
 
                 auto jitCodeBlock = regExp->getRegExpJITCodeBlock();
@@ -1117,7 +1167,7 @@ private:
                 unsigned alignedFrameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(inlineCodeStats8Bit.stackSize());
 
                 if (alignedFrameSize)
-                    m_graph.m_parameterSlots = std::max(m_graph.m_parameterSlots, argumentCountForStackSize(alignedFrameSize));
+                    m_graph.m_parameterSlots = std::max<unsigned>(m_graph.m_parameterSlots, alignedFrameSize / sizeof(Register));
 
                 NodeOrigin origin = m_node->origin;
                 m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, origin, m_node->children.justChecks());
@@ -1126,7 +1176,6 @@ private:
                 m_changed = true;
                 return true;
             };
-#endif
 
             auto convertToStatic = [&] {
                 if (m_node->op() != RegExpExec)
@@ -1144,15 +1193,34 @@ private:
                 return true;
             };
 
-            if (foldToConstant())
-                break;
+            auto convertToSticky = [&] {
+                if (m_node->op() != RegExpExec)
+                    return false;
+                if (!regExp->sticky() || regExp->global())
+                    return false;
+                if (m_node->child3().useKind() != StringUse)
+                    return false;
 
-#if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
+                NodeOrigin origin = m_node->origin;
+                m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, origin, m_node->children.justChecks());
+                insertLastIndexTypeCheckIfNecessary(origin);
+                m_node->convertToRegExpExecStickyWithoutChecks(m_graph.freeze(regExp));
+                m_changed = true;
+                return true;
+            };
+
+            if (!stickyRuntimeLastIndex) {
+                if (foldToConstant())
+                    break;
+            }
+
             if (convertTestToTestInline())
                 break;
-#endif
 
             if (convertToStatic())
+                break;
+
+            if (convertToSticky())
                 break;
 
             break;
@@ -1173,7 +1241,7 @@ private:
             Node* regExpObjectNode = m_node->child2().node();
             RegExp* regExp;
             if (RegExpObject* regExpObject = regExpObjectNode->dynamicCastConstant<RegExpObject*>()) {
-                JSGlobalObject* globalObject = regExpObject->globalObject();
+                JSGlobalObject* globalObject = regExpObject->realm();
                 if (m_graph.m_plan.isUnlinked() && globalObject != m_graph.globalObjectFor(m_node->origin.semantic)) {
                     dataLogLnIf(verbose, "Giving up because unlinked DFG requires globalObject is the same to the node's origin.");
                     break;
@@ -1208,7 +1276,7 @@ private:
             bool ok = true;
             do {
                 MatchResult result;
-                Vector<int> ovector;
+                Vector<int> ovector(regExp->offsetVectorSize());
                 // Model which version of match() is called by the main thread.
                 if (replace.isEmpty() && regExp->global()) {
                     if (!regExp->matchConcurrently(vm(), string, startPosition, result)) {
@@ -1217,11 +1285,11 @@ private:
                     }
                 } else {
                     int position;
-                    if (!regExp->matchConcurrently(vm(), string, startPosition, position, ovector)) {
+                    if (!regExp->matchConcurrently(vm(), string, startPosition, position, ovector.mutableSpan())) {
                         ok = false;
                         break;
                     }
-                    
+
                     result.start = position;
                     result.end = ovector[1];
                 }
@@ -1247,6 +1315,11 @@ private:
                     startPosition++;
                     if (startPosition > string.length())
                         break;
+                    if (regExp->eitherUnicode() && U16_IS_LEAD(string[startPosition - 1]) && U16_IS_TRAIL(string[startPosition])) {
+                        startPosition++;
+                        if (startPosition > string.length())
+                            break;
+                    }
                 }
             } while (regExp->global());
             if (!ok)
@@ -1324,7 +1397,7 @@ private:
                 break;
 
             int32_t startValue = m_node->child2()->asInt32();
-            std::optional<int32_t> endValue = std::nullopt;
+            std::optional<int32_t> endValue;
             if (m_node->child3()) {
                 if (!m_node->child3()->isInt32Constant())
                     break;
@@ -1360,6 +1433,55 @@ private:
             break;
         }
 
+        case StringSubstr: {
+            Node* stringNode = m_node->child1().node();
+
+            if (!m_node->child2()->isInt32Constant())
+                break;
+
+            int32_t startValue = m_node->child2()->asInt32();
+            std::optional<int32_t> lengthValue;
+            if (m_node->child3()) {
+                if (!m_node->child3()->isInt32Constant())
+                    break;
+                lengthValue = m_node->child3()->asInt32();
+                if (lengthValue.value() <= 0) {
+                    // Regardless of whatever the string is, it generates empty string.
+                    m_changed = true;
+                    m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, m_node->origin, m_node->children.justChecks());
+                    m_node->convertToLazyJSConstant(m_graph, LazyJSValue::newString(m_graph, emptyString()));
+                    break;
+                }
+            }
+
+            String string = stringNode->tryGetString(m_graph);
+            if (!string)
+                break;
+
+            int32_t length = string.length();
+            auto [start, span] = extractSubstrOffsets(length, startValue, lengthValue);
+
+            m_changed = true;
+            m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, m_node->origin, m_node->children.justChecks());
+            if (!start && span == length) {
+                m_node->convertToIdentityOn(stringNode);
+                break;
+            }
+            m_node->convertToLazyJSConstant(m_graph, LazyJSValue::newString(m_graph, string.substring(start, span)));
+            break;
+        }
+
+        case ArrayJoin: {
+            Edge& separatorEdge = m_graph.varArgChild(m_node, 1);
+            Node* separator = separatorEdge.node();
+            if (separatorEdge.useKind() == UntypedUse && separator->op() == JSConstant && separator->asJSValue().isUndefined()) {
+                Node* commaNode = m_insertionSet.insertConstant(m_nodeIndex, m_node->origin, vm().smallStrings.singleCharacterString(','));
+                separatorEdge = Edge(commaNode, StringUse);
+                m_changed = true;
+            }
+            break;
+        }
+
         case StringIndexOf: {
             Node* stringNode = m_node->child1().node();
             String string = stringNode->tryGetString(m_graph);
@@ -1387,6 +1509,86 @@ private:
             m_changed = true;
             m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, m_node->origin, m_node->children.justChecks());
             m_graph.convertToConstant(m_node, jsNumber(indexResult));
+            break;
+        }
+
+        case StringLastIndexOf: {
+            Node* stringNode = m_node->child1().node();
+            String string = stringNode->tryGetString(m_graph);
+            if (!string)
+                break;
+
+            String searchString = m_node->child2()->tryGetString(m_graph);
+            if (!searchString)
+                break;
+
+            if (string.length() < searchString.length()) {
+                m_changed = true;
+                m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, m_node->origin, m_node->children.justChecks());
+                m_graph.convertToConstant(m_node, jsNumber(-1));
+                break;
+            }
+            unsigned maxStart = string.length() - searchString.length();
+            unsigned startPosition = maxStart;
+            if (m_node->child3()) {
+                if (!m_node->child3()->isInt32Constant())
+                    break;
+                int32_t pos = m_node->child3()->asInt32();
+                if (pos < 0)
+                    startPosition = 0;
+                else
+                    startPosition = std::min<unsigned>(pos, maxStart);
+            }
+
+            size_t result = string.reverseFind(searchString, startPosition);
+            int32_t indexResult = (result == notFound) ? -1 : static_cast<int32_t>(result);
+
+            m_changed = true;
+            m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, m_node->origin, m_node->children.justChecks());
+            m_graph.convertToConstant(m_node, jsNumber(indexResult));
+            break;
+        }
+
+        case StringStartsWith:
+        case StringEndsWith: {
+            bool isStartsWith = m_node->op() == StringStartsWith;
+
+            Node* stringNode = m_node->child1().node();
+            String string = stringNode->tryGetString(m_graph);
+            if (!string)
+                break;
+
+            String searchString = m_node->child2()->tryGetString(m_graph);
+            if (!searchString)
+                break;
+
+            unsigned position = isStartsWith ? 0 : string.length();
+            if (m_node->child3()) {
+                if (!m_node->child3()->isInt32Constant())
+                    break;
+                int32_t pos = m_node->child3()->asInt32();
+                if (pos < 0)
+                    position = 0;
+                else
+                    position = std::min<unsigned>(pos, string.length());
+            }
+
+            bool result;
+            if (isStartsWith) {
+                if (!position)
+                    result = string.startsWith(searchString);
+                else
+                    result = string.hasInfixStartingAt(searchString, position);
+            } else {
+                if (position == string.length())
+                    result = string.endsWith(searchString);
+                else
+                    result = string.hasInfixEndingAt(searchString, position);
+            }
+
+            m_changed = true;
+            m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, m_node->origin, m_node->children.justChecks());
+            m_graph.convertToConstant(m_node, jsBoolean(result));
             break;
         }
 
@@ -1432,15 +1634,50 @@ private:
                 break;
             }
 
+            case Array::Int8Array:
             case Array::Uint8Array:
+            case Array::Int16Array:
             case Array::Uint16Array:
             case Array::Uint32Array: {
                 if (m_node->op() == PutByVal || m_node->op() == PutByValDirect || m_node->op() == PutByValDirectResolved) {
                     Edge& valueEdge = m_graph.child(m_node, 2);
                     if (valueEdge.useKind() == Int32Use) {
-                        if (valueEdge->op() == UInt32ToNumber && valueEdge->child1().useKind() == Int32Use) {
-                            valueEdge = valueEdge->child1();
-                            m_changed = true;
+                        unsigned arrayElementWidth = 0;
+                        switch (m_node->arrayMode().modeForPut().type()) {
+                        case Array::Int8Array:
+                        case Array::Uint8Array:
+                            arrayElementWidth = 1U << 8;
+                            break;
+                        case Array::Int16Array:
+                        case Array::Uint16Array:
+                            arrayElementWidth = 1U << 16;
+                            break;
+                        default:
+                            break;
+                        }
+
+                        while (true) {
+                            if (arrayElementWidth
+                                && valueEdge->op() == ArithMod
+                                && valueEdge->binaryUseKind() == Int32Use
+                                && valueEdge->child2()->isInt32Constant()) {
+                                int32_t modConst = valueEdge->child2()->asInt32();
+                                if (modConst != INT_MIN) {
+                                    // Canonicalize modConst via std::abs as ArithMod(x, -256) and ArithMod(x, 256) are the same.
+                                    int64_t absModConst = std::abs(static_cast<int64_t>(modConst));
+                                    if (absModConst >= arrayElementWidth && absModConst % arrayElementWidth == 0) {
+                                        valueEdge = Edge(valueEdge->child1().node(), Int32Use);
+                                        m_changed = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                            if (valueEdge->op() == UInt32ToNumber && valueEdge->child1().useKind() == Int32Use) {
+                                valueEdge = valueEdge->child1();
+                                m_changed = true;
+                                continue;
+                            }
+                            break;
                         }
                     }
                 }
@@ -1471,6 +1708,19 @@ private:
             if (keyEdge->op() == MakeRope) {
                 keyEdge->setOp(MakeAtomString);
                 m_changed = true;
+            }
+
+            Node* object = m_graph.child(m_node, 0).node();
+            Node* key = keyEdge.node();
+            if (key->op() == EnumeratorNextUpdatePropertyName && key->child3()->op() == GetPropertyEnumerator && key->child3()->child1().node() == object) {
+                Node* indexNode = key->child1().node();
+                if (indexNode->op() == ExtractFromTuple && indexNode->child1()->op() == EnumeratorNextUpdateIndexAndMode) {
+                    m_node->convertToEnumeratorHasOwnProperty(
+                        m_graph, Edge(object, CellUse), Edge(key, UntypedUse),
+                        key->child1(), key->child2(), key->child3(),
+                        indexNode->child1()->arrayMode(), key->enumeratorMetadata().toRaw());
+                    m_changed = true;
+                }
             }
             break;
         }
@@ -1572,7 +1822,7 @@ private:
                 break;
 
             if (m_graph.m_plan.isFTL()) {
-                if (Options::useDataICInFTL())
+                if (Options::useHandlerICInFTL())
                     break;
             }
 
@@ -1585,25 +1835,25 @@ private:
                     break;
                 if (!function)
                     break;
-                auto* wasmFunction = jsDynamicCast<WebAssemblyFunction*>(function);
+                auto* wasmFunction = dynamicDowncast<WebAssemblyFunction>(function);
                 if (!wasmFunction)
                     break;
-                const auto& signature = Wasm::TypeInformation::getFunctionSignature(wasmFunction->typeIndex());
-                if (signature.argumentsOrResultsIncludeV128() || signature.argumentsOrResultsIncludeExnref())
+                Ref signature = wasmFunction->signature();
+                if (signature->argumentsOrResultsIncludeV128() || signature->argumentsOrResultsIncludeExnref())
                     break;
 
                 unsigned numPassedArgs = m_node->numChildren() - /* |callee| and |this| */ 2;
-                if (signature.argumentCount() > numPassedArgs)
+                if (signature->argumentCount() > numPassedArgs)
                     break;
 
-                if (!signature.returnsVoid() && signature.returnCount() != 1)
+                if (!signature->returnsVoid() && signature->returnCount() != 1)
                     break;
 
                 bool success = true;
-                for (unsigned index = 0; index < signature.argumentCount(); ++index) {
-                    auto type = signature.argumentType(index);
+                for (unsigned index = 0; index < signature->argumentCount(); ++index) {
+                    auto type = signature->argumentType(index);
                     Edge argument = m_graph.varArgChild(m_node, 2 + index);
-                    switch (type.kind) {
+                    switch (type.kind()) {
                     case Wasm::TypeKind::I32: {
                         if (!argument->shouldSpeculateInt32())
                             success = false;
@@ -1636,10 +1886,10 @@ private:
                     }
                 }
 
-                if (!signature.returnsVoid()) {
-                    ASSERT(signature.returnCount() == 1);
-                    auto type = signature.returnType(0);
-                    switch (type.kind) {
+                if (!signature->returnsVoid()) {
+                    ASSERT(signature->returnCount() == 1);
+                    auto type = signature->returnType(0);
+                    switch (type.kind()) {
                     case Wasm::TypeKind::I32:
                     case Wasm::TypeKind::I64:
                     case Wasm::TypeKind::Ref:
@@ -1672,18 +1922,18 @@ private:
                 if (!checkIndexValue)
                     break;
 
-                if (!success || !is64Bit() || !m_graph.m_plan.isFTL())
+                if (!success || !m_graph.m_plan.isFTL())
                     break;
 
-                unsigned numAllocatedArgs = static_cast<unsigned>(signature.argumentCount()) + /* |this| for wasm */ 1;
+                unsigned numAllocatedArgs = static_cast<unsigned>(signature->argumentCount()) + /* |this| for wasm */ 1;
                 m_graph.m_parameterSlots = std::max(m_graph.m_parameterSlots, Graph::parameterSlotsForArgCount(numAllocatedArgs));
 
                 unsigned checkIndex = checkIndexValue.value();
-                for (unsigned index = 0; index < signature.argumentCount(); ++index) {
-                    auto type = signature.argumentType(index);
+                for (unsigned index = 0; index < signature->argumentCount(); ++index) {
+                    auto type = signature->argumentType(index);
                     Edge argument = m_graph.varArgChild(m_node, 2 + index);
                     Node* argumentNode = argument.node();
-                    switch (type.kind) {
+                    switch (type.kind()) {
                     case Wasm::TypeKind::I32: {
                         m_insertionSet.insertCheck(checkIndex, m_node->origin, Edge(argumentNode, Int32Use));
                         m_graph.varArgChild(m_node, 2 + index) = Edge(argumentNode, KnownInt32Use);
@@ -1719,9 +1969,9 @@ private:
                     }
                 }
 
-                if (!signature.returnsVoid()) {
-                    auto type = signature.returnType(0);
-                    switch (type.kind) {
+                if (!signature->returnsVoid()) {
+                    auto type = signature->returnType(0);
+                    switch (type.kind()) {
                     case Wasm::TypeKind::I32: {
                         m_node->setResult(NodeResultInt32);
                         break;
@@ -1754,11 +2004,11 @@ private:
             // We gave up inlining a wrapped function, but still, we can inline bound function's wrapper by extracting it.
             // This also wipes bound-function thunk call which is suboptimal compared to directly calling a wrapped function here.
             if (executable->intrinsic() == BoundFunctionCallIntrinsic && function && (m_node->op() == Call || m_node->op() == TailCall || m_node->op() == TailCallInlinedCaller)) {
-                JSBoundFunction* boundFunction = jsCast<JSBoundFunction*>(function);
-                if (JSFunction* targetFunction = jsDynamicCast<JSFunction*>(boundFunction->targetFunction())) {
+                JSBoundFunction* boundFunction = uncheckedDowncast<JSBoundFunction>(function);
+                if (JSFunction* targetFunction = dynamicDowncast<JSFunction>(boundFunction->targetFunction())) {
                     auto* targetExecutable = targetFunction->executable();
                     if ((boundFunction->boundArgsLength() + m_node->numChildren()) <= Options::maximumDirectCallStackSize()) {
-                        if (FunctionExecutable* functionExecutable = jsDynamicCast<FunctionExecutable*>(targetExecutable)) {
+                        if (FunctionExecutable* functionExecutable = dynamicDowncast<FunctionExecutable>(targetExecutable)) {
                             // We need to update m_parameterSlots before we get to the backend, but we don't
                             // want to do too much of this.
                             unsigned numAllocatedArgs = static_cast<unsigned>(functionExecutable->parameterCount()) + 1;
@@ -1790,7 +2040,7 @@ private:
                 }
             }
 
-            if (FunctionExecutable* functionExecutable = jsDynamicCast<FunctionExecutable*>(executable)) {
+            if (FunctionExecutable* functionExecutable = dynamicDowncast<FunctionExecutable>(executable)) {
                 if (m_node->op() == Construct && functionExecutable->constructAbility() == ConstructAbility::CannotConstruct)
                     break;
 
@@ -1890,4 +2140,3 @@ bool performStrengthReduction(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

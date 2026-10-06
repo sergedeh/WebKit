@@ -45,7 +45,7 @@ namespace Inspector {
 static Lock rwiQueueMutex;
 static RemoteTargetQueue* rwiQueue;
 
-static RetainPtr<CFRunLoopSourceRef>& rwiRunLoopSource()
+static RetainPtr<CFRunLoopSourceRef>& NODELETE rwiRunLoopSource()
 {
     static NeverDestroyed<RetainPtr<CFRunLoopSourceRef>> source;
     return source.get();
@@ -136,11 +136,6 @@ std::optional<TargetID> RemoteConnectionToTarget::targetIdentifier() const
 NSString *RemoteConnectionToTarget::connectionIdentifier() const
 {
     return adoptNS([m_connectionIdentifier copy]).autorelease();
-}
-
-RetainPtr<NSString> RemoteConnectionToTarget::protectedConnectionIdentifier() const
-{
-    return connectionIdentifier();
 }
 
 NSString *RemoteConnectionToTarget::destination() const

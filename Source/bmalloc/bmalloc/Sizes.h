@@ -29,12 +29,7 @@
 
 #include "Algorithm.h"
 #include "BPlatform.h"
-#include <algorithm>
-#include <cstdint>
 #include <cstddef>
-#include <limits>
-#include <type_traits>
-#include <chrono>
 
 namespace bmalloc {
 
@@ -71,7 +66,6 @@ static constexpr size_t deallocatorLogCapacity = 512;
 static constexpr size_t bumpRangeCacheCapacity = 3;
 
 static constexpr size_t scavengerBytesPerMemoryPressureCheck = 16 * MB;
-static constexpr double memoryPressureThreshold = 0.75;
 
 static constexpr size_t maskSizeClassCount = maskSizeClassMax / alignment;
 

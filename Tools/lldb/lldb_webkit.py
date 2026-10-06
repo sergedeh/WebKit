@@ -242,7 +242,7 @@ def __lldb_init_module(debugger, dict):
     debugger.HandleCommand('type summary add -F lldb_webkit.WebCoreSecurityOrigin_SummaryProvider WebCore::SecurityOrigin')
     debugger.HandleCommand('type summary add -F lldb_webkit.WebCoreFrame_SummaryProvider WebCore::Frame')
 
-    for className in ['Document', 'FTPDirectoryDocument', 'HTMLDocument', 'ImageDocument', 'MediaDocument', 'PluginDocument', 'SVGDocument', 'SinkDocument', 'TextDocument', 'XMLDocument']:
+    for className in ['Document', 'HTMLDocument', 'ImageDocument', 'MediaDocument', 'PluginDocument', 'SVGDocument', 'SinkDocument', 'TextDocument', 'XMLDocument']:
         debugger.HandleCommand('type summary add -F lldb_webkit.WebCoreDocument_SummaryProvider WebCore::' + className)
 
     # synthetic types (see <https://lldb.llvm.org/varformats.html>)
@@ -723,7 +723,7 @@ class WebCoreColorProvider:
 
         color_space = self._color_space(rgba_and_flags)
 
-        # From ColorSpace.h.
+        # From ColorSpaceName.h.
         color_spaces = [
             'A98RGB',
             'DisplayP3',
@@ -1504,7 +1504,7 @@ class JSValueMirror:
     VALUE_DELETED   = 4
 
     def __init__(self, valobj, bits=None):
-        assert valobj.GetTypeName() == "JSC::JSValue" or valobj.GetTypeName() == "JSC::EncodedJSValue"
+        assert bits is not None or valobj.GetTypeName() == "JSC::JSValue"
         self.valobj = valobj
         self.bits = bits if bits is not None else valobj.GetChildMemberWithName("u").GetChildMemberWithName("asInt64").GetValueAsUnsigned(0)
 

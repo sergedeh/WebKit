@@ -1,15 +1,21 @@
 include(platform/Adwaita.cmake)
-include(platform/GCrypt.cmake)
+include(platform/CoordinatedGraphics.cmake)
 include(platform/GStreamer.cmake)
 include(platform/ImageDecoders.cmake)
+include(platform/Skia.cmake)
 include(platform/Soup.cmake)
-include(platform/TextureMapper.cmake)
 
-if (USE_CAIRO)
-    include(platform/Cairo.cmake)
-    include(platform/FreeType.cmake)
-elseif (USE_SKIA)
-    include(platform/Skia.cmake)
+if (USE_OPENSSL)
+    include(platform/OpenSSL.cmake)
+    list(APPEND WebCore_LIBRARIES OpenSSL::Crypto)
+    # The OpenSSL backend uses APIs deprecated in OpenSSL 3, see bug 245146.
+    list(APPEND WebCore_PRIVATE_DEFINITIONS OPENSSL_API_COMPAT=0x10100000L)
+else ()
+    include(platform/GCrypt.cmake)
+endif ()
+
+if (USE_TEXTURE_MAPPER)
+    include(platform/TextureMapper.cmake)
 endif ()
 
 list(APPEND WebCore_UNIFIED_SOURCE_LIST_FILES
@@ -54,6 +60,9 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/glib/SelectionData.h
     platform/glib/SystemSettings.h
 
+    platform/graphics/DMABufBuffer.h
+    platform/graphics/DMABufBufferAttributes.h
+
     platform/graphics/egl/PlatformDisplayDefault.h
     platform/graphics/egl/PlatformDisplaySurfaceless.h
 
@@ -62,13 +71,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/graphics/x11/XErrorTrapper.h
 
-    platform/gtk/ScrollbarThemeGtk.h
-
     platform/text/enchant/TextCheckerEnchant.h
-)
-
-list(APPEND WebCore_PRIVATE_LIBRARIES
-    Tasn1::Tasn1
 )
 
 list(APPEND WebCore_LIBRARIES
@@ -81,13 +84,6 @@ list(APPEND WebCore_LIBRARIES
 list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES
     ${UPOWERGLIB_INCLUDE_DIRS}
 )
-
-if (USE_CAIRO)
-    # GTK is only used by WebCore when building with cairo enabled.
-    list(APPEND WebCore_LIBRARIES
-        GTK::GTK
-    )
-endif ()
 
 if (ENABLE_WAYLAND_TARGET)
     list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES
@@ -111,25 +107,18 @@ if (ENABLE_BUBBLEWRAP_SANDBOX)
     list(APPEND WebCore_LIBRARIES Libseccomp::Libseccomp)
 endif ()
 
-if (USE_CAIRO)
-    list(APPEND WebCore_SOURCES
-        platform/cairo/DragImageCairo.cpp
-    )
-elseif (USE_SKIA)
-    # When building with Skia we don't build Cairo sources, but since
-    # Cairo is still needed in the UI process API we need to include
-    # here the Cairo sources required.
-    list(APPEND WebCore_SOURCES
-        platform/graphics/cairo/IntRectCairo.cpp
-        platform/graphics/cairo/RefPtrCairo.cpp
+# We don't build most Cairo sources, but since Cairo is still needed in the
+# UI process API we need to include here the Cairo sources required.
+list(APPEND WebCore_SOURCES
+    platform/graphics/cairo/IntRectCairo.cpp
+    platform/graphics/cairo/RefPtrCairo.cpp
 
-        platform/skia/DragImageSkia.cpp
-    )
+    platform/skia/DragImageSkia.cpp
+)
 
-    list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
-        platform/graphics/cairo/RefPtrCairo.h
-    )
-endif ()
+list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+    platform/graphics/cairo/RefPtrCairo.h
+)
 
 include_directories(SYSTEM
     ${WebCore_SYSTEM_INCLUDE_DIRECTORIES}
@@ -195,6 +184,16 @@ if (USE_LIBHYPHEN)
     list(APPEND WebCore_PRIVATE_LIBRARIES Hyphen::Hyphen)
 endif ()
 
-if (USE_LIBSECRET)
-    list(APPEND WebCore_PRIVATE_LIBRARIES Secret::Secret)
+if (USE_VULKAN)
+    list(APPEND WebCore_PRIVATE_LIBRARIES volk::volk)
+    list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
+        "${WEBCORE_DIR}/platform/graphics/vulkan"
+    )
+    list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+        platform/graphics/vulkan/VulkanHandle.h
+        platform/graphics/vulkan/VulkanStructure.h
+        platform/graphics/vulkan/VulkanTypes.h
+        platform/graphics/vulkan/VulkanUtilities.h
+        platform/graphics/vulkan/VulkanVolk.h
+    )
 endif ()

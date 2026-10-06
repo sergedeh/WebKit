@@ -23,6 +23,7 @@
 #pragma once
 
 #include <WebCore/Color.h>
+#include <WebCore/ColorSpace.h>
 #include <WebCore/FilterEffect.h>
 
 namespace WebCore {
@@ -31,24 +32,24 @@ class FEFlood final : public FilterEffect {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEFlood);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEFlood);
 public:
-    WEBCORE_EXPORT static Ref<FEFlood> create(const Color& floodColor, float floodOpacity, DestinationColorSpace = DestinationColorSpace::SRGB());
+    WEBCORE_EXPORT static Ref<FEFlood> create(const Color& floodColor, float floodOpacity, ColorSpace = ColorSpace::SRGB());
 
     bool operator==(const FEFlood&) const;
 
-    const Color& floodColor() const { return m_floodColor; }
-    bool setFloodColor(const Color&);
+    const Color& floodColor() const LIFETIME_BOUND { return m_floodColor; }
+    bool NODELETE setFloodColor(const Color&);
 
     float floodOpacity() const { return m_floodOpacity; }
-    bool setFloodOpacity(float);
+    bool NODELETE setFloodOpacity(float);
 
 #if !USE(CG) && !USE(SKIA)
     // feFlood does not perform color interpolation of any kind, so the result is always in the current
     // color space regardless of the value of color-interpolation-filters.
-    void setOperatingColorSpace(const DestinationColorSpace&) override { }
+    void setOperatingColorSpace(const ColorSpace&) override { }
 #endif
 
 private:
-    FEFlood(const Color& floodColor, float floodOpacity, DestinationColorSpace = DestinationColorSpace::SRGB());
+    FEFlood(const Color& floodColor, float floodOpacity, ColorSpace = ColorSpace::SRGB());
 
     bool operator==(const FilterEffect& other) const override { return areEqual<FEFlood>(*this, other); }
 

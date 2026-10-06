@@ -40,6 +40,7 @@ messages -> WebProcessProxy WantsDispatchMessage {
 #if ENABLE(GPU_PROCESS)
     CreateGPUProcessConnection(WebKit::GPUProcessConnectionIdentifier identifier, IPC::ConnectionHandle connectionHandle) AllowedWhenWaitingForSyncReply
     GPUProcessConnectionDidBecomeUnresponsive(WebKit::GPUProcessConnectionIdentifier identifier)
+    [EnabledBy=SiteIsolationEnabled] DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rect, WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode) AllowedWhenWaitingForSyncReply
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -56,10 +57,16 @@ messages -> WebProcessProxy WantsDispatchMessage {
 
     MemoryPressureStatusChanged(WTF::SystemMemoryPressureStatus status)
 
-    DidCollectPrewarmInformation(WebCore::RegistrableDomain domain, struct WebCore::PrewarmInformation prewarmInformation)
+    DidCollectPrewarmInformation(IPC::Untrusted<WebCore::RegistrableDomain> domain, struct WebCore::PrewarmInformation prewarmInformation)
+
+    DidCompleteAutofill(IPC::Untrusted<WebCore::Site> site)
+
+    DidObserveFirstPartyUserGesture(IPC::Untrusted<WebCore::Site> site)
 
 #if PLATFORM(COCOA)
     CacheMediaMIMETypes(Vector<String> types)
+    CacheMediaSourceTypeSupported(String type, bool isSupported)
+    SetTaskNamePort(MachSendRight taskNamePort)
 #endif
 
 #if HAVE(DISPLAY_LINK)
@@ -82,6 +89,8 @@ messages -> WebProcessProxy WantsDispatchMessage {
     IsAXAuthenticated(struct WebKit::CoreIPCAuditToken auditToken) -> (bool authenticated) Synchronous
 #endif
 
+    AccessibilityModeDidChange(enum:uint8_t WebCore::AccessibilityMode mode)
+
 #if HAVE(MEDIA_ACCESSIBILITY_FRAMEWORK)
     SetCaptionDisplayMode(enum:uint8_t WebCore::CaptionUserPreferencesDisplayMode mode)
     SetCaptionLanguage(String language)
@@ -90,14 +99,14 @@ messages -> WebProcessProxy WantsDispatchMessage {
 #if ENABLE(NOTIFICATION_EVENT)
     [EnabledBy=NotificationEventEnabled] GetNotifications(URL registrationURL, String tag) -> (Vector<WebCore::NotificationData> result)
 #endif
-    [EnabledBy=AppBadgeEnabled] SetAppBadgeFromWorker(WebCore::SecurityOriginData origin, std::optional<uint64_t> badge)
+    [EnabledBy=AppBadgeEnabled] SetAppBadgeFromWorker(IPC::Untrusted<WebCore::SecurityOriginData> origin, std::optional<uint64_t> badge)
 
     SerializeAndWrapCryptoKey(struct WebCore::CryptoKeyData key) -> (std::optional<Vector<uint8_t>> wrappedKey) Synchronous
     UnwrapCryptoKey(struct WebCore::WrappedCryptoKey wrappedKey) -> (std::optional<Vector<uint8_t>> key) Synchronous
 
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
 #if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
-    CreateLogStream(IPC::StreamServerConnectionHandle connectionHandle, WebKit::LogStreamIdentifier identifier) -> (IPC::Semaphore streamWakeUpSemaphore, IPC::Semaphore streamClientWaitSemaphore)
+    CreateLogStream(IPC::StreamServerConnectionHandle connectionHandle, WebKit::LogStreamIdentifier identifier) -> ()
 #endif
 #if !ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
     CreateLogStream(WebKit::LogStreamIdentifier identifier) -> ()
@@ -110,14 +119,21 @@ messages -> WebProcessProxy WantsDispatchMessage {
     [EnabledBy=ServiceWorkersEnabled] SendMessageToInspector(WebCore::ServiceWorkerIdentifier identifier, String message)
 #endif
 
-#if ENABLE(REMOTE_INSPECTOR) && ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER) && ENABLE(REMOTE_INSPECTOR)
     SendWasmDebuggerResponse(String response)
+    WasmDebugServerReady()
 #endif
 
-    DidPostMessage(WebKit::WebPageProxyIdentifier pageID, WebKit::UserContentControllerIdentifier identifier, struct WebKit::FrameInfoData frameInfoData, WebKit::ScriptMessageHandlerIdentifier messageHandlerID, WebKit::JavaScriptEvaluationResult message) -> (Expected<WebKit::JavaScriptEvaluationResult, String> reply)
-    DidPostLegacySynchronousMessage(WebKit::WebPageProxyIdentifier pageID, WebKit::UserContentControllerIdentifier identifier, struct WebKit::FrameInfoData frameInfoData, WebKit::ScriptMessageHandlerIdentifier messageHandlerID, WebKit::JavaScriptEvaluationResult message) -> (Expected<WebKit::JavaScriptEvaluationResult, String> reply) Synchronous
+    DidPostMessage(WebKit::WebPageProxyIdentifier pageID, WebKit::UserContentControllerIdentifier identifier, struct WebKit::FrameInfoData frameInfoData, WebKit::ScriptMessageHandlerIdentifier messageHandlerID, WebKit::JavaScriptEvaluationResult message) -> (std::expected<WebKit::JavaScriptEvaluationResult, String> reply)
+    DidPostLegacySynchronousMessage(WebKit::WebPageProxyIdentifier pageID, WebKit::UserContentControllerIdentifier identifier, struct WebKit::FrameInfoData frameInfoData, WebKit::ScriptMessageHandlerIdentifier messageHandlerID, WebKit::JavaScriptEvaluationResult message) -> (std::expected<WebKit::JavaScriptEvaluationResult, String> reply) Synchronous
 
 #if ENABLE(IPC_TESTING_API)
     TakeInvalidMessageStringForTesting() -> (String error) Synchronous
+#endif
+
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+    OffscreenCanvasPlaceholderCreated(WebCore::PlaceholderRenderingContextIdentifier identifier)
+    OffscreenCanvasPlaceholderDestroyed(WebCore::PlaceholderRenderingContextIdentifier identifier)
+    CommitOffscreenCanvasPlaceholderFrame(WebCore::RemotePlaceholderRenderingContextIdentifier identifier, struct WebCore::ImageBufferTransferHandle transferHandle, std::optional<WebKit::ImageBufferBackendHandle> layerContentsHandle, bool originClean, bool opaque) -> (bool placeholderMayExist)
 #endif
 }

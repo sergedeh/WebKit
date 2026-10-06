@@ -29,7 +29,6 @@
 #if PLATFORM(MAC)
 
 #import "Blob.h"
-#import "CSSPrimitiveValueMappings.h"
 #import "CSSValuePool.h"
 #import "Color.h"
 #import "ColorCocoa.h"
@@ -56,6 +55,7 @@
 #import "RenderBlock.h"
 #import "RenderImage.h"
 #import "SharedBuffer.h"
+#import "StyleKeyword+Mappings.h"
 #import "WebContentReader.h"
 #import "WebNSAttributedStringExtras.h"
 #import "markup.h"
@@ -71,9 +71,11 @@ namespace WebCore {
 void Editor::pasteWithPasteboard(Pasteboard* pasteboard, OptionSet<PasteOption> options)
 {
     auto range = selectedRange();
+    if (!range)
+        return;
 
     // FIXME: How can this hard-coded pasteboard name be right, given that the passed-in pasteboard has a name?
-    client()->setInsertionPasteboard(NSPasteboardNameGeneral);
+    protect(client())->setInsertionPasteboard(NSPasteboardNameGeneral);
 
     bool chosePlainText;
     RefPtr<DocumentFragment> fragment = webContentFromPasteboard(*pasteboard, *range, options.contains(PasteOption::AllowPlainText), chosePlainText);
@@ -84,7 +86,7 @@ void Editor::pasteWithPasteboard(Pasteboard* pasteboard, OptionSet<PasteOption> 
     if (fragment && shouldInsertFragment(*fragment, range, EditorInsertAction::Pasted))
         pasteAsFragment(fragment.releaseNonNull(), canSmartReplaceWithPasteboard(*pasteboard), false, options.contains(PasteOption::IgnoreMailBlockquote) ? MailBlockquoteHandling::IgnoreBlockquote : MailBlockquoteHandling::RespectBlockquote );
     
-    if (auto* client = this->client())
+    if (CheckedPtr client = this->client())
         client->setInsertionPasteboard(String());
 }
 
@@ -96,7 +98,7 @@ void Editor::platformCopyFont()
     auto fontData = RetainPtr([fontSampleString RTFFromRange:NSMakeRange(0, [fontSampleString length]) documentAttributes:@{ }]);
 
     PasteboardBuffer pasteboardBuffer;
-    pasteboardBuffer.contentOrigin = document().originIdentifierForPasteboard();
+    pasteboardBuffer.contentOrigin = protect(document())->originIdentifierForPasteboard();
     pasteboardBuffer.type = legacyFontPasteboardTypeSingleton();
     pasteboardBuffer.data = SharedBuffer::create(fontData.get());
     pasteboard.write(pasteboardBuffer);
@@ -106,7 +108,7 @@ void Editor::platformPasteFont()
 {
     Pasteboard pasteboard(PagePasteboardContext::create(document().pageID()), NSPasteboardNameFont);
 
-    client()->setInsertionPasteboard(pasteboard.name());
+    protect(client())->setInsertionPasteboard(pasteboard.name());
 
     RetainPtr<NSData> fontData;
     if (auto buffer = pasteboard.readBuffer(std::nullopt, legacyFontPasteboardTypeSingleton()))
@@ -127,13 +129,13 @@ void Editor::platformPasteFont()
         // FIXME: Need more sophisticated escaping code if we want to handle family names
         // with characters like single quote or backslash in their names.
         style->setProperty(CSSPropertyFontFamily, [NSString stringWithFormat:@"'%@'", retainPtr([font familyName]).get()]);
-        style->setProperty(CSSPropertyFontSize, CSSPrimitiveValue::create([font pointSize], CSSUnitType::CSS_PX));
+        style->setProperty(CSSPropertyFontSize, CSSPrimitiveValue::create([font pointSize], CSSUnitType::Px));
         // FIXME: Map to the entire range of CSS weight values.
         style->setProperty(CSSPropertyFontWeight, ([NSFontManager.sharedFontManager weightOfFont:font.get()] >= 7) ? CSSValueBold : CSSValueNormal);
         style->setProperty(CSSPropertyFontStyle, ([NSFontManager.sharedFontManager traitsOfFont:font.get()] & NSItalicFontMask) ? CSSValueItalic : CSSValueNormal);
     } else {
         style->setProperty(CSSPropertyFontFamily, "Helvetica"_s);
-        style->setProperty(CSSPropertyFontSize, CSSPrimitiveValue::create(12, CSSUnitType::CSS_PX));
+        style->setProperty(CSSPropertyFontSize, CSSPrimitiveValue::create(12, CSSUnitType::Px));
         style->setProperty(CSSPropertyFontWeight, CSSValueNormal);
         style->setProperty(CSSPropertyFontStyle, CSSValueNormal);
     }
@@ -162,7 +164,7 @@ void Editor::platformPasteFont()
 
     applyStyleToSelection(style.ptr(), EditAction::PasteFont);
 
-    client()->setInsertionPasteboard(String());
+    protect(client())->setInsertionPasteboard(String());
 }
 
 RefPtr<SharedBuffer> Editor::imageInWebArchiveFormat(Element& imageElement)
@@ -204,11 +206,11 @@ static void getImage(Element& imageElement, RefPtr<Image>& image, CachedImage*& 
     if (!renderImage)
         return;
 
-    CachedResourceHandle tentativeCachedImage = renderImage->cachedImage();
+    RefPtr tentativeCachedImage = renderImage->cachedImage();
     if (!tentativeCachedImage || tentativeCachedImage->errorOccurred())
         return;
 
-    image = tentativeCachedImage->imageForRenderer(renderImage.get());
+    image = tentativeCachedImage->image();
     if (!image)
         return;
 
@@ -217,11 +219,11 @@ static void getImage(Element& imageElement, RefPtr<Image>& image, CachedImage*& 
 
 void Editor::selectionWillChange()
 {
-    if (!hasComposition() || ignoreSelectionChanges() || document().selection().isNone() || !document().hasLivingRenderTree())
+    if (!hasComposition() || ignoreSelectionChanges() || document().selection().isNone() || document().renderTreeState() != Document::RenderTreeState::Built)
         return;
 
     cancelComposition();
-    client()->canceledComposition();
+    protect(client())->canceledComposition();
 }
 
 String Editor::plainTextFromPasteboard(const PasteboardPlainText& text)

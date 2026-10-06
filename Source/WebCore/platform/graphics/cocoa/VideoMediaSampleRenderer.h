@@ -30,6 +30,7 @@
 #include "MediaReorderQueue.h"
 #include "ProcessIdentity.h"
 #include "SampleMap.h"
+#include "VideoPlaybackQualityMetrics.h"
 #include "WebAVSampleBufferListener.h"
 #include <wtf/Deque.h>
 #include <wtf/Forward.h>
@@ -73,8 +74,8 @@ public:
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
     using Preferences = VideoRendererPreferences;
-    bool prefersDecompressionSession() const;
-    void setPreferences(Preferences);
+    bool NODELETE prefersDecompressionSession() const;
+    void NODELETE setPreferences(Preferences);
     bool isUsingDecompressionSession() const { return m_isUsingDecompressionSession; }
 
     void setTimebase(RetainPtr<CMTimebaseRef>&&);
@@ -82,7 +83,7 @@ public:
 
     bool isReadyForMoreMediaData() const;
     void requestMediaDataWhenReady(Function<void()>&&);
-    void enqueueSample(const MediaSample&, const MediaTime&);
+    void enqueueSample(const MediaSample&, std::optional<MediaTime> minimumUpcomingTime);
     void stopRequestingMediaData();
 
     void notifyFirstFrameAvailable(Function<void(const MediaTime&, double)>&&);
@@ -99,9 +100,9 @@ public:
 
     void expectMinimumUpcomingSampleBufferPresentationTime(const MediaTime&);
 
-    WebSampleBufferVideoRendering *renderer() const;
+    WebSampleBufferVideoRendering *NODELETE renderer() const;
 
-    template <typename T> T* as() const;
+    template <typename T> T* NODELETE as() const;
     template <> AVSampleBufferVideoRenderer* as() const;
     template <> AVSampleBufferDisplayLayer* as() const
     {
@@ -115,11 +116,8 @@ public:
     };
     DisplayedPixelBufferEntry copyDisplayedPixelBuffer();
 
-    unsigned totalDisplayedFrames() const;
-    unsigned totalVideoFrames() const;
-    unsigned droppedVideoFrames() const;
-    unsigned corruptedVideoFrames() const;
-    MediaTime totalFrameDelay() const;
+    unsigned NODELETE totalDisplayedFrames() const;
+    std::optional<VideoPlaybackQualityMetrics> videoPlaybackQualityMetrics() const;
 
     void setResourceOwner(const ProcessIdentity&);
 
@@ -152,7 +150,7 @@ private:
         Displayed
     };
     DecodedFrameResult maybeQueueFrameForDisplay(const MediaTime&, const MediaSample&, FlushId);
-    void flushCompressedSampleQueue();
+    void NODELETE flushCompressedSampleQueue();
     void flushDecodedSampleQueue();
     void cancelTimer();
     void purgeDecodedSampleQueue(FlushId);
@@ -167,8 +165,8 @@ private:
     RetainPtr<CVPixelBufferRef> imageForSample(CMSampleBufferRef) const;
 
     void assignResourceOwner(const MediaSample&);
-    bool areSamplesQueuesReadyForMoreMediaData(size_t waterMark) const;
-    size_t compressedSamplesCount() const;
+    bool NODELETE areSamplesQueuesReadyForMoreMediaData(size_t waterMark) const;
+    size_t NODELETE compressedSamplesCount() const;
     void maybeBecomeReadyForMoreMediaData();
     bool shouldDecodeSample(const MediaSample&);
 
@@ -178,12 +176,12 @@ private:
 
     Ref<GuaranteedSerialFunctionDispatcher> dispatcher() const;
     void ensureOnDispatcher(Function<void()>&&) const;
-    void ensureOnDispatcherSync(Function<void()>&&) const;
+    void ensureOnDispatcherSync(NOESCAPE Function<void()>&&) const;
     dispatch_queue_t dispatchQueue() const;
     RefPtr<WebCoreDecompressionSession> decompressionSession() const;
-    bool useDecompressionSessionForProtectedFallback() const;
-    bool useDecompressionSessionForProtectedContent() const;
-    bool useStereoDecoding() const;
+    bool NODELETE useDecompressionSessionForProtectedFallback() const;
+    bool NODELETE useDecompressionSessionForProtectedContent() const;
+    bool NODELETE useStereoDecoding() const;
 
     // WebAVSampleBufferListenerClient
     void videoRendererDidReceiveError(WebSampleBufferVideoRendering *, NSError *) final;
@@ -194,7 +192,6 @@ private:
 #if !RELEASE_LOG_DISABLED
     // Logger
     const Logger& logger() const final { return m_logger.get(); }
-    Ref<const Logger> protectedLogger() const { return logger(); }
     ASCIILiteral logClassName() const final { return "VideoMediaSampleRenderer"_s; }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     WTFLogChannel& logChannel() const final;
@@ -210,7 +207,7 @@ private:
     TimebaseAndTimerSource m_timebaseAndTimerSource WTF_GUARDED_BY_LOCK(m_lock);
     RefPtr<EffectiveRateChangedListener> m_effectiveRateChangedListener;
     std::atomic<FlushId> m_flushId { 0 };
-    Deque<std::tuple<Ref<const MediaSample>, MediaTime, FlushId, bool>> m_compressedSampleQueue WTF_GUARDED_BY_CAPABILITY(dispatcher().get());
+    Deque<std::tuple<Ref<const MediaSample>, std::optional<MediaTime>, FlushId, bool>> m_compressedSampleQueue WTF_GUARDED_BY_CAPABILITY(dispatcher().get());
     std::atomic<uint32_t> m_compressedSamplesCount { 0 };
     std::atomic<uint32_t> m_pendingSamplesCount { 0 };
     MediaSampleReorderQueue m_decodedSampleQueue WTF_GUARDED_BY_CAPABILITY(dispatcher().get());
@@ -235,6 +232,8 @@ private:
     bool m_needsFlushing WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
 
     MediaTime m_lastMinimumUpcomingPresentationTime WTF_GUARDED_BY_CAPABILITY(dispatcher().get()) { MediaTime::invalidTime() };
+    bool m_decoderIdledAtHighWaterMark WTF_GUARDED_BY_CAPABILITY(dispatcher().get()) { false };
+    bool m_hasReachedHighWatermark WTF_GUARDED_BY_CAPABILITY(dispatcher().get()) { false };
 
     // Playback Statistics
     std::atomic<unsigned> m_totalVideoFrames { 0 };

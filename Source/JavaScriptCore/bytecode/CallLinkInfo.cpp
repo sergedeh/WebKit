@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CallLinkInfo.h"
 
+#include "BaselineJITRegisters.h"
 #include "CCallHelpers.h"
 #include "CallFrameShuffleData.h"
 #include "DFGJITCode.h"
@@ -47,7 +48,6 @@ CallLinkInfo::CallType CallLinkInfo::callTypeFor(OpcodeID opcodeID)
 {
     switch (opcodeID) {
     case op_tail_call_varargs:
-    case op_tail_call_forward_arguments:
         return TailCallVarargs;
 
     case op_call:
@@ -55,6 +55,8 @@ CallLinkInfo::CallType CallLinkInfo::callTypeFor(OpcodeID opcodeID)
     case op_call_direct_eval:
     case op_iterator_open:
     case op_iterator_next:
+    case op_async_iterator_open:
+    case op_async_iterator_next:
         return Call;
 
     case op_call_varargs:
@@ -168,7 +170,7 @@ bool CallLinkInfo::haveLastSeenCallee() const
     return !!m_lastSeenCallee;
 }
 
-void CallLinkInfo::visitWeak(VM& vm)
+void CallLinkInfo::reconcileWeakReferencesAtGCEnd(VM& vm)
 {
     auto handleSpecificCallee = [&] (JSFunction* callee) {
         if (vm.heap.isMarked(callee->executable()))
@@ -183,7 +185,7 @@ void CallLinkInfo::visitWeak(VM& vm)
         break;
     case Mode::Polymorphic: {
         if (stub()) {
-            if (!stub()->visitWeak(vm)) {
+            if (!stub()->reconcileWeakReferencesAtGCEnd(vm)) {
                 dataLogLnIf(Options::verboseOSR(), "At ", codeOrigin(), ", ", RawPointer(this), ": clearing call stub to ", listDump(stub()->variants()), ", stub routine ", RawPointer(stub()), ".");
                 unlinkOrUpgrade(vm, nullptr, nullptr);
                 m_clearedByGC = true;
@@ -209,7 +211,7 @@ void CallLinkInfo::visitWeak(VM& vm)
 
     if (haveLastSeenCallee() && !vm.heap.isMarked(lastSeenCallee())) {
         if (lastSeenCallee()->type() == JSFunctionType)
-            handleSpecificCallee(jsCast<JSFunction*>(lastSeenCallee()));
+            handleSpecificCallee(uncheckedDowncast<JSFunction>(lastSeenCallee()));
         else
             m_clearedByGC = true;
         m_lastSeenCallee.clear();
@@ -246,7 +248,7 @@ void DataOnlyCallLinkInfo::initialize(VM& vm, CodeBlock* owner, CallType callTyp
 
 std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner)
 {
-    auto* codeBlock = jsDynamicCast<CodeBlock*>(owner);
+    auto* codeBlock = dynamicDowncast<CodeBlock>(owner);
     if (!codeBlock)
         return { };
     CodeOrigin codeOrigin = this->codeOrigin();
@@ -293,9 +295,9 @@ JSGlobalObject* CallLinkInfo::globalObjectForSlowPath(JSCell* owner)
     if (codeBlock)
         return codeBlock->globalObject();
 #if ENABLE(WEBASSEMBLY)
-    auto* module = jsDynamicCast<JSWebAssemblyModule*>(owner);
+    auto* module = dynamicDowncast<JSWebAssemblyModule>(owner);
     if (module)
-        return module->globalObject();
+        return module->realm();
 #endif
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
@@ -320,15 +322,10 @@ void CallLinkInfo::setStub(Ref<PolymorphicCallStubRoutine>&& newStub)
 
 #if ENABLE(JIT)
 
-void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& jit, bool isTailCall, ScopedLambda<void()>&& prepareForTailCall)
+void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& jit, bool isTailCall, NOESCAPE const ScopedLambda<void()>& prepareForTailCall)
 {
     if (callLinkInfo)
         jit.move(CCallHelpers::TrustedImmPtr(callLinkInfo), BaselineJITRegisters::Call::callLinkInfoGPR);
-#if USE(JSVALUE32_64)
-    // We need this on JSVALUE32_64 only as on JSVALUE64 a pointer comparison in the DataIC fast
-    // path catches this.
-    auto failed = jit.branchIfNotCell(BaselineJITRegisters::Call::calleeJSR);
-#endif
 
     // For RISCV64, scratch register usage here collides with MacroAssembler's internal usage
     // that's necessary for the test-and-branch operation but is avoidable by loading from the callee
@@ -348,9 +345,6 @@ void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& ji
         found.append(jit.branchTestPtr(CCallHelpers::NonZero, scratchGPR, CCallHelpers::TrustedImm32(polymorphicCalleeMask)));
     }
 
-#if USE(JSVALUE32_64)
-    failed.link(&jit);
-#endif
     jit.move(CCallHelpers::TrustedImmPtr(LLInt::defaultCall().code().taggedPtr()), BaselineJITRegisters::Call::callTargetGPR);
 
     found.link(&jit);
@@ -370,9 +364,9 @@ void CallLinkInfo::emitDataICFastPath(CCallHelpers& jit)
     emitFastPathImpl(nullptr, jit, false, nullptr);
 }
 
-void CallLinkInfo::emitTailCallDataICFastPath(CCallHelpers& jit, ScopedLambda<void()>&& prepareForTailCall)
+void CallLinkInfo::emitTailCallDataICFastPath(CCallHelpers& jit, NOESCAPE const ScopedLambda<void()>& prepareForTailCall)
 {
-    emitFastPathImpl(nullptr, jit, true, WTF::move(prepareForTailCall));
+    emitFastPathImpl(nullptr, jit, true, prepareForTailCall);
 }
 
 void CallLinkInfo::emitFastPath(CCallHelpers& jit, CompileTimeCallLinkInfo callLinkInfo)
@@ -383,12 +377,12 @@ void CallLinkInfo::emitFastPath(CCallHelpers& jit, CompileTimeCallLinkInfo callL
     return CallLinkInfo::emitDataICFastPath(jit);
 }
 
-void CallLinkInfo::emitTailCallFastPath(CCallHelpers& jit, CompileTimeCallLinkInfo callLinkInfo, ScopedLambda<void()>&& prepareForTailCall)
+void CallLinkInfo::emitTailCallFastPath(CCallHelpers& jit, CompileTimeCallLinkInfo callLinkInfo, NOESCAPE const ScopedLambda<void()>& prepareForTailCall)
 {
     if (std::holds_alternative<OptimizingCallLinkInfo*>(callLinkInfo))
-        return std::get<OptimizingCallLinkInfo*>(callLinkInfo)->emitTailCallFastPath(jit, WTF::move(prepareForTailCall));
+        return std::get<OptimizingCallLinkInfo*>(callLinkInfo)->emitTailCallFastPath(jit, prepareForTailCall);
 
-    return CallLinkInfo::emitTailCallDataICFastPath(jit, WTF::move(prepareForTailCall));
+    return CallLinkInfo::emitTailCallDataICFastPath(jit, prepareForTailCall);
 }
 
 void OptimizingCallLinkInfo::emitFastPath(CCallHelpers& jit)
@@ -397,10 +391,10 @@ void OptimizingCallLinkInfo::emitFastPath(CCallHelpers& jit)
     emitFastPathImpl(this, jit, isTailCall(), nullptr);
 }
 
-void OptimizingCallLinkInfo::emitTailCallFastPath(CCallHelpers& jit, ScopedLambda<void()>&& prepareForTailCall)
+void OptimizingCallLinkInfo::emitTailCallFastPath(CCallHelpers& jit, NOESCAPE const ScopedLambda<void()>& prepareForTailCall)
 {
     RELEASE_ASSERT(isTailCall());
-    emitFastPathImpl(this, jit, isTailCall(), WTF::move(prepareForTailCall));
+    emitFastPathImpl(this, jit, isTailCall(), prepareForTailCall);
 }
 
 #if ENABLE(DFG_JIT)
@@ -446,7 +440,7 @@ void DirectCallLinkInfo::unlinkOrUpgradeImpl(VM&, CodeBlock* oldCodeBlock, CodeB
     RELEASE_ASSERT(!isOnList());
 }
 
-void DirectCallLinkInfo::visitWeak(VM& vm)
+void DirectCallLinkInfo::reconcileWeakReferencesAtGCEnd(VM& vm)
 {
     if (m_codeBlock && !vm.heap.isMarked(m_codeBlock)) {
         dataLogLnIf(Options::verboseOSR(), "Clearing call to ", RawPointer(m_codeBlock), " (", pointerDump(m_codeBlock), ").");
@@ -479,7 +473,7 @@ CCallHelpers::JumpList DirectCallLinkInfo::emitDirectFastPath(CCallHelpers& jit)
     return { };
 }
 
-CCallHelpers::JumpList DirectCallLinkInfo::emitDirectTailCallFastPath(CCallHelpers& jit, ScopedLambda<void()>&& prepareForTailCall)
+CCallHelpers::JumpList DirectCallLinkInfo::emitDirectTailCallFastPath(CCallHelpers& jit, NOESCAPE const ScopedLambda<void()>& prepareForTailCall)
 {
     RELEASE_ASSERT(isTailCall());
 
@@ -555,7 +549,7 @@ CodeBlock* DirectCallLinkInfo::retrieveCodeBlock(FunctionExecutable* functionExe
     if (!codeBlock)
         return nullptr;
 
-    CodeBlock* ownerCodeBlock = jsDynamicCast<CodeBlock*>(owner());
+    CodeBlock* ownerCodeBlock = dynamicDowncast<CodeBlock>(owner());
     if (!ownerCodeBlock)
         return nullptr;
 
@@ -588,7 +582,7 @@ void DirectCallLinkInfo::repatchSpeculatively()
         return;
     }
 
-    FunctionExecutable* functionExecutable = jsDynamicCast<FunctionExecutable*>(m_executable);
+    FunctionExecutable* functionExecutable = dynamicDowncast<FunctionExecutable>(m_executable);
     if (!functionExecutable) {
         initialize();
         return;
@@ -612,7 +606,7 @@ void DirectCallLinkInfo::repatchSpeculatively()
 void DirectCallLinkInfo::validateSpeculativeRepatchOnMainThread(VM&)
 {
     constexpr bool verbose = false;
-    FunctionExecutable* functionExecutable = jsDynamicCast<FunctionExecutable*>(m_executable);
+    FunctionExecutable* functionExecutable = dynamicDowncast<FunctionExecutable>(m_executable);
     if (!functionExecutable)
         return;
 

@@ -26,6 +26,8 @@
 #include "config.h"
 #include "ServiceWorkerClients.h"
 
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertSequences.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSServiceWorkerWindowClient.h"
 #include "Logging.h"
@@ -37,6 +39,7 @@
 #include <ranges>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -94,14 +97,14 @@ void ServiceWorkerClients::matchAll(ScriptExecutionContext& context, const Clien
 
 void ServiceWorkerClients::openWindow(ScriptExecutionContext& context, const String& urlString, Ref<DeferredPromise>&& promise)
 {
-    LOG(ServiceWorker, "WebProcess %i service worker calling openWindow to URL %s", getpid(), urlString.utf8().data());
+    LOG_WITH_STREAM(ServiceWorker, stream << "WebProcess "_s << getpid() << " service worker calling openWindow to URL "_s << urlString);
 
     if (context.settingsValues().serviceWorkersUserGestureEnabled && !downcast<ServiceWorkerGlobalScope>(context).isProcessingUserGesture()) {
         promise->reject(Exception { ExceptionCode::InvalidAccessError, "ServiceWorkerClients.openWindow() requires a user gesture"_s });
         return;
     }
 
-    auto url = context.completeURL(urlString);
+    auto url = context.encodingParseURL(urlString);
     if (!url.isValid()) {
         promise->reject(Exception { ExceptionCode::TypeError, makeString("URL string "_s, urlString, " cannot successfully be parsed"_s) });
         return;

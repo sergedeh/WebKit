@@ -28,6 +28,7 @@
 #include "ArgumentCoders.h" // NOLINT
 #include "Decoder.h" // NOLINT
 #include "HandleMessage.h" // NOLINT
+#include "MessageNames.h" // NOLINT
 #include "TestClassName.h" // NOLINT
 #if ENABLE(TEST_FEATURE)
 #include "TestTwoStateEnum.h" // NOLINT
@@ -44,7 +45,6 @@ namespace WebKit {
 
 void TestWithSuperclass::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
-    Ref protectedThis { *this };
     if (decoder.messageName() == Messages::TestWithSuperclass::LoadURL::name()) {
         IPC::handleMessage<Messages::TestWithSuperclass::LoadURL>(connection, decoder, this, &TestWithSuperclass::loadURL);
         return;
@@ -52,6 +52,10 @@ void TestWithSuperclass::didReceiveMessage(IPC::Connection& connection, IPC::Dec
 #if ENABLE(TEST_FEATURE)
     if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessage::name()) {
         IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessage>(connection, decoder, this, &TestWithSuperclass::testAsyncMessage);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageAnyThread::name()) {
+        IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageAnyThread>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageAnyThread);
         return;
     }
     if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithNoArguments::name()) {
@@ -67,12 +71,17 @@ void TestWithSuperclass::didReceiveMessage(IPC::Connection& connection, IPC::Dec
         return;
     }
 #endif
+    if (decoder.messageName() == Messages::TestWithSuperclass::TestMessageWithMessageName::name()) {
+        IPC::handleMessage<Messages::TestWithSuperclass::TestMessageWithMessageName>(connection, decoder, this, &TestWithSuperclass::testMessageWithMessageName);
+        return;
+    }
+#if ENABLE(TEST_FEATURE)
+#endif
     WebPageBase::didReceiveMessage(connection, decoder);
 }
 
 void TestWithSuperclass::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& replyEncoder)
 {
-    Ref protectedThis { *this };
     if (decoder.messageName() == Messages::TestWithSuperclass::TestSyncMessage::name()) {
         IPC::handleMessageSynchronous<Messages::TestWithSuperclass::TestSyncMessage>(connection, decoder, replyEncoder, this, &TestWithSuperclass::testSyncMessage);
         return;
@@ -102,6 +111,14 @@ template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::Tes
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName::TestWithSuperclass_TestAsyncMessage>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {
     return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessage::ReplyArguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageAnyThread>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageAnyThread::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName::TestWithSuperclass_TestAsyncMessageAnyThread>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageAnyThread::ReplyArguments>(globalObject, decoder);
 }
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageWithNoArguments>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {
@@ -144,10 +161,18 @@ template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName
 {
     return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestSynchronousMessage::ReplyArguments>(globalObject, decoder);
 }
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestMessageWithMessageName>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestMessageWithMessageName::Arguments>(globalObject, decoder);
+}
 #if ENABLE(TEST_FEATURE)
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {
     return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageAnyThreadReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageAnyThreadReply::Arguments>(globalObject, decoder);
 }
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageWithNoArgumentsReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {

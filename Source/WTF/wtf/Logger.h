@@ -30,6 +30,7 @@
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if ENABLE(JOURNALD_LOG)
 #define SD_JOURNAL_SUPPRESS_LOCATION
@@ -138,15 +139,17 @@ public:
 
     class Observer {
     public:
-        virtual ~Observer() = default;
+        virtual ~Observer() { assertIsNotRegistered(); }
         // Can be called on any thread.
-        virtual void didLogMessage(const WTFLogChannel&, WTFLogLevel, Vector<JSONLogValue>&&) = 0;
+        virtual void didLogMessage(const WTFLogChannel&, WTFLogLevel, std::optional<WTFLogLocation>, Vector<JSONLogValue>&&) = 0;
+
+        WTF_EXPORT_PRIVATE void assertIsNotRegistered() const;
     };
 
     class MessageHandlerObserver {
     public:
         virtual ~MessageHandlerObserver() = default;
-        virtual void handleLogMessage(const WTFLogChannel&, WTFLogLevel, Vector<JSONLogValue>&&) = 0;
+        virtual void handleLogMessage(const WTFLogChannel&, WTFLogLevel, std::optional<WTFLogLocation>, const Vector<JSONLogValue>&) = 0;
     };
 
     static Ref<Logger> create(const void* owner)
@@ -162,7 +165,7 @@ public:
         //  on some systems, so don't allow it.
         UNUSED_PARAM(channel);
 #else
-        if (!willLog(channel, WTFLogLevel::Always, arguments...))
+        if (!willLog(channel, WTFLogLevel::Always, { }, arguments...))
             return;
 
         log(channel, WTFLogLevel::Always, arguments...);
@@ -172,7 +175,7 @@ public:
     template<typename... Arguments>
     inline void error(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Error, arguments...))
+        if (!willLog(channel, WTFLogLevel::Error, { }, arguments...))
             return;
 
         log(channel, WTFLogLevel::Error, arguments...);
@@ -181,7 +184,7 @@ public:
     template<typename... Arguments>
     inline void warning(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Warning, arguments...))
+        if (!willLog(channel, WTFLogLevel::Warning, { }, arguments...))
             return;
 
         log(channel, WTFLogLevel::Warning, arguments...);
@@ -190,7 +193,7 @@ public:
     template<typename... Arguments>
     inline void info(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Info, arguments...))
+        if (!willLog(channel, WTFLogLevel::Info, { }, arguments...))
             return;
 
         log(channel, WTFLogLevel::Info, arguments...);
@@ -199,7 +202,7 @@ public:
     template<typename... Arguments>
     inline void debug(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Debug, arguments...))
+        if (!willLog(channel, WTFLogLevel::Debug, { }, arguments...))
             return;
 
         log(channel, WTFLogLevel::Debug, arguments...);
@@ -216,7 +219,7 @@ public:
         UNUSED_PARAM(function);
         UNUSED_PARAM(line);
 #else
-        if (!willLog(channel, WTFLogLevel::Always, arguments...))
+        if (!willLog(channel, WTFLogLevel::Always, { { file, function, line } }, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Always, file, function, line, arguments...);
@@ -226,7 +229,7 @@ public:
     template<typename... Arguments>
     inline void errorVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Error, arguments...))
+        if (!willLog(channel, WTFLogLevel::Error, { { file, function, line } }, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Error, file, function, line, arguments...);
@@ -235,7 +238,7 @@ public:
     template<typename... Arguments>
     inline void warningVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Warning, arguments...))
+        if (!willLog(channel, WTFLogLevel::Warning, { { file, function, line } }, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Warning, file, function, line, arguments...);
@@ -244,7 +247,7 @@ public:
     template<typename... Arguments>
     inline void infoVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Info, arguments...))
+        if (!willLog(channel, WTFLogLevel::Info, { { file, function, line } }, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Info, file, function, line, arguments...);
@@ -253,22 +256,23 @@ public:
     template<typename... Arguments>
     inline void debugVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Debug, arguments...))
+        if (!willLog(channel, WTFLogLevel::Debug, { { file, function, line } }, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Debug, file, function, line, arguments...);
     }
 
     template<typename... Argument>
-    inline bool willLog(const WTFLogChannel& channel, WTFLogLevel level, const Argument&... arguments) const
+    inline bool willLog(const WTFLogChannel& channel, WTFLogLevel level, std::optional<WTFLogLocation> logLocation, const Argument&... arguments) const
     {
         {
             if (!messageHandlerObserverLock().tryLock())
                 return false;
 
             Locker locker { AdoptLock, messageHandlerObserverLock() };
+            Vector<JSONLogValue> values { ConsoleLogValue<Argument>::toValue(arguments)... };
             for (MessageHandlerObserver& observer : messageHandlerObservers())
-                observer.handleLogMessage(channel, level, { ConsoleLogValue<Argument>::toValue(arguments)... });
+                observer.handleLogMessage(channel, level, logLocation, values);
         }
 
         if (!m_enabled)
@@ -289,12 +293,12 @@ public:
     }
 
     template<typename... Arguments>
-    inline void toObservers(WTFLogChannel& channel, WTFLogLevel level, const Arguments&... arguments) const
+    inline void toObservers(WTFLogChannel& channel, WTFLogLevel level, std::optional<WTFLogLocation> location, const Arguments&... arguments) const
     {
-        if (!willLog(channel, level, arguments...))
+        if (!willLog(channel, level, location, arguments...))
             return;
 
-        sendMessageToObservers(channel, level, arguments...);
+        sendMessageToObservers(channel, level, location, arguments...);
     }
 
     bool enabled() const { return m_enabled; }
@@ -364,28 +368,35 @@ private:
     {
     }
 
+#if USE(OS_LOG)
+    WTF_EXPORT_PRIVATE static void osLog(WTFLogChannel&, const UTF8CString& message);
+#endif
+
     template<typename... Argument>
     static inline void log(WTFLogChannel& channel, WTFLogLevel level, const Argument&... arguments)
     {
         auto logMessage = makeString(LogArgument<Argument>::toString(arguments)...);
 
 #if RELEASE_LOG_DISABLED
-        WTFLog(&channel, "%s", logMessage.utf8().data());
+        WTFLog(&channel, "%s", logMessage.utf8().legacyCStringPointer());
 #elif USE(OS_LOG)
-        SUPPRESS_UNRETAINED_LOCAL os_log(channel.osLogChannel, "%{public}s", logMessage.utf8().data());
+        osLog(channel, logMessage.utf8());
 #elif OS(ANDROID)
-        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s", channel.name, logMessage.utf8().data());
+        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s", channel.name, logMessage.utf8().legacyCStringPointer());
 #elif ENABLE(JOURNALD_LOG)
-        sd_journal_send("WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().data(), nullptr);
+        if (WTFShouldLogToJournal())
+            sd_journal_send("WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().legacyCStringPointer(), nullptr);
+        else
+            SAFE_FPRINTF(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8());
 #else
-        fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", channel.name, logMessage.utf8().data());
+        SAFE_FPRINTF(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8());
 #endif
 
-        sendMessageToObservers(channel, level, arguments...);
+        sendMessageToObservers(channel, level, { }, arguments...);
     }
 
     template<typename... Argument>
-    static inline void sendMessageToObservers(WTFLogChannel& channel, WTFLogLevel level, const Argument&... arguments)
+    static inline void sendMessageToObservers(WTFLogChannel& channel, WTFLogLevel level, std::optional<WTFLogLocation> location, const Argument&... arguments)
     {
         if (channel.state == WTFLogChannelState::Off || level > channel.level)
             return;
@@ -395,7 +406,7 @@ private:
 
         Locker locker { AdoptLock, observerLock() };
         for (Observer& observer : observers())
-            observer.didLogMessage(channel, level, { ConsoleLogValue<Argument>::toValue(arguments)... });
+            observer.didLogMessage(channel, level, location, { ConsoleLogValue<Argument>::toValue(arguments)... });
     }
 
     template<typename... Argument>
@@ -404,33 +415,37 @@ private:
         auto logMessage = makeString(LogArgument<Argument>::toString(arguments)...);
 
 #if RELEASE_LOG_DISABLED
-        WTFLogVerbose(file, line, function, &channel, "%s", logMessage.utf8().data());
+        WTFLogVerbose(file, line, function, &channel, "%s", logMessage.utf8().legacyCStringPointer());
 #elif USE(OS_LOG)
-        SUPPRESS_UNRETAINED_LOCAL os_log(channel.osLogChannel, "%{public}s", logMessage.utf8().data());
+        osLog(channel, logMessage.utf8());
         UNUSED_PARAM(file);
         UNUSED_PARAM(line);
         UNUSED_PARAM(function);
 #elif OS(ANDROID)
-        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s FILE=%s:%d: %s", channel.name, logMessage.utf8().data(), file, line, function);
+        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s FILE=%s:%d: %s", channel.name, logMessage.utf8().legacyCStringPointer(), file, line, function);
 #elif ENABLE(JOURNALD_LOG)
-        auto fileString = makeString("CODE_FILE="_s, unsafeSpan(file));
-        auto lineString = makeString("CODE_LINE="_s, line);
-        sd_journal_send_with_location(fileString.utf8().data(), lineString.utf8().data(), function, "WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().data(), nullptr);
+        if (WTFShouldLogToJournal()) {
+            auto fileString = makeString("CODE_FILE="_s, unsafeSpan(file));
+            auto lineString = makeString("CODE_LINE="_s, line);
+            sd_journal_send_with_location(fileString.utf8().legacyCStringPointer(), lineString.utf8().legacyCStringPointer(), function, "WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().legacyCStringPointer(), nullptr);
+        } else {
+            SAFE_FPRINTF(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s [%s:%d %s]\n", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8(), UTF8CStringView::unsafeFromUTF8(file), line, UTF8CStringView::unsafeFromUTF8(function));
+        }
 #else
-        fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s FILE=%s:%d %s\n", channel.name, logMessage.utf8().data(), file, line, function);
+        SAFE_FPRINTF(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s FILE=%s:%d %s\n", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8(), UTF8CStringView::unsafeFromUTF8(file), line, UTF8CStringView::unsafeFromUTF8(function));
 #endif
 
-        sendMessageToObservers(channel, level, arguments...);
+        sendMessageToObservers(channel, level, { { file, function, line } }, arguments...);
     }
 
-    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<Observer>>& observers() WTF_REQUIRES_LOCK(observerLock());
+    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<Observer>>& NODELETE observers() WTF_REQUIRES_LOCK(observerLock());
 
     static Lock& observerLock() WTF_RETURNS_LOCK(loggerObserverLock)
     {
         return loggerObserverLock;
     }
 
-    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<MessageHandlerObserver>>& messageHandlerObservers() WTF_REQUIRES_LOCK(messageHandlerObserverLock());
+    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<MessageHandlerObserver>>& NODELETE messageHandlerObservers() WTF_REQUIRES_LOCK(messageHandlerObserverLock());
 
     static Lock& messageHandlerObserverLock() WTF_RETURNS_LOCK(messageHandlerLoggerObserverLock)
     {

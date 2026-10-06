@@ -95,8 +95,10 @@ WI.CSSKeywordCompletions.forPartialPropertyValue = function(text, propertyName, 
     if (currentTokenValue === ")" || tokenBeforeCaret?.value === ")")
         return {prefix: "", completions: []};
 
-    // The CodeMirror CSS-mode tokenizer splits a string like `-name` into two tokens: `-` and `name`.
-    if (currentTokenValue.length && tokenBeforeCaret?.value === "-") {
+    // The CodeMirror CSS-mode tokenizer splits a hyphen-prefixed identifier into two tokens: a leading `-`
+    // for a value like `-name`, or a `-vendor-` meta token followed by the remainder for a value like
+    // `-apple-system`. Rejoin the preceding hyphen-terminated token so the whole identifier is the prefix.
+    if (currentTokenValue.length && tokenBeforeCaret?.value.endsWith("-")) {
         currentTokenValue = tokenBeforeCaret.value + currentTokenValue;
     }
 
@@ -241,7 +243,7 @@ WI.CSSKeywordCompletions.addCustomCompletions = function(properties)
             WI.CSSKeywordCompletions.LonghandNamesForShorthandProperty.set(property.name, property.longhands);
 
             for (let longhand of property.longhands) {
-                let shorthands = WI.CSSKeywordCompletions.ShorthandNamesForLongHandProperty.getOrInitialize(longhand, []);
+                let shorthands = WI.CSSKeywordCompletions.ShorthandNamesForLongHandProperty.getOrInsert(longhand, []);
                 shorthands.push(property.name);
             }
         }

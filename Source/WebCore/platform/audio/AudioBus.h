@@ -34,6 +34,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
+#include <wtf/text/StringView.h>
 
 namespace WebCore {
 
@@ -75,16 +76,16 @@ public:
     // Channels
     unsigned numberOfChannels() const { return m_channels.size(); }
 
-    AudioChannel* channel(unsigned channel) { return m_channels[channel].get(); }
-    const AudioChannel* channel(unsigned channel) const { return m_channels[channel].get(); }
-    AudioChannel* channelByType(unsigned type);
-    const AudioChannel* channelByType(unsigned type) const;
+    AudioChannel* channel(unsigned channel) LIFETIME_BOUND { return m_channels[channel].get(); }
+    const AudioChannel* channel(unsigned channel) const LIFETIME_BOUND { return m_channels[channel].get(); }
+    AudioChannel* NODELETE channelByType(unsigned type) LIFETIME_BOUND;
+    const AudioChannel* channelByType(unsigned type) const LIFETIME_BOUND;
 
     // Number of sample-frames
     size_t length() const { return m_length; }
 
     // Reduce the number of frames available without changing the allocated memory size.
-    void setLength(size_t);
+    void NODELETE setLength(size_t);
 
     // Sample-rate : 0.0 if unknown or "don't care"
     float sampleRate() const { return m_sampleRate; }
@@ -94,13 +95,13 @@ public:
     void zero();
 
     // Clears the silent flag on all channels.
-    void clearSilentFlag();
+    void NODELETE clearSilentFlag();
 
     // Returns true if the silent bit is set on all channels.
-    bool isSilent() const;
+    bool NODELETE isSilent() const;
 
     // Returns true if the channel count and frame-size match.
-    bool topologyMatches(const AudioBus& sourceBus) const;
+    bool NODELETE topologyMatches(const AudioBus& sourceBus) const;
 
     static Ref<AudioBus> createCopy(const AudioBus& sourceBus);
 
@@ -146,7 +147,7 @@ public:
     // Makes maximum absolute value == 1.0 (if possible).
     void normalize();
 
-    static RefPtr<AudioBus> loadPlatformResource(const char* name, float sampleRate);
+    static RefPtr<AudioBus> loadPlatformResource(StringView name, float sampleRate);
 
 private:
     AudioBus() { }
@@ -161,7 +162,6 @@ private:
     Vector<std::unique_ptr<AudioChannel>> m_channels;
     int m_layout;
     float m_busGain { 1 };
-    std::unique_ptr<AudioFloatArray> m_dezipperGainValues;
     bool m_isFirstTime { 0 };
     float m_sampleRate { 0 }; // 0.0 if unknown or N/A
 };

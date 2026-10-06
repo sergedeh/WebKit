@@ -40,7 +40,7 @@ public:
     SegmentedString& operator=(const SegmentedString&) = default;
 
     void clear();
-    void close();
+    void NODELETE close();
 
     void append(SegmentedString&&);
     void append(const SegmentedString&);
@@ -50,16 +50,19 @@ public:
 
     void pushBack(String&&);
 
-    void setExcludeLineNumbers();
+    void NODELETE setExcludeLineNumbers();
 
     bool isEmpty() const { return !m_currentSubstring.length(); }
-    unsigned length() const;
+    unsigned NODELETE length() const;
 
     bool isClosed() const { return m_isClosed; }
 
     void advance();
     void advancePastNonNewline(); // Faster than calling advance when we know the current character is not a newline.
     void advancePastNewline(); // Faster than calling advance when we know the current character is a newline.
+
+    std::span<const Latin1Character> currentSubstringSpan8() const;
+    void advancePastMultiple8(unsigned count);
 
     enum AdvancePastResult { DidNotMatch, DidMatch, NotEnoughCharacters };
     AdvancePastResult advancePast(ASCIILiteral literal) { return advancePast<false>(literal); }
@@ -71,12 +74,12 @@ public:
 
     char16_t currentCharacter() const { return m_currentCharacter; }
 
-    OrdinalNumber currentColumn() const;
-    OrdinalNumber currentLine() const;
+    OrdinalNumber NODELETE currentColumn() const;
+    OrdinalNumber NODELETE currentLine() const;
 
     // Sets value of line/column variables. Column is specified indirectly by a parameter columnAfterProlog
     // which is a value of column that we should get after a prolog (first prologLength characters) has been consumed.
-    void setCurrentPosition(OrdinalNumber line, OrdinalNumber columnAfterProlog, int prologLength);
+    void NODELETE setCurrentPosition(OrdinalNumber line, OrdinalNumber columnAfterProlog, int prologLength);
 
 private:
     struct Substring {
@@ -118,15 +121,15 @@ private:
     void startNewLine();
 
     void advanceWithoutUpdatingLineNumber();
-    void advanceWithoutUpdatingLineNumber16();
-    void advanceAndUpdateLineNumber16();
+    void NODELETE advanceWithoutUpdatingLineNumber16();
+    void NODELETE advanceAndUpdateLineNumber16();
     void advancePastSingleCharacterSubstringWithoutUpdatingLineNumber();
     void advancePastSingleCharacterSubstring();
-    void advanceEmpty();
+    void NODELETE advanceEmpty();
 
     void updateAdvanceFunctionPointers();
-    void updateAdvanceFunctionPointersForEmptyString();
-    void updateAdvanceFunctionPointersForSingleCharacterSubstring();
+    void NODELETE updateAdvanceFunctionPointersForEmptyString();
+    void NODELETE updateAdvanceFunctionPointersForSingleCharacterSubstring();
 
     void updateAdvanceFunctionPointersIfNecessary();
 
@@ -290,6 +293,40 @@ inline void SegmentedString::advancePastNewline()
     }
 
     (this->*m_advanceAndUpdateLineNumberFunction)();
+}
+
+// Returns a span over the remaining characters in the current 8-bit substring,
+// starting from the current character. Returns an empty span if not 8-bit.
+inline std::span<const Latin1Character> SegmentedString::currentSubstringSpan8() const
+{
+    if (m_fastPathFlags & Use8BitAdvance)
+        return m_currentSubstring.s.currentCharacter8;
+    return { };
+}
+
+// Advances past `count` characters in the current 8-bit substring.
+// The caller must ensure at least one character remains after advancing
+// (i.e. count < currentSubstringSpan8().size()), as the function sets
+// the next remaining character as m_currentCharacter.
+inline void SegmentedString::advancePastMultiple8(unsigned count)
+{
+    ASSERT(m_fastPathFlags & Use8BitAdvance);
+    ASSERT(count < m_currentSubstring.s.currentCharacter8.size());
+
+    if (m_currentCharacter == '\n' && (m_fastPathFlags & Use8BitAdvanceAndUpdateLineNumbers)) {
+        // Must skip past the newline before calling startNewLine(), so that
+        // numberOfCharactersConsumed() reflects the position after the '\n'.
+        // This matches the ordering in advance().
+        skip(m_currentSubstring.s.currentCharacter8, 1);
+        startNewLine();
+        if (count > 1)
+            skip(m_currentSubstring.s.currentCharacter8, count - 1);
+    } else
+        skip(m_currentSubstring.s.currentCharacter8, count);
+
+    m_currentCharacter = m_currentSubstring.s.currentCharacter8[0];
+    if (m_currentSubstring.s.currentCharacter8.size() == 1) [[unlikely]]
+        updateAdvanceFunctionPointersForSingleCharacterSubstring();
 }
 
 inline unsigned SegmentedString::numberOfCharactersConsumed() const

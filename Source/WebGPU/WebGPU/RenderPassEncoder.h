@@ -28,14 +28,16 @@
 #import "BindableResource.h"
 #import "CommandsMixin.h"
 #import "TextureOrTextureView.h"
+#import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
 #import <wtf/HashSet.h>
 #import <wtf/HashTraits.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
-#import <wtf/RetainReleaseSwift.h>
+#import <wtf/RetainPtr.h>
+#import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
+#import <wtf/ThreadSafeRefCounted.h>
 #import <wtf/Vector.h>
 #import <wtf/WeakPtr.h>
 
@@ -44,7 +46,7 @@
 struct WGPURenderPassEncoderImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class BindGroup;
 class Buffer;
@@ -58,16 +60,22 @@ class TextureView;
 struct BindableResources;
 
 // https://gpuweb.github.io/gpuweb/#gpurenderpassencoder
-class RenderPassEncoder : public RefCountedAndCanMakeWeakPtr<RenderPassEncoder>, public WGPURenderPassEncoderImpl, public CommandsMixin {
+class RenderPassEncoder final : public WebGPU::RenderPassEncoder, public WGPURenderPassEncoderImpl, public CommandsMixin {
     WTF_MAKE_TZONE_ALLOCATED(RenderPassEncoder);
 public:
-    static Ref<RenderPassEncoder> create(id<MTLRenderCommandEncoder> renderCommandEncoder, const WGPURenderPassDescriptor& descriptor, NSUInteger visibilityResultBufferSize, bool depthReadOnly, bool stencilReadOnly, CommandEncoder& parentEncoder, id<MTLBuffer> visibilityResultBuffer, uint64_t maxDrawCount, Device& device, MTLRenderPassDescriptor* mtlDescriptor)
+    static Ref<RenderPassEncoder> create(id<MTLRenderCommandEncoder> renderCommandEncoder, const WebGPU::RenderPassDescriptor& descriptor, NSUInteger visibilityResultBufferSize, bool depthReadOnly, bool stencilReadOnly, CommandEncoder& parentEncoder, id<MTLBuffer> visibilityResultBuffer, uint64_t maxDrawCount, Device& device, MTLRenderPassDescriptor* mtlDescriptor)
     {
         return adoptRef(*new RenderPassEncoder(renderCommandEncoder, descriptor, visibilityResultBufferSize, depthReadOnly, stencilReadOnly, parentEncoder, visibilityResultBuffer, maxDrawCount, device, mtlDescriptor));
     }
     static Ref<RenderPassEncoder> createInvalid(CommandEncoder& parentEncoder, Device& device, NSString* errorString)
     {
         return adoptRef(*new RenderPassEncoder(parentEncoder, device, errorString));
+    }
+    static Ref<RenderPassEncoder> createInvalidWithEncoderStateNotOpen(CommandEncoder& parentEncoder, Device& device, NSString* errorString)
+    {
+        Ref renderPassEncoder = createInvalid(parentEncoder, device, errorString);
+        renderPassEncoder->markEncoderStateWasNotOpen();
+        return renderPassEncoder;
     }
 
     ~RenderPassEncoder();
@@ -79,25 +87,30 @@ public:
     void drawIndirect(Buffer& indirectBuffer, uint64_t indirectOffset);
     void endOcclusionQuery();
     void endPass();
-    void executeBundles(Vector<Ref<RenderBundle>>&& bundles);
+    void executeBundles(std::span<const Ref<WebGPU::RenderBundle>>);
     void insertDebugMarker(String&& markerLabel);
     void popDebugGroup();
     void pushDebugGroup(String&& groupLabel);
-    void setBindGroup(uint32_t groupIndex, const BindGroup*, std::optional<Vector<uint32_t>>&&);
-    void setBlendConstant(const WGPUColor&);
-    void setIndexBuffer(Buffer&, WGPUIndexFormat, uint64_t offset, uint64_t size);
+    // std::nullopt dynamic offsets are not validated against the bind group layout.
+    void setBindGroup(uint32_t groupIndex, const BindGroup*, std::optional<std::span<const uint32_t>> dynamicOffsets);
+    void setBlendConstant(const WebGPU::Color&);
+    // A std::nullopt size is the rest of the buffer after the offset.
+    void setIndexBuffer(Buffer&, WebGPU::IndexFormat, uint64_t offset, std::optional<uint64_t> size);
     void setPipeline(const RenderPipeline&);
     void setScissorRect(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
     void setStencilReference(uint32_t);
-    void setVertexBuffer(uint32_t slot, const Buffer*, uint64_t offset, uint64_t size);
+    void setVertexBuffer(uint32_t slot, const Buffer*, uint64_t offset, std::optional<uint64_t> size);
     void setViewport(float x, float y, float width, float height, float minDepth, float maxDepth);
-    void setLabel(String&&);
+    void setLabel(String&&) final;
 
     Device& device() const { return m_device; }
 
-    bool isValid() const { return m_renderCommandEncoder; }
+    bool isValid() const final { return m_renderCommandEncoder; }
+    // A pass begun while its command encoder was not open never took the encoder over, so it can
+    // never be ended. https://gpuweb.github.io/gpuweb/#dom-gpurenderpassencoder-end
+    void markEncoderStateWasNotOpen() { m_encoderStateWasNotOpen = true; }
     NSString* errorValidatingColorDepthStencilTargets(const RenderPipeline&) const;
-    id<MTLRenderCommandEncoder> renderCommandEncoder() const;
+    id<MTLRenderCommandEncoder> NODELETE renderCommandEncoder() const;
     void makeInvalid(NSString* = nil);
     CommandEncoder& parentEncoder() const { return m_parentEncoder; }
 
@@ -108,6 +121,11 @@ public:
 
     static std::pair<id<MTLBuffer>, uint64_t> clampIndirectIndexBufferToValidValues(Buffer*, Buffer&, MTLIndexType, NSUInteger indexBufferOffsetInBytes, uint64_t indirectOffset, uint32_t minVertexCount, uint32_t minInstanceCount, MTLPrimitiveType, Device&, uint32_t rasterSampleCount, RenderPassEncoder&, bool& splitEncoder);
     static std::pair<id<MTLBuffer>, uint64_t> clampIndirectBufferToValidValues(Buffer&, uint64_t indirectOffset, uint32_t minVertexCount, uint32_t minInstanceCount, Device&, uint32_t rasterSampleCount, RenderPassEncoder&, bool& splitEncoder);
+    // Batched (no-internal-barrier, per-draw-scratch) clamp helpers used by executeBundles.
+    static std::pair<id<MTLBuffer>, uint64_t> newZeroedIndirectScratch(Device&, size_t);
+    static bool clampIndirectBufferDispatchBatched(Buffer& indirectBuffer, uint64_t indirectOffset, uint32_t minVertexCount, uint32_t minInstanceCount, Device&, uint32_t rasterSampleCount, RenderPassEncoder&, id<MTLBuffer> finalScratch, uint64_t finalScratchOffset);
+    static bool clampIndirectIndexBufferDispatch1Batched(Buffer* apiIndexBuffer, Buffer& indexedIndirectBuffer, MTLIndexType, NSUInteger indexBufferOffsetInBytes, uint64_t indirectOffset, uint32_t minInstanceCount, Device&, uint32_t rasterSampleCount, RenderPassEncoder&, id<MTLBuffer> finalScratch, uint64_t finalScratchOffset, id<MTLBuffer> intermediateScratch, uint64_t intermediateScratchOffset, uint32_t& outIndexBufferCount);
+    static bool clampIndirectIndexBufferDispatch2Batched(Buffer* apiIndexBuffer, MTLIndexType, NSUInteger indexBufferOffsetInBytes, uint32_t minVertexCount, MTLPrimitiveType, uint32_t indexBufferCount, Device&, uint32_t rasterSampleCount, RenderPassEncoder&, id<MTLBuffer> finalScratch, uint64_t finalScratchOffset, id<MTLBuffer> intermediateScratch, uint64_t intermediateScratchOffset);
     enum class IndexCall { Draw, IndirectDraw, Skip, CachedIndirectDraw };
     struct DrawIndexResult {
         IndexCall result;
@@ -117,13 +135,13 @@ public:
     static DrawIndexResult clampIndexBufferToValidValues(uint32_t indexCount, uint32_t instanceCount, int32_t baseVertex, uint32_t firstInstance, MTLIndexType, NSUInteger indexBufferOffsetInBytes, Buffer*, uint32_t minVertexCount, uint32_t minInstanceCount, RenderPassEncoder&, Device&, uint32_t rasterSampleCount, MTLPrimitiveType);
     [[nodiscard]] bool splitRenderPass();
     static std::pair<uint32_t, uint32_t> computeMininumVertexInstanceCount(const RenderPipeline*, bool& needsValidationLayerWorkaround, uint64_t (^)(uint32_t));
+    void trackIndirectDeviceLostCheck(id<MTLBuffer> scratch, uint64_t scratchOffset, id<MTLBuffer> alsoRetain);
 
 private:
-    RenderPassEncoder(id<MTLRenderCommandEncoder>, const WGPURenderPassDescriptor&, NSUInteger, bool depthReadOnly, bool stencilReadOnly, CommandEncoder&, id<MTLBuffer>, uint64_t maxDrawCount, Device&, MTLRenderPassDescriptor*);
+    RenderPassEncoder(id<MTLRenderCommandEncoder>, const WebGPU::RenderPassDescriptor&, NSUInteger, bool depthReadOnly, bool stencilReadOnly, CommandEncoder&, id<MTLBuffer>, uint64_t maxDrawCount, Device&, MTLRenderPassDescriptor*);
     RenderPassEncoder(CommandEncoder&, Device&, NSString*);
 
-    bool validatePopDebugGroup() const;
-    bool executePreDrawCommands(uint32_t vertexCount);
+    bool NODELETE validatePopDebugGroup() const;
     bool executePreDrawCommands(uint32_t firstInstance, uint32_t instanceCount, bool passWasSplit, const Buffer*, bool needsValidationLayerWorkaround);
     bool runIndexBufferValidation(uint32_t firstInstance, uint32_t instanceCount);
     void runVertexBufferValidation(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance);
@@ -132,16 +150,16 @@ private:
     void addResourceToActiveResources(const TextureView&, OptionSet<BindGroupEntryUsage>, WGPUTextureAspect);
     void addResourceToActiveResources(const TextureOrTextureView&, OptionSet<BindGroupEntryUsage>, WGPUTextureAspect);
     void addResourceToActiveResources(const Texture&, OptionSet<BindGroupEntryUsage>);
-    void addTextureToActiveResources(const void*, id<MTLResource>, OptionSet<BindGroupEntryUsage>, uint32_t baseMipLevel, uint32_t baseArrayLayer, WGPUTextureAspect);
+    void addTextureToActiveResources(const void*, id<MTLResource>, OptionSet<BindGroupEntryUsage>, uint32_t baseMipLevel, uint32_t mipLevelCount, uint32_t baseArrayLayer, uint32_t arrayLayerCount, WGPUTextureAspect);
     void addResourceToActiveResources(const void*, OptionSet<BindGroupEntryUsage>);
 
     NSString* errorValidatingAndBindingBuffers();
     NSString* errorValidatingDrawIndexed() const;
-    uint32_t maxVertexBufferIndex() const;
-    uint32_t maxBindGroupIndex() const;
-    bool issuedDrawCall() const;
+    uint32_t NODELETE maxVertexBufferIndex() const;
+    uint32_t NODELETE maxBindGroupIndex() const;
+    bool NODELETE issuedDrawCall() const;
     void incrementDrawCount(uint32_t = 1);
-    bool occlusionQueryIsDestroyed() const;
+    bool NODELETE occlusionQueryIsDestroyed() const;
     DrawIndexResult clampIndexBufferToValidValues(uint32_t indexCount, uint32_t instanceCount, int32_t baseVertex, uint32_t firstInstance, MTLIndexType, NSUInteger indexBufferOffsetInBytes, bool& needsValidationLayerWorkaround);
     std::pair<uint32_t, uint32_t> computeMininumVertexInstanceCount(bool& needsValidationLayerWorkaround) const;
     std::pair<id<MTLBuffer>, uint64_t> clampIndirectIndexBufferToValidValues(Buffer&, MTLIndexType, NSUInteger indexBufferOffsetInBytes, uint64_t indirectOffset, uint32_t minVertexCount, uint32_t minInstanceCount, bool& splitEncoder);
@@ -189,9 +207,6 @@ private:
     uint32_t m_memoryBarrierCount { 0 };
     NSMutableDictionary<NSNumber*, TextureAndClearColor*> *m_attachmentsToClear { nil };
     id<MTLTexture> m_depthStencilAttachmentToClear { nil };
-    WGPURenderPassDescriptor m_descriptor;
-    Vector<WGPURenderPassColorAttachment> m_descriptorColorAttachments;
-    WGPURenderPassDepthStencilAttachment m_descriptorDepthStencilAttachment;
     Vector<TextureOrTextureView> m_colorAttachmentViews;
     std::optional<TextureOrTextureView> m_depthStencilView;
     struct BufferAndOffset {
@@ -208,7 +223,7 @@ private:
     std::array<uint32_t, 32> m_maxDynamicOffsetAtIndex;
     NSString* m_lastErrorString { nil };
     MTLRenderPassDescriptor* m_metalDescriptor { nil };
-    std::optional<WGPUColor> m_blendColor;
+    std::optional<WebGPU::Color> m_blendColor;
     std::optional<MTLScissorRect> m_scissorRect;
     std::optional<uint32_t> m_stencilReferenceValue;
     float m_depthClearValue { 0 };
@@ -216,24 +231,43 @@ private:
     const uint64_t m_maxDrawCount { 0 };
     id<MTLRasterizationRateMap> m_rasterizationRateMap { nil };
     uint32_t m_stencilClearValue { 0 };
+    // Kept for the lifetime of the pass rather than cleared once applied: every draw reads the depth
+    // range back out to tell the fragment shader what to clamp frag_depth to, and splitting the pass
+    // has to reapply the viewport to the new command encoder.
     std::optional<MTLViewport> m_viewport;
+    bool m_viewportNeedsApplying { false };
     MTLDepthClipMode m_overrideDepthClipMode { MTLDepthClipModeClip };
     bool m_clearDepthAttachment { false };
     bool m_clearStencilAttachment { false };
     bool m_occlusionQueryActive { false };
     bool m_passEnded { false };
+    bool m_encoderStateWasNotOpen { false };
     bool m_ignoreBufferCache { false };
     Vector<bool> m_bindGroupDynamicOffsetsChanged;
-} SWIFT_SHARED_REFERENCE(refRenderPassEncoder, derefRenderPassEncoder);
 
-} // namespace WebGPU
+    // Scratch records whose lostOrOOBRead flag the pass checks once, from a single completion handler,
+    // rather than one handler per clamping indirect draw. Shared with that handler, hence thread-safe.
+    struct IndirectDeviceLostChecks : public ThreadSafeRefCounted<IndirectDeviceLostChecks> {
+        struct Entry {
+            RetainPtr<id<MTLBuffer>> scratch;
+            uint64_t offset { 0 };
+            RetainPtr<id<MTLBuffer>> alsoRetain;
+        };
+        Vector<Entry> entries;
+    };
+    RefPtr<IndirectDeviceLostChecks> m_indirectDeviceLostChecks;
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refRenderPassEncoder, derefRenderPassEncoder);
 
-inline void refRenderPassEncoder(WebGPU::RenderPassEncoder* obj)
+} // namespace WebGPU::Metal
+
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+inline void refRenderPassEncoder(WebGPU::Metal::RenderPassEncoder* obj)
 {
-    WTF::ref(obj);
+    obj->ref();
 }
 
-inline void derefRenderPassEncoder(WebGPU::RenderPassEncoder* obj)
+inline void derefRenderPassEncoder(WebGPU::Metal::RenderPassEncoder* obj)
 {
-    WTF::deref(obj);
+    obj->deref();
 }
+#endif

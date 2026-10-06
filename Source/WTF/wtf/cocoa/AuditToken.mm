@@ -23,12 +23,16 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#import "config.h"
-#import "AuditToken.h"
+#if !__has_feature(objc_arc)
+#error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+#endif
 
-#import "Logging.h"
+#import "config.h"
+#import <wtf/cocoa/AuditToken.h>
+
 #import <mach/mach.h>
 #import <mach/task_info.h>
+#import <wtf/Logging.h>
 
 namespace WTF {
 

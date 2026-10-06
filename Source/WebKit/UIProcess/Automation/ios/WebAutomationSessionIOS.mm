@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017, 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -60,7 +60,7 @@ void WebAutomationSession::sendSynthesizedEventsToPage(WebPageProxy& page, NSArr
 
         case WebEventKeyDown:
         case WebEventKeyUp:
-            page.handleKeyboardEvent(NativeWebKeyboardEvent(event, NativeWebKeyboardEvent::HandledByInputMethod::No));
+            page.handleKeyboardEvent(NativeWebKeyboardEvent::create(event, NativeWebKeyboardEvent::HandledByInputMethod::No));
             break;
         }
     }
@@ -155,6 +155,11 @@ void WebAutomationSession::platformSimulateKeyboardInteraction(WebPageProxy& pag
     }
     }
 
+    // iOS supplies no key code for virtual keys, so the DOM 'key', 'code' and keypad location
+    // cannot be inferred from the event. Where the WebDriver key table states them, attach them so
+    // the web process reports those values instead of the derived ones.
+    setKeyIdentityForVirtualKeyIfNeeded(eventsToBeSent.get(), key);
+
     sendSynthesizedEventsToPage(page, eventsToBeSent.get());
 }
 
@@ -210,17 +215,17 @@ void WebAutomationSession::platformSimulateTouchInteraction(WebPageProxy& page, 
     });
 
     _WKTouchEventGenerator *generator = [_WKTouchEventGenerator sharedTouchEventGenerator];
-    UIWindow *window = [page.cocoaView() window];
+    RetainPtr window = [page.cocoaView() window];
 
     switch (interaction) {
     case TouchInteraction::TouchDown:
-        [generator touchDown:locationOnScreen window:window completionBlock:interactionFinished.get()];
+        [generator touchDown:locationOnScreen window:window.get() completionBlock:interactionFinished.get()];
         break;
     case TouchInteraction::LiftUp:
-        [generator liftUp:locationOnScreen window:window completionBlock:interactionFinished.get()];
+        [generator liftUp:locationOnScreen window:window.get() completionBlock:interactionFinished.get()];
         break;
     case TouchInteraction::MoveTo:
-        [generator moveToPoint:locationOnScreen duration:duration.value_or(0_s).seconds() window:window completionBlock:interactionFinished.get()];
+        [generator moveToPoint:locationOnScreen duration:duration.value_or(0_s).seconds() window:window.get() completionBlock:interactionFinished.get()];
         break;
     }
 }

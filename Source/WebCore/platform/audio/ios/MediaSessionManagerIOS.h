@@ -64,16 +64,21 @@ public:
     USING_CAN_MAKE_WEAKPTR(MediaSessionHelperClient);
 
 protected:
-    explicit MediaSessionManageriOS(PageIdentifier);
+    explicit MediaSessionManageriOS(std::optional<PageIdentifier>);
 
 #if !PLATFORM(MACCATALYST)
     void resetRestrictions() override;
 #endif
 
-    void sessionWillBeginPlayback(PlatformMediaSessionInterface&, CompletionHandler<void(bool)>&&) override;
+    void sessionDidCompleteAdmission(PlatformMediaSessionInterface&) override;
 
 private:
+    void applyActiveVideoRouteToSession(PlatformMediaSessionInterface&);
+    void activeNowPlayingSessionChanged(PlatformMediaSessionInterface*) final;
     void configureWirelessTargetMonitoring() final;
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
+    void ensureMediaDeviceRouteControllerMonitoring() final;
+#endif
     void sessionWillEndPlayback(PlatformMediaSessionInterface&, DelayCallingUpdateNowPlaying) final;
 
     // AudioSessionInterruptionObserver
@@ -89,7 +94,6 @@ private:
     void activeAudioRouteDidChange(ShouldPause) final;
     void activeVideoRouteDidChange(SupportsAirPlayVideo, Ref<MediaPlaybackTarget>&&) final;
     void isPlayingToAutomotiveHeadUnitDidChange(PlayingToAutomotiveHeadUnit) final;
-    void activeAudioRouteSupportsSpatialPlaybackDidChange(SupportsSpatialAudioPlayback) final;
 
 #if !RELEASE_LOG_DISABLED
     ASCIILiteral logClassName() const override;

@@ -41,11 +41,12 @@
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
 #include <wtf/Compiler.h>
+#include <wtf/CurrentThread.h>
 #include <wtf/DataLog.h>
 #include <wtf/DoublyLinkedList.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/PageBlock.h>
-#include <wtf/Threading.h>
 
 #if OS(DARWIN)
 #include <pthread/tsd_private.h>
@@ -53,14 +54,53 @@
 
 namespace WTF {
 
+static constexpr size_t inlineGranuleSize { 512 * KB };
+
 struct GranuleHeader : public DoublyLinkedListNode<GranuleHeader> {
-    // non-inclusive of the page this is on
-    // so a value of 0 encodes 1 total pages
+    enum class Type : uint8_t { Inline, Large };
+
     GranuleHeader* m_prev;
     GranuleHeader* m_next;
-    size_t additionalPageCount;
+    Type m_type { Type::Inline };
+    void* m_largeBase { nullptr };
+    size_t m_largeSize { 0 };
+
+    void* payload() const
+    {
+        if (m_type == Type::Inline) [[likely]]
+            return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(this) + sizeof(GranuleHeader));
+        RELEASE_ASSERT(m_type == Type::Large);
+        return m_largeBase;
+    }
+
+    size_t size() const
+    {
+        if (m_type == Type::Inline) [[likely]]
+            return inlineGranuleSize - sizeof(GranuleHeader);
+        RELEASE_ASSERT(m_type == Type::Large);
+        return m_largeSize;
+    }
 };
 using GranuleList = DoublyLinkedList<GranuleHeader>;
+
+static constexpr size_t largeAlignShift = 20; // 1 MiB
+
+class SequesteredLargeHeap {
+public:
+    WTF_EXPORT_PRIVATE GranuleHeader* allocate(size_t bytes);
+    WTF_EXPORT_PRIVATE void decommit(GranuleHeader* gran);
+
+private:
+    WTF_EXPORT_PRIVATE GranuleHeader* acquireHeader();
+    void releaseHeader(GranuleHeader* h) { m_emptyHeaders.push(h); }
+
+    void insertSorted(GranuleHeader*);
+
+    UncheckedKeyHashMap<uintptr_t, GranuleHeader*> m_liveMap;
+    GranuleList m_decommittedList;
+    GranuleList m_emptyHeaders;
+    Lock m_lock;
+};
 
 
 class ConcurrentDecommitQueue {
@@ -78,7 +118,7 @@ public:
         }
     }
 
-    void decommit();
+    WTF_EXPORT_PRIVATE void decommit();
 private:
     GranuleList acquireExclusiveCopyOfGranuleList()
     {
@@ -98,7 +138,7 @@ private:
 // FIXME: a lot of this, but not all, can be de-duped with SequesteredArenaAllocator::Arena
 class SequesteredImmortalAllocator {
     constexpr static bool verbose { false };
-    constexpr static size_t minGranuleSize { 16 * KB };
+    constexpr static size_t minGranuleSize { inlineGranuleSize };
     constexpr static size_t minHeadAlignment { alignof(std::max_align_t) };
 public:
     SequesteredImmortalAllocator() = default;
@@ -115,7 +155,8 @@ public:
         {
             Locker lock(m_lock);
             retval = allocateImpl(bytes);
-            newAllocHead = reinterpret_cast<void*>(m_allocHead);
+            if constexpr (verbose)
+                newAllocHead = reinterpret_cast<void*>(m_allocHead);
         }
         dataLogLnIf(verbose,
             "SequesteredImmortalAllocator at ", RawPointer(this),
@@ -132,7 +173,8 @@ public:
         {
             Locker lock(m_lock);
             retval = alignedAllocateImpl(alignment, bytes);
-            newAllocHead = reinterpret_cast<void*>(m_allocHead);
+            if constexpr (verbose)
+                newAllocHead = reinterpret_cast<void*>(m_allocHead);
         }
         dataLogLnIf(verbose,
             "SequesteredImmortalAllocator at ", RawPointer(this),
@@ -161,7 +203,8 @@ private:
 
     void* alignedAllocateImpl(size_t alignment, size_t bytes)
     {
-        uintptr_t allocation = WTF::roundUpToMultipleOf<minHeadAlignment>(m_allocHead);
+        alignment = std::max(alignment, minHeadAlignment);
+        uintptr_t allocation = WTF::roundUpToMultipleOf(alignment, m_allocHead);
         uintptr_t newHead = headIncrementedBy((allocation - m_allocHead) + bytes);
         if (newHead < m_allocBound) [[likely]] {
             m_allocHead = newHead;
@@ -172,28 +215,32 @@ private:
 
     NEVER_INLINE void* allocateImplSlowPath(size_t bytes)
     {
-        addGranule(bytes);
+        // FIXME: routing through the GranuleProvider mixes up concerns.
+        // Extract this into some common logic instead
+        auto* granule = addGranule(bytes);
+        RELEASE_ASSERT(granule->m_type == GranuleHeader::Type::Inline);
 
         uintptr_t allocation = m_allocHead;
         m_allocHead = headIncrementedBy(bytes);
         ASSERT(m_allocHead <= m_allocBound);
-
         return reinterpret_cast<void*>(allocation);
     }
 
     NEVER_INLINE void* alignedAllocateImplSlowPath(size_t alignment, size_t bytes)
     {
-        addGranule(bytes);
+        // FIXME: if alignment-wasteage from the inline GranuleHeader
+        // is too high, fall back to large heap instead.
+        auto* granule = addGranule(alignment + bytes);
+        RELEASE_ASSERT(granule->m_type == GranuleHeader::Type::Inline);
 
         alignment = std::max(alignment, minHeadAlignment);
         uintptr_t allocation = WTF::roundUpToMultipleOf(alignment, m_allocHead);
         m_allocHead = headIncrementedBy((allocation - m_allocHead) + bytes);
         ASSERT(m_allocHead <= m_allocBound);
-
         return reinterpret_cast<void*>(allocation);
     }
 
-    GranuleHeader* addGranule(size_t minSize);
+    WTF_EXPORT_PRIVATE GranuleHeader* addGranule(size_t minSizeBytes);
 
     GranuleList m_granules { };
     uintptr_t m_allocHead { 0 };
@@ -201,41 +248,228 @@ private:
     Lock m_lock { };
 };
 
-class alignas(16 * KB) SequesteredImmortalHeap {
-    friend class WTF::LazyNeverDestroyed<SequesteredImmortalHeap>;
-    static constexpr bool verbose { false };
-    static constexpr pthread_key_t key = __PTK_FRAMEWORK_JAVASCRIPTCORE_KEY0;
-    static constexpr size_t sequesteredImmortalHeapSlotSize { 16 * KB };
-public:
-    static constexpr size_t slotSize { 128 };
-    static constexpr size_t numSlots { 64 };
+class SlotManager {
+private:
+    static constexpr size_t slotSize = 128;
+    static constexpr size_t numInlineSlots = 64;
+    static constexpr size_t slotsPerPage = 64;
 
+    struct alignas(slotSize) Slot {
+        std::array<std::byte, slotSize> data;
+    };
+
+    struct SlotPage : public DoublyLinkedListNode<SlotPage> {
+        SlotPage* m_prev;
+        SlotPage* m_next;
+        std::array<Slot, slotsPerPage> slots;
+    };
+
+    size_t m_nextFreeInlineSlotIndex;
+    size_t m_nextFreeOutOfLineSlotIndexInPage;
+    size_t m_totalAllocatedCount;
+    std::array<Slot, numInlineSlots> m_inlineSlots;
+    DoublyLinkedList<SlotPage> m_pages;
+
+public:
+    SlotManager()
+        : m_nextFreeInlineSlotIndex(0)
+        , m_nextFreeOutOfLineSlotIndexInPage(0)
+        , m_totalAllocatedCount(0)
+    { }
+
+    void* allocateNextSlot(SequesteredImmortalAllocator& immortalAllocator)
+    {
+        void* result;
+
+        if (m_nextFreeInlineSlotIndex < numInlineSlots) {
+            result = &m_inlineSlots[m_nextFreeInlineSlotIndex];
+            ++m_nextFreeInlineSlotIndex;
+        } else {
+            // Allocate from out-of-line pages
+            if (!m_nextFreeOutOfLineSlotIndexInPage) {
+                // Need a new page
+                void* memory = immortalAllocator.alignedAllocate(
+                    alignof(SlotPage), sizeof(SlotPage));
+                auto* page = new (memory) SlotPage();
+                m_pages.append(page);
+            }
+
+            result = &m_pages.tail()->slots[m_nextFreeOutOfLineSlotIndexInPage];
+            ++m_nextFreeOutOfLineSlotIndexInPage;
+
+            if (m_nextFreeOutOfLineSlotIndexInPage >= slotsPerPage)
+                m_nextFreeOutOfLineSlotIndexInPage = 0; // Next allocation will create new page
+        }
+
+        ++m_totalAllocatedCount;
+        return result;
+    }
+
+    int computeSlotIndex(void* slotPtr) const
+    {
+        auto slot = reinterpret_cast<uintptr_t>(slotPtr);
+        auto arrayBase = reinterpret_cast<uintptr_t>(m_inlineSlots.data());
+        auto arrayBound = arrayBase + sizeof(m_inlineSlots);
+
+        // Happy path: pointer is within inline slots
+        if (slot >= arrayBase && slot < arrayBound)
+            return static_cast<int>((slot - arrayBase) / sizeof(Slot));
+
+        int pageStartIndex = numInlineSlots;
+        for (auto* page = m_pages.head(); page; page = page->next()) {
+            auto pageBase = reinterpret_cast<uintptr_t>(&page->slots[0]);
+            auto pageBound = pageBase + sizeof(page->slots);
+
+            if (slot >= pageBase && slot < pageBound) {
+                int offsetInPage = (slot - pageBase) / sizeof(Slot);
+                return pageStartIndex + offsetInPage;
+            }
+
+            pageStartIndex += slotsPerPage;
+        }
+
+        RELEASE_ASSERT_NOT_REACHED();
+        return -1;
+    }
+
+    Slot& operator[](size_t index) {
+        if (index < numInlineSlots)
+            return m_inlineSlots[index];
+
+        size_t pageIndex = (index - numInlineSlots) / slotsPerPage;
+        size_t offsetInPage = (index - numInlineSlots) % slotsPerPage;
+
+        auto* page = m_pages.head();
+        for (size_t i = 0; i < pageIndex; ++i) {
+            RELEASE_ASSERT(page);
+            page = page->next();
+        }
+        RELEASE_ASSERT(page);
+
+        return page->slots[offsetInPage];
+    }
+
+    size_t allocatedCount() const
+    {
+        return m_totalAllocatedCount;
+    }
+};
+
+struct StackHandle : public DoublyLinkedListNode<StackHandle> {
+    std::span<std::byte> stack;
+private:
+    friend class DoublyLinkedListNode<StackHandle>;
+    StackHandle* m_prev;
+    StackHandle* m_next;
+};
+
+class SequesteredStackAllocator {
+public:
+    struct Result {
+        StackHandle* handle;
+    };
+
+    WTF_EXPORT_PRIVATE Result allocate(size_t stackSize, size_t guardSize);
+    WTF_EXPORT_PRIVATE void deallocate(StackHandle*);
+
+    SequesteredStackAllocator() = default;
+    SequesteredStackAllocator(SequesteredStackAllocator&&) = delete;
+    SequesteredStackAllocator& operator=(SequesteredStackAllocator&&) = delete;
+    SequesteredStackAllocator(const SequesteredStackAllocator&) = delete;
+    SequesteredStackAllocator& operator=(const SequesteredStackAllocator&) = delete;
+private:
+    DoublyLinkedList<StackHandle> m_freeList;
+    DoublyLinkedList<StackHandle> m_inUseList;
+    Lock m_lock;
+};
+
+class SequesteredGranuleProvider {
+public:
     enum class AllocationFailureMode {
         Assert,
         ReturnNull
     };
 
-    static SequesteredImmortalHeap& instance();
+    SequesteredGranuleProvider() = default;
+
+    template<AllocationFailureMode mode>
+    GranuleHeader* mapGranule(size_t minSizeBytes)
+    {
+        if (minSizeBytes <= inlineGranuleSize - sizeof(GranuleHeader)) [[likely]]
+            return mapInlineGranule<mode>();
+        return mapLargeGranule(minSizeBytes);
+    }
+
+    size_t decommitGranule(GranuleHeader* gran)
+    {
+        switch (gran->m_type) {
+        case GranuleHeader::Type::Large: {
+            size_t bytes = gran->m_largeSize;
+            m_largeHeap.decommit(gran);
+            return bytes / pageSize();
+        }
+        case GranuleHeader::Type::Inline:
+            munmap(gran, inlineGranuleSize);
+            return inlineGranuleSize / pageSize();
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+private:
+    friend class SequesteredImmortalHeap;
+
+    template<AllocationFailureMode mode>
+    GranuleHeader* mapInlineGranule()
+    {
+        void* p = mmap(nullptr, inlineGranuleSize, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (p == MAP_FAILED) [[unlikely]] {
+            if constexpr (mode == AllocationFailureMode::ReturnNull)
+                return nullptr;
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        auto* gran = reinterpret_cast<GranuleHeader*>(p);
+        gran->m_type = GranuleHeader::Type::Inline;
+        return gran;
+    }
+
+    GranuleHeader* mapLargeGranule(size_t bytes)
+    {
+        return m_largeHeap.allocate(bytes);
+    }
+
+    SequesteredLargeHeap m_largeHeap { };
+};
+
+class alignas(16 * KB) SequesteredImmortalHeap {
+    friend class WTF::LazyNeverDestroyed<SequesteredImmortalHeap>;
+    friend class SlotManager;
+    static constexpr bool verbose { false };
+    static constexpr pthread_key_t key = __PTK_FRAMEWORK_JAVASCRIPTCORE_KEY0;
+    static constexpr size_t sequesteredImmortalHeapSlotSize { 16 * KB };
+public:
+    static constexpr size_t slotSize { 128 };
+    static constexpr size_t numSlots { 110 };
+
+    WTF_EXPORT_PRIVATE static SequesteredImmortalHeap& instance();
 
     template <typename T> requires (sizeof(T) <= slotSize)
-    T* allocateAndInstall()
+    T* allocateAndInstall() WTF_EXCLUDES_LOCK(m_scavengerLock)
     {
         T* slot = nullptr;
+        size_t slotIndex = 0;
         {
             Locker locker { m_scavengerLock };
             ASSERT(!getUnchecked());
-            // FIXME: implement resizing to a larger capacity
-            RELEASE_ASSERT(m_nextFreeIndex < numSlots);
 
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-            void* buff = &(m_allocatorSlots[m_nextFreeIndex++]);
+            void* buff = m_slotManager.allocateNextSlot(m_immortalAllocator);
             slot = new (buff) T();
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            slotIndex = m_slotManager.allocatedCount() - 1;
         }
         _pthread_setspecific_direct(key, reinterpret_cast<void*>(slot));
         pthread_key_init_np(key, nullptr);
 
-        dataLogIf(verbose, "SequesteredImmortalHeap: thread (", Thread::currentSingleton(), ") allocated slot ", instance().m_nextFreeIndex - 1, " (", slot, ")");
+        dataLogLnIf(verbose, "SequesteredImmortalHeap: thread (", currentThreadID(), ") allocated slot ", slotIndex, " (", slot, ")");
         return slot;
     }
 
@@ -249,18 +483,19 @@ public:
         return m_immortalAllocator.alignedAllocate(alignment, bytes);
     }
 
+    SequesteredStackAllocator& stackAllocator() LIFETIME_BOUND { return m_stackAllocator; }
+    SequesteredGranuleProvider& granuleProvider() LIFETIME_BOUND { return m_granuleProvider; }
+
     void* getSlot()
     {
         return getUnchecked();
     }
 
-    int computeSlotIndex(void* slotPtr)
+    // Slots and slot pages are never freed or moved once installed, so walking
+    // them to recover a slot's index does not need m_scavengerLock.
+    int computeSlotIndex(void* slotPtr) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
-        auto slot = reinterpret_cast<uintptr_t>(slotPtr);
-        auto arrayBase = reinterpret_cast<uintptr_t>(m_allocatorSlots.begin());
-        auto arrayBound = reinterpret_cast<uintptr_t>(m_allocatorSlots.begin()) + sizeof(m_allocatorSlots);
-        ASSERT_UNUSED(arrayBound, slot >= arrayBase && slot < arrayBound);
-        return static_cast<int>((slot - arrayBase) / slotSize);
+        return m_slotManager.computeSlotIndex(slotPtr);
     }
 
     static bool scavenge(void* userdata)
@@ -269,32 +504,12 @@ public:
         return sih.scavengeImpl(userdata);
     }
 
-    template<AllocationFailureMode mode>
-    GranuleHeader* mapGranule(size_t bytes)
-    {
-        void* p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | MAP_ANON, -1, 0);
-        if (p == MAP_FAILED) [[unlikely]] {
-            if constexpr (mode == AllocationFailureMode::ReturnNull)
-                return nullptr;
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        auto* gran = reinterpret_cast<GranuleHeader*>(p);
-        gran->additionalPageCount = bytes / pageSize() - 1;
-        return gran;
-    }
+    // Reclaim the granule cached by every idle thread and decommit all queued
+    // granules right now, rather than waiting for the next scavenger tick.
+    WTF_EXPORT_PRIVATE void reclaimIdleGranulesOnce() WTF_EXCLUDES_LOCK(m_scavengerLock);
 
-    size_t decommitGranule(GranuleHeader* gran)
-    {
-        size_t pageCount = 1 + gran->additionalPageCount;
-        size_t bytes = pageCount * pageSize();
-
-        // FIXME: experiment with other decommit strategies
-        auto success = munmap(gran, bytes);
-        RELEASE_ASSERT(!success);
-
-        return pageCount;
-    }
+    // If true, then SIH dependents should not cache any unnecessary memory.
+    WTF_EXPORT_PRIVATE bool shouldReduceRetention() const;
 
 private:
     SequesteredImmortalHeap()
@@ -311,25 +526,26 @@ private:
 
         // Cannot use dataLog here as it takes a lock
         if constexpr (verbose)
-            SAFE_FPRINTF(stderr, "SequesteredImmortalHeap: initialized by thread (%u)\n", Thread::currentSingleton().uid());
+            SAFE_FPRINTF(stderr, "SequesteredImmortalHeap: initialized by thread (%u)\n", currentThreadID());
     }
 
-    void installScavenger();
-    bool scavengeImpl(void* userdata);
+    WTF_EXPORT_PRIVATE void installScavenger();
+    WTF_EXPORT_PRIVATE bool scavengeImpl(void* userdata) WTF_EXCLUDES_LOCK(m_scavengerLock);
+
+    // Walks every slot under m_scavengerLock, optionally reclaiming the granule
+    // cached by each idle thread, then decommitting each slot's queued granules.
+    WTF_EXPORT_PRIVATE void reclaimIdleSlots(bool reclaimIdleGranules) WTF_EXCLUDES_LOCK(m_scavengerLock);
 
     static void* getUnchecked()
     {
         return _pthread_getspecific_direct(key);
     }
 
-    struct alignas(slotSize) Slot {
-        std::array<std::byte, slotSize> data;
-    };
-
-    Lock m_scavengerLock { };
-    size_t m_nextFreeIndex { };
+    Lock m_scavengerLock;
     SequesteredImmortalAllocator m_immortalAllocator { };
-    std::array<Slot, numSlots> m_allocatorSlots { };
+    SlotManager m_slotManager WTF_GUARDED_BY_LOCK(m_scavengerLock) { };
+    SequesteredStackAllocator m_stackAllocator { };
+    SequesteredGranuleProvider m_granuleProvider { };
 };
 
 }

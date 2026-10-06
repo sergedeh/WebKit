@@ -62,14 +62,13 @@ public:
 
     WEBCORE_EXPORT ~UniqueIDBDatabaseTransaction();
 
-    UniqueIDBDatabaseConnection* databaseConnection() const;
-    UniqueIDBDatabase* database() const;
-    CheckedPtr<UniqueIDBDatabase> checkedDatabase() const;
-    const IDBTransactionInfo& info() const { return m_transactionInfo; }
-    WEBCORE_EXPORT bool isVersionChange() const;
-    bool isReadOnly() const;
+    WEBCORE_EXPORT UniqueIDBDatabaseConnection* NODELETE databaseConnection() const;
+    UniqueIDBDatabase* NODELETE database() const;
+    const IDBTransactionInfo& info() const LIFETIME_BOUND { return m_transactionInfo; }
+    WEBCORE_EXPORT bool NODELETE isVersionChange() const;
+    bool NODELETE isReadOnly() const;
 
-    IDBDatabaseInfo* originalDatabaseInfo() const;
+    IDBDatabaseInfo* NODELETE originalDatabaseInfo() const;
 
     WEBCORE_EXPORT void abort();
     WEBCORE_EXPORT void abortWithoutCallback();
@@ -97,20 +96,23 @@ public:
     const Vector<IDBObjectStoreIdentifier>& objectStoreIdentifiers();
 
     void setSuspensionAbortResult(const IDBError& error) { m_suspensionAbortResult = { error }; }
-    const std::optional<IDBError>& suspensionAbortResult() const { return m_suspensionAbortResult; }
+    const std::optional<IDBError>& suspensionAbortResult() const LIFETIME_BOUND { return m_suspensionAbortResult; }
 
     uint64_t pendingGenerateIndexKeyRequests() const { return m_pendingGenerateIndexKeyRequests; }
     WEBCORE_EXPORT void didCreateIndexAsync(const IDBError&);
     bool generateIndexKeyForRecord(const IDBIndexInfo&, const std::optional<IDBKeyPath>&, const IDBKeyData&, const IDBValue&, std::optional<int64_t> recordID);
     WEBCORE_EXPORT void didGenerateIndexKeyForRecord(IDBResourceIdentifier createIndexRequestIdentifier, const IDBIndexInfo&, const IDBKeyData&, const IndexKey&, std::optional<int64_t> recordID);
 
+    bool isFinishingOrFinished() const { return m_isFinishingOrFinished; }
+
 private:
     UniqueIDBDatabaseTransaction(UniqueIDBDatabaseConnection&, const IDBTransactionInfo&);
+    void setIsFinishingOrFinished() { m_isFinishingOrFinished = true; }
 
     WeakPtr<UniqueIDBDatabaseConnection> m_databaseConnection;
     IDBTransactionInfo m_transactionInfo;
 
-    std::unique_ptr<IDBDatabaseInfo> m_originalDatabaseInfo;
+    const std::unique_ptr<IDBDatabaseInfo> m_originalDatabaseInfo;
 
     Vector<IDBObjectStoreIdentifier> m_objectStoreIdentifiers;
 
@@ -119,6 +121,7 @@ private:
 
     uint64_t m_pendingGenerateIndexKeyRequests { 0 };
     IDBResourceIdentifier m_createIndexRequestIdentifier;
+    bool m_isFinishingOrFinished { false };
 };
 
 } // namespace IDBServer

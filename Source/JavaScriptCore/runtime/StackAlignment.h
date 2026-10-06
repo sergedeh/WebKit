@@ -63,19 +63,14 @@ constexpr unsigned roundLocalRegisterCountForFramePointerOffset(unsigned localRe
     return WTF::roundUpToMultipleOf(stackAlignmentRegisters(), localRegisterCount + CallerFrameAndPC::sizeInRegisters) - CallerFrameAndPC::sizeInRegisters;
 }
 
-constexpr unsigned argumentCountForStackSize(unsigned sizeInBytes)
-{
-    unsigned sizeInRegisters = sizeInBytes / sizeof(void*);
-
-    if (sizeInRegisters <= CallFrame::headerSizeInRegisters)
-        return 0;
-
-    return sizeInRegisters - CallFrame::headerSizeInRegisters;
-}
-
 inline unsigned logStackAlignmentRegisters()
 {
     return WTF::fastLog2(stackAlignmentRegisters());
+}
+
+inline bool isStackAligned(const void* pointer)
+{
+    return !(reinterpret_cast<uintptr_t>(pointer) & (stackAlignmentBytes() - 1));
 }
 
 } // namespace JSC

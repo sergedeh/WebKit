@@ -28,7 +28,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGHiddenContainer);
 
-LegacyRenderSVGHiddenContainer::LegacyRenderSVGHiddenContainer(Type type, SVGElement& element, RenderStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+LegacyRenderSVGHiddenContainer::LegacyRenderSVGHiddenContainer(Type type, SVGElement& element, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
     : LegacyRenderSVGContainer(type, element, WTF::move(style), svgFlags | SVGModelObjectFlag::IsHiddenContainer)
 {
 }
@@ -46,7 +46,7 @@ void LegacyRenderSVGHiddenContainer::paint(PaintInfo&, const LayoutPoint&)
     // This subtree does not paint.
 }
 
-LayoutRect LegacyRenderSVGHiddenContainer::clippedOverflowRect(const RenderLayerModelObject*, VisibleRectContext) const
+LayoutRect LegacyRenderSVGHiddenContainer::clippedOverflowRect(const RenderLayerModelObject*, const VisibleRectContext&) const
 {
     return { };
 }

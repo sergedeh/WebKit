@@ -37,6 +37,7 @@
 
 namespace WebCore {
 
+enum class EventHandlerRemovalReason : bool;
 class HTMLInputElement;
 class TouchEvent;
 
@@ -48,7 +49,7 @@ public:
 
     void setPositionFromValue();
     void dragFrom(const LayoutPoint&);
-    RefPtr<HTMLInputElement> hostInput() const;
+    RefPtr<HTMLInputElement> NODELETE hostInput() const;
     void setPositionFromPoint(const LayoutPoint&);
 
 #if ENABLE(IOS_TOUCH_EVENTS)
@@ -59,7 +60,8 @@ public:
 
 private:
     explicit SliderThumbElement(Document&);
-    bool isSliderThumbElement() const final { return true; }
+
+    bool NODELETE isSliderThumbElement() const final { return true; }
 
     Ref<Element> cloneElementWithoutAttributesAndChildren(Document&, CustomElementRegistry*) const final;
     bool isDisabledFormControl() const final;
@@ -74,7 +76,7 @@ private:
 #endif
     void willDetachRenderers() final;
 
-    std::optional<Style::UnadjustedStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*) final;
+    std::optional<Style::UnadjustedStyle> resolveCustomStyle(const Style::ResolutionContext&, const Style::ComputedStyle*) final;
 
     void startDragging();
     void stopDragging();
@@ -89,7 +91,8 @@ private:
     void handleTouchEndAndCancel(TouchEvent&);
 
     void registerForTouchEvents();
-    void unregisterForTouchEvents(EventHandlerRemovalReason = EventHandlerRemovalReason::Other);
+    void unregisterForTouchEvents(); // EventHandlerRemovalReason::Other
+    void unregisterForTouchEvents(EventHandlerRemovalReason);
 #endif
 
     bool m_inDragMode { false };
@@ -113,8 +116,8 @@ public:
 
 private:
     explicit SliderContainerElement(Document&);
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isSliderContainerElement() const final { return true; }
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    bool NODELETE isSliderContainerElement() const final { return true; }
 };
 
 } // namespace WebCore

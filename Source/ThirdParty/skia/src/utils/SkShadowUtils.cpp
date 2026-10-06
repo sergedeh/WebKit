@@ -1,5 +1,5 @@
 /*
-* Copyright 2017 Google Inc.
+* Copyright 2017 Google LLC
 *
 * Use of this source code is governed by a BSD-style license that can be
 * found in the LICENSE file.
@@ -22,17 +22,17 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkVertices.h"
+#include "include/private/SkFloatingPoint.h"
 #include "include/private/SkIDChangeListener.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTPin.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkRandom.h"
+#include "include/private/SkTPin.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkBlurMask.h"
 #include "src/core/SkColorFilterPriv.h"
 #include "src/core/SkDevice.h"
 #include "src/core/SkDrawShadowInfo.h"
 #include "src/core/SkPathPriv.h"
+#include "src/core/SkRandom.h"
 #include "src/core/SkResourceCache.h"
 #include "src/core/SkVerticesPriv.h"
 
@@ -358,7 +358,10 @@ public:
     const SkMatrix& viewMatrix() const { return *fViewMatrix; }
 #if defined(SK_GANESH)
     /** Negative means the vertices should not be cached for this path. */
-    int keyBytes() const { return fShapeForKey.unstyledKeySize() * sizeof(uint32_t); }
+    int keyBytes() const {
+        return fShapeForKey.hasUnstyledKey() ? fShapeForKey.unstyledKeySize() * sizeof(uint32_t)
+                                             : -1;
+    }
     void writeKey(void* key) const {
         fShapeForKey.writeUnstyledKey(reinterpret_cast<uint32_t*>(key));
     }

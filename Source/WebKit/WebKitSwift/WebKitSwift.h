@@ -25,6 +25,7 @@
 
 #import "CredentialUpdaterShim.h"
 
+#import "ModelTypes.h"
 #import "WKGroupSession.h"
 #import "WKIdentityDocumentPresentmentController.h"
 #import "WKIdentityDocumentPresentmentDelegate.h"
@@ -40,7 +41,9 @@
 #import "WKMarketplaceKit.h"
 #import "WKPreviewWindowController.h"
 #import "WKRKEntity.h"
+#import "WKSExperienceController.h"
 #import "WKSLinearMediaPlayer.h"
 #import "WKSLinearMediaTypes.h"
 #import "WKStageMode.h"
+#import "WKStageModeOrbitSimulator.h"
 #import "WKTextAnimationManagerIOS.h"

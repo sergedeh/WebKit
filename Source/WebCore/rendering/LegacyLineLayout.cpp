@@ -45,6 +45,7 @@
 #include "RenderLayoutState.h"
 #include "RenderLineBreak.h"
 #include "RenderObjectInlines.h"
+#include "RenderSVGInline.h"
 #include "RenderSVGText.h"
 #include "RenderView.h"
 #include "SVGElementTypeHelpers.h"
@@ -99,7 +100,7 @@ bool LegacyLineLayout::shouldSkipCreatingRunsForObject(RenderObject& object)
     auto& renderElement = downcast<RenderElement>(object);
     if (renderElement.isFloating())
         return true;
-    if (renderElement.isOutOfFlowPositioned() && !renderElement.style().isOriginalDisplayInlineType() && !renderElement.container()->isRenderInline())
+    if (renderElement.isOutOfFlowPositioned() && !renderElement.style().originalDisplay().isInlineType() && !renderElement.container()->isInlineBox())
         return true;
     return false;
 }
@@ -161,7 +162,7 @@ LegacyRootInlineBox* LegacyLineLayout::createAndAppendRootInlineBox()
 {
     m_legacyRootInlineBox = createRootInlineBox();
     if (AXObjectCache::accessibilityEnabled()) [[unlikely]] {
-        if (AXObjectCache* cache = m_flow.document().existingAXObjectCache())
+        if (AXObjectCache* cache = protect(m_flow)->document().existingAXObjectCache())
             cache->deferRecomputeIsIgnored(m_flow.element());
     }
 
@@ -173,11 +174,11 @@ LegacyInlineBox* LegacyLineLayout::createInlineBoxForRenderer(RenderObject* rend
     if (renderer == &m_flow)
         return createAndAppendRootInlineBox();
 
-    if (CheckedPtr textRenderer = dynamicDowncast<RenderSVGInlineText>(*renderer))
+    if (auto* textRenderer = dynamicDowncast<RenderSVGInlineText>(*renderer))
         return textRenderer->createInlineTextBox();
 
-    if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(renderer))
-        return renderInline->createAndAppendInlineFlowBox();
+    if (auto* renderSVGInline = dynamicDowncast<RenderSVGInline>(*renderer))
+        return renderSVGInline->createAndAppendInlineFlowBox();
 
     ASSERT_NOT_REACHED();
     return nullptr;
@@ -187,11 +188,11 @@ static inline void dirtyLineBoxesForRenderer(RenderObject& renderer)
 {
     if (CheckedPtr renderText = dynamicDowncast<RenderSVGInlineText>(renderer))
         renderText->deleteLegacyLineBoxes();
-    else if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(renderer))
-        renderInline->deleteLegacyLineBoxes();
+    else if (CheckedPtr renderSVGInline = dynamicDowncast<RenderSVGInline>(renderer))
+        renderSVGInline->deleteLegacyLineBoxes();
 }
 
-static bool parentIsConstructedOrHaveNext(LegacyInlineFlowBox* parentBox)
+static bool NODELETE parentIsConstructedOrHaveNext(LegacyInlineFlowBox* parentBox)
 {
     do {
         if (parentBox->isConstructed() || parentBox->nextOnLine())
@@ -209,7 +210,7 @@ LegacyInlineFlowBox* LegacyLineLayout::createLineBoxes(RenderObject* obj, const 
     LegacyInlineFlowBox* parentBox = nullptr;
     LegacyInlineFlowBox* result = nullptr;
     do {
-        RenderInline* inlineFlow = obj != &m_flow ? &downcast<RenderInline>(*obj) : nullptr;
+        RenderSVGInline* inlineFlow = obj != &m_flow ? &downcast<RenderSVGInline>(*obj) : nullptr;
 
         // Get the last box we made for this render object.
         parentBox = inlineFlow ? inlineFlow->lastLegacyInlineBox() : downcast<RenderBlockFlow>(*obj).legacyRootBox();
@@ -318,7 +319,7 @@ void LegacyLineLayout::removeInlineBox(BidiRun& run, const LegacyRootInlineBox& 
     inlineBox->removeFromParent();
 
     auto& renderer = run.renderer();
-    if (CheckedPtr textRenderer = dynamicDowncast<RenderSVGInlineText>(renderer))
+    if (auto* textRenderer = dynamicDowncast<RenderSVGInlineText>(renderer))
         textRenderer->removeTextBox(downcast<LegacyInlineTextBox>(*inlineBox));
     delete inlineBox;
     run.setBox(nullptr);
@@ -476,7 +477,7 @@ void LegacyLineLayout::layoutRunsAndFloats(bool hasInlineChild)
     resolver.setPosition(iter, numberOfIsolateAncestors(iter));
 
     if (hasInlineChild && !m_flow.selfNeedsLayout()) {
-        m_flow.setNeedsLayout(MarkOnlyThis); // Mark as needing a full layout to force us to repaint.
+        m_flow.setNeedsLayout(MarkingBehavior::MarkOnlyThis); // Mark as needing a full layout to force us to repaint.
         if (!layoutContext().needsFullRepaint() && m_flow.cachedLayerClippedOverflowRect()) {
             // Because we waited until we were already inside layout to discover
             // that the block really needed a full layout, we missed our chance to repaint the layer
@@ -493,7 +494,7 @@ void LegacyLineLayout::layoutRunsAndFloats(bool hasInlineChild)
 
 void LegacyLineLayout::layoutRunsAndFloatsInRange(InlineBidiResolver& resolver)
 {
-    const RenderStyle& styleToUse = style();
+    const Style::ComputedStyle& styleToUse = style();
     LineWhitespaceCollapsingState& lineWhitespaceCollapsingState = resolver.whitespaceCollapsingState();
     LegacyInlineIterator end = resolver.position();
     RenderTextInfo renderTextInfo;
@@ -592,7 +593,7 @@ size_t LegacyLineLayout::lineCount() const
     return legacyRootBox() ? 1 : 0;
 }
 
-const RenderStyle& LegacyLineLayout::style() const
+const Style::ComputedStyle& LegacyLineLayout::style() const
 {
     return m_flow.style();
 }

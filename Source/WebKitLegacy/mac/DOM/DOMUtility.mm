@@ -47,6 +47,7 @@
 #import "DOMTreeWalkerInternal.h"
 #import "DOMXPathExpressionInternal.h"
 #import "DOMXPathResultInternal.h"
+#import <JavaScriptCore/HeapCellInlines.h>
 #import <WebCore/JSCSSRule.h>
 #import <WebCore/JSCSSRuleList.h>
 #import <WebCore/JSCSSStyleDeclaration.h>
@@ -72,6 +73,7 @@
 #import <WebCore/JSXPathResult.h>
 #import <WebCore/SimpleRange.h>
 #import <WebCore/WebScriptObjectPrivate.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 static WebScriptObject *createDOMWrapper(JSC::JSObject& jsWrapper)
 {
@@ -115,10 +117,10 @@ static WebScriptObject *createDOMWrapper(JSC::JSObject& jsWrapper)
 static void disconnectWindowWrapper(WebScriptObject *windowWrapper)
 {
     ASSERT([windowWrapper isKindOfClass:[DOMAbstractView class]]);
-    [(DOMAbstractView *)windowWrapper _disconnectFrame];
+    [checked_objc_cast<DOMAbstractView>(windowWrapper) _disconnectFrame];
 }
 
-void initializeDOMWrapperHooks()
+void NODELETE initializeDOMWrapperHooks()
 {
     WebCore::initializeDOMWrapperHooks(createDOMWrapper, disconnectWindowWrapper);
 }

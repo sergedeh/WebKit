@@ -34,10 +34,9 @@
 #include <wtf/TypeCasts.h>
 
 namespace WebCore {
-
-struct BlendingContext;
-
 namespace Style {
+
+struct ZoomFactor;
 
 enum class TransformFunctionType : uint8_t {
     ScaleX,
@@ -81,11 +80,11 @@ public:
 
     virtual Ref<const TransformFunctionBase> clone() const = 0;
 
-    virtual Ref<TransformOperation> toPlatform(const FloatSize& borderBoxSize) const = 0;
+    virtual Ref<TransformOperation> toPlatform(const FloatSize& borderBoxSize, ZoomFactor) const = 0;
 
     virtual bool operator==(const TransformFunctionBase&) const = 0;
 
-    virtual void apply(TransformationMatrix&, const FloatSize& borderBoxSize) const = 0;
+    virtual void apply(TransformationMatrix&, const FloatSize& borderBoxSize, ZoomFactor) const = 0;
 
     virtual Ref<const TransformFunctionBase> blend(const TransformFunctionBase* from, const BlendingContext&, bool blendToIdentity = false) const = 0;
 
@@ -161,7 +160,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, const TransformFunctionBase&);
 
 // MARK: - Platform
 
-template<> struct ToPlatform<TransformFunctionType> { auto operator()(TransformFunctionType) -> TransformOperationType; };
+template<> struct ToPlatform<TransformFunctionType> { TransformOperationType NODELETE operator()(TransformFunctionType); };
 
 } // namespace Style
 } // namespace WebCore

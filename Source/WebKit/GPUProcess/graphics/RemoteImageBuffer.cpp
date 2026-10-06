@@ -38,11 +38,14 @@
 #include "RemoteSharedResourceCache.h"
 #include "StreamConnectionWorkQueue.h"
 #include <WebCore/GraphicsContext.h>
+#include <WebCore/RenderingResourceIdentifier.h>
 #include <wtf/StdLibExtras.h>
 
 #define MESSAGE_CHECK(assertion, message) MESSAGE_CHECK_WITH_MESSAGE_BASE(assertion, m_renderingBackend->streamConnection(), message)
 
 namespace WebKit {
+
+using namespace WebCore;
 
 Ref<RemoteImageBuffer> RemoteImageBuffer::create(Ref<WebCore::ImageBuffer>&& imageBuffer, WebCore::RenderingResourceIdentifier identifier, RemoteGraphicsContextIdentifier contextIdentifier, RemoteRenderingBackend& renderingBackend)
 {
@@ -58,12 +61,23 @@ RemoteImageBuffer::RemoteImageBuffer(Ref<WebCore::ImageBuffer>&& imageBuffer, We
     , m_context(RemoteImageBufferGraphicsContext::create(m_imageBuffer, contextIdentifier, m_renderingBackend))
 {
     m_renderingBackend->sharedResourceCache().didCreateImageBuffer(m_imageBuffer->renderingPurpose(), m_imageBuffer->renderingMode());
+}
 
-    // If the ImageBuffer was an error buffer, this will fail and nullopt will be sent, signaling
-    // allocation failure.
+void RemoteImageBuffer::getEffectiveRenderingModeForTesting(CompletionHandler<void(std::optional<WebCore::RenderingMode>)>&& completionHandler)
+{
+    assertIsCurrent(workQueue());
+    completionHandler(m_imageBuffer->getEffectiveRenderingModeForTesting());
+}
+
+void RemoteImageBuffer::getBackendHandle(CompletionHandler<void(std::optional<ImageBufferBackendHandle>&&)>&& completionHandler)
+{
+    assertIsCurrent(workQueue());
     auto* sharing = m_imageBuffer->toBackendSharing();
-    auto handle = sharing ? downcast<ImageBufferBackendHandleSharing>(*sharing).createBackendHandle() : std::nullopt;
-    m_renderingBackend->streamConnection().send(Messages::RemoteImageBufferProxy::DidCreateBackend(WTF::move(handle)), m_identifier);
+    if (!sharing) {
+        completionHandler(std::nullopt);
+        return;
+    }
+    completionHandler(downcast<ImageBufferBackendHandleSharing>(*sharing).createBackendHandle());
 }
 
 RemoteImageBuffer::~RemoteImageBuffer()
@@ -105,7 +119,9 @@ void RemoteImageBuffer::getPixelBuffer(WebCore::PixelBufferFormat destinationFor
     assertIsCurrent(workQueue());
     auto memory = m_renderingBackend->sharedMemoryForGetPixelBuffer();
     MESSAGE_CHECK(memory, "No shared memory for getPixelBufferForImageBuffer");
-    MESSAGE_CHECK(WebCore::PixelBuffer::supportedPixelFormat(destinationFormat.pixelFormat), "Pixel format not supported");
+    MESSAGE_CHECK(WebCore::ImageBuffer::supportedPixelBufferFormats(destinationFormat.pixelFormat), "Pixel format not supported");
+    MESSAGE_CHECK(m_imageBuffer->renderingMode() != RenderingMode::PDFDocument && m_imageBuffer->renderingMode() != RenderingMode::DisplayList, "Backend does not hold pixels");
+    MESSAGE_CHECK(m_imageBuffer->renderingPurpose() != RenderingPurpose::LayerBacking, "We should not interact with the pixelBuffer for LayerBacking");
     WebCore::IntRect srcRect(srcPoint, srcSize);
     if (auto pixelBuffer = m_imageBuffer->getPixelBuffer(destinationFormat, srcRect)) {
         MESSAGE_CHECK(pixelBuffer->bytes().size() <= memory->size(), "Shmem for return of getPixelBuffer is too small");
@@ -130,6 +146,8 @@ void RemoteImageBuffer::putPixelBuffer(const WebCore::PixelBufferSourceView& pix
     assertIsCurrent(workQueue());
 
     MESSAGE_CHECK(m_imageBuffer->resolutionScale() == 1, "putPixelBuffer() should not be called if (resolutionScale() != 1)");
+    MESSAGE_CHECK(m_imageBuffer->renderingMode() != RenderingMode::PDFDocument && m_imageBuffer->renderingMode() != RenderingMode::DisplayList, "Backend does not hold pixels");
+    MESSAGE_CHECK(m_imageBuffer->renderingPurpose() != RenderingPurpose::LayerBacking, "We should not interact with the pixelBuffer for LayerBacking");
 
     WebCore::IntRect srcRect(srcPoint, srcSize);
     m_imageBuffer->putPixelBuffer(pixelBuffer, srcRect, destPoint, destFormat);
@@ -175,7 +193,7 @@ void RemoteImageBuffer::convertToLuminanceMask()
     m_imageBuffer->convertToLuminanceMask();
 }
 
-void RemoteImageBuffer::transformToColorSpace(const WebCore::DestinationColorSpace& colorSpace)
+void RemoteImageBuffer::transformToColorSpace(const WebCore::ColorSpace& colorSpace)
 {
     assertIsCurrent(workQueue());
     m_imageBuffer->transformToColorSpace(colorSpace);

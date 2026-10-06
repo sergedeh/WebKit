@@ -25,15 +25,15 @@
 
 #pragma once
 
-#include "CSSKeywordValue.h"
 #include "CSSNumericValue.h"
+#include "CSSOMKeywordValue.h"
 #include "CSSTransformComponent.h"
 
 namespace WebCore {
 
 template<typename> class ExceptionOr;
 class CSSFunctionValue;
-using CSSPerspectiveValue = Variant<RefPtr<CSSNumericValue>, String, RefPtr<CSSKeywordValue>>;
+using CSSPerspectiveValue = Variant<Ref<CSSNumericValue>, String, Ref<CSSOMKeywordValue>>;
 class Document;
 
 class CSSPerspective : public CSSTransformComponent {
@@ -44,7 +44,7 @@ public:
 
     virtual ~CSSPerspective();
 
-    const CSSPerspectiveValue& length() const { return m_length; }
+    const CSSPerspectiveValue& length() const LIFETIME_BOUND { return m_length; }
     ExceptionOr<void> setLength(CSSPerspectiveValue);
 
     void serialize(StringBuilder&) const final;
@@ -57,7 +57,7 @@ public:
 private:
     explicit CSSPerspective(CSSPerspectiveValue);
 
-    void setIs2D(bool);
+    void NODELETE setIs2D(bool);
 
     CSSPerspectiveValue m_length;
 };

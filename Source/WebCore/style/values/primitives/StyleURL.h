@@ -26,9 +26,11 @@
 
 #include <WebCore/CSSURL.h>
 #include <WebCore/StyleValueTypes.h>
+#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
+class CSSURLValue;
 class ScriptExecutionContext;
 
 namespace Style {
@@ -36,6 +38,10 @@ namespace Style {
 struct URL {
     WTF::URL resolved;
     CSS::URLModifiers modifiers;
+
+    // The fragment identifier of `resolved`. `resolved` may be a bare "#id" same-document reference,
+    // which is not a valid standalone URL, so this handles that case as well as absolute URLs.
+    AtomString fragment() const;
 
     bool operator==(const URL&) const = default;
 };
@@ -53,16 +59,28 @@ template<size_t I> const auto& get(const URL& value)
 // Special conversion function for use by filters and font-face code.
 URL toStyleWithScriptExecutionContext(const CSS::URL&, const ScriptExecutionContext&);
 
-template<> struct ToCSS<URL> { auto operator()(const URL&, const RenderStyle&) -> CSS::URL; };
+template<> struct ToCSS<URL> {
+    CSS::URL operator()(const URL&, const Style::ComputedStyle&);
+};
+
 template<> struct ToStyle<CSS::URL> { auto operator()(const CSS::URL&, const BuilderState&) -> URL; };
 
-// `URL` is special-cased to return a `CSSURLValue`.
-template<> struct CSSValueCreation<URL> { Ref<CSSValue> operator()(CSSValuePool&, const RenderStyle&, const URL&); };
-template<> struct CSSValueConversion<URL> { auto operator()(BuilderState&, const CSSValue&) -> URL; };
+template<> struct CSSValueCreation<URL> {
+    Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const URL&);
+};
+
+template<> struct CSSValueConversion<URL> {
+    auto operator()(BuilderState&, const CSSURLValue&) -> URL;
+    auto operator()(BuilderState&, const CSSValue&) -> URL;
+};
+
+template<> struct DeprecatedCSSOMValueCreation<URL> {
+    Ref<DeprecatedCSSOMValue> operator()(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&, const URL&);
+};
 
 // MARK: Serialization
 
-template<> struct Serialize<URL> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const URL&); };
+template<> struct Serialize<URL> { void operator()(StringBuilder&, const CSS::SerializationContext&, const Style::ComputedStyle&, const URL&); };
 
 // MARK: Logging
 

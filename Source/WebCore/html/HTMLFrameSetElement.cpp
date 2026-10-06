@@ -3,7 +3,7 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2000 Simon Hausmann (hausmann@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * This library is free software; you can redistribute it and/or
@@ -87,7 +87,7 @@ void HTMLFrameSetElement::collectPresentationalHintsForAttribute(const Qualified
 void HTMLFrameSetElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     if (auto& eventName = HTMLBodyElement::eventNameForWindowEventHandlerAttribute(name); !eventName.isNull())
-        protectedDocument()->setWindowAttributeEventListener(eventName, name, newValue, mainThreadNormalWorldSingleton());
+        protect(document())->setWindowAttributeEventListener(eventName, name, newValue, mainThreadNormalWorldSingleton());
     else
         HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 
@@ -116,17 +116,18 @@ void HTMLFrameSetElement::attributeChanged(const QualifiedName& name, const Atom
                 m_frameborder = false;
                 m_frameborderSet = true;
             } else if (equalLettersIgnoringASCIICase(newValue, "yes"_s) || newValue == "1"_s) {
+                m_frameborder = true;
                 m_frameborderSet = true;
             }
         } else {
-            m_frameborder = false;
+            m_frameborder = true;
             m_frameborderSet = false;
         }
-        // FIXME: Do we need to trigger repainting?
+        invalidateStyleForSubtree();
         break;
     case AttributeNames::noresizeAttr:
-        // FIXME: This should set m_noresize to false if the value is null.
-        m_noresize = true;
+        m_noresize = !newValue.isNull();
+        invalidateStyleForSubtree();
         break;
     case AttributeNames::borderAttr:
         if (!newValue.isNull()) {
@@ -146,9 +147,9 @@ void HTMLFrameSetElement::attributeChanged(const QualifiedName& name, const Atom
     }
 }
 
-RenderPtr<RenderElement> HTMLFrameSetElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLFrameSetElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
-    if (style.hasContent())
+    if (style.content().isData())
         return RenderElement::createFor(*this, WTF::move(style));
     
     return createRenderer<RenderFrameSet>(*this, WTF::move(style));
@@ -200,15 +201,15 @@ void HTMLFrameSetElement::willRecalcStyle(OptionSet<Style::Change>)
         renderer->setNeedsLayout();
 }
 
-Node::InsertedIntoAncestorResult HTMLFrameSetElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLFrameSetElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
-    return InsertedIntoAncestorResult::Done;
+    HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
+    return NeedsPostConnectionSteps::No;
 }
 
-void HTMLFrameSetElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLFrameSetElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
 }
 
 WindowProxy* HTMLFrameSetElement::namedItem(const AtomString& name)

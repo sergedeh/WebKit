@@ -75,13 +75,18 @@ static bool shouldFlipScreenDimensions(const LocalFrame& frame)
     return document && document->quirks().shouldFlipScreenDimensions();
 }
 
+static bool shouldReportScreenSizeAsAvailableScreenSize(const LocalFrame& frame)
+{
+    return shouldApplyScreenFingerprintingProtections(frame) || frame.settings().shouldReportViewportSizeAsScreenSize();
+}
+
 int Screen::height() const
 {
     RefPtr frame = this->frame();
     if (!frame)
         return 0;
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logScreenAPIAccessed(*frame->protectedDocument(), ScreenAPIsAccessed::Height);
+        ResourceLoadObserver::singleton().logScreenAPIAccessed(*protect(frame->document()), ScreenAPIsAccessed::Height);
 
     if (shouldFlipScreenDimensions(*frame))
         return static_cast<int>(frame->screenSize().width());
@@ -95,7 +100,7 @@ int Screen::width() const
     if (!frame)
         return 0;
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logScreenAPIAccessed(*frame->protectedDocument(), ScreenAPIsAccessed::Width);
+        ResourceLoadObserver::singleton().logScreenAPIAccessed(*protect(frame->document()), ScreenAPIsAccessed::Width);
 
     if (shouldFlipScreenDimensions(*frame))
         return static_cast<int>(frame->screenSize().height());
@@ -109,8 +114,8 @@ unsigned Screen::colorDepth() const
     if (!frame)
         return 24;
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logScreenAPIAccessed(*frame->protectedDocument(), ScreenAPIsAccessed::ColorDepth);
-    return static_cast<unsigned>(screenDepth(frame->protectedView().get()));
+        ResourceLoadObserver::singleton().logScreenAPIAccessed(*protect(frame->document()), ScreenAPIsAccessed::ColorDepth);
+    return static_cast<unsigned>(screenDepth(protect(frame->view()).get()));
 }
 
 int Screen::availLeft() const
@@ -120,12 +125,12 @@ int Screen::availLeft() const
         return 0;
 
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logScreenAPIAccessed(*frame->protectedDocument(), ScreenAPIsAccessed::AvailLeft);
+        ResourceLoadObserver::singleton().logScreenAPIAccessed(*protect(frame->document()), ScreenAPIsAccessed::AvailLeft);
 
     if (shouldApplyScreenFingerprintingProtections(*frame))
         return 0;
 
-    return static_cast<int>(screenAvailableRect(frame->protectedView().get()).x());
+    return static_cast<int>(screenAvailableRect(protect(frame->view()).get()).x());
 }
 
 int Screen::availTop() const
@@ -135,12 +140,12 @@ int Screen::availTop() const
         return 0;
 
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logScreenAPIAccessed(*frame->protectedDocument(), ScreenAPIsAccessed::AvailTop);
+        ResourceLoadObserver::singleton().logScreenAPIAccessed(*protect(frame->document()), ScreenAPIsAccessed::AvailTop);
 
     if (shouldApplyScreenFingerprintingProtections(*frame))
         return 0;
 
-    return static_cast<int>(screenAvailableRect(frame->protectedView().get()).y());
+    return static_cast<int>(screenAvailableRect(protect(frame->view()).get()).y());
 }
 
 int Screen::availHeight() const
@@ -150,12 +155,12 @@ int Screen::availHeight() const
         return 0;
 
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logScreenAPIAccessed(*frame->protectedDocument(), ScreenAPIsAccessed::AvailHeight);
+        ResourceLoadObserver::singleton().logScreenAPIAccessed(*protect(frame->document()), ScreenAPIsAccessed::AvailHeight);
 
-    if (shouldApplyScreenFingerprintingProtections(*frame))
+    if (shouldReportScreenSizeAsAvailableScreenSize(*frame))
         return static_cast<int>(frame->screenSize().height());
 
-    return static_cast<int>(screenAvailableRect(frame->protectedView().get()).height());
+    return static_cast<int>(screenAvailableRect(protect(frame->view()).get()).height());
 }
 
 int Screen::availWidth() const
@@ -165,18 +170,18 @@ int Screen::availWidth() const
         return 0;
 
     if (frame->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::singleton().logScreenAPIAccessed(*frame->protectedDocument(), ScreenAPIsAccessed::AvailWidth);
+        ResourceLoadObserver::singleton().logScreenAPIAccessed(*protect(frame->document()), ScreenAPIsAccessed::AvailWidth);
 
-    if (shouldApplyScreenFingerprintingProtections(*frame))
+    if (shouldReportScreenSizeAsAvailableScreenSize(*frame))
         return static_cast<int>(frame->screenSize().width());
 
-    return static_cast<int>(screenAvailableRect(frame->protectedView().get()).width());
+    return static_cast<int>(screenAvailableRect(protect(frame->view()).get()).width());
 }
 
 ScreenOrientation& Screen::orientation()
 {
     if (!m_screenOrientation)
-        m_screenOrientation = ScreenOrientation::create(window() ? window()->protectedDocument().get() : nullptr);
+        lazyInitialize(m_screenOrientation, ScreenOrientation::create(window() ? protect(window()->document()).get() : nullptr));
     return *m_screenOrientation;
 }
 

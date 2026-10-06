@@ -35,10 +35,10 @@ class SubstituteResource : public RefCounted<SubstituteResource> {
 public:
     virtual ~SubstituteResource() = default;
 
-    const URL& url() const { return m_url; }
-    const ResourceResponse& response() const { return m_response; }
+    const URL& url() const LIFETIME_BOUND { return m_url; }
+    const ResourceResponse& response() const LIFETIME_BOUND { return m_response; }
     FragmentedSharedBuffer& data() const LIFETIME_BOUND { return *m_data.buffer(); }
-    Ref<FragmentedSharedBuffer> protectedData() const { return data(); }
+    Ref<FragmentedSharedBuffer> dataForSerialization() const { return m_data.copyBuffer(); }
     void append(const SharedBuffer& buffer) { m_data.append(buffer); }
     void clear() { m_data.empty(); }
 

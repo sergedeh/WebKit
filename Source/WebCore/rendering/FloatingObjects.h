@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include <WebCore/LegacyRootInlineBox.h>
+#include <WebCore/LayoutRect.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
@@ -37,12 +37,17 @@ class FloatingObjects;
 template<typename, typename> class PODInterval;
 template<typename, typename> class PODIntervalTree;
 
+// Note that FloatingObjectType uses bits so you can use FloatLeftRight as a mask to query for both left and right.
+enum FloatingObjectType : uint8_t { FloatLeft = 1, FloatRight = 2, FloatLeftRight = 3 };
+
 class FloatingObject {
     WTF_MAKE_TZONE_ALLOCATED(FloatingObject);
     WTF_MAKE_NONCOPYABLE(FloatingObject);
 public:
-    // Note that Type uses bits so you can use FloatLeftRight as a mask to query for both left and right.
-    enum Type { FloatLeft = 1, FloatRight = 2, FloatLeftRight = 3 };
+    using Type = FloatingObjectType;
+    static constexpr FloatingObjectType FloatLeft = WebCore::FloatLeft;
+    static constexpr FloatingObjectType FloatRight = WebCore::FloatRight;
+    static constexpr FloatingObjectType FloatLeftRight = WebCore::FloatLeftRight;
 
     static std::unique_ptr<FloatingObject> create(RenderBox&);
     std::unique_ptr<FloatingObject> copyToNewContainer(LayoutSize, bool shouldPaint = false, bool isDescendant = false, bool overflowClipped = false) const;
@@ -74,7 +79,7 @@ public:
 
     void setMarginOffset(LayoutSize offset) { ASSERT(!isInPlacedTree()); m_marginOffset = offset; }
 
-    const LayoutRect& frameRect() const { ASSERT(isPlaced()); return m_frameRect; }
+    const LayoutRect& frameRect() const LIFETIME_BOUND { ASSERT(isPlaced()); return m_frameRect; }
     void setFrameRect(const LayoutRect& frameRect) { ASSERT(!isInPlacedTree()); m_frameRect = frameRect; }
 
     LayoutUnit paginationStrut() const { return m_paginationStrut; }
@@ -85,7 +90,7 @@ public:
     void setIsInPlacedTree(bool value) { m_isInPlacedTree = value; }
 #endif
 
-    bool shouldPaint() const;
+    bool NODELETE shouldPaint() const;
 
     bool paintsFloat() const { return m_paintsFloat; }
     void setPaintsFloat(bool paintsFloat) { m_paintsFloat = paintsFloat; }
@@ -101,7 +106,7 @@ public:
         return LayoutSize(m_frameRect.location().x() + m_marginOffset.width(), m_frameRect.location().y() + m_marginOffset.height());
     }
     LayoutSize marginOffset() const { ASSERT(isPlaced()); return m_marginOffset; }
-    LayoutSize translationOffsetToAncestor() const;
+    LayoutSize NODELETE translationOffsetToAncestor() const;
 
 private:
     friend FloatingObjects;
@@ -158,13 +163,14 @@ public:
     void clear();
     FloatingObject* add(std::unique_ptr<FloatingObject>);
     void remove(FloatingObject*);
-    void addPlacedObject(FloatingObject*);
-    void removePlacedObject(FloatingObject*);
+    void NODELETE addPlacedObject(FloatingObject*);
+    void NODELETE removePlacedObject(FloatingObject*);
+    void place(FloatingObject&, const LayoutRect& frameRect, LayoutSize marginOffset);
     void setHorizontalWritingMode(bool b = true) { m_horizontalWritingMode = b; }
 
     bool hasLeftObjects() const { return m_leftObjectsCount > 0; }
     bool hasRightObjects() const { return m_rightObjectsCount > 0; }
-    const FloatingObjectSet& set() const { return m_set; }
+    const FloatingObjectSet& set() const LIFETIME_BOUND { return m_set; }
 
     LayoutUnit logicalLeftOffset(LayoutUnit fixedOffset, LayoutUnit logicalTop, LayoutUnit logicalHeight);
     LayoutUnit logicalRightOffset(LayoutUnit fixedOffset, LayoutUnit logicalTop, LayoutUnit logicalHeight);
@@ -181,9 +187,9 @@ private:
     const RenderBlockFlow& renderer() const { ASSERT(m_renderer); return *m_renderer; }
     void computePlacedFloatsTree();
     const FloatingObjectTree* placedFloatsTree();
-    void increaseObjectsCount(FloatingObject::Type);
-    void decreaseObjectsCount(FloatingObject::Type);
-    FloatingObjectInterval intervalForFloatingObject(FloatingObject*);
+    void NODELETE increaseObjectsCount(FloatingObjectType);
+    void NODELETE decreaseObjectsCount(FloatingObjectType);
+    FloatingObjectInterval NODELETE intervalForFloatingObject(FloatingObject*);
 
     FloatingObjectSet m_set;
     std::unique_ptr<FloatingObjectTree> m_placedFloatsTree;

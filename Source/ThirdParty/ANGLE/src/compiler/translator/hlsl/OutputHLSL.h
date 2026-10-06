@@ -10,20 +10,18 @@
 #include <list>
 #include <map>
 #include <stack>
+#include <string>
 
 #include "angle_gl.h"
 #include "compiler/translator/Compiler.h"
 #include "compiler/translator/FlagStd140Structs.h"
 #include "compiler/translator/ImmutableString.h"
 #include "compiler/translator/hlsl/ASTMetadataHLSL.h"
-#include "compiler/translator/hlsl/ShaderStorageBlockOutputHLSL.h"
 #include "compiler/translator/tree_util/IntermTraverse.h"
-
-class BuiltInFunctionEmulator;
 
 namespace sh
 {
-class AtomicCounterFunctionHLSL;
+class BuiltInFunctionEmulator;
 class ImageFunctionHLSL;
 class ResourcesHLSL;
 class StructureHLSL;
@@ -32,7 +30,18 @@ class TSymbolTable;
 class TVariable;
 class UnfoldShortCircuit;
 
+struct TReferencedBlock : angle::NonCopyable
+{
+    POOL_ALLOCATOR_NEW_DELETE
+    TReferencedBlock(const TInterfaceBlock *block, const TVariable *instanceVariable);
+    const TInterfaceBlock *block;
+    const TVariable *instanceVariable;  // May be nullptr if the block is not instanced.
+};
+
+// Maps from uniqueId to a variable.
 using ReferencedVariables = std::map<int, const TVariable *>;
+using ReferencedInterfaceBlocks = std::map<int, const TReferencedBlock *>;
+using ExtractedSamplerNameMap   = std::map<const TVariable *, std::string>;
 
 class OutputHLSL : public TIntermTraverser
 {
@@ -46,12 +55,11 @@ class OutputHLSL : public TIntermTraverser
                int numRenderTargets,
                int maxDualSourceDrawBuffers,
                const std::vector<ShaderVariable> &uniforms,
+               const ExtractedSamplerNameMap &extractedSamplerNames,
                const ShCompileOptions &compileOptions,
-               sh::WorkGroupSize workGroupSize,
                TSymbolTable *symbolTable,
                PerformanceDiagnostics *perfDiagnostics,
                const std::map<int, const TInterfaceBlock *> &uniformBlockOptimizedMap,
-               const std::vector<InterfaceBlock> &shaderStorageBlocks,
                uint8_t clipDistanceSize,
                uint8_t cullDistanceSize,
                bool isEarlyFragmentTestsSpecified);
@@ -60,7 +68,6 @@ class OutputHLSL : public TIntermTraverser
 
     void output(TIntermNode *treeRoot, TInfoSinkBase &objSink);
 
-    const std::map<std::string, unsigned int> &getShaderStorageBlockRegisterMap() const;
     const std::map<std::string, unsigned int> &getUniformBlockRegisterMap() const;
     const std::map<std::string, bool> &getUniformBlockUseStructuredBufferMap() const;
     const std::map<std::string, unsigned int> &getUniformRegisterMap() const;
@@ -75,8 +82,6 @@ class OutputHLSL : public TIntermTraverser
     }
 
   protected:
-    friend class ShaderStorageBlockOutputHLSL;
-
     TString zeroInitializer(const TType &type) const;
 
     void writeReferencedAttributes(TInfoSinkBase &out) const;
@@ -110,8 +115,6 @@ class OutputHLSL : public TIntermTraverser
     bool visitDeclaration(Visit visit, TIntermDeclaration *node) override;
     bool visitLoop(Visit visit, TIntermLoop *) override;
     bool visitBranch(Visit visit, TIntermBranch *) override;
-
-    bool handleExcessiveLoop(TInfoSinkBase &out, TIntermLoop *node);
 
     // Emit one of three strings depending on traverse phase. Called with literal strings so using
     // const char* instead of TString.
@@ -194,7 +197,6 @@ class OutputHLSL : public TIntermTraverser
     ResourcesHLSL *mResourcesHLSL;
     TextureFunctionHLSL *mTextureFunctionHLSL;
     ImageFunctionHLSL *mImageFunctionHLSL;
-    AtomicCounterFunctionHLSL *mAtomicCounterFunctionHLSL;
 
     // Parameters determining what goes in the header output
     bool mUsesFragColor;
@@ -203,7 +205,6 @@ class OutputHLSL : public TIntermTraverser
     bool mUsesFragCoord;
     bool mUsesPointCoord;
     bool mUsesFrontFacing;
-    bool mUsesHelperInvocation;
     bool mUsesPointSize;
     bool mUsesInstanceID;
     bool mHasMultiviewExtensionEnabled;
@@ -215,11 +216,6 @@ class OutputHLSL : public TIntermTraverser
     bool mUsesSampleMaskIn;
     bool mUsesSampleMask;
     bool mUsesNumSamples;
-    bool mUsesNumWorkGroups;
-    bool mUsesWorkGroupID;
-    bool mUsesLocalInvocationID;
-    bool mUsesGlobalInvocationID;
-    bool mUsesLocalInvocationIndex;
     bool mUsesXor;
     bool mUsesDiscardRewriting;
     bool mUsesNestedBreak;
@@ -240,8 +236,6 @@ class OutputHLSL : public TIntermTraverser
     bool mOutputLod0Function;
     bool mInsideDiscontinuousLoop;
     int mNestedLoopDepth;
-
-    TIntermSymbol *mExcessiveLoopIndex;
 
     TString structInitializerString(int indent, const TType &type, const TString &name) const;
 
@@ -285,19 +279,14 @@ class OutputHLSL : public TIntermTraverser
     };
     std::vector<FlatEvaluateFunction> mFlatEvaluateFunctions;
 
-    sh::WorkGroupSize mWorkGroupSize;
-
     PerformanceDiagnostics *mPerfDiagnostics;
 
   private:
     TString generateStructMapping(const std::vector<MappedStruct> &std140Structs) const;
-    ImmutableString samplerNamePrefixFromStruct(TIntermTyped *node);
-    bool ancestorEvaluatesToSamplerInStruct();
     // We need to do struct mapping when pass the struct to a function or copy the struct via
     // assignment.
     bool needStructMapping(TIntermTyped *node);
 
-    ShaderStorageBlockOutputHLSL *mSSBOOutputHLSL;
     uint8_t mClipDistanceSize;
     uint8_t mCullDistanceSize;
     bool mIsEarlyFragmentTestsSpecified;

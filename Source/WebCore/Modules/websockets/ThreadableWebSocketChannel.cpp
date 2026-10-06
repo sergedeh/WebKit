@@ -37,6 +37,7 @@
 #include "DocumentPage.h"
 #include "DocumentQuirks.h"
 #include "DocumentSecurityOrigin.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "HTTPHeaderValues.h"
 #include "ScriptExecutionContext.h"
@@ -52,9 +53,9 @@
 
 namespace WebCore {
 
-RefPtr<ThreadableWebSocketChannel> ThreadableWebSocketChannel::create(Document& document, WebSocketChannelClient& client, SocketProvider& provider)
+RefPtr<ThreadableWebSocketChannel> ThreadableWebSocketChannel::create(Document& document, WebSocketChannelClient& client, SocketProvider& provider, IsInitiatedByDedicatedWorker isInitiatedByDedicatedWorker)
 {
-    return provider.createWebSocketChannel(document, client);
+    return provider.createWebSocketChannel(document, client, isInitiatedByDedicatedWorker);
 }
 
 RefPtr<ThreadableWebSocketChannel> ThreadableWebSocketChannel::create(ScriptExecutionContext& context, WebSocketChannelClient& client, SocketProvider& provider)
@@ -109,10 +110,10 @@ std::optional<ResourceRequest> ThreadableWebSocketChannel::webSocketConnectReque
     auto userAgent = document.userAgent(validatedURL->url);
     ResourceRequest request { WTF::move(validatedURL->url) };
     request.setHTTPUserAgent(userAgent);
-    request.setDomainForCachePartition(document.domainForCachePartition());
+    request.setShouldBlockThirdPartyStorage(document.shouldBlockThirdPartyStorage());
     request.setAllowCookies(validatedURL->areCookiesAllowed);
     request.setFirstPartyForCookies(document.firstPartyForCookies());
-    request.setHTTPHeaderField(HTTPHeaderName::Origin, document.protectedSecurityOrigin()->toString());
+    request.setHTTPHeaderField(HTTPHeaderName::Origin, protect(document.securityOrigin())->toString());
 
     if (RefPtr documentLoader = document.loader())
         request.setIsAppInitiated(documentLoader->lastNavigationWasAppInitiated());
@@ -133,9 +134,9 @@ std::optional<ResourceRequest> ThreadableWebSocketChannel::webSocketConnectReque
         request.addHTTPHeaderField(HTTPHeaderName::SecFetchDest, "websocket"_s);
         request.addHTTPHeaderField(HTTPHeaderName::SecFetchMode, "websocket"_s);
 
-        if (document.protectedSecurityOrigin()->isSameOriginAs(requestOrigin.get()))
+        if (protect(document.securityOrigin())->isSameOriginAs(requestOrigin.get()))
             request.addHTTPHeaderField(HTTPHeaderName::SecFetchSite, "same-origin"_s);
-        else if (document.protectedSecurityOrigin()->isSameSiteAs(requestOrigin))
+        else if (protect(document.securityOrigin())->isSameSiteAs(requestOrigin))
             request.addHTTPHeaderField(HTTPHeaderName::SecFetchSite, "same-site"_s);
         else
             request.addHTTPHeaderField(HTTPHeaderName::SecFetchSite, "cross-site"_s);

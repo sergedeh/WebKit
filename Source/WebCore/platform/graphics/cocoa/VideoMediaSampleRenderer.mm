@@ -78,7 +78,7 @@ static constexpr CMItemCount SampleQueueHighWaterMark = 30;
 static constexpr CMItemCount SampleQueueLowWaterMark = 15;
 
 static constexpr MediaTime DecodeLowWaterMark { 100, 1000 };
-static constexpr MediaTime DecodeHighWaterMark { 133, 1000 };
+static constexpr MediaTime DecodeHighWaterMark { 166, 1000 };
 
 static bool isRendererThreadSafe(WebSampleBufferVideoRendering *renderering)
 {
@@ -148,7 +148,9 @@ VideoMediaSampleRenderer::~VideoMediaSampleRenderer()
 #if HAVE(AVSAMPLEBUFFERVIDEORENDERER)
 AVSampleBufferVideoRenderer *VideoMediaSampleRenderer::videoRendererFor(WebSampleBufferVideoRendering *renderer)
 {
-    ASSERT(renderer);
+    if (!renderer)
+        return nullptr;
+
     if (auto *displayLayer = dynamic_objc_cast<AVSampleBufferDisplayLayer>(renderer))
         return [displayLayer sampleBufferRenderer];
     return checked_objc_cast<AVSampleBufferVideoRenderer>(renderer);
@@ -190,7 +192,7 @@ Ref<GenericPromise> VideoMediaSampleRenderer::changeRenderer(WebSampleBufferVide
 
             protectedThis->purgeDecodedSampleQueue(protectedThis->m_flushId);
             for (Ref sample : protectedThis->m_decodedSampleQueue)
-                [renderer enqueueSampleBuffer:sample->platformSample().cmSampleBuffer()];
+                [renderer enqueueSampleBuffer:protect(sample->platformSample().cmSampleBuffer())];
         }
         return GenericPromise::createAndResolve();
     });
@@ -289,11 +291,11 @@ void VideoMediaSampleRenderer::maybeBecomeReadyForMoreMediaData()
             return;
         m_waitingForMoreMediaData = true;
         ThreadSafeWeakPtr weakThis { *this };
-        [renderer requestMediaDataWhenReadyOnQueue:dispatchQueue() usingBlock:^{
+        [renderer requestMediaDataWhenReadyOnQueue:protect(dispatchQueue()) usingBlock:^{
             if (RefPtr protectedThis = weakThis.get()) {
                 assertIsCurrent(protectedThis->dispatcher().get());
                 protectedThis->m_waitingForMoreMediaData = false;
-                [protectedThis->rendererOrDisplayLayer() stopRequestingMediaData];
+                [protect(protectedThis->rendererOrDisplayLayer()) stopRequestingMediaData];
                 protectedThis->maybeBecomeReadyForMoreMediaData();
             }
         }];
@@ -331,12 +333,12 @@ void VideoMediaSampleRenderer::stopRequestingMediaData()
             if (RefPtr protectedThis = weakThis.get()) {
                 assertIsCurrent(protectedThis->dispatcher().get());
                 protectedThis->m_waitingForMoreMediaData = false;
-                [protectedThis->rendererOrDisplayLayer() stopRequestingMediaData];
+                [protect(protectedThis->rendererOrDisplayLayer()) stopRequestingMediaData];
             }
         });
         return;
     }
-    [renderer() stopRequestingMediaData];
+    [protect(renderer()) stopRequestingMediaData];
 }
 
 bool VideoMediaSampleRenderer::prefersDecompressionSession() const
@@ -365,7 +367,7 @@ void VideoMediaSampleRenderer::setTimebase(RetainPtr<CMTimebaseRef>&& timebase)
 
     ASSERT(!m_timebaseAndTimerSource.first);
 
-    auto timerSource = adoptOSObject(dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatchQueue()));
+    OSObjectPtr timerSource = adoptOSObject(dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, protect(dispatchQueue())));
     dispatch_source_set_event_handler(timerSource.get(), [weakThis = ThreadSafeWeakPtr { *this }] {
         if (RefPtr protectedThis = weakThis.get())
             protectedThis->purgeDecodedSampleQueue(protectedThis->m_flushId);
@@ -415,16 +417,20 @@ MediaTime VideoMediaSampleRenderer::currentTime() const
     return MediaTime::invalidTime();
 }
 
-void VideoMediaSampleRenderer::enqueueSample(const MediaSample& sample, const MediaTime& minimumUpcomingTime)
+void VideoMediaSampleRenderer::enqueueSample(const MediaSample& sample, std::optional<MediaTime> minimumUpcomingTime)
 {
     assertIsMainThread();
-    DEBUG_LOG(LOGIDENTIFIER, "sample: ", sample, " minimumUpcomingTime: ", minimumUpcomingTime);
+    DEBUG_LOG(LOGIDENTIFIER, "sample: ", sample, " minimumUpcomingTime: ", minimumUpcomingTime.value_or(MediaTime::invalidTime()));
 
     ASSERT(sample.type() == MediaSample::Type::CMSampleBuffer);
     if (sample.type() != MediaSample::Type::CMSampleBuffer)
         return;
 
-    ASSERT(!m_needsFlushing);
+    if (m_needsFlushing) {
+        // The client resubmits samples once it has flushed.
+        DEBUG_LOG(LOGIDENTIFIER, "Dropping sample, waiting for flush: ", sample);
+        return;
+    }
     RetainPtr cmSampleBuffer = sample.platformSample().cmSampleBuffer();
 
     bool needsDecompressionSession = false;
@@ -496,31 +502,55 @@ void VideoMediaSampleRenderer::decodeNextSampleIfNeeded()
     while (!m_compressedSampleQueue.isEmpty() && !m_isDecodingSample) {
         WebCoreDecompressionSession::DecodingFlags decodingFlags;
 
-        if (currentTime.isValid() && !m_wasProtected && !m_decompressionSessionWasBlocked) {
-            auto endTime = lastDecodedSampleTime();
-            if (endTime.isValid() && endTime > highWaterMarkTime) {
-                auto [sample, upcomingMinimum, flushId, blocked] = m_compressedSampleQueue.first();
-                upcomingMinimum = std::min(sample->presentationTime(), upcomingMinimum.isValid() ? upcomingMinimum : MediaTime::positiveInfiniteTime());
+        auto endTime = lastDecodedSampleTime();
 
-                if (endTime < upcomingMinimum) {
-                    if (m_lastMinimumUpcomingPresentationTime.isInvalid() || upcomingMinimum != m_lastMinimumUpcomingPresentationTime) {
-                        ASSERT(m_lastMinimumUpcomingPresentationTime.isInvalid() || m_lastMinimumUpcomingPresentationTime < upcomingMinimum);
-                        m_lastMinimumUpcomingPresentationTime = upcomingMinimum;
-                        LogPerformance("VideoMediaSampleRenderer::decodeNextSampleIfNeeded currentTime:%0.2f expectMinimumUpcomingSampleBufferPresentationTime:%0.2f decoded queued:%zu upcoming:%zu high watermark reached", currentTime.toDouble(), m_lastMinimumUpcomingPresentationTime.toDouble(), decodedSamplesCount(), compressedSamplesCount());
-                        [rendererOrDisplayLayer() expectMinimumUpcomingSampleBufferPresentationTime:PAL::toCMTime(m_lastMinimumUpcomingPresentationTime)];
-                    }
+        if (currentTime.isValid() && !m_wasProtected && !m_decompressionSessionWasBlocked) {
+            // Hysteresis: once we stopped at the high watermark, stay idle
+            // until the decoded buffer drains below the low watermark.
+            if (m_decoderIdledAtHighWaterMark) {
+                if (endTime.isValid() && endTime >= lowWaterMarkTime)
                     return;
-                }
-                DEBUG_LOG(LOGIDENTIFIER, "Out of order frames detected, forcing extra decode");
+                m_decoderIdledAtHighWaterMark = false;
             }
-            if (endTime.isValid() && endTime >= lowWaterMarkTime && playbackRate > 0.9 && playbackRate < 1.1) {
-                LogPerformance("VideoMediaSampleRenderer::decodeNextSampleIfNeeded expectMinimumUpcomingSampleBufferPresentationTime:%0.2f decoded queued:%zu upcoming:%zu currentTime:%0.2f endTime:%0.2f low:%0.2f high:%0.2f low watermark reached", m_lastMinimumUpcomingPresentationTime.toDouble(), decodedSamplesCount(), compressedSamplesCount(), currentTime.toDouble(), endTime.toDouble(), lowWaterMarkTime.toDouble(), highWaterMarkTime.toDouble());
-                decodingFlags.add(WebCoreDecompressionSession::DecodingFlag::RealTime);
+
+            if (endTime.isValid() && endTime > highWaterMarkTime) {
+                m_hasReachedHighWatermark = true;
+                const auto& [sample, upcomingMinimumOpt, flushId, blocked] = m_compressedSampleQueue.first();
+                // Tri-state on upcomingMinimumOpt:
+                //   nullopt            -> caller did not supply a bound; use
+                //                         sample->presentationTime() as an
+                //                         internal ceiling. Do not publish a
+                //                         floor to AVF — external floors are
+                //                         only promised when a caller has
+                //                         explicitly asserted a lookahead.
+                //   !isFinite()        -> caller marked as unknown
+                //                         (MediaTime::indefiniteTime()); keep
+                //                         decoding unbounded.
+                //   finite MediaTime   -> caller-supplied lookahead bound; use
+                //                         it and publish the floor to AVF.
+                const bool explicitUnknown = upcomingMinimumOpt && !upcomingMinimumOpt->isFinite();
+                if (!explicitUnknown) {
+                    const bool callerSuppliedBound = upcomingMinimumOpt.has_value();
+                    auto upcomingMinimum = callerSuppliedBound ? std::min(sample->presentationTime(), *upcomingMinimumOpt) : sample->presentationTime();
+                    if (endTime < upcomingMinimum) {
+                        if (callerSuppliedBound && (m_lastMinimumUpcomingPresentationTime.isInvalid() || upcomingMinimum != m_lastMinimumUpcomingPresentationTime)) {
+                            ASSERT(m_lastMinimumUpcomingPresentationTime.isInvalid() || m_lastMinimumUpcomingPresentationTime < upcomingMinimum);
+                            m_lastMinimumUpcomingPresentationTime = upcomingMinimum;
+                            LogPerformance("VideoMediaSampleRenderer::decodeNextSampleIfNeeded currentTime:%0.2f expectMinimumUpcomingSampleBufferPresentationTime:%0.2f decoded queued:%zu upcoming:%zu high watermark reached", currentTime.toDouble(), m_lastMinimumUpcomingPresentationTime.toDouble(), decodedSamplesCount(), compressedSamplesCount());
+                            [protect(rendererOrDisplayLayer()) expectMinimumUpcomingSampleBufferPresentationTime:PAL::toCMTime(m_lastMinimumUpcomingPresentationTime)];
+                        }
+                        m_decoderIdledAtHighWaterMark = true;
+                        return;
+                    }
+                    if (callerSuppliedBound)
+                        DEBUG_LOG(LOGIDENTIFIER, "Out of order frames detected, forcing extra decode");
+                }
             }
         }
 
-        auto [sample, upcomingMinimum, flushId, blocked] = m_compressedSampleQueue.takeFirst();
+        auto [sample, upcomingMinimumOpt, flushId, blocked] = m_compressedSampleQueue.takeFirst();
         m_compressedSamplesCount = m_compressedSampleQueue.size();
+
         maybeBecomeReadyForMoreMediaData();
 
         if (flushId != m_flushId) {
@@ -553,38 +583,56 @@ void VideoMediaSampleRenderer::decodeNextSampleIfNeeded()
             decodingFlags.add(WebCoreDecompressionSession::DecodingFlag::NonDisplaying);
         if (useStereoDecoding())
             decodingFlags.add(WebCoreDecompressionSession::DecodingFlag::EnableStereo);
+        // Mirror AVF's RealTime policy. On iOS-family the flag is set
+        // whenever we're in normal 1x playback and the sample is displaying.
+        // On macOS it is additionally suppressed during the
+        // kVMC2DecayingFromHighWaterLevel state: we have previously crossed
+        // the high watermark at least once since the last flush, and the
+        // decoded buffer has since drained below the low watermark.
+#if PLATFORM(MAC)
+        bool suppressRealTime = m_hasReachedHighWatermark && endTime.isValid() && endTime < lowWaterMarkTime;
+#else
+        bool suppressRealTime = false;
+#endif
+        if (currentTime.isValid() && !sample->isNonDisplaying() && playbackRate > 0.9 && playbackRate < 1.1 && !suppressRealTime) {
+            LogPerformance("VideoMediaSampleRenderer::decodeNextSampleIfNeeded RealTime set currentTime:%0.2f endTime:%0.2f low:%0.2f high:%0.2f reachedHigh:%d", currentTime.toDouble(), endTime.toDouble(), lowWaterMarkTime.toDouble(), highWaterMarkTime.toDouble(), m_hasReachedHighWatermark);
+            decodingFlags.add(WebCoreDecompressionSession::DecodingFlag::RealTime);
+        }
 
         RetainPtr cmSample = sample->platformSample().cmSampleBuffer();
         auto decodePromise = decompressionSession->decodeSample(cmSample.get(), decodingFlags);
 
         m_isDecodingSample = true;
 
-        decodePromise->whenSettled(dispatcher(), [weakThis = ThreadSafeWeakPtr { *this }, this, decodingFlags, flushId = flushId, startTime = MonotonicTime::now(), numberOfSamples = PAL::CMSampleBufferGetNumSamples(cmSample.get())](auto&& result) {
+        decodePromise->whenSettled(dispatcher(), [weakThis = ThreadSafeWeakPtr { *this }, decodingFlags, flushId = flushId, startTime = MonotonicTime::now(), numberOfSamples = PAL::CMSampleBufferGetNumSamples(cmSample.get())](WebCoreDecompressionSession::DecodingPromise::Result&& result) {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
 
-            assertIsCurrent(dispatcher().get());
+            assertIsCurrent(protectedThis->dispatcher().get());
 
-            m_isDecodingSample = false;
+            protectedThis->m_isDecodingSample = false;
 
-            if (flushId != m_flushId || (!result && result.error() == noErr)) {
-                ALWAYS_LOG(LOGIDENTIFIER, "Decoder was flushed");
-                decodeNextSampleIfNeeded();
+            if (flushId != protectedThis->m_flushId || (!result && result.error() == noErr)) {
+                ALWAYS_LOG_WITH_THIS(protectedThis, LOGIDENTIFIER_WITH_THIS(protectedThis), "Decoder was flushed");
+                protectedThis->decodeNextSampleIfNeeded();
                 return;
             }
 
-            m_totalVideoFrames += numberOfSamples;
+            protectedThis->m_totalVideoFrames += numberOfSamples;
 
             if (!result) {
-                if (result.error() == kVTInvalidSessionErr) {
-                    ALWAYS_LOG(LOGIDENTIFIER, "VTDecompressionSession got invalidated, requesting flush");
-                    invalidateDecompressionSession();
+                // Invalidating a session while a sample is in flight is reported either as an
+                // invalid session or as a decoder malfunction, depending on how far that sample
+                // had got. Both mean the session is gone and a flush is what resumes decoding.
+                if (result.error() == kVTInvalidSessionErr || result.error() == kVTVideoDecoderMalfunctionErr) {
+                    ALWAYS_LOG_WITH_THIS(protectedThis, LOGIDENTIFIER_WITH_THIS(protectedThis), "VTDecompressionSession got invalidated (", result.error(), "), requesting flush");
+                    protectedThis->invalidateDecompressionSession();
                     return;
                 }
 
-                m_gotDecodingError = true;
-                ++m_corruptedVideoFrames;
+                protectedThis->m_gotDecodingError = true;
+                ++protectedThis->m_corruptedVideoFrames;
 
                 callOnMainThread([protectedThis, status = result.error()] {
                     assertIsMainThread();
@@ -596,25 +644,25 @@ void VideoMediaSampleRenderer::decodeNextSampleIfNeeded()
 
             if (LOG_CHANNEL(MediaPerformance).level >= WTFLogLevel::Debug) {
                 auto now = MonotonicTime::now();
-                m_frameRateMonitor.update();
+                protectedThis->m_frameRateMonitor.update();
                 OSType format = '----';
                 MediaTime presentationTime = MediaTime::invalidTime();
                 if (RetainPtr firstFrame = result->isEmpty() ? nullptr : (*result)[0]) {
-                    RetainPtr imageBuffer = imageForSample(static_cast<CMSampleBufferRef>(firstFrame.get()));
+                    RetainPtr imageBuffer = protectedThis->imageForSample(static_cast<CMSampleBufferRef>(firstFrame.get()));
                     format = CVPixelBufferGetPixelFormatType(imageBuffer.get());
                     presentationTime = PAL::toMediaTime(PAL::CMSampleBufferGetOutputPresentationTimeStamp(firstFrame.get()));
                 }
-                LogPerformance("VideoMediaSampleRenderer pts:%0.2f minimum upcoming:%0.2f decoding rate:%0.1fHz rolling:%0.1f decoder rate:%0.1fHz compressed queue:%zu decoded queue:%zu hw:%d format:%s", presentationTime.toDouble(), m_lastMinimumUpcomingPresentationTime.toDouble(), 1.0f / Seconds { now - std::exchange(m_timeSinceLastDecode, now) }.value(), m_frameRateMonitor.observedFrameRate(), 1.0f / Seconds { now - startTime }.value(), compressedSamplesCount(), decodedSamplesCount(), protectedThis->decompressionSession()->isHardwareAccelerated(), &FourCC(format).string()[0]);
+                LogPerformance("VideoMediaSampleRenderer pts:%0.2f minimum upcoming:%0.2f decoding rate:%0.1fHz rolling:%0.1f decoder rate:%0.1fHz compressed queue:%zu decoded queue:%zu hw:%d format:%s", presentationTime.toDouble(), protectedThis->m_lastMinimumUpcomingPresentationTime.toDouble(), 1.0f / Seconds { now - std::exchange(protectedThis->m_timeSinceLastDecode, now) }.value(), protectedThis->m_frameRateMonitor.observedFrameRate(), 1.0f / Seconds { now - startTime }.value(), protectedThis->compressedSamplesCount(), protectedThis->decodedSamplesCount(), protectedThis->decompressionSession()->isHardwareAccelerated(), &FourCC(format).string()[0]);
             }
 
             if (!decodingFlags.contains(WebCoreDecompressionSession::DecodingFlag::NonDisplaying)) {
                 for (auto& decodedFrame : *result) {
                     if (decodedFrame)
-                        decodedFrameAvailable(MediaSampleAVFObjC::create(decodedFrame.get(), 0), flushId);
+                        protectedThis->decodedFrameAvailable(MediaSampleAVFObjC::create(decodedFrame.get(), 0), flushId);
                 }
             }
 
-            decodeNextSampleIfNeeded();
+            protectedThis->decodeNextSampleIfNeeded();
         });
     }
 }
@@ -631,7 +679,7 @@ bool VideoMediaSampleRenderer::shouldDecodeSample(const MediaSample& sample)
     if (sample.presentationEndTime() >= currentTime)
         return true;
 
-    RetainPtr attachments = PAL::CMSampleBufferGetSampleAttachmentsArray(sample.platformSample().cmSampleBuffer(), false);
+    RetainPtr attachments = PAL::CMSampleBufferGetSampleAttachmentsArray(protect(sample.platformSample().cmSampleBuffer()), false);
     if (!attachments)
         return true;
 
@@ -678,7 +726,7 @@ void VideoMediaSampleRenderer::decodedFrameAvailable(Ref<const MediaSample>&& sa
 
     assignResourceOwner(sample);
 
-    [rendererOrDisplayLayer() enqueueSampleBuffer:sample->platformSample().cmSampleBuffer()];
+    [protect(rendererOrDisplayLayer()) enqueueSampleBuffer:protect(sample->platformSample().cmSampleBuffer())];
 
     if (auto timebase = this->timebase()) {
         enqueueDecodedSample(WTF::move(sample));
@@ -742,6 +790,8 @@ void VideoMediaSampleRenderer::flushDecodedSampleQueue()
     m_lastDisplayedTime.reset();
     m_isDisplayingSample = false;
     m_lastMinimumUpcomingPresentationTime = MediaTime::invalidTime();
+    m_decoderIdledAtHighWaterMark = false;
+    m_hasReachedHighWatermark = false;
 }
 
 void VideoMediaSampleRenderer::cancelTimer()
@@ -865,14 +915,16 @@ void VideoMediaSampleRenderer::maybeReschedulePurge(FlushId flushId)
 void VideoMediaSampleRenderer::flush()
 {
     assertIsMainThread();
-    [renderer() flush];
+
+    m_needsFlushing = false;
+
+    [protect(renderer()) flush];
 
     if (!isUsingDecompressionSession()) {
         resetReadyForMoreMediaData();
         return;
     }
 
-    m_needsFlushing = false;
     cancelTimer();
     flushCompressedSampleQueue();
 
@@ -894,7 +946,7 @@ void VideoMediaSampleRenderer::shutdown()
     assertIsMainThread();
 
     clearTimebase();
-    [renderer() flush];
+    [protect(renderer()) flush];
     cancelTimer();
     flushCompressedSampleQueue();
     RefPtr<WebCoreDecompressionSession> decompressionSession = [&] {
@@ -930,12 +982,12 @@ void VideoMediaSampleRenderer::resetReadyForMoreMediaData()
     }
 
     ThreadSafeWeakPtr weakThis { *this };
-    [renderer() requestMediaDataWhenReadyOnQueue:mainDispatchQueueSingleton() usingBlock:^{
+    [protect(renderer()) requestMediaDataWhenReadyOnQueue:mainDispatchQueueSingleton() usingBlock:^{
         assertIsMainThread();
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
-        if (![protectedThis->renderer() isReadyForMoreMediaData])
+        if (![protect(protectedThis->renderer()) isReadyForMoreMediaData])
             return;
         if (protectedThis->m_readyForMoreMediaDataFunction)
             protectedThis->m_readyForMoreMediaDataFunction();
@@ -948,7 +1000,7 @@ void VideoMediaSampleRenderer::expectMinimumUpcomingSampleBufferPresentationTime
     if (isUsingDecompressionSession() || ![PAL::getAVSampleBufferDisplayLayerClassSingleton() instancesRespondToSelector:@selector(expectMinimumUpcomingSampleBufferPresentationTime:)])
         return;
 
-    [renderer() expectMinimumUpcomingSampleBufferPresentationTime:PAL::toCMTime(time)];
+    [protect(renderer()) expectMinimumUpcomingSampleBufferPresentationTime:PAL::toCMTime(time)];
 }
 
 WebSampleBufferVideoRendering *VideoMediaSampleRenderer::renderer() const
@@ -1053,7 +1105,7 @@ auto VideoMediaSampleRenderer::copyDisplayedPixelBuffer() -> DisplayedPixelBuffe
         if (presentationTime > currentTime && (!m_lastDisplayedSample || presentationTime > *m_lastDisplayedSample))
             return;
 
-        imageBuffer = imageForSample(nextSample->platformSample().cmSampleBuffer());
+        imageBuffer = imageForSample(protect(nextSample->platformSample().cmSampleBuffer()));
         presentationTimeStamp = presentationTime;
     });
 
@@ -1073,55 +1125,31 @@ unsigned VideoMediaSampleRenderer::totalDisplayedFrames() const
     return isUsingDecompressionSession() ? m_presentedVideoFrames.load() : ++m_sampleCount;
 }
 
-unsigned VideoMediaSampleRenderer::totalVideoFrames() const
+std::optional<VideoPlaybackQualityMetrics> VideoMediaSampleRenderer::videoPlaybackQualityMetrics() const
 {
     assertIsMainThread();
 
-    if (isUsingDecompressionSession() && !m_decompressionSessionBlocked)
-        return m_totalVideoFrames;
+    if (isUsingDecompressionSession() && !m_decompressionSessionBlocked) {
+        return VideoPlaybackQualityMetrics {
+            m_totalVideoFrames.load(),
+            m_droppedVideoFrames.load(),
+            m_corruptedVideoFrames.load(),
+            m_totalFrameDelay.toDouble(),
+            m_presentedVideoFrames.load()
+        };
+    }
 #if PLATFORM(WATCHOS)
-    return 0;
+    return std::nullopt;
 #else
-    return [renderer() videoPerformanceMetrics].totalNumberOfVideoFrames;
-#endif
-}
-
-unsigned VideoMediaSampleRenderer::droppedVideoFrames() const
-{
-    assertIsMainThread();
-
-    if (isUsingDecompressionSession() && !m_decompressionSessionBlocked)
-        return m_droppedVideoFrames;
-#if PLATFORM(WATCHOS)
-    return 0;
-#else
-    return [renderer() videoPerformanceMetrics].numberOfDroppedVideoFrames + m_droppedVideoFramesOffset;
-#endif
-}
-
-unsigned VideoMediaSampleRenderer::corruptedVideoFrames() const
-{
-    assertIsMainThread();
-
-    if (isUsingDecompressionSession() && !m_decompressionSessionBlocked)
-        return m_corruptedVideoFrames;
-#if PLATFORM(WATCHOS)
-    return 0;
-#else
-    return [renderer() videoPerformanceMetrics].numberOfCorruptedVideoFrames + m_corruptedVideoFrames;
-#endif
-}
-
-MediaTime VideoMediaSampleRenderer::totalFrameDelay() const
-{
-    assertIsMainThread();
-
-    if (isUsingDecompressionSession() && !m_decompressionSessionBlocked)
-        return m_totalFrameDelay;
-#if PLATFORM(WATCHOS)
-    return MediaTime::invalidTime();
-#else
-    return MediaTime::createWithDouble([renderer() videoPerformanceMetrics].totalFrameDelay);
+    RetainPtr renderer = this->renderer();
+    RetainPtr metrics = [renderer videoPerformanceMetrics];
+    return VideoPlaybackQualityMetrics {
+        static_cast<uint32_t>([metrics totalNumberOfVideoFrames]),
+        static_cast<uint32_t>([metrics numberOfDroppedVideoFrames] + m_droppedVideoFramesOffset),
+        static_cast<uint32_t>([metrics numberOfCorruptedVideoFrames] + m_corruptedVideoFrames.load()),
+        [metrics totalFrameDelay],
+        totalDisplayedFrames()
+    };
 #endif
 }
 
@@ -1139,6 +1167,9 @@ void VideoMediaSampleRenderer::invalidateDecompressionSession()
 
     if (decompressionSession)
         decompressionSession->invalidate();
+
+    // Drops samples already queued for the invalidated session.
+    ++m_flushId;
 
     ensureOnMainThread([weakThis = ThreadSafeWeakPtr { *this }] {
         if (RefPtr protectedThis = weakThis.get())
@@ -1165,10 +1196,10 @@ void VideoMediaSampleRenderer::assignResourceOwner(const MediaSample& sample)
         RetainPtr group = PAL::CMSampleBufferGetTaggedBufferGroup(cmSample.get());
 
         for (CFIndex index = 0; index < PAL::CMTaggedBufferGroupGetCount(group.get()); ++index)
-            assignImageBuffer(PAL::CMTaggedBufferGroupGetCVPixelBufferAtIndex(group.get(), index));
+            assignImageBuffer(protect(PAL::CMTaggedBufferGroupGetCVPixelBufferAtIndex(group.get(), index)));
         return;
     }
-    assignImageBuffer(PAL::CMSampleBufferGetImageBuffer(cmSample.get()));
+    assignImageBuffer(protect(PAL::CMSampleBufferGetImageBuffer(cmSample.get())));
 }
 
 void VideoMediaSampleRenderer::notifyFirstFrameAvailable(Function<void(const MediaTime&, double)>&& callback)
@@ -1266,7 +1297,7 @@ void VideoMediaSampleRenderer::ensureOnDispatcher(Function<void()>&& function) c
     callOnMainThread(WTF::move(function));
 }
 
-void VideoMediaSampleRenderer::ensureOnDispatcherSync(Function<void()>&& function) const
+void VideoMediaSampleRenderer::ensureOnDispatcherSync(NOESCAPE Function<void()>&& function) const
 {
     if (dispatcher()->isCurrent()) {
         function();

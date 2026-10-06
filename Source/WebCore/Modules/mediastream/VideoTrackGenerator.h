@@ -27,6 +27,7 @@
 #if ENABLE(MEDIA_STREAM) && ENABLE(WEB_CODECS)
 
 #include "RealtimeMediaSource.h"
+#include "ScriptExecutionContextIdentifier.h"
 #include "WritableStreamSink.h"
 #include <wtf/RefCounted.h>
 
@@ -61,13 +62,13 @@ private:
 
         void writeVideoFrame(VideoFrame&, VideoFrameTimeMetadata);
 
-        void setWritable(WritableStream&);
+        void NODELETE setWritable(WritableStream&);
 
     private:
         explicit Source(ScriptExecutionContextIdentifier);
 
-        const RealtimeMediaSourceCapabilities& capabilities() final { return m_capabilities; }
-        const RealtimeMediaSourceSettings& settings() final { return m_settings; }
+        const RealtimeMediaSourceCapabilities& capabilities() LIFETIME_BOUND final { return m_capabilities; }
+        const RealtimeMediaSourceSettings& settings() LIFETIME_BOUND final { return m_settings; }
         void endProducingData() final;
 
         ScriptExecutionContextIdentifier m_contextIdentifier;
@@ -89,8 +90,8 @@ private:
         explicit Sink(Ref<Source>&&);
 
         void write(ScriptExecutionContext&, JSC::JSValue, DOMPromiseDeferred<void>&&) final;
-        void close() final;
-        void abort(JSC::JSValue) final;
+        void close(JSDOMGlobalObject&, DOMPromiseDeferred<void>&&) final;
+        void abort(JSDOMGlobalObject&, JSC::JSValue, DOMPromiseDeferred<void>&&) final;
 
         bool m_muted { false };
         const Ref<Source> m_source;

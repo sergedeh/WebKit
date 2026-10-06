@@ -89,7 +89,7 @@ TrackBase::~TrackBase() = default;
 
 void TrackBase::didMoveToNewDocument(Document& newDocument)
 {
-    observeContext(newDocument.protectedContextDocument().ptr());
+    observeContext(protect(newDocument.contextDocument()).ptr());
 }
 
 #if ENABLE(MEDIA_SOURCE)
@@ -119,16 +119,16 @@ TrackListBase* TrackBase::trackList() const
     return m_trackList.get();
 }
 
-WebCoreOpaqueRoot TrackBase::opaqueRoot()
+WebCoreOpaqueRoot TrackBase::opaqueRoot() const
 {
     // Runs on GC thread.
     if (SUPPRESS_UNCOUNTED_LOCAL auto* trackList = this->trackList())
         return trackList->opaqueRoot();
-    return WebCoreOpaqueRoot { this };
+    return WebCoreOpaqueRoot { const_cast<TrackBase*>(this) };
 }
 
 // See: https://tools.ietf.org/html/bcp47#section-2.1
-static bool isValidBCP47LanguageTag(const String& languageTag)
+static bool NODELETE isValidBCP47LanguageTag(const String& languageTag)
 {
     auto const length = languageTag.length();
 

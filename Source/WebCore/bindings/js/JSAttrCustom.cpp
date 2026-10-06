@@ -30,17 +30,15 @@
 #include "JSAttr.h"
 
 #include "Element.h"
-#include "WebCoreOpaqueRootInlines.h"
 
 namespace WebCore {
 
 template<typename Visitor>
-void JSAttr::visitAdditionalChildren(Visitor& visitor)
+void JSAttr::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    if (SUPPRESS_UNCHECKED_LOCAL auto* element = wrapped().ownerElement())
-        addWebCoreOpaqueRoot(visitor, *element);
+    SUPPRESS_UNCHECKED_ARG wrapped().visitOwnerElementInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSAttr);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSAttr);
 
 } // namespace WebCore

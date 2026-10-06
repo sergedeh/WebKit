@@ -144,7 +144,7 @@ private:
     }
 
     ImageBufferSetIdentifier m_identifier;
-    std::unique_ptr<WebCore::ThreadSafeImageBufferFlusher> m_imageBufferFlusher;
+    const std::unique_ptr<WebCore::ThreadSafeImageBufferFlusher> m_imageBufferFlusher;
     std::unique_ptr<BufferSetBackendHandle> m_handles;
 };
 
@@ -159,9 +159,9 @@ std::unique_ptr<ThreadSafeImageBufferSetFlusher> RemoteLayerWithInProcessRenderi
 
     auto handles = makeUnique<BufferSetBackendHandle>(BufferSetBackendHandle {
         frontBufferHandle(),
-        m_bufferSet.m_frontBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(Ref { *m_bufferSet.m_frontBuffer }) } : std::nullopt,
-        m_bufferSet.m_backBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(Ref { *m_bufferSet.m_backBuffer }) } : std::nullopt,
-        m_bufferSet.m_secondaryBackBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(Ref { *m_bufferSet.m_secondaryBackBuffer }) } : std::nullopt,
+        m_bufferSet.m_frontBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(*m_bufferSet.m_frontBuffer) } : std::nullopt,
+        m_bufferSet.m_backBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(*m_bufferSet.m_backBuffer) } : std::nullopt,
+        m_bufferSet.m_secondaryBackBuffer ? std::optional { BufferAndBackendInfo::fromImageBuffer(*m_bufferSet.m_secondaryBackBuffer) } : std::nullopt,
     });
 
     return ImageBufferBackingStoreFlusher::create(m_bufferSet.identifier(), WTF::move(flusher), WTF::move(handles));
@@ -215,7 +215,7 @@ bool RemoteLayerWithInProcessRenderingBackingStore::setBufferVolatile(BufferType
 }
 
 template<typename ImageBufferType>
-static RefPtr<ImageBuffer> allocateBufferInternal(RemoteLayerBackingStore::Type type, const WebCore::FloatSize& logicalSize, WebCore::RenderingPurpose purpose, float resolutionScale, const WebCore::DestinationColorSpace& colorSpace, WebCore::ImageBufferFormat bufferFormat, WebCore::ImageBufferCreationContext& creationContext)
+static RefPtr<ImageBuffer> allocateBufferInternal(RemoteLayerBackingStore::Type type, const WebCore::FloatSize& logicalSize, WebCore::RenderingPurpose purpose, float resolutionScale, const WebCore::ColorSpace& colorSpace, WebCore::ImageBufferFormat bufferFormat, WebCore::ImageBufferCreationContext& creationContext)
 {
     switch (type) {
     case RemoteLayerBackingStore::Type::IOSurface:

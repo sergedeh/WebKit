@@ -28,6 +28,7 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "IPCEvent.h"
+#include "ImageBufferBackendHandle.h"
 #include "RemoteGraphicsContextIdentifier.h"
 #include "ScopedActiveMessageReceiveQueue.h"
 #include "ScopedRenderingResourcesRequest.h"
@@ -59,7 +60,7 @@ public:
 private:
     RemoteImageBuffer(Ref<WebCore::ImageBuffer>&&, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier, RemoteRenderingBackend&);
     void startListeningForIPC();
-    IPC::StreamConnectionWorkQueue& workQueue() const;
+    IPC::StreamConnectionWorkQueue& NODELETE workQueue() const;
 
     // IPC::StreamMessageReceiver
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
@@ -70,9 +71,11 @@ private:
     void getPixelBufferWithNewMemory(WebCore::SharedMemory::Handle&&, WebCore::PixelBufferFormat, WebCore::IntPoint srcPoint, WebCore::IntSize srcSize, CompletionHandler<void()>&&);
     void putPixelBuffer(const WebCore::PixelBufferSourceView&, WebCore::IntPoint srcPoint, WebCore::IntSize srcSize, WebCore::IntPoint destPoint, WebCore::AlphaPremultiplication destFormat);
     void copyNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier);
+    void getEffectiveRenderingModeForTesting(CompletionHandler<void(std::optional<WebCore::RenderingMode>)>&&);
+    void getBackendHandle(CompletionHandler<void(std::optional<ImageBufferBackendHandle>&&)>&&);
     void filteredNativeImage(Ref<WebCore::Filter>, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
     void convertToLuminanceMask();
-    void transformToColorSpace(const WebCore::DestinationColorSpace&);
+    void transformToColorSpace(const WebCore::ColorSpace&);
     void setFlushSignal(IPC::Signal&&);
     void flushContext();
     void flushContextSync(CompletionHandler<void()>&&);

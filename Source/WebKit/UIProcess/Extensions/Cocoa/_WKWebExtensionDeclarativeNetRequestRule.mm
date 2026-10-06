@@ -1025,11 +1025,12 @@ static BOOL isArrayOfRequestMethodsValid(NSArray<NSString *> *requestMethods)
 - (NSArray<NSString *> *)_resourcesToTargetWhenNoneAreSpecifiedInRule
 {
     static NSArray *resourceTypesExceptMainFrame;
-    if (!resourceTypesExceptMainFrame) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
         NSMutableDictionary *allResourceTypes = [[self _chromeResourceTypeToWebKitResourceType] mutableCopy];
         [allResourceTypes removeObjectForKey:@"main_frame"];
         resourceTypesExceptMainFrame = allResourceTypes.allKeys;
-    }
+    });
 
     return resourceTypesExceptMainFrame;
 }
@@ -1207,10 +1208,19 @@ static BOOL isArrayOfRequestMethodsValid(NSArray<NSString *> *requestMethods)
     if (_priority > rule.priority)
         return NSOrderedAscending;
 
-    if (priorityForRuleType(_action[declarativeNetRequestRuleActionTypeKey]) < priorityForRuleType(rule.action[declarativeNetRequestRuleActionTypeKey]))
+    NSInteger actionTypePriority = priorityForRuleType(_action[declarativeNetRequestRuleActionTypeKey]);
+    NSInteger otherActionTypePriority = priorityForRuleType(rule.action[declarativeNetRequestRuleActionTypeKey]);
+    if (actionTypePriority < otherActionTypePriority)
         return NSOrderedDescending;
-    if (priorityForRuleType(_action[declarativeNetRequestRuleActionTypeKey]) > priorityForRuleType(rule.action[declarativeNetRequestRuleActionTypeKey]))
+    if (actionTypePriority > otherActionTypePriority)
         return NSOrderedAscending;
+
+    if (actionTypePriority == DeclarativeNetRequestRuleActionTypeRedirect) {
+        if (_declarationOrder > rule.declarationOrder)
+            return NSOrderedAscending;
+        if (_declarationOrder < rule.declarationOrder)
+            return NSOrderedDescending;
+    }
 
     return NSOrderedSame;
 }

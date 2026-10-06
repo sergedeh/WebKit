@@ -42,9 +42,8 @@ namespace JSC {
     }
 
     inline Node::Node(const JSTokenLocation& location)
-        : m_position(location.line, location.startOffset, location.lineStartOffset)
+        : m_position(location.startOffset)
     {
-        ASSERT(location.startOffset >= location.lineStartOffset);
     }
 
     inline ExpressionNode::ExpressionNode(const JSTokenLocation& location, ResultType resultType)
@@ -179,10 +178,11 @@ namespace JSC {
     {
     }
 
-    inline ImportNode::ImportNode(const JSTokenLocation& location, ExpressionNode* expr, ExpressionNode* option)
+    inline ImportNode::ImportNode(const JSTokenLocation& location, ExpressionNode* expr, ExpressionNode* option, bool deferred)
         : ExpressionNode(location)
         , m_expr(expr)
         , m_option(option)
+        , m_deferred(deferred)
     {
     }
 
@@ -207,7 +207,6 @@ namespace JSC {
         , m_ident(ident)
         , m_start(start)
     {
-        ASSERT(m_start.offset >= m_start.lineStartOffset);
     }
 
     inline PrivateIdentifierNode::PrivateIdentifierNode(const JSTokenLocation& location, const Identifier& ident)
@@ -470,6 +469,11 @@ namespace JSC {
     }
 
     inline HasOwnPropertyFunctionCallDotNode::HasOwnPropertyFunctionCallDotNode(const JSTokenLocation& location, ExpressionNode* base, const Identifier& ident, DotType type, ArgumentsNode* args, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall)
+        : FunctionCallDotNode(location, base, ident, type, args, divot, divotStart, divotEnd, isOptionalCall)
+    {
+    }
+
+    inline ReflectConstructFunctionCallDotNode::ReflectConstructFunctionCallDotNode(const JSTokenLocation& location, ExpressionNode* base, const Identifier& ident, DotType type, ArgumentsNode* args, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall)
         : FunctionCallDotNode(location, base, ident, type, args, divot, divotStart, divotEnd, isOptionalCall)
     {
     }

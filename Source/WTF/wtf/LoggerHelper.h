@@ -36,7 +36,6 @@ public:
     virtual ~LoggerHelper() = default;
 
     virtual const Logger& logger() const = 0;
-    Ref<const Logger> protectedLogger() const { return logger(); }
     virtual ASCIILiteral logClassName() const = 0;
     virtual WTFLogChannel& logChannel() const = 0;
     virtual uint64_t logIdentifier() const = 0;
@@ -70,7 +69,7 @@ public:
 #define DEBUG_LOG_WITH_THIS(thisPtr, ...)      Ref { (thisPtr)->logger() }->debug((thisPtr)->logChannel(), __VA_ARGS__)
 #endif
 
-#define WILL_LOG(_level_)   Ref { logger() }->willLog(logChannel(), _level_)
+#define WILL_LOG(_level_)   Ref { logger() }->willLog(logChannel(), _level_, { })
 
 #define ALWAYS_LOG_IF(condition, ...)     if (condition) ALWAYS_LOG(__VA_ARGS__)
 #define ERROR_LOG_IF(condition, ...)      if (condition) ERROR_LOG(__VA_ARGS__)
@@ -83,7 +82,7 @@ public:
 #define WARNING_LOG_IF_POSSIBLE(...)    if (RefPtr logger = loggerPtr()) logger->warning(logChannel(), __VA_ARGS__)
 #define INFO_LOG_IF_POSSIBLE(...)       if (RefPtr logger = loggerPtr()) logger->info(logChannel(), __VA_ARGS__)
 #define DEBUG_LOG_IF_POSSIBLE(...)      if (RefPtr logger = loggerPtr()) logger->debug(logChannel(), __VA_ARGS__)
-#define WILL_LOG_IF_POSSIBLE(_level_)   if (RefPtr logger = loggerPtr()) logger->willLog(logChannel(), _level_)
+#define WILL_LOG_IF_POSSIBLE(_level_)   if (RefPtr logger = loggerPtr()) logger->willLog(logChannel(), _level_, { })
 
 #define ALWAYS_LOG_WITH_THIS_IF_POSSIBLE(thisPtr, ...)  if (RefPtr logger = thisPtr->loggerPtr()) ALWAYS_LOG_WITH_THIS(thisPtr, __VA_ARGS__)
 #define ERROR_LOG_WITH_THIS_IF_POSSIBLE(thisPtr, ...)   if (RefPtr logger = thisPtr->loggerPtr()) ERROR_LOG_WITH_THIS(thisPtr, __VA_ARGS__)
@@ -93,7 +92,9 @@ public:
 #if defined(__OBJC__)
 #define OBJC_LOGIDENTIFIER WTF::Logger::LogSiteIdentifier(__PRETTY_FUNCTION__, self.logIdentifier)
 #define OBJC_ALWAYS_LOG(...)     if (RefPtr<const Logger> logger = self.loggerPtr; logger && self.logChannel) logger->logAlways(*self.logChannel, __VA_ARGS__)
+#define OBJC_ALWAYS_LOG_WITH_SELF(selfPtr, ...)     if (RefPtr<const Logger> logger = selfPtr.get().loggerPtr; logger && selfPtr.get().logChannel) logger->logAlways(*selfPtr.get().logChannel, __VA_ARGS__)
 #define OBJC_ERROR_LOG(...)      if (RefPtr<const Logger> logger = self.loggerPtr; logger && self.logChannel) logger->error(*self.logChannel, __VA_ARGS__)
+#define OBJC_ERROR_LOG_WITH_SELF(selfPtr, ...)      if (RefPtr<const Logger> logger = selfPtr.get().loggerPtr; logger && selfPtr.get().logChannel) logger->error(*selfPtr.get().logChannel, __VA_ARGS__)
 #define OBJC_WARNING_LOG(...)    if (RefPtr<const Logger> logger = self.loggerPtr; logger && self.logChannel) logger->warning(*self.logChannel, __VA_ARGS__)
 #define OBJC_INFO_LOG(...)       if (RefPtr<const Logger> logger = self.loggerPtr; logger && self.logChannel) logger->info(*self.logChannel, __VA_ARGS__)
 #define OBJC_DEBUG_LOG(...)      if (RefPtr<const Logger> logger = self.loggerPtr; logger && self.logChannel) logger->debug(*self.logChannel, __VA_ARGS__)
@@ -104,6 +105,12 @@ public:
         static constexpr uint64_t parentMask = 0xffffffffffff0000ull;
         static constexpr uint64_t maskLowerWord = 0xffffull;
         return reinterpret_cast<uint64_t>((parentIdentifier & parentMask) | (childIdentifier & maskLowerWord));
+    }
+
+    static bool isChildLogIdentifier(uint64_t identifier, uint64_t parentIdentifier)
+    {
+        static constexpr uint64_t parentMask = 0xffffffffffff0000ull;
+        return (identifier & parentMask) == (parentIdentifier & parentMask);
     }
 
     static uint64_t uniqueLogIdentifier()

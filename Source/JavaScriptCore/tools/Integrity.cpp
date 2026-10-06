@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -126,8 +126,6 @@ void auditCellMinimallySlow(VM&, JSCell* cell)
     }
 }
 
-#if USE(JSVALUE64)
-
 #if ENABLE(EXTRA_INTEGRITY_CHECKS)
 // toJS will trigger an audit if ENABLE(EXTRA_INTEGRITY_CHECKS).
 #define DO_AUDIT(value) toJS(value)
@@ -176,6 +174,16 @@ JSValue doAudit(JSValue value)
         doAudit(value.asCell());
     return value;
 }
+
+#if ENABLE(EXTRA_INTEGRITY_CHECKS)
+template<>
+std::span<JSValue> audit(std::span<JSValue> span)
+{
+    for (auto it : span)
+        JSC::Integrity::audit(it);
+    return span;
+}
+#endif
 
 bool Analyzer::analyzeVM(VM& vm, Analyzer::Action action)
 {
@@ -258,10 +266,10 @@ bool Analyzer::analyzeCell(VM& vm, JSCell* cell, Analyzer::Action action)
         AUDIT_VERIFY(!Gigacage::contains(cell), "cell %p cell.type %d", cell, cellType);
 
     WeakSet& weakSet = cell->cellContainer().weakSet();
-    AUDIT_VERIFY(!weakSet.m_allocator || isSanePointer(weakSet.m_allocator),
-        "cell %p cell.type %d weakSet.allocator %p", cell, cell->type(), weakSet.m_allocator);
+    AUDIT_VERIFY(!weakSet.m_currentBlock || isSanePointer(weakSet.m_currentBlock),
+        "cell %p cell.type %d weakSet.currentBlock %p", cell, cell->type(), weakSet.m_currentBlock);
     AUDIT_VERIFY(!weakSet.m_nextAllocator || isSanePointer(weakSet.m_nextAllocator),
-        "cell %p cell.type %d weakSet.allocator %p", cell, cell->type(), weakSet.m_nextAllocator);
+        "cell %p cell.type %d weakSet.nextAllocator %p", cell, cell->type(), weakSet.m_nextAllocator);
 
     // If we're currently destructing the cell, then we can't rely on its
     // structure being good. Skip the following tests which rely on structure.
@@ -291,7 +299,7 @@ bool Analyzer::analyzeCell(VM& vm, JSCell* cell, Analyzer::Action action)
     }
 
     if (cell->isObject()) {
-        AUDIT_VERIFY(jsDynamicCast<JSObject*>(cell),
+        AUDIT_VERIFY(dynamicDowncast<JSObject>(cell),
             "cell %p cell.type %d", cell, cell->type());
     }
 
@@ -362,8 +370,6 @@ JSGlobalObject* doAudit(JSGlobalObject* globalObject)
     IA_ASSERT(globalObject->isGlobalObject(), "Invalid JSGlobalObject %p", globalObject);
     return globalObject;
 }
-
-#endif // USE(JSVALUE64)
 
 } // namespace Integrity
 } // namespace JSC

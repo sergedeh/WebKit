@@ -60,12 +60,12 @@ static ServiceWorkerClientFrameType toServiceWorkerClientFrameType(ScriptExecuti
 
 ServiceWorkerClientData ServiceWorkerClientData::isolatedCopy() const &
 {
-    return { identifier, type, frameType, url.isolatedCopy(), ownerURL.isolatedCopy(), pageIdentifier, frameIdentifier, lastNavigationWasAppInitiated, advancedPrivacyProtections, isVisible, isFocused, focusOrder, crossThreadCopy(ancestorOrigins) };
+    return { identifier, type, frameType, url.isolatedCopy(), ownerURL.isolatedCopy(), pageIdentifier, frameIdentifier, lastNavigationWasAppInitiated, advancedPrivacyProtections, isVisible, isFocused, focusOrder, crossThreadCopy(ancestorOrigins), globalPrivacyControlEnabled };
 }
 
 ServiceWorkerClientData ServiceWorkerClientData::isolatedCopy() &&
 {
-    return { identifier, type, frameType, WTF::move(url).isolatedCopy(), WTF::move(ownerURL).isolatedCopy(), pageIdentifier, frameIdentifier, lastNavigationWasAppInitiated, advancedPrivacyProtections, isVisible, isFocused, focusOrder, crossThreadCopy(WTF::move(ancestorOrigins)) };
+    return { identifier, type, frameType, WTF::move(url).isolatedCopy(), WTF::move(ownerURL).isolatedCopy(), pageIdentifier, frameIdentifier, lastNavigationWasAppInitiated, advancedPrivacyProtections, isVisible, isFocused, focusOrder, crossThreadCopy(WTF::move(ancestorOrigins)), globalPrivacyControlEnabled };
 }
 
 ServiceWorkerClientData ServiceWorkerClientData::from(ScriptExecutionContext& context)
@@ -75,7 +75,7 @@ ServiceWorkerClientData ServiceWorkerClientData::from(ScriptExecutionContext& co
 
         Vector<String> ancestorOrigins;
         if (RefPtr frame = document->frame()) {
-            for (RefPtr ancestor = frame->tree().parent(); ancestor; ancestor = ancestor->tree().parent()) {
+            for (Ref ancestor : ancestorFrames(*frame)) {
                 if (RefPtr origin = ancestor->frameDocumentSecurityOrigin())
                     ancestorOrigins.append(origin->toString());
             }
@@ -94,7 +94,8 @@ ServiceWorkerClientData ServiceWorkerClientData::from(ScriptExecutionContext& co
             !document->hidden(),
             document->hasFocus(),
             0,
-            WTF::move(ancestorOrigins)
+            WTF::move(ancestorOrigins),
+            context.settingsValues().globalPrivacyControlEnabled
         };
     }
 
@@ -113,7 +114,8 @@ ServiceWorkerClientData ServiceWorkerClientData::from(ScriptExecutionContext& co
         false,
         false,
         0,
-        { }
+        { },
+        context.settingsValues().globalPrivacyControlEnabled
     };
 }
 

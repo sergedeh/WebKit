@@ -33,6 +33,7 @@
 #include "WebGPUTextureFormat.h"
 #include <IOSurface/IOSurfaceRef.h>
 #include <WebGPU/WebGPU.h>
+#include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore::WebGPU {
@@ -50,9 +51,12 @@ public:
 
     virtual ~PresentationContextImpl();
 
-    void setSize(uint32_t width, uint32_t height);
+    void NODELETE setSize(uint32_t width, uint32_t height);
 
     void present(uint32_t frameIndex, bool = false);
+
+    Seconds lastFrameGPUCost() const;
+    Seconds lastFramePresentStall() const;
 
     WGPUSurface backing() const { return m_backing.get(); }
     bool isPresentationContextImpl() const final { return true; }

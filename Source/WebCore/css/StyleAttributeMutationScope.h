@@ -54,12 +54,12 @@ public:
 
         bool shouldReadOldValue = false;
 
-        m_mutationRecipients = MutationObserverInterestGroup::createForAttributesMutation(*m_element, HTMLNames::styleAttr);
+        lazyInitialize(m_mutationRecipients, MutationObserverInterestGroup::createForAttributesMutation(*m_element, HTMLNames::styleAttr));
         if (m_mutationRecipients && m_mutationRecipients->isOldValueRequested())
             shouldReadOldValue = true;
 
         if (m_element->isDefinedCustomElement()) [[unlikely]] {
-            CheckedPtr reactionQueue = m_element->reactionQueue();
+            auto* reactionQueue = m_element->reactionQueue();
             if (reactionQueue && reactionQueue->observesStyleAttribute()) {
                 m_isCustomElement = true;
                 shouldReadOldValue = true;
@@ -101,9 +101,9 @@ private:
     static unsigned s_scopeCount;
     static StyleAttributeMutationScope* s_currentScope;
 
-    std::unique_ptr<MutationObserverInterestGroup> m_mutationRecipients;
+    const std::unique_ptr<MutationObserverInterestGroup> m_mutationRecipients;
     AtomString m_oldValue;
-    RefPtr<Element> m_element;
+    const RefPtr<Element> m_element;
     bool m_isCustomElement { false };
     bool m_shouldDeliver { false };
 };

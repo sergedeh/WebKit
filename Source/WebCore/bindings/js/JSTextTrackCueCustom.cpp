@@ -41,8 +41,9 @@ using namespace JSC;
 
 bool JSTextTrackCueOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    JSTextTrackCue* jsTextTrackCue = jsCast<JSTextTrackCue*>(handle.slot()->asCell());
-    TextTrackCue& textTrackCue = jsTextTrackCue->wrapped();
+    JSTextTrackCue* jsTextTrackCue = downcast<JSTextTrackCue>(handle.slot()->asCell());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_LOCAL TextTrackCue& textTrackCue = jsTextTrackCue->wrapped();
 
     if (!textTrackCue.isContextStopped() && textTrackCue.hasPendingActivity()) {
         if (reason) [[unlikely]]
@@ -50,24 +51,26 @@ bool JSTextTrackCueOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> h
         return true;
     }
 
-    // If the cue is not associated with a track, it is not reachable.
-    if (!textTrackCue.track())
+    // If the cue is not associated with a track, it is not reachable. This runs on the parallel GC
+    // marking threads, so the test is done by TextTrackCue under m_trackLockForGC rather than
+    // through track(), which is only for the owner thread.
+    if (!textTrackCue.containsTrackAsOpaqueRootInGCThread(visitor))
         return false;
 
     if (reason) [[unlikely]]
         *reason = "TextTrack is an opaque root"_s;
 
-    return containsWebCoreOpaqueRoot(visitor, textTrackCue.track());
+    return true;
 }
 
 template<typename Visitor>
-void JSTextTrackCue::visitAdditionalChildren(Visitor& visitor)
+void JSTextTrackCue::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    if (auto* textTrack = wrapped().track())
-        addWebCoreOpaqueRoot(visitor, *textTrack);
+    // Do not ref `wrapped()` here since this function may get called on a GC thread.
+    SUPPRESS_UNCOUNTED_ARG wrapped().visitAdditionalChildrenInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSTextTrackCue);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSTextTrackCue);
 
 } // namespace WebCore
 

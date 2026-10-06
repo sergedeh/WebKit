@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ColorControlSupportsAlpha.h"
 #include "WebColorPicker.h"
 #include <gdk/gdk.h>
 
@@ -39,23 +40,24 @@ namespace WebKit {
 
 class WebColorPickerGtk : public WebColorPicker {
 public:
-    static Ref<WebColorPickerGtk> create(WebPageProxy&, const WebCore::Color&, const WebCore::IntRect&);
+    static Ref<WebColorPickerGtk> create(WebPageProxy&, const WebCore::Color&, ColorControlSupportsAlpha, std::optional<WebCore::FrameIdentifier> = std::nullopt);
     virtual ~WebColorPickerGtk();
 
     void endPicker() override;
-    void showColorPicker(const WebCore::Color&) override;
+    void showColorPicker(const WebCore::Color&, const WebCore::IntRect&) override;
 
     void cancel();
 
-    const GdkRGBA* initialColor() const { return &m_initialColor; }
+    const GdkRGBA* initialColor() const LIFETIME_BOUND { return &m_initialColor; }
 
 protected:
-    WebColorPickerGtk(WebPageProxy&, const WebCore::Color&, const WebCore::IntRect&);
+    WebColorPickerGtk(WebPageProxy&, const WebCore::Color&, ColorControlSupportsAlpha, std::optional<WebCore::FrameIdentifier> = std::nullopt);
 
     void didChooseColor(const WebCore::Color&);
 
     GdkRGBA m_initialColor;
     GtkWidget* m_webView;
+    ColorControlSupportsAlpha m_supportsAlpha;
 
 private:
     static void colorChooserDialogRGBAChangedCallback(GtkColorChooser*, GParamSpec*, WebColorPickerGtk*);

@@ -50,7 +50,7 @@ static bool shouldForceContentSniffing;
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceHandleInternal);
 
 typedef HashMap<AtomString, ResourceHandle::BuiltinConstructor> BuiltinResourceHandleConstructorMap;
-static BuiltinResourceHandleConstructorMap& builtinResourceHandleConstructorMap()
+static BuiltinResourceHandleConstructorMap& NODELETE builtinResourceHandleConstructorMap()
 {
 #if PLATFORM(IOS_FAMILY)
     ASSERT(WebThreadIsLockedOrDisabled());
@@ -67,7 +67,7 @@ void ResourceHandle::registerBuiltinConstructor(const AtomString& protocol, Reso
 }
 
 typedef HashMap<AtomString, ResourceHandle::BuiltinSynchronousLoader> BuiltinResourceHandleSynchronousLoaderMap;
-static BuiltinResourceHandleSynchronousLoaderMap& builtinResourceHandleSynchronousLoaderMap()
+static BuiltinResourceHandleSynchronousLoaderMap& NODELETE builtinResourceHandleSynchronousLoaderMap()
 {
     ASSERT(isMainThread());
     static NeverDestroyed<BuiltinResourceHandleSynchronousLoaderMap> map;
@@ -164,7 +164,7 @@ void ResourceHandle::clearClient()
 void ResourceHandle::didReceiveResponse(ResourceResponse&& response, CompletionHandler<void()>&& completionHandler)
 {
     if (response.isHTTP09()) {
-        auto url = response.url();
+        auto& url = response.url();
         std::optional<uint16_t> port = url.port();
         if (port && !WTF::isDefaultPortForProtocol(port.value(), url.protocol())) {
             cancel();

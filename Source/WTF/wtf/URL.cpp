@@ -27,19 +27,16 @@
 #include "config.h"
 #include <wtf/URL.h>
 
-#include "URLParser.h"
-#include <ranges>
 #include <stdio.h>
 #include <unicode/uidna.h>
-#include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/URLParser.h>
 #include <wtf/UUID.h>
-#include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringHash.h>
@@ -74,7 +71,7 @@ URL::URL(String&& absoluteURL, const URLTextEncoding* encoding)
     *this = URLParser(WTF::move(absoluteURL), URL(), encoding).result();
 }
 
-static bool shouldTrimFromURL(char16_t character)
+static bool NODELETE shouldTrimFromURL(char16_t character)
 {
     // Ignore leading/trailing whitespace and control characters.
     return character <= ' ';
@@ -197,7 +194,7 @@ String URL::protocolHostAndPort() const
     );
 }
 
-static std::optional<Latin1Character> decodeEscapeSequence(StringView input, unsigned index, unsigned length)
+static std::optional<Latin1Character> NODELETE decodeEscapeSequence(StringView input, unsigned index, unsigned length)
 {
     if (index + 3 > length || input[index] != '%')
         return std::nullopt;
@@ -311,7 +308,7 @@ String URL::fileSystemPath() const
 
 #if !ASSERT_ENABLED
 
-static inline void assertProtocolIsGood(StringView)
+static inline void NODELETE assertProtocolIsGood(StringView)
 {
 }
 
@@ -335,13 +332,13 @@ static void assertProtocolIsGood(StringView protocol)
 static Lock defaultPortForProtocolMapForTestingLock;
 
 using DefaultPortForProtocolMapForTesting = HashMap<String, uint16_t>;
-static DefaultPortForProtocolMapForTesting*& defaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
+static DefaultPortForProtocolMapForTesting*& NODELETE defaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
 {
     static DefaultPortForProtocolMapForTesting* defaultPortForProtocolMap;
     return defaultPortForProtocolMap;
 }
 
-static DefaultPortForProtocolMapForTesting& ensureDefaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
+static DefaultPortForProtocolMapForTesting& NODELETE ensureDefaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
 {
     DefaultPortForProtocolMapForTesting*& defaultPortForProtocolMap = defaultPortForProtocolMapForTesting();
     if (!defaultPortForProtocolMap)
@@ -382,7 +379,7 @@ bool isDefaultPortForProtocol(uint16_t port, StringView protocol)
 
 bool URL::protocolIsJavaScript() const
 {
-    return WTF::protocolIsJavaScript(string());
+    return protocolIs("javascript"_s);
 }
 
 bool URL::protocolIs(StringView protocol) const
@@ -416,7 +413,8 @@ StringView URL::path() const LIFETIME_BOUND
     if (!m_isValid)
         return { };
 
-    return StringView(m_string).substring(pathStart(), m_pathEnd - pathStart());
+    unsigned pathStart = this->pathStart();
+    return StringView(m_string).substring(pathStart, m_pathEnd - pathStart);
 }
 
 bool URL::setProtocol(StringView newProtocol)
@@ -484,14 +482,14 @@ unsigned URL::credentialsEnd() const
     return end;
 }
 
-static bool forwardSlashHashOrQuestionMark(char16_t c)
+static bool NODELETE forwardSlashHashOrQuestionMark(char16_t c)
 {
     return c == '/'
         || c == '#'
         || c == '?';
 }
 
-static bool slashHashOrQuestionMark(char16_t c)
+static bool NODELETE slashHashOrQuestionMark(char16_t c)
 {
     return forwardSlashHashOrQuestionMark(c) || c == '\\';
 }
@@ -543,7 +541,7 @@ void URL::setPort(std::optional<uint16_t> port)
     ));
 }
 
-static unsigned countASCIIDigits(StringView string)
+static unsigned NODELETE countASCIIDigits(StringView string)
 {
     unsigned length = string.length();
     for (unsigned count = 0; count < length; ++count) {
@@ -768,7 +766,7 @@ void URL::setPath(StringView path)
 
     parseAllowingC0AtEnd(makeString(
         StringView(m_string).left(pathStart()),
-        path.startsWith('/') || (path.startsWith('\\') && (hasSpecialScheme() || protocolIsFile())) || (!hasSpecialScheme() && path.isEmpty() && m_schemeEnd + 1U < pathStart()) ? ""_s : "/"_s,
+        path.startsWith('/') || (path.startsWith('\\') && hasSpecialScheme()) || (!hasSpecialScheme() && path.isEmpty() && m_schemeEnd + 1U < pathStart()) ? ""_s : "/"_s,
         !hasSpecialScheme() && host().isEmpty() && path.startsWith("//"_s) && path.length() > 2 ? "/."_s : ""_s,
         escapePathWithoutCopying(path),
         StringView(m_string).substring(m_pathEnd)
@@ -812,17 +810,17 @@ bool protocolHostAndPortAreEqual(const URL& a, const URL& b)
     unsigned hostStartA = a.hostStart();
     unsigned hostLengthA = a.m_hostEnd - hostStartA;
     unsigned hostStartB = b.hostStart();
-    unsigned hostLengthB = b.m_hostEnd - b.hostStart();
+    unsigned hostLengthB = b.m_hostEnd - hostStartB;
     if (hostLengthA != hostLengthB)
         return false;
 
-    // Check the scheme
+    // Check the scheme.
     for (unsigned i = 0; i < a.m_schemeEnd; ++i) {
         if (toASCIILower(a.string()[i]) != toASCIILower(b.string()[i]))
             return false;
     }
 
-    // And the host
+    // And the host.
     for (unsigned i = 0; i < hostLengthA; ++i) {
         if (toASCIILower(a.string()[hostStartA + i]) != toASCIILower(b.string()[hostStartB + i]))
             return false;
@@ -865,7 +863,7 @@ String percentEncodeFragmentDirectiveSpecialCharacters(const String& input)
     return percentEncodeCharacters(input, URLParser::isSpecialCharacterForFragmentDirective);
 }
 
-static bool protocolIsInternal(StringView string, ASCIILiteral protocol)
+static bool NODELETE protocolIsInternal(StringView string, ASCIILiteral protocol)
 {
     assertProtocolIsGood(protocol);
     size_t protocolIndex = 0;
@@ -958,9 +956,9 @@ String URL::strippedForUseAsReport() const
     return makeString(StringView(m_string).left(m_userStart), StringView(m_string).substring(end, m_pathEnd - end));
 }
 
-bool protocolIsJavaScript(StringView string)
+bool isValidJavaScriptURL(StringView string)
 {
-    return protocolIsInternal(string, "javascript"_s);
+    return URL(string.toStringWithoutCopying()).protocolIsJavaScript();
 }
 
 bool protocolIsInHTTPFamily(StringView url)
@@ -977,14 +975,14 @@ bool protocolIsInHTTPFamily(StringView url)
 
 
 static StaticStringImpl aboutBlankString { "about:blank" };
-const URL& aboutBlankURL()
+SUPPRESS_NODELETE const URL& aboutBlankURL()
 {
     static NeverDestroyed<URL> staticBlankURL { &aboutBlankString };
     return staticBlankURL;
 }
 
 static StaticStringImpl aboutSrcDocString { "about:srcdoc" };
-const URL& aboutSrcDocURL()
+SUPPRESS_NODELETE const URL& aboutSrcDocURL()
 {
     static NeverDestroyed<URL> staticSrcDocURL { &aboutSrcDocString };
     return staticSrcDocURL;
@@ -1000,7 +998,7 @@ bool portAllowed(const URL& url)
 
     // This blocked port list is defined by the Fetch spec, with the addition of port 0.
     // See https://fetch.spec.whatwg.org/#port-blocking for more information.
-    static constexpr auto blockedPortList = std::to_array<uint16_t>({
+    static constexpr auto blockedPortList = WTF::toArray<uint16_t>({
         0, // reserved
         1, // tcpmux
         7, // echo
@@ -1170,7 +1168,7 @@ bool URL::isAboutSrcDoc() const
     return protocolIsAbout() && path() == "srcdoc"_s;
 }
 
-static bool isIPv4Address(StringView string)
+static bool NODELETE isIPv4Address(StringView string)
 {
     auto count = 0;
 
@@ -1323,7 +1321,7 @@ Vector<KeyValuePair<String, String>> differingQueryParameters(const URL& firstUR
     return differingQueryParameters;
 }
 
-static StringView substringIgnoringQueryAndFragments(const URL& url LIFETIME_BOUND)
+static StringView NODELETE substringIgnoringQueryAndFragments(const URL& url LIFETIME_BOUND)
 {
     if (!url.isValid())
         return StringView(url.string());

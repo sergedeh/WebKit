@@ -35,17 +35,19 @@
 #import "CharacterData.h"
 #import "ColorCocoa.h"
 #import "CommonAtomStrings.h"
+#import "ComposedTreeAncestorIterator.h"
 #import "ComposedTreeIterator.h"
 #import "ContainerNodeInlines.h"
 #import "Document.h"
 #import "DocumentLoader.h"
+#import "DocumentPage.h"
 #import "Editing.h"
 #import "ElementChildIteratorInlines.h"
 #import "ElementInlines.h"
 #import "ElementRareData.h"
 #import "ElementTraversal.h"
 #import "FontAttributes.h"
-#import "FontCascade.h"
+#import "FontCascadeInlines.h"
 #import "FrameDestructionObserverInlines.h"
 #import "FrameLoader.h"
 #import "HTMLAttachmentElement.h"
@@ -57,10 +59,11 @@
 #import "LocalFrame.h"
 #import "LocalizedStrings.h"
 #import "NodeName.h"
+#import "Page.h"
 #import "RenderImage.h"
 #import "RenderObjectStyle.h"
-#import "RenderStyle+GettersInlines.h"
 #import "RenderText.h"
+#import "StyleComputedStyle+GettersInlines.h"
 #import "StyleExtractor.h"
 #import "StyleProperties.h"
 #import "StyledElement.h"
@@ -101,7 +104,7 @@ static String preferredFilenameForElement(const HTMLImageElement& element)
 
     auto suggestedName = [&] -> String {
         Ref document = element.document();
-        RetainPtr url = document->completeURL(urlString).createNSURL();
+        RetainPtr url = document->encodingParseURL(urlString).createNSURL();
         if (!url)
             url = [NSURL _web_URLWithString:[urlString.createNSString() stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] relativeToURL:nil];
 
@@ -132,7 +135,7 @@ static String preferredFilenameForElement(const HTMLImageElement& element)
 
 static RetainPtr<NSFileWrapper> fileWrapperForElement(const HTMLImageElement& element)
 {
-    if (CachedImage* cachedImage = element.cachedImage()) {
+    if (RefPtr cachedImage = element.cachedImage()) {
         if (RefPtr sharedBuffer = cachedImage->resourceBuffer()) {
             RetainPtr wrapper = adoptNS([[NSFileWrapper alloc] initRegularFileWithContents:sharedBuffer->makeContiguous()->createNSData().get()]);
             [wrapper setPreferredFilename:preferredFilenameForElement(element).createNSString().get()];
@@ -140,11 +143,11 @@ static RetainPtr<NSFileWrapper> fileWrapperForElement(const HTMLImageElement& el
         }
     }
 
-    auto* renderer = element.renderer();
-    if (auto* renderImage = dynamicDowncast<RenderImage>(renderer)) {
-        CachedResourceHandle image = renderImage->cachedImage();
+    CheckedPtr renderer = element.renderer();
+    if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer)) {
+        RefPtr image = renderImage->cachedImage();
         if (image && !image->errorOccurred()) {
-            RetainPtr<NSFileWrapper> wrapper = adoptNS([[NSFileWrapper alloc] initRegularFileWithContents:(__bridge NSData *)image->imageForRenderer(renderer)->adapter().tiffRepresentation()]);
+            RetainPtr<NSFileWrapper> wrapper = adoptNS([[NSFileWrapper alloc] initRegularFileWithContents:(__bridge NSData *)protect(protect(image->image())->adapter().tiffRepresentation()).get()]);
             [wrapper setPreferredFilename:@"image.tiff"];
             return wrapper;
         }
@@ -204,18 +207,27 @@ static RetainPtr<NSAttributedString> attributedStringWithAttachmentForElement(co
 }
 
 #if ENABLE(WRITING_TOOLS)
-static bool elementQualifiesForWritingToolsPreservation(Element* element)
+static bool elementQualifiesForWritingToolsPreservation(Element* element, const WeakHashSet<Node, WeakPtrImplWithEventTargetData>& clientPreservedNodes)
 {
+    if (clientPreservedNodes.contains(*element))
+        return true;
+
     // If the element is a mail blockquote, it should be preserved after a Writing Tools composition.
     if (isMailBlockquote(*element))
         return true;
+
+    if (element->getIdAttribute() == "AppleMailSignature"_s) [[unlikely]] {
+        // FIXME (310312): Remove this special case once Mail adopts `-_addWritingToolsPreservedNodes:`.
+        if (auto* page = element->document().page(); page && page->isEditable())
+            return true;
+    }
 
     // If the element is a tab span node, it is a tab character with `whitespace:pre`, and need not be preserved.
     if (tabSpanNode(element))
         return false;
 
     // If the element has no renderer, it can't have `whitespace:pre` so it need not be preserved.
-    auto renderer = element->renderer();
+    CheckedPtr renderer = element->renderer();
     if (!renderer)
         return false;
 
@@ -229,14 +241,14 @@ static bool elementQualifiesForWritingToolsPreservation(Element* element)
     return false;
 }
 
-static bool hasAncestorQualifyingForWritingToolsPreservation(Element* ancestor, ElementCache<bool>& cache)
+static bool hasAncestorQualifyingForWritingToolsPreservation(Element* ancestor, ElementCache<bool>& cache, const WeakHashSet<Node, WeakPtrImplWithEventTargetData>& clientPreservedNodes)
 {
     if (!ancestor)
         return false;
 
     auto entry = cache.find(*ancestor);
     if (entry == cache.end()) {
-        auto result = elementQualifiesForWritingToolsPreservation(ancestor) || hasAncestorQualifyingForWritingToolsPreservation(ancestor->protectedParentElement().get(), cache);
+        auto result = elementQualifiesForWritingToolsPreservation(ancestor, clientPreservedNodes) || hasAncestorQualifyingForWritingToolsPreservation(protect(ancestor->parentElement()).get(), cache, clientPreservedNodes);
 
         cache.set(*ancestor, result);
         return result;
@@ -246,23 +258,23 @@ static bool hasAncestorQualifyingForWritingToolsPreservation(Element* ancestor, 
 }
 #endif // ENABLE(WRITING_TOOLS)
 
-static RefPtr<Element> enclosingElement(const Node& node, ElementCache<RefPtr<Element>>& cache, Function<bool(Element *)>&& predicate)
+static RefPtr<Element> enclosingElement(const Node& node, ElementCache<RefPtr<Element>>& cache, NOESCAPE const Function<bool(Element*)>& predicate)
 {
     Vector<Ref<Element>> ancestors;
     RefPtr<Element> result;
-    for (RefPtr ancestor = node.parentElementInComposedTree(); ancestor; ancestor = ancestor->parentElementInComposedTree()) {
-        if (predicate(ancestor.get())) {
-            result = ancestor.get();
+    for (Ref ancestor : composedTreeAncestors(const_cast<Node&>(node))) {
+        if (predicate(ancestor.ptr())) {
+            result = ancestor.ptr();
             break;
         }
 
-        auto entry = cache.find(*ancestor);
+        auto entry = cache.find(ancestor);
         if (entry != cache.end()) {
             result = entry->value;
             break;
         }
 
-        ancestors.append(*ancestor);
+        ancestors.append(ancestor);
     }
 
     for (auto& ancestor : ancestors)
@@ -332,11 +344,11 @@ static void associateElementWithTextLists(Element* element, ElementCache<RefPtr<
 }
 
 // FIXME: Encapsulate all these parameters into a type for readability and maintainability.
-static void updateAttributes(const Node* node, const RenderStyle& style, OptionSet<IncludedElement> includedElements, ElementCache<bool>& elementQualifiesForWritingToolsPreservationCache, ElementCache<RefPtr<Element>>& enclosingLinkCache, ElementCache<RefPtr<Element>>& enclosingListCache, NSMutableDictionary<NSAttributedStringKey, id> *attributes, ElementCache<RetainPtr<NSArray<NSTextList *>>>& textListsForListElements)
+static void updateAttributes(const Node* node, const Style::ComputedStyle& style, OptionSet<IncludedElement> includedElements, ElementCache<bool>& elementQualifiesForWritingToolsPreservationCache, ElementCache<RefPtr<Element>>& enclosingLinkCache, ElementCache<RefPtr<Element>>& enclosingListCache, NSMutableDictionary<NSAttributedStringKey, id> *attributes, ElementCache<RetainPtr<NSArray<NSTextList *>>>& textListsForListElements, const WeakHashSet<Node, WeakPtrImplWithEventTargetData>& clientPreservedNodes)
 {
 #if ENABLE(WRITING_TOOLS)
     if (includedElements.contains(IncludedElement::PreservedContent)) {
-        if (hasAncestorQualifyingForWritingToolsPreservation(node->protectedParentElement().get(), elementQualifiesForWritingToolsPreservationCache))
+        if (hasAncestorQualifyingForWritingToolsPreservation(protect(node->parentElement()).get(), elementQualifiesForWritingToolsPreservationCache, clientPreservedNodes))
             [attributes setObject:@(1) forKey:WTWritingToolsPreservedAttributeName];
         else
             [attributes removeObjectForKey:WTWritingToolsPreservedAttributeName];
@@ -345,6 +357,7 @@ static void updateAttributes(const Node* node, const RenderStyle& style, OptionS
     UNUSED_PARAM(node);
     UNUSED_PARAM(includedElements);
     UNUSED_PARAM(elementQualifiesForWritingToolsPreservationCache);
+    UNUSED_PARAM(clientPreservedNodes);
 #endif
 
     if (style.textDecorationLineInEffect().hasUnderline())
@@ -358,14 +371,14 @@ static void updateAttributes(const Node* node, const RenderStyle& style, OptionS
         [attributes removeObjectForKey:NSStrikethroughStyleAttributeName];
 
     CheckedRef fontCascade = style.fontCascade();
-    if (auto ctFont = fontCascade->primaryFont()->ctFont())
-        [attributes setObject:(__bridge PlatformFont *)ctFont forKey:NSFontAttributeName];
+    if (RetainPtr ctFont = fontCascade->primaryFont().ctFont())
+        [attributes setObject:(__bridge PlatformFont *)ctFont.get() forKey:NSFontAttributeName];
     else {
-        auto size = fontCascade->primaryFont()->platformData().size();
+        auto size = fontCascade->primaryFont().platformData().size();
 #if PLATFORM(IOS_FAMILY)
         PlatformFont *platformFont = [PlatformFontClass systemFontOfSize:size];
 #else
-        PlatformFont *platformFont = [[NSFontManager sharedFontManager] convertFont:WebDefaultFont() toSize:size];
+        RetainPtr platformFont = [[NSFontManager sharedFontManager] convertFont:protect(WebDefaultFont()) toSize:size];
 #endif
         [attributes setObject:platformFont forKey:NSFontAttributeName];
     }
@@ -389,10 +402,10 @@ static void updateAttributes(const Node* node, const RenderStyle& style, OptionS
         break;
     case Style::TextAlign::Start:
         if (style.hasExplicitlySetDirection())
-            textAlignment = style.isLeftToRightDirection() ? NSTextAlignmentLeft : NSTextAlignmentRight;
+            textAlignment = style.writingMode().deprecatedIsLeftToRightDirection() ? NSTextAlignmentLeft : NSTextAlignmentRight;
         break;
     case Style::TextAlign::End:
-        textAlignment = style.isLeftToRightDirection() ? NSTextAlignmentRight : NSTextAlignmentLeft;
+        textAlignment = style.writingMode().deprecatedIsLeftToRightDirection() ? NSTextAlignmentRight : NSTextAlignmentLeft;
         break;
     default:
         ASSERT_NOT_REACHED();
@@ -448,7 +461,7 @@ static void updateAttributes(const Node* node, const RenderStyle& style, OptionS
 
 // This function uses TextIterator, which makes offsets in its result compatible with HTML editing.
 enum class ReplaceAllNoBreakSpaces : bool { No, Yes };
-static AttributedString editingAttributedStringInternal(const SimpleRange& range, TextIteratorBehaviors behaviors, OptionSet<IncludedElement> includedElements, ReplaceAllNoBreakSpaces replaceAllNoBreakSpaces)
+static AttributedString editingAttributedStringInternal(const SimpleRange& range, TextIteratorBehaviors behaviors, OptionSet<IncludedElement> includedElements, ReplaceAllNoBreakSpaces replaceAllNoBreakSpaces, const WeakHashSet<Node, WeakPtrImplWithEventTargetData>& clientPreservedNodes = { })
 {
     ElementCache<RefPtr<Element>> enclosingLinkCache;
     ElementCache<RefPtr<Element>> enclosingListCache;
@@ -481,10 +494,10 @@ static AttributedString editingAttributedStringInternal(const SimpleRange& range
         // In those cases, base the style on the container.
         if (!node)
             node = it.range().start.container.ptr();
-        auto renderer = node->renderer();
+        CheckedPtr renderer = node->renderer();
 
         if (renderer)
-            updateAttributes(node.get(), renderer->checkedStyle(), includedElements, elementQualifiesForWritingToolsPreservationCache, enclosingLinkCache, enclosingListCache, attributes.get(), textListsForListElements);
+            updateAttributes(node.get(), protect(renderer->style()), includedElements, elementQualifiesForWritingToolsPreservationCache, enclosingLinkCache, enclosingListCache, attributes.get(), textListsForListElements, clientPreservedNodes);
         else if (!includedElements.contains(IncludedElement::NonRenderedContent))
             continue;
 
@@ -509,9 +522,9 @@ static AttributedString editingAttributedStringInternal(const SimpleRange& range
     return AttributedString::fromNSAttributedString(WTF::move(string));
 }
 
-AttributedString editingAttributedString(const SimpleRange& range, OptionSet<IncludedElement> includedElements)
+AttributedString editingAttributedString(const SimpleRange& range, OptionSet<IncludedElement> includedElements, const WeakHashSet<Node, WeakPtrImplWithEventTargetData>& clientPreservedNodes)
 {
-    return editingAttributedStringInternal(range, { }, includedElements, ReplaceAllNoBreakSpaces::No);
+    return editingAttributedStringInternal(range, { }, includedElements, ReplaceAllNoBreakSpaces::No, clientPreservedNodes);
 }
 
 AttributedString editingAttributedStringReplacingNoBreakSpace(const SimpleRange& range, TextIteratorBehaviors behaviors, OptionSet<IncludedElement> includedElements)

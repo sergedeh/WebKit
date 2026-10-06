@@ -63,7 +63,7 @@ Ref<MathMLPresentationElement> MathMLPresentationElement::create(const Qualified
     return adoptRef(*new MathMLPresentationElement(tagName, document));
 }
 
-RenderPtr<RenderElement> MathMLPresentationElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition& insertionPosition)
+RenderPtr<RenderElement> MathMLPresentationElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& insertionPosition)
 {
     if (hasTagName(mtableTag))
         return createRenderer<RenderMathMLTable>(*this, WTF::move(style));
@@ -175,7 +175,7 @@ MathMLElement::Length MathMLPresentationElement::parseNamedSpace(StringView stri
     return length;
 }
 
-MathMLElement::Length MathMLPresentationElement::parseMathMLLength(const String& string, bool acceptLegacyMathMLLengths)
+MathMLElement::Length MathMLPresentationElement::parseMathMLLength(StringView string, bool acceptLegacyMathMLLengths)
 {
     // The regular expression from the MathML Relax NG schema is as follows:
     //
@@ -185,8 +185,7 @@ MathMLElement::Length MathMLPresentationElement::parseMathMLLength(const String&
     // Instead, we just use isASCIIWhitespace and toFloat to parse these parts.
 
     // We first skip whitespace from both ends of the string.
-    StringView stringView = string;
-    StringView trimmedLength = stringView.trim(isASCIIWhitespaceWithoutFF<char16_t>);
+    StringView trimmedLength = string.trim(isASCIIWhitespaceWithoutFF<char16_t>);
 
     if (trimmedLength.isEmpty())
         return Length();
@@ -213,7 +212,7 @@ const MathMLElement::Length& MathMLPresentationElement::cachedMathMLLength(const
 MathVariant MathMLPresentationElement::parseMathVariantAttribute(const AtomString& attributeValue)
 {
     // The mathvariant attribute values is case-sensitive.
-    static constexpr SortedArrayMap map { std::to_array<std::pair<ComparableASCIILiteral, MathVariant>>({
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, MathVariant>>({
         { "bold"_s, MathVariant::Bold },
         { "bold-fraktur"_s, MathVariant::BoldFraktur },
         { "bold-italic"_s, MathVariant::BoldItalic },
@@ -238,7 +237,7 @@ MathVariant MathMLPresentationElement::parseMathVariantAttribute(const AtomStrin
 
 std::optional<MathVariant> MathMLPresentationElement::specifiedMathVariant()
 {
-    if (!acceptsMathVariantAttribute())
+    if (!acceptsLegacyMathVariantAttribute())
         return std::nullopt;
     if (!m_mathVariant)
         m_mathVariant = parseMathVariantAttribute(attributeWithoutSynchronization(mathvariantAttr));
@@ -247,10 +246,10 @@ std::optional<MathVariant> MathMLPresentationElement::specifiedMathVariant()
 
 void MathMLPresentationElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
-    if (name == mathvariantAttr && acceptsMathVariantAttribute()) {
+    if (name == mathvariantAttr && acceptsLegacyMathVariantAttribute()) {
         m_mathVariant = std::nullopt;
-        if (renderer())
-            MathMLStyle::resolveMathMLStyleTree(renderer());
+        if (CheckedPtr renderer = this->renderer())
+            MathMLStyle::resolveMathMLStyleTree(renderer);
     }
 
     MathMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);

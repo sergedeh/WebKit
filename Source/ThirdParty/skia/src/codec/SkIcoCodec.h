@@ -11,7 +11,7 @@
 #include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 
 #include <cstddef>
 #include <memory>
@@ -72,6 +72,7 @@ private:
 
     bool onSkipScanlines(int count) override;
 
+    bool onSupportsIncrementalDecode(const SkImageInfo&) override;
     Result onStartIncrementalDecode(const SkImageInfo& dstInfo, void* pixels, size_t rowBytes,
             const SkCodec::Options&) override;
 

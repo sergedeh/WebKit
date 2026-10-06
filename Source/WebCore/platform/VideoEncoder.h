@@ -64,7 +64,7 @@ public:
         int64_t timestamp { 0 };
         std::optional<uint64_t> duration;
     };
-    using CreateResult = Expected<Ref<VideoEncoder>, String>;
+    using CreateResult = std::expected<Ref<VideoEncoder>, String>;
     using CreatePromise = NativePromise<Ref<VideoEncoder>, String>;
 
     using DescriptionCallback = Function<void(ActiveConfiguration&&)>;
@@ -72,7 +72,7 @@ public:
     using CreateCallback = Function<void(CreateResult&&)>;
 
     using CreatorFunction = void(*)(const String&, const Config&, CreateCallback&&, DescriptionCallback&&, OutputCallback&&);
-    WEBCORE_EXPORT static void setCreatorCallback(CreatorFunction&&);
+    WEBCORE_EXPORT static void NODELETE setCreatorCallback(CreatorFunction&&);
 
     static Ref<CreatePromise> create(const String&, const Config&, DescriptionCallback&&, OutputCallback&&);
     WEBCORE_EXPORT static void createLocalEncoder(const String&, const Config&, CreateCallback&&, DescriptionCallback&&, OutputCallback&&);

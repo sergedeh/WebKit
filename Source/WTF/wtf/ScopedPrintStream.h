@@ -40,7 +40,7 @@ public:
 
     ~ScopedPrintStream() final
     {
-        m_out.print(m_buffer.toCString());
+        m_out.print(m_buffer.toUTF8CString());
         m_out.flush();
     }
 
@@ -50,6 +50,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         m_buffer.vprintf(format, argList);
     }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+    bool truncatesLongStrings() const final { return m_out.truncatesLongStrings(); }
 
     void reset() { m_buffer.reset(); }
 

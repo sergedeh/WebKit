@@ -31,8 +31,8 @@
 
 #pragma once
 
-#include <WebCore/GCReachableRef.h>
-#include <WebCore/MutationObserverOptions.h>
+#include "GCReachableRef.h"
+#include "MutationObserverOptions.h"
 #include <wtf/Forward.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
@@ -91,7 +91,6 @@ public:
     MutationCallback& callback() const { return m_callback.get(); }
 
     static void enqueueSlotChangeEvent(HTMLSlotElement&);
-    static void enqueueShadowRootAttachedEvent(Element&);
 
     static void notifyMutationObservers(WindowEventLoop&);
 
@@ -104,13 +103,15 @@ private:
     explicit MutationObserver(Ref<MutationCallback>&&);
     void deliver();
 
-    static bool validateOptions(MutationObserverOptions);
+    static bool NODELETE validateOptions(MutationObserverOptions);
 
     const Ref<MutationCallback> m_callback;
     Vector<Ref<MutationRecord>> m_records;
     HashSet<GCReachableRef<Node>> m_pendingTargets;
     WeakHashSet<MutationObserverRegistration> m_registrations;
-    unsigned m_priority;
+    unsigned m_priority : 30;
+    unsigned m_isInNonNormalWorld : 1;
+    unsigned m_isAutoFillWorld : 1;
 };
 
 } // namespace WebCore

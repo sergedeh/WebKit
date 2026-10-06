@@ -113,14 +113,14 @@ static bool setTextValueInDatabase(SQLiteDatabase& db, StringView query, const S
 {
     auto statement = db.prepareStatementSlow(query);
     if (!statement) {
-        LOG_ERROR("Failed to prepare statement to set value in database (%s)", query.utf8().data());
+        LOG_ERROR("Failed to prepare statement to set value in database (%s)", query.utf8());
         return false;
     }
 
     statement->bindText(1, value);
 
     if (statement->step() != SQLITE_DONE) {
-        LOG_ERROR("Failed to step statement to set value in database (%s)", query.utf8().data());
+        LOG_ERROR("Failed to step statement to set value in database (%s)", query.utf8());
         return false;
     }
 
@@ -131,7 +131,7 @@ static bool retrieveTextResultFromDatabase(SQLiteDatabase& db, StringView query,
 {
     auto statement = db.prepareStatementSlow(query);
     if (!statement) {
-        LOG_ERROR("Error (%i) preparing statement to read text result from database (%s)", db.lastError(), query.utf8().data());
+        LOG_ERROR("Error (%i) preparing statement to read text result from database (%s)", db.lastError(), query.utf8());
         return false;
     }
 
@@ -145,7 +145,7 @@ static bool retrieveTextResultFromDatabase(SQLiteDatabase& db, StringView query,
         return true;
     }
 
-    LOG_ERROR("Error (%i) reading text result from database (%s)", result, query.utf8().data());
+    LOG_ERROR("Error (%i) reading text result from database (%s)", result, query.utf8());
     return false;
 }
 
@@ -157,7 +157,7 @@ struct VersionAndUseCount {
     size_t useCount { 0 };
 };
 
-static HashMap<DatabaseGUID, VersionAndUseCount>& guidToVersionMap() WTF_REQUIRES_LOCK(guidLock)
+static HashMap<DatabaseGUID, VersionAndUseCount>& NODELETE guidToVersionMap() WTF_REQUIRES_LOCK(guidLock)
 {
     static NeverDestroyed<HashMap<DatabaseGUID, VersionAndUseCount>> map;
     return map;
@@ -186,14 +186,14 @@ static inline DatabaseGUID guidForOriginAndName(const String& origin, const Stri
 
 Database::Database(DatabaseContext& context, const String& name, const String& expectedVersion, const String& displayName, unsigned long long estimatedSize)
     : m_document(*context.document())
-    , m_contextThreadSecurityOrigin(m_document->securityOrigin().isolatedCopy())
-    , m_databaseThreadSecurityOrigin(m_document->securityOrigin().isolatedCopy())
+    , m_contextThreadSecurityOrigin(protect(protect(m_document)->securityOrigin())->isolatedCopy())
+    , m_databaseThreadSecurityOrigin(protect(protect(m_document)->securityOrigin())->isolatedCopy())
     , m_databaseContext(context)
     , m_name((name.isNull() ? emptyString() : name).isolatedCopy())
     , m_expectedVersion(expectedVersion.isolatedCopy())
     , m_displayName(displayName.isolatedCopy())
     , m_estimatedSize(estimatedSize)
-    , m_filename(DatabaseManager::singleton().fullPathForDatabase(m_document->securityOrigin(), m_name))
+    , m_filename(DatabaseManager::singleton().fullPathForDatabase(protect(protect(m_document)->securityOrigin()), m_name))
     , m_sqliteDatabase(makeUniqueRef<SQLiteDatabase>())
     , m_databaseAuthorizer(DatabaseAuthorizer::create(unqualifiedInfoTableName))
 {
@@ -348,7 +348,7 @@ ExceptionOr<void> Database::performOpenAndVerify(bool shouldSetVersionInNewDatab
         if (entry != guidToVersionMap().end()) {
             // Map null string to empty string (see updateGUIDVersionMap()).
             currentVersion = entry->value.version.isNull() ? emptyString() : entry->value.version.isolatedCopy();
-            LOG(StorageAPI, "Current cached version for guid %i is %s", m_guid, currentVersion.ascii().data());
+            LOG(StorageAPI, "Current cached version for guid %i is %s", m_guid, currentVersion.utf8());
         } else {
             LOG(StorageAPI, "No cached version for guid %i", m_guid);
 
@@ -377,9 +377,9 @@ ExceptionOr<void> Database::performOpenAndVerify(bool shouldSetVersionInNewDatab
             }
 
             if (currentVersion.length()) {
-                LOG(StorageAPI, "Retrieved current version %s from database %s", currentVersion.ascii().data(), databaseDebugName().ascii().data());
+                LOG(StorageAPI, "Retrieved current version %s from database %s", currentVersion.utf8(), databaseDebugName().utf8());
             } else if (!m_new || shouldSetVersionInNewDatabase) {
-                LOG(StorageAPI, "Setting version %s in database %s that was just created", m_expectedVersion.ascii().data(), databaseDebugName().ascii().data());
+                LOG(StorageAPI, "Setting version %s in database %s that was just created", m_expectedVersion.utf8(), databaseDebugName().utf8());
                 if (!setVersionInDatabase(m_expectedVersion, false)) {
                     String message = formatErrorMessage("unable to open database, failed to write current version"_s, m_sqliteDatabase->lastError(), m_sqliteDatabase->lastErrorMsg());
                     transaction.rollback();
@@ -394,7 +394,7 @@ ExceptionOr<void> Database::performOpenAndVerify(bool shouldSetVersionInNewDatab
     }
 
     if (currentVersion.isNull()) {
-        LOG(StorageAPI, "Database %s does not have its version set", databaseDebugName().ascii().data());
+        LOG(StorageAPI, "Database %s does not have its version set", databaseDebugName().utf8());
         currentVersion = emptyString();
     }
 
@@ -413,7 +413,7 @@ ExceptionOr<void> Database::performOpenAndVerify(bool shouldSetVersionInNewDatab
     if (m_new && !shouldSetVersionInNewDatabase)
         m_expectedVersion = emptyString(); // The caller provided a creationCallback which will set the expected version.
 
-    databaseThread().recordDatabaseOpen(*this);
+    protect(databaseThread())->recordDatabaseOpen(*this);
 
     return { };
 }
@@ -451,7 +451,7 @@ bool Database::getVersionFromDatabase(String& version, bool shouldCacheVersion)
         if (shouldCacheVersion)
             setCachedVersion(version);
     } else
-        LOG_ERROR("Failed to retrieve version from database %s", databaseDebugName().ascii().data());
+        LOG_ERROR("Failed to retrieve version from database %s", databaseDebugName().utf8());
 
     m_databaseAuthorizer->enable();
 
@@ -471,7 +471,7 @@ bool Database::setVersionInDatabase(const String& version, bool shouldCacheVersi
         if (shouldCacheVersion)
             setCachedVersion(version);
     } else
-        LOG_ERROR("Failed to set version %s in database (%s)", version.ascii().data(), query.ascii().data());
+        LOG_ERROR("Failed to set version %s in database (%s)", version.utf8(), query.utf8());
 
     m_databaseAuthorizer->enable();
 
@@ -520,7 +520,7 @@ void Database::scheduleTransaction()
     auto transaction = m_transactionQueue.takeFirst();
     auto task = makeUnique<DatabaseTransactionTask>(WTF::move(transaction));
     LOG(StorageAPI, "Scheduling DatabaseTransactionTask %p for transaction %p\n", task.get(), task->transaction());
-    databaseThread().scheduleTask(WTF::move(task));
+    protect(databaseThread())->scheduleTask(WTF::move(task));
 }
 
 void Database::scheduleTransactionStep(SQLTransaction& transaction)
@@ -566,7 +566,7 @@ void Database::markAsDeletedAndClose()
     if (m_deleted)
         return;
 
-    LOG(StorageAPI, "Marking %s (%p) as deleted", stringIdentifierIsolatedCopy().ascii().data(), this);
+    LOG(StorageAPI, "Marking %s (%p) as deleted", stringIdentifierIsolatedCopy().utf8(), this);
     m_deleted = true;
 
     close();
@@ -676,7 +676,7 @@ void Database::runTransaction(RefPtr<SQLTransactionCallback>&& callback, RefPtr<
     Locker locker { m_transactionInProgressLock };
     if (!m_isTransactionQueueEnabled) {
         if (errorCallback) {
-            m_document->checkedEventLoop()->queueTask(TaskSource::Networking, [errorCallback = Ref { *errorCallback }] {
+            protect(protect(m_document)->eventLoop())->queueTask(TaskSource::Networking, [errorCallback = Ref { *errorCallback }] {
                 errorCallback->invoke(SQLError::create(SQLError::UNKNOWN_ERR, "database has been closed"_s));
             });
         }
@@ -691,7 +691,7 @@ void Database::runTransaction(RefPtr<SQLTransactionCallback>&& callback, RefPtr<
 void Database::scheduleTransactionCallback(SQLTransaction* transaction)
 {
     callOnMainThread([this, protectedThis = Ref { *this }, transaction = RefPtr { transaction }] mutable {
-        m_document->checkedEventLoop()->queueTask(TaskSource::Networking, [transaction = WTF::move(transaction)] {
+        protect(protect(m_document)->eventLoop())->queueTask(TaskSource::Networking, [transaction = WTF::move(transaction)] {
             transaction->performPendingCallback();
         });
     });
@@ -703,7 +703,7 @@ Vector<String> Database::performGetTableNames()
 
     auto statement = sqliteDatabase().prepareStatement("SELECT name FROM sqlite_master WHERE type='table';"_s);
     if (!statement) {
-        LOG_ERROR("Unable to retrieve list of tables for database %s", databaseDebugName().ascii().data());
+        LOG_ERROR("Unable to retrieve list of tables for database %s", databaseDebugName().utf8());
         enableAuthorizer();
         return Vector<String>();
     }
@@ -719,7 +719,7 @@ Vector<String> Database::performGetTableNames()
     enableAuthorizer();
 
     if (result != SQLITE_DONE) {
-        LOG_ERROR("Error getting tables for database %s", databaseDebugName().ascii().data());
+        LOG_ERROR("Error getting tables for database %s", databaseDebugName().utf8());
         return Vector<String>();
     }
 
@@ -741,7 +741,7 @@ void Database::incrementalVacuumIfNeeded()
 
 void Database::logErrorMessage(const String& message)
 {
-    m_document->addConsoleMessage(MessageSource::Storage, MessageLevel::Error, message);
+    protect(m_document)->addConsoleMessage(MessageSource::Storage, MessageLevel::Error, message);
 }
 
 Vector<String> Database::tableNames()
@@ -790,7 +790,7 @@ bool Database::didExceedQuota()
         // oldQuota + 5MB so that the client actually increases the quota.
         setEstimatedSize(oldQuota + quotaIncreaseSize);
     }
-    databaseContext().databaseExceededQuota(stringIdentifierIsolatedCopy(), details());
+    protect(databaseContext())->databaseExceededQuota(stringIdentifierIsolatedCopy(), details());
     return tracker.quota(securityOrigin()) > oldQuota;
 }
 

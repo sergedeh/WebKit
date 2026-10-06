@@ -23,8 +23,12 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if !__has_feature(objc_arc)
+#error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+#endif
+
 #include "config.h"
-#include "LibraryPathDiagnostics.h"
+#include <wtf/darwin/LibraryPathDiagnostics.h>
 
 #include <dlfcn.h>
 #include <notify.h>
@@ -36,6 +40,7 @@
 #include <wtf/UUID.h>
 #include <wtf/cf/TypeCastsCF.h>
 #include <wtf/darwin/DispatchExtras.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/spi/cf/CFPrivSPI.h>
 #include <wtf/spi/darwin/dyldSPI.h>
 
@@ -97,7 +102,9 @@ LibraryPathDiagnosticsLogger::LibraryPathDiagnosticsLogger()
 void LibraryPathDiagnosticsLogger::logJSONPayload(const JSON::Object &object)
 {
     auto textRepresentation = object.toJSONString();
-    os_log(m_osLog, "%{public}s", textRepresentation.utf8().data());
+    auto utf8 = textRepresentation.utf8();
+    auto span = byteCast<char>(utf8.span());
+    os_log(m_osLog, "%{public}.*s", static_cast<int>(span.size()), span.data());
 }
 
 void LibraryPathDiagnosticsLogger::logString(std::span<const String> path, const String& string)
@@ -136,9 +143,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     va_start(argList, format);
     stream.vprintf(format, argList);
     va_end(argList);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-    os_log_error(m_osLog, "%{public}s", stream.toCString().data());
+    os_log_error(m_osLog, "%{public}s", stream.toUTF8CString().legacyCStringPointer());
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 void LibraryPathDiagnosticsLogger::logExecutablePath(void)
@@ -159,7 +166,7 @@ void LibraryPathDiagnosticsLogger::logDYLDSharedCacheInfo(void)
 }
 
 #if HAVE(SHARED_REGION_SPI)
-static bool isAddressInSharedRegion(const void* addr)
+static bool NODELETE isAddressInSharedRegion(const void* addr)
 {
     return std::bit_cast<uintptr_t>(addr) >= SHARED_REGION_BASE && std::bit_cast<uintptr_t>(addr) < (SHARED_REGION_BASE + SHARED_REGION_SIZE);
 }
@@ -167,26 +174,32 @@ static bool isAddressInSharedRegion(const void* addr)
 
 void LibraryPathDiagnosticsLogger::logDynamicLibraryInfo(const String& installName)
 {
-    void *handle = dlopen(installName.utf8().data(), RTLD_NOLOAD);
+    void *handle = posixDlopen(installName.utf8(), RTLD_NOLOAD);
     if (!handle)
         return;
 
     const struct mach_header *header = _dyld_get_dlopen_image_header(handle);
     if (!header) {
-        logError("Unable to locate mach header for %s", installName.utf8().data());
+        auto utf8 = installName.utf8();
+        auto span = byteCast<char>(utf8.span());
+        logError("Unable to locate mach header for %.*s", static_cast<int>(span.size()), span.data());
         return;
     }
 
     Dl_info info = { };
     int dladdr_ret = dladdr(header, &info);
     if (!dladdr_ret) {
-        logError("No info returned from dladdr() for %s", installName.utf8().data());
+        auto utf8 = installName.utf8();
+        auto span = byteCast<char>(utf8.span());
+        logError("No info returned from dladdr() for %.*s", static_cast<int>(span.size()), span.data());
         return;
     }
 
     uuid_t uuid = { 0 };
     if (!_dyld_get_image_uuid(header, uuid)) {
-        logError("No UUID found for %s", installName.utf8().data());
+        auto utf8 = installName.utf8();
+        auto span = byteCast<char>(utf8.span());
+        logError("No UUID found for %.*s", static_cast<int>(span.size()), span.data());
         return;
     }
 
@@ -250,7 +263,9 @@ void LibraryPathDiagnosticsLogger::logCryptexCanaryInfo(canary_cryptex_t which, 
     const canary_meta_t *metadata = canary_metadata(which);
 
     if (!metadata) {
-        logError("Unable to load canary metadata for '%s' cryptex", description.utf8().data());
+        auto utf8 = description.utf8();
+        auto span = byteCast<char>(utf8.span());
+        logError("Unable to load canary metadata for '%.*s' cryptex", static_cast<int>(span.size()), span.data());
         return;
     }
 

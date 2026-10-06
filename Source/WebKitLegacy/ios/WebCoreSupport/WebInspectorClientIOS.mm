@@ -36,6 +36,7 @@
 #import "WebNodeHighlighter.h"
 #import "WebViewInternal.h"
 #import <WebCore/CertificateInfo.h>
+#import <WebCore/DiagnosticLoggingClient.h>
 #import <WebCore/FloatRect.h>
 #import <WebCore/NotImplemented.h>
 #import <WebCore/Page.h>
@@ -144,5 +145,10 @@ void WebInspectorFrontendClient::logDiagnosticEvent(const String& eventName, con
 void WebInspectorFrontendClient::updateWindowTitle() const { }
 bool WebInspectorFrontendClient::canSave(WebCore::InspectorFrontendClient::SaveMode) { return false; }
 void WebInspectorFrontendClient::save(Vector<InspectorFrontendClient::SaveData>&&, bool /* forceSaveAs */) { }
+
+void WebInspectorFrontendClient::sendMessageToBackend(const String&)
+{
+    notImplemented();
+}
 
 #endif // PLATFORM(IOS_FAMILY)

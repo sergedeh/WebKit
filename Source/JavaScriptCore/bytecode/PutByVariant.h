@@ -27,6 +27,7 @@
 
 #include <JavaScriptCore/CacheableIdentifier.h>
 #include "CallLinkStatus.h"
+#include <JavaScriptCore/Intrinsic.h>
 #include <JavaScriptCore/ObjectPropertyConditionSet.h>
 #include <JavaScriptCore/PropertyOffset.h>
 #include <JavaScriptCore/StructureSet.h>
@@ -100,7 +101,7 @@ public:
         return oldStructure();
     }
     
-    Structure* oldStructureForTransition() const;
+    Structure* NODELETE oldStructureForTransition() const;
     
     Structure* newStructure() const
     {
@@ -108,13 +109,13 @@ public:
         return m_newStructure;
     }
     
-    void fixTransitionToReplaceIfNecessary();
+    void NODELETE fixTransitionToReplaceIfNecessary();
 
-    bool writesStructures() const;
-    bool reallocatesStorage() const;
-    bool makesCalls() const;
+    bool NODELETE writesStructures() const;
+    bool NODELETE reallocatesStorage() const;
+    bool NODELETE makesCalls() const;
     
-    const ObjectPropertyConditionSet& conditionSet() const { return m_conditionSet; }
+    const ObjectPropertyConditionSet& conditionSet() const LIFETIME_BOUND { return m_conditionSet; }
     
     // We don't support intrinsics for Setters (it would be sweet if we did) but we need this for templated helpers.
     Intrinsic intrinsic() const { return NoIntrinsic; }
@@ -138,7 +139,7 @@ public:
     
     DECLARE_VISIT_AGGREGATE;
     template<typename Visitor> void markIfCheap(Visitor&);
-    bool finalize(VM&);
+    bool isStillLive(VM&);
     
     void dump(PrintStream&) const;
     void dumpInContext(PrintStream&, DumpContext*) const;
@@ -161,7 +162,7 @@ public:
     bool viaGlobalProxy() const { return m_viaGlobalProxy; }
 
     CodePtr<CustomAccessorPtrTag> customAccessorSetter() const { return m_customAccessorSetter; }
-    DOMAttributeAnnotation* domAttribute() const { return m_domAttribute.get(); }
+    DOMAttributeAnnotation* domAttribute() const LIFETIME_BOUND { return m_domAttribute.get(); }
 
 private:
     bool attemptToMergeTransitionWithReplace(const PutByVariant& replace);

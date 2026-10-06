@@ -44,7 +44,7 @@ namespace WebCore {
 
 Ref<ResizeObserver> ResizeObserver::create(Document& document, Ref<ResizeObserverCallback>&& callback)
 {
-    return adoptRef(*new ResizeObserver(document, { RefPtr<ResizeObserverCallback> { WTF::move(callback) } }));
+    return adoptRef(*new ResizeObserver(document, { WTF::move(callback) }));
 }
 
 Ref<ResizeObserver> ResizeObserver::createNativeObserver(Document& document, NativeResizeObserverCallback&& nativeCallback)
@@ -63,31 +63,36 @@ ResizeObserver::ResizeObserver(Document& document, JSOrNativeResizeObserverCallb
 ResizeObserver::~ResizeObserver()
 {
     disconnect();
-    if (m_document)
-        m_document->removeResizeObserver(*this);
+    if (RefPtr document = m_document)
+        document->removeResizeObserver(*this);
 }
 
 void ResizeObserver::observeInternal(Element& target, const ResizeObserverBoxOptions boxOptions)
 {
     ASSERT(!m_JSOrNativeCallback.valueless_by_exception());
 
-    auto position = m_observations.findIf([&](auto& observation) {
-        return observation->target() == &target;
-    });
-
-    if (position != notFound) {
+    if (RefPtr existingObservation = m_observationMap.get(target)) {
         // The spec suggests unconditionally unobserving here, but that causes a test failure:
         // https://github.com/web-platform-tests/wpt/issues/30708
-        if (m_observations[position]->observedBox() == boxOptions)
+        if (existingObservation->observedBox() == boxOptions)
             return;
 
+        // This removes target from m_observations/m_observationMap.
         unobserve(target);
     }
 
-    auto& observerData = target.ensureResizeObserverData();
-    observerData.observers.append(*this);
+    Ref newObservation = ResizeObservation::create(target, boxOptions);
+    {
+        auto addResult = m_observationMap.add(target, newObservation);
 
-    m_observations.append(ResizeObservation::create(target, boxOptions));
+        // Can't have an existing entry. Either target has never been observed, or it was
+        // previously observed then unobserved (see above)
+        ASSERT_UNUSED(addResult, addResult.isNewEntry);
+    }
+
+    auto& observerData = target.ensureResizeObserverData();
+    observerData.observers.add(*this);
+    m_observations.add(WTF::move(newObservation));
 
     // Per the specification, we should dispatch at least one observation for the target. For this reason, we make sure to keep the
     // target alive until this first observation. This, in turn, will keep the ResizeObserver's JS wrapper alive via
@@ -98,8 +103,8 @@ void ResizeObserver::observeInternal(Element& target, const ResizeObserverBoxOpt
     }
 
     if (m_document && isJSCallback()) {
-        m_document->addResizeObserver(*this);
-        m_document->scheduleRenderingUpdate(RenderingUpdateStep::ResizeObservations);
+        protect(m_document)->addResizeObserver(*this);
+        protect(m_document)->scheduleRenderingUpdate(RenderingUpdateStep::ResizeObservations);
     }
 }
 
@@ -149,7 +154,7 @@ size_t ResizeObserver::gatherObservations(size_t deeperThan)
                 m_activeObservations.append(observation.get());
                 {
                     Locker locker { m_observationTargetsLock };
-                    m_activeObservationTargets.append(*observation->protectedTarget());
+                    m_activeObservationTargets.append(*protect(observation->target()));
                 }
                 minObservedDepth = std::min(depth, minObservedDepth);
             } else
@@ -165,16 +170,16 @@ void ResizeObserver::deliverObservations()
 
     auto entries = WTF::compactMap(m_activeObservations, [](auto& observation) -> RefPtr<ResizeObserverEntry> {
         RefPtr target = observation->target();
-        ASSERT(target); // The target is supposed to be kept alive via `m_activeObservationTargets` and JSResizeObserver::visitAdditionalChildren().
+        ASSERT(target); // The target is supposed to be kept alive via `m_activeObservationTargets` and JSResizeObserver::visitAdditionalChildrenInGCThread().
         if (!target)
             return nullptr;
         return ResizeObserverEntry::create(target.releaseNonNull(), observation->computeContentRect(), observation->borderBoxSize(), observation->contentBoxSize());
     });
-    m_activeObservations.clear();
+    m_activeObservations.shrink(0);
 
     // Use GCReachableRef here to make sure the targets and their JS wrappers are kept alive while we deliver.
     // It is important since m_activeObservationTargets / m_targetsWaitingForFirstObservation will get cleared and
-    // thus JSResizeObserver::visitAdditionalChildren() won't be able to visit them on the GC thread.
+    // thus JSResizeObserver::visitAdditionalChildrenInGCThread() won't be able to visit them on a GC thread.
     Vector<GCReachableRef<Element>> activeObservationTargets;
     Vector<GCReachableRef<Element>> targetsWaitingForFirstObservation;
     {
@@ -182,14 +187,14 @@ void ResizeObserver::deliverObservations()
         activeObservationTargets = WTF::compactMap(m_activeObservationTargets, [](auto& weakTarget) -> std::optional<GCReachableRef<Element>> {
             if (weakTarget)
                 return GCReachableRef<Element> { *weakTarget };
-            ASSERT_NOT_REACHED(); // Targets are supposed to be kept alive via JSResizeObserver::visitAdditionalChildren().
+            ASSERT_NOT_REACHED(); // Targets are supposed to be kept alive via JSResizeObserver::visitAdditionalChildrenInGCThread().
             return std::nullopt;
         });
         m_activeObservationTargets = { };
         targetsWaitingForFirstObservation = WTF::compactMap(m_targetsWaitingForFirstObservation, [](auto& weakTarget) -> std::optional<GCReachableRef<Element>> {
             if (weakTarget)
                 return GCReachableRef<Element> { *weakTarget };
-            ASSERT_NOT_REACHED(); // Targets are supposed to be kept alive via JSResizeObserver::visitAdditionalChildren().
+            ASSERT_NOT_REACHED(); // Targets are supposed to be kept alive via JSResizeObserver::visitAdditionalChildrenInGCThread().
             return std::nullopt;
         });
         m_targetsWaitingForFirstObservation = { };
@@ -202,7 +207,7 @@ void ResizeObserver::deliverObservations()
 
     // FIXME: The JSResizeObserver wrapper should be kept alive as long as the resize observer can fire events.
     ASSERT(isJSCallback());
-    auto jsCallback = std::get<RefPtr<ResizeObserverCallback>>(m_JSOrNativeCallback);
+    auto jsCallback = std::get<Ref<ResizeObserverCallback>>(m_JSOrNativeCallback);
     ASSERT(jsCallback->hasCallback());
     if (!jsCallback->hasCallback())
         return;
@@ -244,13 +249,13 @@ bool ResizeObserver::removeTarget(Element& target)
         return false;
 
     auto& observers = observerData->observers;
-    return observers.removeFirst(this);
+    return observers.remove(this);
 }
 
 void ResizeObserver::removeAllTargets()
 {
     for (auto& observation : m_observations) {
-        bool removed = removeTarget(*observation->protectedTarget());
+        bool removed = removeTarget(*protect(observation->target()));
         ASSERT_UNUSED(removed, removed);
     }
     {
@@ -260,6 +265,7 @@ void ResizeObserver::removeAllTargets()
     }
     m_activeObservations.clear();
     m_observations.clear();
+    m_observationMap.clear();
 }
 
 bool ResizeObserver::removeObservation(const Element& target)
@@ -270,14 +276,16 @@ bool ResizeObserver::removeObservation(const Element& target)
             return pendingTarget.get() == &target;
         });
     }
-    return m_observations.removeFirstMatching([&target](auto& observation) {
-        return observation->target() == &target;
-    });
+    RefPtr observation = m_observationMap.take(target);
+    if (!observation)
+        return false;
+    m_observations.remove(observation);
+    return true;
 }
 
 bool ResizeObserver::isJSCallback()
 {
-    return std::holds_alternative<RefPtr<ResizeObserverCallback>>(m_JSOrNativeCallback);
+    return std::holds_alternative<Ref<ResizeObserverCallback>>(m_JSOrNativeCallback);
 }
 
 bool ResizeObserver::isNativeCallback()
@@ -288,22 +296,19 @@ bool ResizeObserver::isNativeCallback()
 ResizeObserverCallback* ResizeObserver::callbackConcurrently()
 {
     return WTF::switchOn(m_JSOrNativeCallback,
-    [] (const RefPtr<ResizeObserverCallback>& jsCallback) -> ResizeObserverCallback* {
-        return jsCallback.get();
-    },
-    [] (const NativeResizeObserverCallback&) -> ResizeObserverCallback* {
-        return nullptr;
-    });
+        [](const Ref<ResizeObserverCallback>& jsCallback) -> ResizeObserverCallback* {
+            return jsCallback.ptr();
+        },
+        [](const NativeResizeObserverCallback&) -> ResizeObserverCallback* {
+            return nullptr;
+        }
+    );
 }
 
 void ResizeObserver::resetObservationSize(Element& target)
 {
-    auto position = m_observations.findIf([&](auto& observation) {
-        return observation->target() == &target;
-    });
-
-    if (position != notFound)
-        m_observations[position]->resetObservationSize();
+    if (RefPtr observation = m_observationMap.get(target))
+        observation->resetObservationSize();
 }
 
 } // namespace WebCore

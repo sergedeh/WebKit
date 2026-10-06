@@ -28,10 +28,10 @@
 
 #include "AnimationFrameRate.h"
 #include "Document.h"
-#include "ReducedResolutionSeconds.h"
 #include "Timer.h"
 #include <wtf/CheckedPtr.h>
 #include <wtf/OptionSet.h>
+#include <wtf/ReducedResolutionSeconds.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Vector.h>
@@ -51,13 +51,13 @@ public:
     {
         return adoptRef(*new ScriptedAnimationController(document));
     }
-    ~ScriptedAnimationController();
+    WEBCORE_EXPORT ~ScriptedAnimationController();
     void clearDocumentPointer() { m_document = nullptr; }
 
-    WEBCORE_EXPORT Seconds interval() const;
-    WEBCORE_EXPORT OptionSet<ThrottlingReason> throttlingReasons() const;
+    WEBCORE_EXPORT Seconds NODELETE interval() const;
+    WEBCORE_EXPORT OptionSet<ThrottlingReason> NODELETE throttlingReasons() const;
 
-    void suspend();
+    void NODELETE suspend();
     void resume();
 
     void addThrottlingReason(ThrottlingReason reason) { m_throttlingReasons.add(reason); }
@@ -71,12 +71,11 @@ public:
 private:
     ScriptedAnimationController(Document&);
 
-    Page* page() const;
-    Seconds preferredScriptedAnimationInterval() const;
+    Page* NODELETE page() const;
+    Seconds NODELETE preferredScriptedAnimationInterval() const;
     bool isThrottledRelativeToPage() const;
     bool shouldRescheduleRequestAnimationFrame(ReducedResolutionSeconds) const;
     void scheduleAnimation();
-    RefPtr<Document> protectedDocument();
 
     struct CallbackData {
         Ref<RequestAnimationFrameCallback> callback;

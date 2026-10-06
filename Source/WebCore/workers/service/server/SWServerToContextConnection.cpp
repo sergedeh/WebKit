@@ -43,16 +43,9 @@ SWServerToContextConnection::SWServerToContextConnection(SWServer& server, Site&
 {
 }
 
-SWServerToContextConnection::~SWServerToContextConnection()
-{
-}
+SWServerToContextConnection::~SWServerToContextConnection() = default;
 
 SWServer* SWServerToContextConnection::server() const
-{
-    return m_server.get();
-}
-
-RefPtr<SWServer> SWServerToContextConnection::protectedServer() const
 {
     return m_server.get();
 }
@@ -142,7 +135,7 @@ bool SWServerToContextConnection::terminateWhenPossible()
     m_shouldTerminateWhenPossible = true;
 
     bool hasServiceWorkerWithPendingEvents = false;
-    protectedServer()->forEachServiceWorker([&](auto& worker) {
+    protect(server())->forEachServiceWorker([&](auto& worker) {
         if (worker.isRunning() && worker.topRegistrableDomain() == m_site.domain() && worker.hasPendingEvents()) {
             hasServiceWorkerWithPendingEvents = true;
             return false;

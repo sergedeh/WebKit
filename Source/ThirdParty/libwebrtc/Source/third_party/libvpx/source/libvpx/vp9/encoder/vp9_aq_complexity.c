@@ -125,8 +125,11 @@ void vp9_caq_select_segment(VP9_COMP *cpi, MACROBLOCK *mb, BLOCK_SIZE bs,
   } else {
     // Rate depends on fraction of a SB64 in frame (xmis * ymis / bw * bh).
     // It is converted to bits * 256 units.
+    cpi->rc.sb64_target_rate = VPXMIN(INT_MAX / 256, cpi->rc.sb64_target_rate);
+
     const int target_rate =
-        (cpi->rc.sb64_target_rate * xmis * ymis * 256) / (bw * bh);
+        (int)(((int64_t)cpi->rc.sb64_target_rate * xmis * ymis * 256) /
+              (bw * bh));
     double logvar;
     double low_var_thresh;
     const int aq_strength = get_aq_c_strength(cm->base_qindex, cm->bit_depth);

@@ -26,15 +26,19 @@
 
 #include "config.h"
 #include "ReadableStreamToSharedBufferSink.h"
+#include "ContextDestructionObserverInlines.h"
 
 #include "DOMException.h"
+#include "EventLoop.h"
 #include "ExceptionOr.h"
 #include "JSDOMConvertBufferSource.h"
 #include "JSDOMGlobalObject.h"
+#include "JSDOMPromise.h"
 #include "ReadableStream.h"
 #include "ReadableStreamDefaultReader.h"
 #include "ScriptExecutionContext.h"
 #include "SharedBuffer.h"
+#include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 
 namespace WebCore {
 
@@ -46,8 +50,10 @@ public:
     JSDOMGlobalObject* globalObject() final
     {
         RefPtr context = m_context.get();
-        return context ? JSC::jsCast<JSDOMGlobalObject*>(context->globalObject()): nullptr;
+        return context ? downcast<JSDOMGlobalObject>(context->globalObject()): nullptr;
     }
+
+    ScriptExecutionContext* NODELETE context() const { return m_context.get(); }
 
 private:
     SinkReadRequest(ReadableStreamToSharedBufferSink& sink, ScriptExecutionContext& context)
@@ -100,8 +106,9 @@ private:
     WeakPtr<ScriptExecutionContext> m_context;
 };
 
-ReadableStreamToSharedBufferSink::ReadableStreamToSharedBufferSink(Callback&& callback)
+ReadableStreamToSharedBufferSink::ReadableStreamToSharedBufferSink(Callback&& callback, std::optional<size_t> backpressureThreshold)
     : m_callback { WTF::move(callback) }
+    , m_backpressureThreshold { backpressureThreshold }
 {
 }
 
@@ -110,7 +117,7 @@ ReadableStreamToSharedBufferSink::~ReadableStreamToSharedBufferSink() = default;
 void ReadableStreamToSharedBufferSink::pipeFrom(ReadableStream& stream)
 {
     RefPtr context = stream.scriptExecutionContext();
-    auto* globalObject = context ? JSC::jsCast<JSDOMGlobalObject*>(context->globalObject()): nullptr;
+    auto* globalObject = context ? downcast<JSDOMGlobalObject>(context->globalObject()): nullptr;
     if (!globalObject) {
         error(Exception { ExceptionCode::TypeError, "no global object"_s });
         return;
@@ -133,8 +140,35 @@ void ReadableStreamToSharedBufferSink::enqueue(const Ref<JSC::Uint8Array>& buffe
     if (buffer->byteLength()) {
         if (m_callback)
             m_callback(buffer->span());
+        m_dataStored += buffer->byteLength();
     }
 
+    if (m_backpressureThreshold && m_dataStored >= *m_backpressureThreshold)
+        return;
+
+    scheduleKeepReading();
+}
+
+void ReadableStreamToSharedBufferSink::resumeReading()
+{
+    m_dataStored = 0;
+    scheduleKeepReading();
+}
+
+void ReadableStreamToSharedBufferSink::scheduleKeepReading()
+{
+    RefPtr context = m_readRequest ? m_readRequest->context() : nullptr;
+    if (!context)
+        return;
+
+    protect(context->eventLoop())->queueMicrotask(context->vm(), [weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->keepReading();
+    });
+}
+
+void ReadableStreamToSharedBufferSink::keepReading()
+{
     RefPtr readRequest = m_readRequest;
     if (!readRequest)
         return;
@@ -184,6 +218,13 @@ void ReadableStreamToSharedBufferSink::clearCallback()
     m_reader = nullptr;
     m_readRequest = nullptr;
     m_callback = { };
+}
+
+void ReadableStreamToSharedBufferSink::cancel(JSDOMGlobalObject& globalObject, JSC::JSValue value)
+{
+    if (RefPtr reader = m_reader)
+        reader->cancel(globalObject, value);
+    clearCallback();
 }
 
 } // namespace WebCore

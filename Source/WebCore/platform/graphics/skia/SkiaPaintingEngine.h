@@ -26,19 +26,25 @@
 #pragma once
 
 #if USE(COORDINATED_GRAPHICS) && USE(SKIA)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/gpu/ganesh/GrContextThreadSafeProxy.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WorkQueue.h>
 #include <wtf/WorkerPool.h>
 
 namespace WebCore {
 
-class BitmapTexturePool;
+class AtlasUploadCondition;
 class CoordinatedTileBuffer;
 class GraphicsContext;
 class GraphicsLayer;
 class GraphicsLayerCoordinated;
 class IntRect;
 class IntSize;
+class SkiaGPUAtlas;
+class SkiaImageAtlasLayout;
 class SkiaRecordingResult;
 enum class RenderingMode : uint8_t;
 
@@ -46,28 +52,35 @@ class SkiaPaintingEngine {
     WTF_MAKE_TZONE_ALLOCATED(SkiaPaintingEngine);
     WTF_MAKE_NONCOPYABLE(SkiaPaintingEngine);
 public:
-    SkiaPaintingEngine();
+    explicit SkiaPaintingEngine(sk_sp<GrContextThreadSafeProxy>&&);
     ~SkiaPaintingEngine();
 
-    static std::unique_ptr<SkiaPaintingEngine> create();
+    static std::unique_ptr<SkiaPaintingEngine> create(sk_sp<GrContextThreadSafeProxy>&&);
 
     static unsigned numberOfCPUPaintingThreads();
+#if USE(TEXTURE_MAPPER)
     static unsigned numberOfGPUPaintingThreads();
+#endif
+    static bool shouldUseDMABufAtlasTextures();
     static bool shouldUseLinearTileTextures();
     static bool shouldUseVivanteSuperTiledTileTextures();
 
-    bool useThreadedRendering() const { return m_workerPool; }
+    const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext() const { return m_threadSafeGrContext; }
 
-    Ref<CoordinatedTileBuffer> paint(const GraphicsLayerCoordinated&, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale);
-    Ref<SkiaRecordingResult> record(const GraphicsLayerCoordinated&, const IntRect& recordRect, bool contentsOpaque, float contentsScale);
-    Ref<CoordinatedTileBuffer> replay(const GraphicsLayerCoordinated&, const RefPtr<SkiaRecordingResult>&, const IntRect& dirtyRect);
+    Ref<SkiaRecordingResult> record(const GraphicsLayerCoordinated&, const IntRect& recordRect, bool contentsOpaque, float contentsScale, unsigned dirtyTilesCount);
+    Ref<CoordinatedTileBuffer> replay(const GraphicsLayerCoordinated&, Ref<SkiaRecordingResult>&&, const IntRect& tileRect, const IntRect& dirtyRect);
 
 private:
     Ref<CoordinatedTileBuffer> createBuffer(RenderingMode, const IntSize&, bool contentsOpaque) const;
     void paintIntoGraphicsContext(const GraphicsLayer&, GraphicsContext&, const IntRect&, bool contentsOpaque, float contentsScale) const;
+    RefPtr<SkiaGPUAtlas> createAtlas(const SkiaImageAtlasLayout&, AtlasUploadCondition&);
+    bool tryReuseCachedAtlases(SkiaRecordingResult&, unsigned fingerprint);
 
-    RefPtr<WorkerPool> m_workerPool;
-    std::unique_ptr<BitmapTexturePool> m_texturePool;
+    sk_sp<GrContextThreadSafeProxy> m_threadSafeGrContext;
+    const RefPtr<WorkerPool> m_paintingWorkerPool;
+    const RefPtr<WorkQueue> m_uploadWorkQueue;
+    unsigned m_cachedImageFingerprint { 0 };
+    Vector<Ref<SkiaGPUAtlas>> m_cachedGPUAtlases;
 };
 
 } // namespace WebCore

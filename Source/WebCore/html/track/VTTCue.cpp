@@ -157,7 +157,7 @@ void VTTCueBox::applyCSSPropertiesWithRegion()
 
     // the 'left' property must be set to left
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double left) {
-        setInlineStyleProperty(CSSPropertyLeft, left, CSSUnitType::CSS_PERCENTAGE);
+        setInlineStyleProperty(CSSPropertyLeft, left, CSSUnitType::Percentage);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyLeft, CSSValueAuto);
     }), cue->left());
@@ -207,14 +207,14 @@ void VTTCueBox::applyCSSProperties()
 
     // the 'top' property must be set to top
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double top) {
-        setInlineStyleProperty(CSSPropertyTop, top, CSSUnitType::CSS_CQH);
+        setInlineStyleProperty(CSSPropertyTop, top, CSSUnitType::Cqh);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyTop, CSSValueAuto);
     }), cue->top());
 
     // the 'left' property must be set to left
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double left) {
-        setInlineStyleProperty(CSSPropertyLeft, left, CSSUnitType::CSS_CQW);
+        setInlineStyleProperty(CSSPropertyLeft, left, CSSUnitType::Cqw);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyLeft, CSSValueAuto);
     }), cue->left());
@@ -227,14 +227,14 @@ void VTTCueBox::applyCSSProperties()
 
     // the 'width' property must be set to width
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double width) {
-        setInlineStyleProperty(CSSPropertyWidth, width, CSSUnitType::CSS_CQW);
+        setInlineStyleProperty(CSSPropertyWidth, width, CSSUnitType::Cqw);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyWidth, CSSValueAuto);
     }), cue->width());
 
     // the 'height' property must be set to height
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double height) {
-        setInlineStyleProperty(CSSPropertyHeight, height, CSSUnitType::CSS_CQH);
+        setInlineStyleProperty(CSSPropertyHeight, height, CSSUnitType::Cqh);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyHeight, CSSValueAuto);
     }), cue->height());
@@ -249,7 +249,7 @@ void VTTCueBox::applyCSSProperties()
     // unless if it is the child of a region, then it is to be relatively positioned.
     setInlineStyleProperty(CSSPropertyPosition, CSSValueAbsolute);
 
-    if (!cue->snapToLines()) {
+    if (cue->preventLineWrapping()) {
         setInlineStyleProperty(CSSPropertyWhiteSpaceCollapse, CSSValuePreserve);
         setInlineStyleProperty(CSSPropertyTextWrapMode, CSSValueNowrap);
     }
@@ -258,23 +258,26 @@ void VTTCueBox::applyCSSProperties()
     // NOTE: Set in text-tracks.css
 }
 
-RenderPtr<RenderElement> VTTCueBox::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> VTTCueBox::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderVTTCue>(*this, WTF::move(style));
 }
 
 // ----------------------------
 
-Ref<VTTCue> VTTCue::create(Document& document, double start, double end, String&& content)
+ExceptionOr<Ref<VTTCue>> VTTCue::create(Document& document, double start, double end, String&& content)
 {
-    auto cue = adoptRef(*new VTTCue(document, MediaTime::createWithDouble(start), MediaTime::createWithDouble(end), WTF::move(content)));
+    if (std::isnan(end) || end == -std::numeric_limits<double>::infinity())
+        return Exception { ExceptionCode::TypeError, "The provided endTime value is NaN or negative Infinity"_s };
+
+    Ref cue = adoptRef(*new VTTCue(document, MediaTime::createWithDouble(start), MediaTime::createWithDouble(end), WTF::move(content)));
     cue->suspendIfNeeded();
     return cue;
 }
 
 Ref<VTTCue> VTTCue::create(Document& document, Ref<WebVTTCueData>&& data)
 {
-    auto cue = adoptRef(*new VTTCue(document, WTF::move(data)));
+    Ref cue = adoptRef(*new VTTCue(document, WTF::move(data)));
     cue->suspendIfNeeded();
     return cue;
 }
@@ -305,9 +308,7 @@ VTTCue::VTTCue(Document& document, Ref<WebVTTCueData>&& cueData)
     setCueSettings(cueData->settings());
 }
 
-VTTCue::~VTTCue()
-{
-}
+VTTCue::~VTTCue() = default;
 
 RefPtr<VTTCueBox> VTTCue::createDisplayTree()
 {
@@ -486,7 +487,7 @@ void VTTCue::setText(const String& text)
 void VTTCue::createWebVTTNodeTree()
 {
     if (!m_webVTTNodeTree && document())
-        m_webVTTNodeTree = WebVTTParser::createDocumentFragmentFromCueText(*protectedDocument().get(), m_content);
+        m_webVTTNodeTree = WebVTTParser::createDocumentFragmentFromCueText(*protect(document()), m_content);
 }
 
 static void copyWebVTTNodeToDOMTree(ContainerNode& webVTTNode, Node& parent)
@@ -494,9 +495,9 @@ static void copyWebVTTNodeToDOMTree(ContainerNode& webVTTNode, Node& parent)
     for (RefPtr node = webVTTNode.firstChild(); node; node = node->nextSibling()) {
         RefPtr<Node> clonedNode;
         if (RefPtr element = dynamicDowncast<WebVTTElement>(*node))
-            clonedNode = element->createEquivalentHTMLElement(parent.protectedDocument().get());
+            clonedNode = element->createEquivalentHTMLElement(protect(parent.document()).get());
         else
-            clonedNode = node->cloneNode(false);
+            clonedNode = node->cloneNode(CloneSubtree::No);
         parent.appendChild(*clonedNode);
         if (RefPtr containerNode = dynamicDowncast<ContainerNode>(*node))
             copyWebVTTNodeToDOMTree(*containerNode, *clonedNode);
@@ -514,7 +515,7 @@ RefPtr<DocumentFragment> VTTCue::getCueAsHTML()
         return nullptr;
 
     auto clonedFragment = DocumentFragment::create(*document);
-    copyWebVTTNodeToDOMTree(*protectedWebVTTNodeTree(), clonedFragment);
+    copyWebVTTNodeToDOMTree(*protect(m_webVTTNodeTree), clonedFragment);
     return clonedFragment;
 }
 
@@ -533,7 +534,7 @@ RefPtr<DocumentFragment> VTTCue::createCueRenderingTree()
     // The cloned fragment is never exposed to author scripts so it's safe to dispatch events here.
     ScriptDisallowedScope::EventAllowedScope allowedScope(clonedFragment);
 
-    protectedWebVTTNodeTree()->cloneChildNodes(*document, nullptr, clonedFragment);
+    protect(m_webVTTNodeTree)->cloneChildNodes(*document, nullptr, clonedFragment);
     return clonedFragment;
 }
 
@@ -679,23 +680,21 @@ void VTTCue::determineTextDirection()
         if (!current || isCueParagraphSeparator(current))
             return;
 
-        if (char16_t current = paragraph[i]) {
-            UCharDirection charDirection = u_charDirection(current);
-            if (charDirection == U_LEFT_TO_RIGHT) {
-                m_displayDirection = CSSValueLtr;
-                return;
-            }
-            if (charDirection == U_RIGHT_TO_LEFT || charDirection == U_RIGHT_TO_LEFT_ARABIC) {
-                m_displayDirection = CSSValueRtl;
-                return;
-            }
+        UCharDirection charDirection = u_charDirection(current);
+        if (charDirection == U_LEFT_TO_RIGHT) {
+            m_displayDirection = CSSValueLtr;
+            return;
+        }
+        if (charDirection == U_RIGHT_TO_LEFT || charDirection == U_RIGHT_TO_LEFT_ARABIC) {
+            m_displayDirection = CSSValueRtl;
+            return;
         }
     }
 }
 
 double VTTCue::calculateComputedTextPosition() const
 {
-    // http://dev.w3.org/html5/webvtt/#dfn-cue-computed-position
+    // https://www.w3.org/TR/webvtt1/#cue-computed-position
     
     // 1. If the position is numeric, then return the value of the position and
     // abort these steps. (Otherwise, the position is the special value auto.)
@@ -703,18 +702,18 @@ double VTTCue::calculateComputedTextPosition() const
         return *m_textPosition;
     
     switch (m_cueAlignment) {
-    case AlignSetting::Start:
     case AlignSetting::Left:
-        // 2. If the cue text alignment is start or left, return 0 and abort these
+        // 2. If the cue text alignment is left, return 0 and abort these
         // steps.
         return 0;
-    case AlignSetting::End:
     case AlignSetting::Right:
-        // 3. If the cue text alignment is end or right, return 100 and abort these
+        // 3. If the cue text alignment is right, return 100 and abort these
         // steps.
         return 100;
     case AlignSetting::Center:
-        // 4. If the cue text alignment is center, return 50 and abort these steps.
+    case AlignSetting::Start:
+    case AlignSetting::End:
+        // 4. Otherwise, return 50 and abort these steps.
         return 50;
     }
 
@@ -771,24 +770,34 @@ double VTTCue::calculateMaximumSize() const
     auto computedPosition = calculateComputedTextPosition();
     auto positionAlignment = calculateComputedPositionAlignment();
 
-    if (positionAlignment == PositionAlignSetting::LineLeft) {
+    switch (positionAlignment) {
+    case PositionAlignSetting::LineLeft:
         // If the computed position alignment is line-left
         // Let maximum size be the computed position subtracted from 100.
         maxSize = 100.0 - computedPosition;
-    } else if (positionAlignment == PositionAlignSetting::LineRight) {
+        break;
+    case PositionAlignSetting::LineRight:
         // If the computed position alignment is line-right
         // Let maximum size be the computed position.
         maxSize = computedPosition;
-    } else if (positionAlignment == PositionAlignSetting::Center && computedPosition <= 50) {
-        // If the computed position alignment is center, and the computed position is less than or equal to 50
-        // Let maximum size be the computed position multiplied by two.
-        maxSize = 2 * computedPosition;
-        // If the computed position alignment is center, and the computed position is greater than 50
-    } else if (positionAlignment == PositionAlignSetting::Center && computedPosition > 50) {
-        // Let maximum size be the result of subtracting computed position from 100 and then multiplying the result by two.
-        maxSize = 2 * (100.0 - computedPosition);
-    } else
+        break;
+    case PositionAlignSetting::Center:
+        if (computedPosition <= 50) {
+            // If the computed position alignment is center, and the computed position is less than or equal to 50
+            // Let maximum size be the computed position multiplied by two.
+            maxSize = 2 * computedPosition;
+        } else {
+            // If the computed position alignment is center, and the computed position is greater than 50
+            // Let maximum size be the result of subtracting computed position from 100 and then multiplying the result by two.
+            maxSize = 2 * (100.0 - computedPosition);
+        }
+        break;
+    case PositionAlignSetting::Auto:
+        // calculateComputedPositionAlignment() resolves auto to one of the
+        // cases above, so this is never reached.
         ASSERT_NOT_REACHED();
+        break;
+    }
 
     return maxSize;
 }
@@ -1021,7 +1030,7 @@ void VTTCue::updateDisplayTree(const MediaTime& movieTime)
 {
     // The display tree may contain WebVTT timestamp objects representing
     // timestamps (processing instructions), along with displayable nodes.
-    if (!track() || !protectedTrack()->isRendered())
+    if (!track() || !track()->isRendered())
         return;
 
     // Mutating the VTT contents is safe because it's never exposed to author scripts.
@@ -1046,7 +1055,7 @@ RefPtr<TextTrackCueBox> VTTCue::getDisplayTree()
     ASSERT(track());
 
     RefPtr displayTree = displayTreeInternal();
-    if (!displayTree || !m_displayTreeShouldChange || !track() || !protectedTrack()->isRendered())
+    if (!displayTree || !m_displayTreeShouldChange || !track() || !track()->isRendered())
         return displayTree;
 
     if (region())
@@ -1199,13 +1208,9 @@ void VTTCue::setCueSettings(const String& inputString)
         case Line: {
             bool isValid = false;
             do {
-                // 1-2 - Collect chars that are either '-', '%', or a digit.
-                // 1. If value contains any characters other than U+002D HYPHEN-MINUS characters (-), U+0025 PERCENT SIGN
-                //    characters (%), and characters in the range U+0030 DIGIT ZERO (0) to U+0039 DIGIT NINE (9), then jump
-                //    to the step labeled next setting.
-                float linePosition;
+                double linePosition;
                 bool isNegative;
-                if (!input.scanFloat(linePosition, &isNegative))
+                if (!input.scanDouble(linePosition, &isNegative))
                     break;
 
                 LineAlignSetting alignment { LineAlignSetting::Start };
@@ -1226,37 +1231,17 @@ void VTTCue::setCueSettings(const String& inputString)
                     }
                 }
 
-                // 2. If value does not contain at least one character in the range U+0030 DIGIT ZERO (0) to U+0039 DIGIT
-                //    NINE (9), then jump to the step labeled next setting.
-                // 3. If any character in value other than the first character is a U+002D HYPHEN-MINUS character (-), then
-                //    jump to the step labeled next setting.
-                // 4. If any character in value other than the last character is a U+0025 PERCENT SIGN character (%), then
-                //    jump to the step labeled next setting.
-                // 5. If the first character in value is a U+002D HYPHEN-MINUS character (-) and the last character in value is a
-                //    U+0025 PERCENT SIGN character (%), then jump to the step labeled next setting.
                 if (isPercentage && isNegative)
                     break;
 
-                // 6. Ignoring the trailing percent sign, if any, interpret value as a (potentially signed) integer, and
-                //    let number be that number.
-                // 7. If the last character in value is a U+0025 PERCENT SIGN character (%), but number is not in the range
-                //    0 ≤ number ≤ 100, then jump to the step labeled next setting.
-                // 8. Let cue's text track cue line position be number.
-                // 9. If the last character in value is a U+0025 PERCENT SIGN character (%), then let cue's text track cue
-                //    snap-to-lines flag be false. Otherwise, let it be true.
                 if (isPercentage) {
                     if (linePosition < 0 || linePosition > 100)
                         break;
 
-                    // 10 - If '%' then set snap-to-lines flag to false.
                     m_snapToLines = false;
-                } else {
-                    if (linePosition - static_cast<int>(linePosition))
-                        break;
-
+                } else
                     m_snapToLines = true;
-                }
-                
+
                 m_linePosition = linePosition;
                 m_lineAlignment = alignment;
                 isValid = true;
@@ -1268,10 +1253,10 @@ void VTTCue::setCueSettings(const String& inputString)
             break;
         }
         case Position: {
-            float position;
+            double position;
             PositionAlignSetting alignment { PositionAlignSetting::Auto };
 
-            auto parsePosition = [&] (VTTScanner& input, auto end, float& position, auto& alignment) -> bool {
+            auto parsePosition = [&](VTTScanner& input, auto end, double& position, auto& alignment) -> bool {
                 // 1. a position value consisting of: a WebVTT percentage.
                 if (!WebVTTParser::parseFloatPercentageValue(input, position)) {
                     ALWAYS_LOG(identifier, "Invalid position percentage");
@@ -1309,7 +1294,7 @@ void VTTCue::setCueSettings(const String& inputString)
             break;
         }
         case Size: {
-            float cueSize;
+            double cueSize;
             if (WebVTTParser::parseFloatPercentageValue(input, cueSize) && input.isAt(valueRun.end()))
                 m_cueSize = cueSize;
             else
@@ -1418,7 +1403,7 @@ void VTTCue::toJSON(JSON::Object& object) const
 }
 
 #if ENABLE(SPEECH_SYNTHESIS)
-static float mapVideoRateToSpeechRate(float rate)
+static float NODELETE mapVideoRateToSpeechRate(float rate)
 {
     // WebSpeech says to go from .1 -> 10 (default 1)
     // Video rate is 0 -> 2 (default 1). [The spec has no maximum rate, but the default controls only go to 2x, so use that]
@@ -1471,7 +1456,7 @@ void VTTCue::prepareToSpeak(SpeechSynthesis& speechSynthesis, double rate, doubl
 uint64_t VTTCue::logIdentifier() const
 {
     if (!m_logIdentifier && track())
-        m_logIdentifier = childLogIdentifier(track()->logIdentifier(), cryptographicallyRandomNumber<uint64_t>());
+        m_logIdentifier = childLogIdentifier(protect(track())->logIdentifier(), cryptographicallyRandomNumber<uint64_t>());
     return m_logIdentifier;
 }
 

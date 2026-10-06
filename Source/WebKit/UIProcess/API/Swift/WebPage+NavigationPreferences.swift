@@ -21,19 +21,22 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
-import Foundation
+public import Foundation
 
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 extension WebPage {
     /// A type that specifies the behaviors to use when loading and rendering page content.
     ///
     /// Create a `NavigationPreferences` value when you want to change the default rendering behavior of
     /// your web page. Typically, iOS devices render web content for a mobile experience, and Mac devices
     /// render content for a desktop experience.
-    @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-    @available(watchOS, unavailable)
-    @available(tvOS, unavailable)
+    @available(anyAppleOSAndDownlevels 26.0, *)
+    @_spi_available(watchOSAndOpenSourceTBA, *)
+    @_spi_available(tvOSAndOpenSourceTBA, *)
     public struct NavigationPreferences: Sendable {
         /// Options to indicate how to render web view content.
         ///
@@ -64,9 +67,9 @@ extension WebPage {
         }
 
         /// Security restriction modes for WebView content.
-        @available(WK_IOS_TBA, WK_MAC_TBA, WK_XROS_TBA, *)
-        @available(watchOS, unavailable)
-        @available(tvOS, unavailable)
+        @available(anyAppleOSAndDownlevels 26.4, *)
+        @_spi_available(watchOSAndOpenSourceTBA, *)
+        @_spi_available(tvOSAndOpenSourceTBA, *)
         public enum SecurityRestrictionMode: Sendable {
             /// No additional security restrictions beyond WebKit defaults.
             case none
@@ -121,13 +124,41 @@ extension WebPage {
         /// This preference only applies to main frame navigations and will be ignored for subframe navigations. When set for a main frame, all subframe content and opened windows inherit the same security restrictions.
         /// When the system has chosen `SecurityRestrictionMode.lockdown` (e.g., in Lockdown Mode), attempts to set a less restrictive mode will fail silently.
         /// The default value is `SecurityRestrictionMode.none`.
-        @available(WK_IOS_TBA, WK_MAC_TBA, WK_XROS_TBA, *)
-        @available(watchOS, unavailable)
-        @available(tvOS, unavailable)
+        @available(anyAppleOSAndDownlevels 26.4, *)
+        @_spi_available(watchOSAndOpenSourceTBA, *)
+        @_spi_available(tvOSAndOpenSourceTBA, *)
         public var securityRestrictionMode: SecurityRestrictionMode {
             get { backingSecurityRestrictionMode ?? .none }
             set { backingSecurityRestrictionMode = newValue }
         }
+
+        /// Used to make changes to the network request that will be used for this navigation's main resource load.
+        @available(anyAppleOSAndDownlevels 27.0, *)
+        @_spi_available(watchOSAndOpenSourceTBA, *)
+        @_spi_available(tvOSAndOpenSourceTBA, *)
+        public var alternateRequest: URLRequest? = nil
+
+        /// Used to apply a custom `referer` header to all resource loads in the frame of this navigation.
+        @available(anyAppleOSAndDownlevels 27.0, *)
+        @_spi_available(watchOSAndOpenSourceTBA, *)
+        @_spi_available(tvOSAndOpenSourceTBA, *)
+        public var overrideReferrer: Swift.String? = nil
+
+        /// Whether the Global Privacy Control (GPC) signal is enabled for the navigation.
+        ///
+        /// The default value of this property is `false`. When enabled, both `navigator.globalPrivacyControl`
+        /// and the `Sec-GPC: 1` request header are active for the main frame, its subframes, and their subresources.
+        @available(anyAppleOSAndDownlevels 27.0, *)
+        @_spi_available(watchOSAndOpenSourceTBA, *)
+        @_spi_available(tvOSAndOpenSourceTBA, *)
+        public var isGlobalPrivacyControlEnabled: Bool = false
+
+        /// Indicates whether `window.webkit.createJSHandle` will be available in `WKContentWorld.page`
+        /// The default value of this property is `false`.
+        @available(anyAppleOSAndDownlevels 27.0, *)
+        @_spi_available(watchOSAndOpenSourceTBA, *)
+        @_spi_available(tvOSAndOpenSourceTBA, *)
+        public var allowsJSHandleCreationInPageWorld: Bool = false
     }
 }
 
@@ -160,7 +191,9 @@ extension WebPage.NavigationPreferences.UpgradeToHTTPSPolicy {
     }
 }
 
-@available(WK_IOS_TBA, WK_MAC_TBA, WK_XROS_TBA, *)
+@available(anyAppleOSAndDownlevels 26.4, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 extension WebPage.NavigationPreferences.SecurityRestrictionMode {
     init(_ wrapped: WKSecurityRestrictionMode) {
         self =
@@ -185,6 +218,11 @@ extension WebPage.NavigationPreferences {
         self.allowsContentJavaScript = wrapped.allowsContentJavaScript
         self.isLockdownModeEnabled = wrapped.isLockdownModeEnabled
         self.securityRestrictionMode = .init(wrapped.securityRestrictionMode)
+
+        self.alternateRequest = wrapped.alternateRequest
+        self.overrideReferrer = wrapped.overrideReferrer
+        self.isGlobalPrivacyControlEnabled = wrapped.globalPrivacyControlEnabled
+        self.allowsJSHandleCreationInPageWorld = wrapped.allowsJSHandleCreationInPageWorld
     }
 }
 

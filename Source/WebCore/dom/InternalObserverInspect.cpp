@@ -36,6 +36,7 @@
 #include "Subscriber.h"
 #include "SubscriberCallback.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 
 namespace WebCore {
 
@@ -65,7 +66,7 @@ public:
             }
 
             if (RefPtr subscribe = m_inspector.subscribe) {
-                auto* globalObject = protectedScriptExecutionContext()->globalObject();
+                auto* globalObject = protect(scriptExecutionContext())->globalObject();
                 ASSERT(globalObject);
 
                 Ref vm = globalObject->vm();
@@ -120,12 +121,12 @@ private:
             JSC::Exception* exception = scope.exception();
             if (exception) [[unlikely]] {
                 scope.clearException();
-                protectedSubscriber()->error(exception->value());
+                protect(m_subscriber)->error(exception->value());
                 return;
             }
         }
 
-        protectedSubscriber()->next(value);
+        protect(m_subscriber)->next(value);
     }
 
     void error(JSC::JSValue value) final
@@ -142,12 +143,12 @@ private:
             JSC::Exception* exception = scope.exception();
             if (exception) [[unlikely]] {
                 scope.clearException();
-                protectedSubscriber()->error(exception->value());
+                protect(m_subscriber)->error(exception->value());
                 return;
             }
         }
 
-        protectedSubscriber()->error(value);
+        protect(m_subscriber)->error(value);
     }
 
     void complete() final
@@ -166,27 +167,27 @@ private:
             JSC::Exception* exception = scope.exception();
             if (exception) [[unlikely]] {
                 scope.clearException();
-                protectedSubscriber()->error(exception->value());
+                protect(m_subscriber)->error(exception->value());
                 return;
             }
         }
 
-        protectedSubscriber()->complete();
+        protect(m_subscriber)->complete();
     }
 
-    void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
+    void visitAdditionalChildrenInGCThread(JSC::AbstractSlotVisitor& visitor) const final
     {
-        m_subscriber->visitAdditionalChildren(visitor);
+        m_subscriber->visitAdditionalChildrenInGCThread(visitor);
         if (m_inspector.next)
-            SUPPRESS_UNCOUNTED_ARG m_inspector.next->visitJSFunction(visitor);
+            SUPPRESS_UNCOUNTED_ARG m_inspector.next->visitJSFunctionInGCThread(visitor);
         if (m_inspector.error)
-            SUPPRESS_UNCOUNTED_ARG m_inspector.error->visitJSFunction(visitor);
+            SUPPRESS_UNCOUNTED_ARG m_inspector.error->visitJSFunctionInGCThread(visitor);
         if (m_inspector.complete)
-            SUPPRESS_UNCOUNTED_ARG m_inspector.complete->visitJSFunction(visitor);
+            SUPPRESS_UNCOUNTED_ARG m_inspector.complete->visitJSFunctionInGCThread(visitor);
         if (m_inspector.subscribe)
-            SUPPRESS_UNCOUNTED_ARG m_inspector.subscribe->visitJSFunction(visitor);
+            SUPPRESS_UNCOUNTED_ARG m_inspector.subscribe->visitJSFunctionInGCThread(visitor);
         if (m_inspector.abort)
-            SUPPRESS_UNCOUNTED_ARG m_inspector.abort->visitJSFunction(visitor);
+            SUPPRESS_UNCOUNTED_ARG m_inspector.abort->visitJSFunctionInGCThread(visitor);
     }
 
     void removeAbortHandler()
@@ -195,19 +196,14 @@ private:
             return;
 
         auto handle = std::exchange(m_abortAlgorithmHandler, std::nullopt);
-        protectedSubscriber()->signal().removeAlgorithm(*handle);
+        m_subscriber->signal().removeAlgorithm(*handle);
     }
 
     JSC::VM& vm() const
     {
-        auto* globalObject = protectedScriptExecutionContext()->globalObject();
+        auto* globalObject = protect(scriptExecutionContext())->globalObject();
         ASSERT(globalObject);
         return globalObject->vm();
-    }
-
-    Ref<Subscriber> protectedSubscriber() const
-    {
-        return m_subscriber;
     }
 
     InternalObserverInspect(ScriptExecutionContext& context, Ref<Subscriber>&& subscriber, ObservableInspector&& inspector)
@@ -216,7 +212,7 @@ private:
         , m_inspector(WTF::move(inspector))
     {
         if (RefPtr abort = m_inspector.abort) {
-            Ref signal = protectedSubscriber()->signal();
+            Ref signal = m_subscriber->signal();
             m_abortAlgorithmHandler = signal->addAlgorithm([abort = WTF::move(abort)](JSC::JSValue reason) {
                 abort->invoke(reason);
             });

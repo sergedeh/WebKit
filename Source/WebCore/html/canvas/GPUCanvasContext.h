@@ -40,6 +40,7 @@ namespace WebCore {
 class CanvasBase;
 class Document;
 class GPU;
+class GPUDevice;
 class GPUTexture;
 class ImageBitmap;
 struct GPUCanvasConfiguration;
@@ -48,11 +49,12 @@ template<typename> class ExceptionOr;
 class GPUCanvasContext : public GPUBasedCanvasRenderingContext {
     WTF_MAKE_TZONE_ALLOCATED(GPUCanvasContext);
 public:
+    using CanvasType = Variant<
+          Ref<HTMLCanvasElement>
 #if ENABLE(OFFSCREEN_CANVAS)
-    using CanvasType = Variant<RefPtr<HTMLCanvasElement>, RefPtr<OffscreenCanvas>>;
-#else
-    using CanvasType = Variant<RefPtr<HTMLCanvasElement>>;
+        , Ref<OffscreenCanvas>
 #endif
+    >;
 
     static std::unique_ptr<GPUCanvasContext> create(CanvasBase&, GPU&, Document*);
 
@@ -60,6 +62,7 @@ public:
     virtual ExceptionOr<void> configure(GPUCanvasConfiguration&&) = 0;
     virtual void unconfigure() = 0;
     virtual std::optional<GPUCanvasConfiguration> getConfiguration() const = 0;
+    virtual GPUDevice* device() const = 0;
     virtual ExceptionOr<Ref<GPUTexture>> getCurrentTexture() = 0;
 
 protected:

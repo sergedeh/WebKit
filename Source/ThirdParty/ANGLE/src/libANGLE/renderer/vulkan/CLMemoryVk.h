@@ -8,36 +8,21 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_CLMEMORYVK_H_
 #define LIBANGLE_RENDERER_VULKAN_CLMEMORYVK_H_
 
-#include "common/PackedCLEnums_autogen.h"
-#include "common/SimpleMutex.h"
-
-#include "libANGLE/cl_types.h"
 #include "libANGLE/renderer/vulkan/cl_types.h"
 #include "libANGLE/renderer/vulkan/vk_helpers.h"
+#include "libANGLE/renderer/vulkan/vk_wrapper.h"
 
 #include "libANGLE/renderer/CLMemoryImpl.h"
 
 #include "libANGLE/CLBuffer.h"
 #include "libANGLE/CLImage.h"
 #include "libANGLE/CLMemory.h"
+#include "libANGLE/cl_types.h"
 
-#include "libANGLE/renderer/vulkan/vk_wrapper.h"
 #include "vulkan/vulkan_core.h"
 
 namespace rx
 {
-
-union PixelColor
-{
-    uint8_t u8[4];
-    int8_t s8[4];
-    uint16_t u16[4];
-    int16_t s16[4];
-    uint32_t u32[4];
-    int32_t s32[4];
-    cl_half fp16[4];
-    cl_float fp32[4];
-};
 
 class CLMemoryVk : public CLMemoryImpl
 {
@@ -147,7 +132,6 @@ class CLBufferVk : public CLMemoryVk
     angle::Result mapBufferHelper(uint8_t *&ptrOut) override;
     angle::Result mapParentBufferHelper(uint8_t *&ptrOut) override;
     void unmapBufferHelper() override;
-    angle::Result setDataImpl(const uint8_t *data, size_t size, size_t offset);
     angle::Result createWithProperties();
 
     enum class UpdateRectOperation
@@ -200,6 +184,7 @@ class CLImageVk : public CLMemoryVk
     angle::Result createFromBuffer();
 
     bool isCurrentlyInUse() const override;
+    bool isImage2DFromBuffer() const { return mIsImage2DFromBuffer; }
     bool containsHostMemExtension();
 
     angle::Result getOrCreateStagingBuffer(CLBufferVk **clBufferOut);
@@ -214,10 +199,9 @@ class CLImageVk : public CLMemoryVk
     VkImageType getVkImageType(const cl::ImageDescriptor &desc);
     cl::Extents getImageExtent() const { return mExtent; }
     vk::ImageView &getImageView() { return mImageView; }
-    void packPixels(const void *fillColor, PixelColor *packedColor);
     angle::Result fillImageWithColor(const cl::Offset &origin,
                                      const cl::Extents &region,
-                                     PixelColor *packedColor);
+                                     cl::PixelColor packedColor);
     cl::Offset getOffsetForCopy(const cl::Offset &origin);
     cl::Extents getExtentForCopy(const cl::Extents &region);
     VkImageSubresourceLayers getSubresourceLayersForCopy(const cl::Offset &origin,
@@ -240,9 +224,10 @@ class CLImageVk : public CLMemoryVk
     cl::Extents mExtent;
     angle::FormatID mAngleFormat;
 
-    cl::Buffer *mStagingBuffer;
+    cl::BufferPtr mStagingBuffer;
     vk::ImageView mImageView;
     VkImageViewType mImageViewType;
+    bool mIsImage2DFromBuffer;
 
     // Images created from buffer create texel buffer views. BufferViewHelper contain the view
     // corresponding to the attached buffer.

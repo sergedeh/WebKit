@@ -26,8 +26,10 @@
 
 #pragma once
 
+#include <JavaScriptCore/InjectedScriptManager.h>
 #include <JavaScriptCore/InspectorEnvironment.h>
 #include <JavaScriptCore/InspectorFrontendRouter.h>
+#include <wtf/AbstractCanMakeCheckedPtr.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/WTFString.h>
@@ -39,11 +41,10 @@ class JSGlobalObject;
 namespace Inspector {
 
 class BackendDispatcher;
-class InjectedScriptManager;
 
 struct AgentContext {
     CheckedRef<InspectorEnvironment> environment;
-    InjectedScriptManager& injectedScriptManager;
+    CheckedRef<InjectedScriptManager> injectedScriptManager;
     CheckedRef<FrontendRouter> frontendRouter;
     BackendDispatcher& backendDispatcher;
 };
@@ -55,7 +56,7 @@ struct JSAgentContext : public AgentContext {
     {
     }
 
-    JSC::JSGlobalObject& inspectedGlobalObject;
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::JSGlobalObject& inspectedGlobalObject;
 };
 
 enum class DisconnectReason {
@@ -63,7 +64,7 @@ enum class DisconnectReason {
     InspectorDestroyed
 };
 
-class InspectorAgentBase {
+class InspectorAgentBase : public AbstractCanMakeCheckedPtr {
     WTF_MAKE_TZONE_ALLOCATED(InspectorAgentBase);
 public:
     virtual ~InspectorAgentBase() { }

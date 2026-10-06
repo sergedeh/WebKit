@@ -31,8 +31,8 @@
 #include <wtf/CheckedPtr.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
-#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WebCore {
 
@@ -40,7 +40,7 @@ class DisplayAnimationClient;
 class DisplayRefreshMonitorClient;
 class DisplayRefreshMonitorFactory;
 
-class DisplayRefreshMonitor : public ThreadSafeRefCounted<DisplayRefreshMonitor> {
+class DisplayRefreshMonitor : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<DisplayRefreshMonitor> {
     friend class DisplayRefreshMonitorManager;
 public:
     static RefPtr<DisplayRefreshMonitor> create(DisplayRefreshMonitorFactory*, PlatformDisplayID);
@@ -73,7 +73,7 @@ protected:
 
     WEBCORE_EXPORT virtual void dispatchDisplayDidRefresh(const DisplayUpdate&);
 
-    Lock& lock() WTF_RETURNS_LOCK(m_lock) { return m_lock; }
+    Lock& lock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
     void setMaxUnscheduledFireCount(unsigned count) WTF_REQUIRES_LOCK(m_lock) { m_maxUnscheduledFireCount = count; }
 
     // Returns true if the start was successful.
@@ -89,7 +89,7 @@ protected:
     WEBCORE_EXPORT void displayDidRefresh(const DisplayUpdate&);
 
 private:
-    bool firedAndReachedMaxUnscheduledFireCount() WTF_REQUIRES_LOCK(m_lock);
+    bool NODELETE firedAndReachedMaxUnscheduledFireCount() WTF_REQUIRES_LOCK(m_lock);
 
     virtual void adjustPreferredFramesPerSecond(FramesPerSecond) { }
 

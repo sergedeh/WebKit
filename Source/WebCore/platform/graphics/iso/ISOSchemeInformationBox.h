@@ -36,9 +36,13 @@ public:
 
     static FourCC boxTypeName() { return std::span { "schi" }; }
 
-    const ISOBox* schemeSpecificData() const { return m_schemeSpecificData.get(); }
+    const ISOBox* schemeSpecificData() const LIFETIME_BOUND { return m_schemeSpecificData.get(); }
 
-    bool parse(JSC::DataView&, unsigned& offset) override;
+    bool parse(const ByteView&, unsigned& offset) final;
+    bool pack(MutableByteView&, unsigned& offset) const final;
+
+    void updateSize() final;
+    uint64_t partialSize() const final;
 
 private:
     std::unique_ptr<ISOBox> m_schemeSpecificData;

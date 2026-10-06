@@ -30,7 +30,7 @@
 #include "ActiveDOMObject.h"
 #include "Blob.h"
 #include "Document.h"
-#include "JSDOMPromiseDeferred.h"
+#include "JSDOMPromiseDeferredForward.h"
 #include "MediaStreamTrack.h"
 #include "PhotoCapabilities.h"
 #include "PhotoSettings.h"
@@ -79,7 +79,7 @@ private:
     const Logger& logger() const { return m_logger.get(); }
     uint64_t logIdentifier() const { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "ImageCapture"_s; }
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& NODELETE logChannel() const;
 #endif
 
     const Ref<MediaStreamTrack> m_track;

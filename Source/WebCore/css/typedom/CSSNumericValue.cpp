@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2019 Apple Inc. All rights reserved.
- * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2025-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,7 @@
 #include "CSSCalcTree+Parser.h"
 #include "CSSCalcTree+Simplification.h"
 #include "CSSCalcTree.h"
+#include "CSSCalcValue.h"
 #include "CSSMathClamp.h"
 #include "CSSMathInvert.h"
 #include "CSSMathMax.h"
@@ -164,6 +165,11 @@ template<typename Op> static ExceptionOr<Ref<CSSNumericValue>> reifyMathExpressi
 }
 
 // https://drafts.css-houdini.org/css-typed-om/#reify-a-math-expression
+ExceptionOr<Ref<CSSNumericValue>> CSSNumericValue::reifyMathExpression(const CSS::UnevaluatedCalcBase& calc)
+{
+    return CSSNumericValue::reifyMathExpression(calc.calcValue().tree().root);
+}
+
 ExceptionOr<Ref<CSSNumericValue>> CSSNumericValue::reifyMathExpression(const CSSCalc::Tree& tree)
 {
     return CSSNumericValue::reifyMathExpression(tree.root);
@@ -196,10 +202,10 @@ static ExceptionOr<Ref<CSSNumericValue>> invert(Ref<CSSNumericValue>&& value)
 {
     // https://drafts.css-houdini.org/css-typed-om/#cssmath-invert-a-cssnumericvalue
     if (auto* mathInvert = dynamicDowncast<CSSMathInvert>(value.get()))
-        return Ref { mathInvert->value() };
+        return protect(mathInvert->value());
 
     if (auto* unitValue = dynamicDowncast<CSSUnitValue>(value.get())) {
-        if (unitValue->unitEnum() == CSSUnitType::CSS_NUMBER) {
+        if (unitValue->unitEnum() == CSSUnitType::Number) {
             if (unitValue->value() == 0.0 || unitValue->value() == -0.0)
                 return Exception { ExceptionCode::RangeError };
             return Ref<CSSNumericValue> { CSSUnitValue::create(1.0 / unitValue->value(), unitValue->unitEnum()) };
@@ -210,11 +216,11 @@ static ExceptionOr<Ref<CSSNumericValue>> invert(Ref<CSSNumericValue>&& value)
 }
 
 template<typename T>
-static RefPtr<CSSNumericValue> operationOnValuesOfSameUnit(T&& operation, const Vector<Ref<CSSNumericValue>>& values)
+static RefPtr<CSSNumericValue> operationOnValuesOfSameUnit(NOESCAPE const T& operation, const Vector<Ref<CSSNumericValue>>& values)
 {
     bool allValuesHaveSameUnit = values.size() && std::ranges::all_of(values, [&](auto& value) {
         auto* unitValue = dynamicDowncast<CSSUnitValue>(value.get());
-        return unitValue ? unitValue->unitEnum() == downcast<CSSUnitValue>(values[0].get()).unitEnum() : false;
+        return unitValue && unitValue->unitEnum() == downcast<CSSUnitValue>(values[0].get()).unitEnum();
     });
     if (allValuesHaveSameUnit) {
         Ref firstUnitValue = downcast<CSSUnitValue>(values[0]);
@@ -274,7 +280,7 @@ ExceptionOr<Ref<CSSNumericValue>> CSSNumericValue::multiplyInternal(Vector<Ref<C
         std::optional<size_t> nonNumberUnitIndex;
         for (size_t i = 0; i < values.size(); ++i) {
             auto unit = downcast<CSSUnitValue>(values[i].get()).unitEnum();
-            if (unit == CSSUnitType::CSS_NUMBER)
+            if (unit == CSSUnitType::Number)
                 continue;
             if (nonNumberUnitIndex) {
                 multipleUnitsFound = true;
@@ -286,7 +292,7 @@ ExceptionOr<Ref<CSSNumericValue>> CSSNumericValue::multiplyInternal(Vector<Ref<C
             double product = 1;
             for (const Ref<CSSNumericValue>& value : values)
                 product *= downcast<CSSUnitValue>(value.get()).value();
-            auto unit = nonNumberUnitIndex ? downcast<CSSUnitValue>(values[*nonNumberUnitIndex].get()).unitEnum() : CSSUnitType::CSS_NUMBER;
+            auto unit = nonNumberUnitIndex ? downcast<CSSUnitValue>(values[*nonNumberUnitIndex].get()).unitEnum() : CSSUnitType::Number;
             return { CSSUnitValue::create(product, unit) };
         }
     }
@@ -335,12 +341,39 @@ ExceptionOr<Ref<CSSNumericValue>> CSSNumericValue::max(FixedVector<CSSNumberish>
 Ref<CSSNumericValue> CSSNumericValue::rectifyNumberish(CSSNumberish&& numberish)
 {
     // https://drafts.css-houdini.org/css-typed-om/#rectify-a-numberish-value
-    return WTF::switchOn(numberish, [](RefPtr<CSSNumericValue>& value) {
-        RELEASE_ASSERT(!!value);
-        return Ref<CSSNumericValue> { *value };
-    }, [](double value) {
-        return Ref<CSSNumericValue> { CSSNumericFactory::number(value) };
-    });
+    return WTF::switchOn(numberish,
+        [](Ref<CSSNumericValue>& value) {
+            return value;
+        },
+        [](double value) {
+            return Ref<CSSNumericValue> { CSSNumericFactory::number(value) };
+        }
+    );
+}
+
+ExceptionOr<Ref<CSSNumericValue>> CSSNumericValue::reifyValue(Document& document, const CSSValue& cssValue)
+{
+    auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(cssValue);
+    if (!primitiveValue)
+        return Exception { ExceptionCode::TypeError };
+    return reifyValue(document, *primitiveValue);
+}
+
+ExceptionOr<Ref<CSSNumericValue>> CSSNumericValue::reifyValue(Document&, const CSSPrimitiveValue& primitiveValue)
+{
+    return WTF::switchOn(primitiveValue,
+        [&](const CSSPrimitiveValue::Calc& calc) -> ExceptionOr<Ref<CSSNumericValue>> {
+            return reifyMathExpression(calc);
+        },
+        [&](const CSSPrimitiveValue::Raw& raw) -> ExceptionOr<Ref<CSSNumericValue>> {
+            if (raw.unit == CSSUnitType::Integer) {
+                // Integer is special cased to resolved the same as <number>.
+                return upcast<CSSNumericValue>(CSSUnitValue::create(raw.value, CSSUnitType::Number));
+            } else {
+                return upcast<CSSNumericValue>(CSSUnitValue::create(raw.value, raw.unit));
+            }
+        }
+    );
 }
 
 bool CSSNumericValue::equals(FixedVector<CSSNumberish>&& values)
@@ -364,7 +397,7 @@ static RefPtr<CSSUnitValue> createCSSUnitValueFromAddend(CSSNumericValue::Addend
     if (addend.units.size() > 1)
         return nullptr;
     if (addend.units.isEmpty())
-        return CSSUnitValue::create(addend.value, CSSUnitType::CSS_NUMBER);
+        return CSSUnitValue::create(addend.value, CSSUnitType::Number);
     auto unit = addend.units.begin();
     if (unit->value != 1)
         return nullptr;
@@ -401,7 +434,7 @@ ExceptionOr<Ref<CSSMathSum>> CSSNumericValue::toSum(FixedVector<String>&& units)
     parsedUnits.reserveInitialCapacity(units.size());
     for (auto& unit : units) {
         auto parsedUnit = CSSUnitValue::parseUnit(unit);
-        if (parsedUnit == CSSUnitType::CSS_UNKNOWN)
+        if (parsedUnit == CSSUnitType::Unknown)
             return Exception { ExceptionCode::SyntaxError, "Invalid unit parameter"_s };
         parsedUnits.append(parsedUnit);
     }

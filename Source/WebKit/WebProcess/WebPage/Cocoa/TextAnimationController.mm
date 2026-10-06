@@ -37,6 +37,8 @@
 #include <WebCore/Editing.h>
 #include <WebCore/FocusController.h>
 #include <WebCore/FrameDestructionObserverInlines.h>
+#include <WebCore/LocalFrameInlines.h>
+#include <WebCore/Page.h>
 #include <WebCore/Range.h>
 #include <WebCore/RenderedDocumentMarker.h>
 #include <WebCore/SimpleRange.h>
@@ -71,13 +73,13 @@ WebCore::Document* TextAnimationController::document() const
         return nullptr;
     }
 
-    RefPtr corePage = m_webPage->corePage();
+    auto* corePage = m_webPage->corePage();
     if (!corePage) {
         ASSERT_NOT_REACHED();
         return nullptr;
     }
 
-    RefPtr frame = corePage->focusController().focusedOrMainFrame();
+    auto* frame = corePage->focusController().focusedOrMainFrame();
     if (!frame) {
         ASSERT_NOT_REACHED();
         return nullptr;
@@ -164,7 +166,7 @@ void TextAnimationController::removeTransparentMarkersForTextAnimationID(const W
         return;
     }
 
-    document->checkedMarkers()->removeMarkers({ WebCore::DocumentMarkerType::TransparentContent }, [&](const WebCore::DocumentMarker& marker) {
+    protect(document->markers())->removeMarkers({ WebCore::DocumentMarkerType::TransparentContent }, [&](const WebCore::DocumentMarker& marker) {
         return std::get<WebCore::DocumentMarker::TransparentContentData>(marker.data()).uuid == uuid ? WebCore::FilterMarkerResult::Remove : WebCore::FilterMarkerResult::Keep;
     });
 }
@@ -172,10 +174,10 @@ void TextAnimationController::removeTransparentMarkersForTextAnimationID(const W
 void TextAnimationController::removeInitialTextAnimationForActiveWritingToolsSession()
 {
     if (auto initialAnimationID = std::exchange(m_initialAnimationID, std::nullopt))
-        protectedWebPage()->removeTextAnimationForAnimationID(*initialAnimationID);
+        protect(m_webPage.get())->removeTextAnimationForAnimationID(*initialAnimationID);
 }
 
-static WebCore::CharacterRange remainingCharacterRange(WebCore::CharacterRange totalRange, WebCore::CharacterRange previousRange)
+static WebCore::CharacterRange NODELETE remainingCharacterRange(WebCore::CharacterRange totalRange, WebCore::CharacterRange previousRange)
 {
     if (totalRange.length < previousRange.length)
         return totalRange;
@@ -200,7 +202,7 @@ void TextAnimationController::addInitialTextAnimationForActiveWritingToolsSessio
 
     removeInitialTextAnimationForActiveWritingToolsSession();
 
-    protectedWebPage()->addTextAnimationForAnimationID(initialAnimationID, { WebCore::TextAnimationType::Initial, WebCore::TextAnimationRunMode::RunAnimation }, textIndicator);
+    protect(m_webPage.get())->addTextAnimationForAnimationID(initialAnimationID, { WebCore::TextAnimationType::Initial, WebCore::TextAnimationRunMode::RunAnimation }, textIndicator);
 
     m_initialAnimationID = initialAnimationID;
 }
@@ -242,18 +244,21 @@ void TextAnimationController::addSourceTextAnimationForActiveWritingToolsSession
     }
 
     // On iOS this will search for the completion handler to pass the text indicator to so that the animation can continue.
-    protectedWebPage()->addTextAnimationForAnimationID(sourceAnimationUUID, { WebCore::TextAnimationType::Source, runMode, WTF::UUID(WTF::UUID::emptyValue), sourceAnimationUUID, destinationAnimationUUID }, textIndicator, WTF::move(completionHandler));
+    protect(m_webPage.get())->addTextAnimationForAnimationID(sourceAnimationUUID, { WebCore::TextAnimationType::Source, runMode, { }, sourceAnimationUUID, destinationAnimationUUID }, textIndicator, WTF::move(completionHandler));
     m_activeAnimation = sourceAnimationUUID;
     m_textAnimationRanges.append({ sourceAnimationUUID, replaceCharacterRange });
 }
 
-void TextAnimationController::addDestinationTextAnimationForActiveWritingToolsSession(const WTF::UUID& sourceAnimationUUID, const WTF::UUID& destinationAnimationUUID, const std::optional<WebCore::CharacterRange>& characterRangeAfterReplace, const String& string)
+void TextAnimationController::addDestinationTextAnimationForActiveWritingToolsSession(Markable<WTF::UUID> sourceAnimationUUIDValue, Markable<WTF::UUID> destinationAnimationUUIDValue, const std::optional<WebCore::CharacterRange>& characterRangeAfterReplace, const String& string)
 {
     RefPtr webPage = m_webPage.get();
-    if (!characterRangeAfterReplace) {
+    if (!characterRangeAfterReplace || !sourceAnimationUUIDValue || !destinationAnimationUUIDValue) {
         webPage->didEndPartialIntelligenceTextAnimation();
         return;
     }
+
+    auto sourceAnimationUUID = *sourceAnimationUUIDValue;
+    auto destinationAnimationUUID = *destinationAnimationUUIDValue;
 
     auto sessionRange = contextRangeForActiveWritingToolsSession();
     if (!sessionRange) {
@@ -279,13 +284,14 @@ void TextAnimationController::addDestinationTextAnimationForActiveWritingToolsSe
     auto endPosition = makeContainerOffsetPosition(sessionRange->start);
     auto endBoundaryPoint = makeBoundaryPoint(endOfEditableContent(endPosition));
 
-    WTF::UUID unanimatedRangeUUID { WTF::UUID::emptyValue };
+    Markable<WTF::UUID> unanimatedRangeUUID;
     if (endBoundaryPoint) {
         auto unanimatedRange = makeSimpleRangeHelper(replacedRangeAfterReplace.end, *endBoundaryPoint);
 
         if (unanimatedRange) {
-            unanimatedRangeUUID = WTF::UUID::createVersion4();
-            m_unanimatedRangeData = { unanimatedRangeUUID, *unanimatedRange };
+            auto animationUUID = WTF::UUID::createVersion4();
+            unanimatedRangeUUID = animationUUID;
+            m_unanimatedRangeData = { animationUUID, *unanimatedRange };
         }
     }
 
@@ -299,10 +305,8 @@ void TextAnimationController::addDestinationTextAnimationForActiveWritingToolsSe
         if (runMode == WebCore::TextAnimationRunMode::DoNotRun)
             return;
 
-        if (!weakWebPage)
-            return;
-
-        weakWebPage->addInitialTextAnimationForActiveWritingToolsSession();
+        if (RefPtr webPage = weakWebPage)
+            webPage->addInitialTextAnimationForActiveWritingToolsSession();
     });
 
     if (m_activeAnimation == sourceAnimationUUID) {
@@ -340,7 +344,7 @@ void TextAnimationController::updateUnderlyingTextVisibilityForTextAnimationID(c
                 completionHandler();
             return;
         }
-        document->checkedMarkers()->addTransparentContentMarker(*animationRange, uuid);
+        protect(document->markers())->addTransparentContentMarker(*animationRange, uuid);
     }
 
     if (completionHandler)

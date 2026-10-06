@@ -26,9 +26,10 @@
 #pragma once
 
 #include "ResourceLoadStatisticsParameters.h"
+#include "TimeBasedEvictionMode.h"
 #include "UnifiedOriginStorageLevel.h"
 #include "WebPushDaemonConnectionConfiguration.h"
-#include <WebCore/NetworkStorageSession.h>
+#include <WebCore/SecurityOriginData.h>
 #include <pal/SessionID.h>
 #include <wtf/Seconds.h>
 #include <wtf/URL.h>
@@ -86,6 +87,7 @@ struct NetworkSessionCreationParameters {
     String networkCacheDirectory;
     SandboxExtension::Handle networkCacheDirectoryExtensionHandle;
     String dataConnectionServiceType;
+    String ipAddressSpaceOverridesForTesting;
     bool fastServerTrustEvaluationEnabled { false };
     bool networkCacheSpeculativeValidationEnabled { false };
     bool shouldUseTestingNetworkSession { false };
@@ -97,8 +99,8 @@ struct NetworkSessionCreationParameters {
     bool shouldRunServiceWorkersOnMainThreadForTesting { false };
     std::optional<unsigned> overrideServiceWorkerRegistrationCountTestingValue;
     bool preventsSystemHTTPProxyAuthentication { false };
-    std::optional<bool> useNetworkLoader { std::nullopt };
     bool allowsHSTSWithUntrustedRootCertificate { false };
+    bool qualifiedServerTrustDebugEnabledForTesting { false };
     String pcmMachServiceName;
     String webPushMachServiceName;
     String webPushPartitionString;
@@ -126,6 +128,11 @@ struct NetworkSessionCreationParameters {
     bool serviceWorkerProcessTerminationDelayEnabled { true };
     bool inspectionForServiceWorkersAllowed { true };
     bool storageSiteValidationEnabled { false };
+    TimeBasedEvictionMode timeBasedEvictionMode { TimeBasedEvictionMode::Disabled };
+    Seconds timeBasedEvictionThreshold { 180 * 24_h };
+    std::optional<Seconds> lastModificationTimeUpdateIntervalOverride;
+    std::optional<Seconds> timeBasedEvictionIntervalOverride;
+    Vector<WebCore::SecurityOriginData> mockPushSubscriptionOriginsForTesting;
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     bool isDeclarativeWebPushEnabled { false };
 #endif

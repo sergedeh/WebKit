@@ -26,33 +26,30 @@
 
 #include "GenericMediaQueryEvaluator.h"
 #include "MediaQuery.h"
-#include "RenderStyle.h"
 
 namespace WebCore {
-
 namespace MQ {
 
 class MediaQueryEvaluator : public GenericMediaQueryEvaluator<MediaQueryEvaluator> {
 public:
-    MediaQueryEvaluator(const AtomString& mediaType, const Document&, const RenderStyle* rootElementStyle);
+    MediaQueryEvaluator(const AtomString& mediaType, const Document&);
     MediaQueryEvaluator(const AtomString& mediaType = nullAtom(), EvaluationResult mediaConditionResult = EvaluationResult::False);
 
     bool evaluate(const MediaQueryList&) const;
     bool evaluate(const MediaQuery&) const;
 
-    bool evaluateMediaType(const MediaQuery&) const;
+    bool NODELETE evaluateMediaType(const MediaQuery&) const;
 
     OptionSet<MediaQueryDynamicDependency> collectDynamicDependencies(const MediaQueryList&) const;
     OptionSet<MediaQueryDynamicDependency> collectDynamicDependencies(const MediaQuery&) const;
 
-    bool isPrintMedia() const;
+    bool NODELETE isPrintMedia() const;
 
 private:
     AtomString m_mediaType;
     WeakPtr<const Document, WeakPtrImplWithEventTargetData> m_document;
-    CheckedPtr<const RenderStyle> m_rootElementStyle;
     EvaluationResult m_staticMediaConditionResult { EvaluationResult::Unknown };
 };
 
-}
-}
+} // namespace MQ
+} // namespace WebCore

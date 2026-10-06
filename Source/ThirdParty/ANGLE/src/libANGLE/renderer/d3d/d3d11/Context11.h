@@ -73,9 +73,6 @@ class Context11 : public ContextD3D, public MultisampleTextureInitializer
     // Semaphore creation.
     SemaphoreImpl *createSemaphore() override;
 
-    // Overlay creation.
-    OverlayImpl *createOverlay(const gl::OverlayState &state) override;
-
     // Flush and finish.
     angle::Result flush(const gl::Context *context) override;
     angle::Result finish(const gl::Context *context) override;
@@ -255,7 +252,6 @@ class Context11 : public ContextD3D, public MultisampleTextureInitializer
 
     angle::Result triggerDrawCallProgramRecompilation(const gl::Context *context,
                                                       gl::PrimitiveMode drawMode);
-    angle::Result triggerDispatchCallProgramRecompilation(const gl::Context *context);
     angle::Result getIncompleteTexture(const gl::Context *context,
                                        gl::TextureType type,
                                        gl::Texture **textureOut);

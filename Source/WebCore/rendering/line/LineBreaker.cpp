@@ -61,7 +61,7 @@ LegacyInlineIterator LineBreaker::nextLineBreak(InlineBidiResolver& resolver, Li
 
     while (context.currentObject()) {
         context.initializeForCurrentObject();
-        if (context.currentObject()->isRenderInline()) {
+        if (context.currentObject()->isInlineBox()) {
             context.handleEmptyInline();
         } else if (context.currentObject()->isRenderText()) {
             if (context.handleText()) {
@@ -69,7 +69,7 @@ LegacyInlineIterator LineBreaker::nextLineBreak(InlineBidiResolver& resolver, Li
                 return context.lineBreak();
             }
         } else if (context.currentObject()->isLineBreakOpportunity())
-            context.commitLineBreakAtCurrentWidth(*context.checkedCurrentObject());
+            context.commitLineBreakAtCurrentWidth(*context.currentObject());
         else
             ASSERT_NOT_REACHED();
 

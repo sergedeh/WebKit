@@ -27,6 +27,18 @@ struct FrontendFeatures : FeatureSetBase
         &members,
     };
 
+    FeatureInfo loseHardenedContextOnBackendError = {
+        "loseHardenedContextOnBackendError",
+        FeatureCategory::FrontendWorkarounds,
+        &members,
+    };
+
+    FeatureInfo disallowNonZeroBaseLevelAndIncompatibleLevelsOnHardenedContexts = {
+        "disallowNonZeroBaseLevelAndIncompatibleLevelsOnHardenedContexts",
+        FeatureCategory::FrontendWorkarounds,
+        &members,
+    };
+
     FeatureInfo disableProgramCachingForTransformFeedback = {
         "disableProgramCachingForTransformFeedback",
         FeatureCategory::FrontendWorkarounds,
@@ -95,6 +107,12 @@ struct FrontendFeatures : FeatureSetBase
 
     FeatureInfo emulatePixelLocalStorage = {
         "emulatePixelLocalStorage",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
+    FeatureInfo useIr = {
+        "useIr",
         FeatureCategory::FrontendFeatures,
         &members,
     };
@@ -171,12 +189,6 @@ struct FrontendFeatures : FeatureSetBase
         &members,
     };
 
-    FeatureInfo rejectWebglShadersWithUndefinedBehavior = {
-        "rejectWebglShadersWithUndefinedBehavior",
-        FeatureCategory::FrontendWorkarounds,
-        &members,
-    };
-
     FeatureInfo alwaysEnableEmulatedMultidrawExtensions = {
         "alwaysEnableEmulatedMultidrawExtensions",
         FeatureCategory::FrontendWorkarounds,
@@ -185,6 +197,12 @@ struct FrontendFeatures : FeatureSetBase
 
     FeatureInfo forcePassthroughShaders = {
         "forcePassthroughShaders",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
+    FeatureInfo enableCreateContextBackwardsCompatible = {
+        "enableCreateContextBackwardsCompatible",
         FeatureCategory::FrontendFeatures,
         &members,
     };
@@ -203,6 +221,36 @@ struct FrontendFeatures : FeatureSetBase
 
     FeatureInfo forceDebugContexts = {
         "forceDebugContexts",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
+    FeatureInfo limitMaxBufferBytesTo1MB = {
+        "limitMaxBufferBytesTo1MB",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
+    FeatureInfo limitMaxTextureBytesTo1MB = {
+        "limitMaxTextureBytesTo1MB",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
+    FeatureInfo allowExtensionDisableAfterNonPpTokens = {
+        "allowExtensionDisableAfterNonPpTokens",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
+    FeatureInfo setNeedInitOnInvalidation = {
+        "setNeedInitOnInvalidation",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
+    FeatureInfo compressProgramBinaryBlob = {
+        "compressProgramBinaryBlob",
         FeatureCategory::FrontendFeatures,
         &members,
     };

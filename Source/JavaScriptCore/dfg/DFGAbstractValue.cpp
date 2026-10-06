@@ -54,13 +54,11 @@ void AbstractValue::set(Graph& graph, const FrozenValue& value, StructureClobber
 {
     if (!!value && value.value().isCell()) {
         Structure* structure = value.structure();
-        StructureRegistrationResult result;
-        RegisteredStructure registeredStructure = graph.registerStructure(structure, result);
-        if (result == StructureRegisteredAndWatched) {
-            m_structure = registeredStructure;
+        if (graph.tryWatch(structure)) {
+            m_structure = graph.registerStructure(structure);
             if (clobberState == StructuresAreClobbered) {
                 m_arrayModes = ALL_ARRAY_MODES;
-                m_structure.clobber();
+                m_structure.clobber(graph);
             } else
                 m_arrayModes = arrayModesFromStructure(structure);
         } else {
@@ -141,7 +139,7 @@ void AbstractValue::fixTypeForRepresentation(Graph& graph, NodeFlags representat
             m_type |= SpecAnyIntAsDouble;
         }
         if (m_type & ~SpecFullDouble)
-            DFG_CRASH(graph, node, toCString("Abstract value ", *this, " for double node has type outside SpecFullDouble.\n").data());
+            DFG_CRASH(graph, node, toUTF8CString("Abstract value ", *this, " for double node has type outside SpecFullDouble.\n"));
     } else if (representation == NodeResultInt52) {
         if (m_type & SpecAnyIntAsDouble) {
             // AnyIntAsDouble can produce i32 or i52. SpecAnyIntAsDouble doesn't bound the magnitude of the value.
@@ -160,7 +158,7 @@ void AbstractValue::fixTypeForRepresentation(Graph& graph, NodeFlags representat
         }
 
         if (m_type & ~SpecInt52Any)
-            DFG_CRASH(graph, node, toCString("Abstract value ", *this, " for int52 node has type outside SpecInt52Any.\n").data());
+            DFG_CRASH(graph, node, toUTF8CString("Abstract value ", *this, " for int52 node has type outside SpecInt52Any.\n"));
 
         if (m_value) {
             DFG_ASSERT(graph, node, m_value.isAnyInt());
@@ -176,7 +174,7 @@ void AbstractValue::fixTypeForRepresentation(Graph& graph, NodeFlags representat
             m_type |= SpecAnyIntAsDouble;
         }
         if (m_type & ~SpecBytecodeTop)
-            DFG_CRASH(graph, node, toCString("Abstract value ", *this, " for value node has type outside SpecBytecodeTop.\n").data());
+            DFG_CRASH(graph, node, toUTF8CString("Abstract value ", *this, " for value node has type outside SpecBytecodeTop.\n"));
     }
     
     checkConsistency();
@@ -317,11 +315,11 @@ FiltrationResult AbstractValue::filterSlow(SpeculatedType type)
     return normalizeClarity();
 }
 
-FiltrationResult AbstractValue::fastForwardToAndFilterSlow(AbstractValueClobberEpoch newEpoch, SpeculatedType type)
+FiltrationResult AbstractValue::fastForwardToAndFilterSlow(Graph& graph, AbstractValueClobberEpoch newEpoch, SpeculatedType type)
 {
     if (newEpoch != m_effectEpoch)
-        fastForwardToSlow(newEpoch);
-    
+        fastForwardToSlow(graph, newEpoch);
+
     return filterSlow(type);
 }
 
@@ -528,7 +526,7 @@ void AbstractValue::validateReferences(const TrackedReferences& trackedReference
     m_structure.validateReferences(trackedReferences);
 }
 
-#if USE(JSVALUE64) && !defined(NDEBUG)
+#if !defined(NDEBUG)
 void AbstractValue::ensureCanInitializeWithZeros()
 {
     AlignedStorage<AbstractValue> zeroFilledStorage;
@@ -537,12 +535,12 @@ void AbstractValue::ensureCanInitializeWithZeros()
 }
 #endif
 
-void AbstractValue::fastForwardToSlow(AbstractValueClobberEpoch newEpoch)
+void AbstractValue::fastForwardToSlow(Graph& graph, AbstractValueClobberEpoch newEpoch)
 {
     ASSERT(newEpoch != m_effectEpoch);
     
     if (newEpoch.clobberEpoch() != m_effectEpoch.clobberEpoch())
-        clobberStructures();
+        clobberStructures(graph);
     if (newEpoch.structureClobberState() == StructuresAreWatched)
         m_structure.observeInvalidationPoint();
     

@@ -89,7 +89,9 @@ ExceptionOr<void> URLPatternParser::performParse(const URLPatternStringOptions& 
             nameToken = tryToConsumeToken(TokenType::Name);
             regexOrWildcardToken = tryToConsumeRegexOrWildcardToken(nameToken);
             String suffix = consumeText();
-            consumeRequiredToken(TokenType::Close);
+            auto maybeSyntaxError = consumeRequiredToken(TokenType::Close);
+            if (maybeSyntaxError.hasException())
+                return maybeSyntaxError.releaseException();
             auto modifierToken = tryToConsumeModifierToken();
 
             maybeFunctionException = addPart(WTF::move(prefix), nameToken, regexOrWildcardToken, WTF::move(suffix), modifierToken);
@@ -310,7 +312,7 @@ String generateSegmentWildcardRegexp(const URLPatternStringOptions& options)
 template<typename CharacterType>
 static String escapeRegexStringForCharacters(std::span<const CharacterType> characters)
 {
-    static constexpr auto regexEscapeCharacters = std::to_array<const CharacterType>({ '.', '+', '*', '?', '^', '$', '{', '}', '(', ')', '[', ']', '|', '/', '\\' }); // NOLINT
+    static constexpr auto regexEscapeCharacters = WTF::toArray<CharacterType>({ '.', '+', '*', '?', '^', '$', '{', '}', '(', ')', '[', ']', '|', '/', '\\' }); // NOLINT
 
     StringBuilder result;
     result.reserveCapacity(characters.size());
@@ -508,7 +510,7 @@ String generatePatternString(const Vector<Part>& partList, const URLPatternStrin
 template<typename CharacterType>
 static String escapePatternStringForCharacters(std::span<const CharacterType> characters)
 {
-    static constexpr auto escapeCharacters = std::to_array<const CharacterType>({ '+', '*', '?', ':', '(', ')', '\\', '{', '}' }); // NOLINT
+    static constexpr auto escapeCharacters = WTF::toArray<CharacterType>({ '+', '*', '?', ':', '(', ')', '\\', '{', '}' }); // NOLINT
 
     StringBuilder result;
     result.reserveCapacity(characters.size());
@@ -535,7 +537,7 @@ String escapePatternString(StringView input)
 }
 
 // https://urlpattern.spec.whatwg.org/#is-a-valid-name-code-point
-bool isValidNameCodepoint(char16_t codepoint, URLPatternUtilities::IsFirst first)
+bool isValidNameCodepoint(char32_t codepoint, URLPatternUtilities::IsFirst first)
 {
     if (first == URLPatternUtilities::IsFirst::Yes)
         return u_hasBinaryProperty(codepoint, UCHAR_ID_START) || codepoint == '_' || codepoint == '$';

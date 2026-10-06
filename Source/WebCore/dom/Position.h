@@ -38,6 +38,8 @@ namespace WebCore {
 
 class LegacyInlineBox;
 class RenderElement;
+class RenderObject;
+class RenderText;
 class Text;
 
 struct BoundaryPoint;
@@ -48,6 +50,8 @@ enum PositionMoveType {
     Character,       // Move to the next Unicode character break.
     BackwardDeletion // Subject to platform conventions.
 };
+
+enum class AllowUserSelectNone : bool { No, Yes };
 
 struct InlineBoxAndOffset;
 
@@ -81,13 +85,11 @@ public:
 
     // These are always DOM compliant values.  Editing positions like [img, 0] (aka [img, before])
     // will return img->parentNode() and img->computeNodeIndex() from these functions.
-    WEBCORE_EXPORT Node* containerNode() const; // null for a before/after position anchored to a node with no parent
-    RefPtr<Node> protectedContainerNode() const { return containerNode(); }
-    Text* containerText() const;
-    RefPtr<Text> protectedContainerText() const;
-    Element* containerOrParentElement() const;
+    WEBCORE_EXPORT Node* NODELETE containerNode() const; // null for a before/after position anchored to a node with no parent
+    Text* NODELETE containerText() const;
+    Element* NODELETE containerOrParentElement() const;
 
-    int computeOffsetInContainerNode() const;  // O(n) for before/after-anchored positions, O(1) for parent-anchored positions
+    int NODELETE computeOffsetInContainerNode() const; // O(n) for before/after-anchored positions, O(1) for parent-anchored positions
     WEBCORE_EXPORT Position parentAnchoredEquivalent() const; // Convenience method for DOM positions that also fixes up some positions for editing
 
     // Inline O(1) access for Positions which callers know to be parent-anchored
@@ -105,20 +107,24 @@ public:
         return offsetForPositionAfterAnchor();
     }
 
+    // Returns the renderer and fragment-local offset for this position, correctly
+    // handling first-letter text fragment splits where the DOM text node's renderer
+    // is the remaining fragment rather than the first-letter fragment.
+    std::pair<RenderObject*, unsigned> rendererAndOffset() const;
+    std::pair<RenderText*, unsigned> resolvedTextRendererAndOffset() const;
+
     RefPtr<Node> firstNode() const;
 
     // These are convenience methods which are smart about whether the position is neighbor anchored or parent anchored
-    WEBCORE_EXPORT Node* computeNodeBeforePosition() const;
-    WEBCORE_EXPORT Node* computeNodeAfterPosition() const;
+    WEBCORE_EXPORT Node* NODELETE computeNodeBeforePosition() const;
+    WEBCORE_EXPORT Node* NODELETE computeNodeAfterPosition() const;
 
     Node* anchorNode() const { return m_anchorNode.get(); }
-    RefPtr<Node> protectedAnchorNode() const { return m_anchorNode; }
 
     // FIXME: Callers should be moved off of node(), node() is not always the container for this position.
     // For nodes which editingIgnoresContent(node()) returns true, positions like [ignoredNode, 0]
     // will be treated as before ignoredNode (thus node() is really after the position, not containing it).
     Node* deprecatedNode() const { return m_anchorNode.get(); }
-    RefPtr<Node> protectedDeprecatedNode() const { return m_anchorNode; }
 
     inline Document* document() const; // Defined in PositionInlines.h.
     inline TreeScope* treeScope() const;
@@ -170,21 +176,21 @@ public:
     WEBCORE_EXPORT Position upstream(EditingBoundaryCrossingRule = CannotCrossEditingBoundary) const;
     WEBCORE_EXPORT Position downstream(EditingBoundaryCrossingRule = CannotCrossEditingBoundary) const;
     
-    bool isCandidate() const;
+    bool isCandidate(AllowUserSelectNone = AllowUserSelectNone::No) const;
     bool isRenderedCharacter() const;
     bool rendersInDifferentPosition(const Position&) const;
 
     InlineBoxAndOffset inlineBoxAndOffset(Affinity) const;
     InlineBoxAndOffset inlineBoxAndOffset(Affinity, TextDirection primaryDirection) const;
 
-    TextDirection primaryDirection() const;
+    TextDirection NODELETE primaryDirection() const;
 
     // Returns the number of positions that exist between two positions.
     static unsigned positionCountBetweenPositions(const Position&, const Position&);
 
     static bool hasRenderedNonAnonymousDescendantsWithHeight(const RenderElement&);
-    static bool nodeIsUserSelectNone(Node*);
-    static bool nodeIsUserSelectAll(const Node*);
+    static bool NODELETE nodeIsUserSelectNone(const Node*);
+    static bool NODELETE nodeIsUserSelectAll(const Node*);
     static RefPtr<Node> rootUserSelectAllForNode(Node*);
 
     void debugPosition(ASCIILiteral msg = ""_s) const;
@@ -197,7 +203,7 @@ public:
 
     // This is a tentative enhancement of operator== to account for different position types.
     // FIXME: Combine this function with operator==
-    bool equals(const Position&) const;
+    WEBCORE_EXPORT bool NODELETE equals(const Position&) const;
 
 private:
     // For creating legacy editing positions: (Anchor type will be determined from editingIgnoresContent(node))
@@ -233,16 +239,16 @@ WEBCORE_EXPORT Position makeDeprecatedLegacyPosition(const BoundaryPoint&);
 
 WEBCORE_EXPORT std::optional<BoundaryPoint> makeBoundaryPoint(const Position&);
 
-Position positionInParentBeforeNode(Node*);
-Position positionInParentAfterNode(Node*);
+Position positionInParentBeforeNode(Node&);
+Position positionInParentAfterNode(Node&);
 
 // positionBeforeNode and positionAfterNode return neighbor-anchored positions, construction is O(1)
-Position positionBeforeNode(Node* anchorNode);
-Position positionAfterNode(Node* anchorNode);
+Position positionBeforeNode(Node& anchorNode);
+Position positionAfterNode(Node& anchorNode);
 
 // firstPositionInNode and lastPositionInNode return parent-anchored positions, lastPositionInNode construction is O(n) due to countChildNodes()
-Position firstPositionInNode(Node* anchorNode);
-inline Position lastPositionInNode(Node* anchorNode);
+inline Position firstPositionInNode(Node& anchorNode); // Defined in PositionInlines.h
+inline Position lastPositionInNode(Node& anchorNode); // Defined in PositionInlines.h
 
 bool offsetIsBeforeLastNodeOffset(unsigned offset, Node* anchorNode);
 
@@ -267,7 +273,7 @@ public:
     {
     }
 
-    const Position& position() const { return m_position; }
+    const Position& position() const LIFETIME_BOUND { return m_position; }
     Affinity affinity() const { return m_affinity; }
 
 private:
@@ -296,27 +302,17 @@ inline bool operator==(const Position& a, const Position& b)
 }
 
 // positionBeforeNode and positionAfterNode return neighbor-anchored positions, construction is O(1)
-inline Position positionBeforeNode(Node* anchorNode)
+inline Position positionBeforeNode(Node& anchorNode)
 {
-    ASSERT(anchorNode);
-    return Position(anchorNode, Position::PositionIsBeforeAnchor);
+    return Position(&anchorNode, Position::PositionIsBeforeAnchor);
 }
 
-inline Position positionAfterNode(Node* anchorNode)
+inline Position positionAfterNode(Node& anchorNode)
 {
-    ASSERT(anchorNode);
-    return Position(anchorNode, Position::PositionIsAfterAnchor);
+    return Position(&anchorNode, Position::PositionIsAfterAnchor);
 }
 
-// firstPositionInNode and lastPositionInNode return parent-anchored positions, lastPositionInNode construction is O(n) due to countChildNodes()
-inline Position firstPositionInNode(Node* anchorNode)
-{
-    if (anchorNode->isCharacterDataNode())
-        return Position(anchorNode, 0, Position::PositionIsOffsetInAnchor);
-    return Position(anchorNode, Position::PositionIsBeforeChildren);
-}
-
-inline bool offsetIsBeforeLastNodeOffset(unsigned offset, Node* anchorNode);
+inline bool offsetIsBeforeLastNodeOffset(unsigned offset, Node anchorNode);
 
 } // namespace WebCore
 

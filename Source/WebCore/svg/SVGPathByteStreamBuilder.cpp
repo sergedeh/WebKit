@@ -21,8 +21,7 @@
 #include "config.h"
 #include "SVGPathByteStreamBuilder.h"
 
-#include "SVGPathSeg.h"
-#include "SVGPathStringViewSource.h"
+#include "SVGPathSegType.h"
 
 namespace WebCore {
 

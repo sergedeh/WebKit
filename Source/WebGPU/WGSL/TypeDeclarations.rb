@@ -62,6 +62,7 @@ operator :'&', {
 operator :-, {
     must_use: true,
     const: "constantMinus",
+    validate: "validateMinus",
 
     # unary
     [T < SignedNumber].(T) => T,
@@ -78,6 +79,7 @@ operator :-, {
 operator :+, {
     must_use: true,
     const: "constantAdd",
+    validate: "validateAdd",
 
     [T < Number].(T, T) => T,
 
@@ -93,6 +95,7 @@ operator :+, {
 operator :*, {
     must_use: true,
     const: "constantMultiply",
+    validate: "validateMultiply",
 
     # binary
     [T < Number].(T, T) => T,
@@ -117,6 +120,7 @@ operator :*, {
 operator :/, {
     must_use: true,
     const: "constantDivide",
+    validate: "validateDivide",
 
     [T < Number].(T, T) => T,
 
@@ -129,6 +133,7 @@ operator :/, {
 operator :%, {
     must_use: true,
     const: "constantModulo",
+    validate: "validateModulo",
     [T < Number].(T, T) => T,
 
     # vector scaling
@@ -192,12 +197,14 @@ operator :~, {
 end
 
 {
-    "<<" => 'constantBitwiseShiftLeft',
-    ">>" => 'constantBitwiseShiftRight',
-}.each do |op, const_function|
+    "<<" => ['constantBitwiseShiftLeft', 'validateBitwiseShiftLeft'],
+    ">>" => ['constantBitwiseShiftRight', 'validateBitwiseShiftRight'],
+}.each do |op, functions|
+    const_function, validate_function = functions
     operator :"#{op}", {
         must_use: true,
         const: const_function,
+        validate: validate_function,
 
         [S < Integer].(S, u32) => S,
         [S < Integer, N].(vec[N][S], vec[N][u32]) => vec[N][S],
@@ -478,6 +485,7 @@ function :ceil, {
 function :clamp, {
     must_use: true,
     const: true,
+    validate: true,
 
     [T < Number].(T, T, T) => T,
     [T < Number, N].(vec[N][T], vec[N][T], vec[N][T]) => vec[N][T],
@@ -571,6 +579,7 @@ end
 function :extractBits, {
     must_use: true,
     const: true,
+    validate: true,
 
     # signed
     [].(i32, u32, u32) => i32,
@@ -665,6 +674,7 @@ function :frexp, {
 function :insertBits, {
     must_use: true,
     const: true,
+    validate: true,
 
     [T < ConcreteInteger].(T, T, u32, u32) => T,
     [T < ConcreteInteger, N].(vec[N][T], vec[N][T], u32, u32) => vec[N][T],
@@ -683,11 +693,14 @@ function :inverseSqrt, {
 function :ldexp, {
     must_use: true,
     const: true,
+    validate: true,
 
     [T < ConcreteFloat].(T, i32) => T,
     [].(abstract_float, abstract_int) => abstract_float,
+    [].(abstract_float, i32) => abstract_float,
     [T < ConcreteFloat, N].(vec[N][T], vec[N][i32]) => vec[N][T],
     [N].(vec[N][abstract_float], vec[N][abstract_int]) => vec[N][abstract_float],
+    [N].(vec[N][abstract_float], vec[N][i32]) => vec[N][abstract_float],
 }
 
 # 17.5.36
@@ -855,6 +868,7 @@ function :sign, {
 function :smoothstep, {
     must_use: true,
     const: true,
+    validate: true,
 
     [T < Float].(T, T, T) => T,
     [T < Float, N].(vec[N][T], vec[N][T], vec[N][T]) => vec[N][T],
@@ -1068,14 +1082,8 @@ function :textureLoad, {
     [F, T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_storage_1d[F, read], T) => vec4[ChannelFormat[F]],
     [F, T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_storage_1d[F, read_write], T) => vec4[ChannelFormat[F]],
     [T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_2d[S], vec2[T], U) => vec4[S],
-    [F, T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_storage_2d[F, read], T) => vec4[ChannelFormat[F]],
-    [F, T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_storage_2d[F, read_write], T) => vec4[ChannelFormat[F]],
-    [F, T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_storage_2d_array[F, read], T) => vec4[ChannelFormat[F]],
-    [F, T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_storage_2d_array[F, read_write], T) => vec4[ChannelFormat[F]],
     [T < ConcreteInteger, V < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_2d_array[S], vec2[T], V, U) => vec4[S],
     [T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_3d[S], vec3[T], U) => vec4[S],
-    [F, T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_storage_3d[F, read], T) => vec4[ChannelFormat[F]],
-    [F, T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_storage_3d[F, read_write], T) => vec4[ChannelFormat[F]],
     [T < ConcreteInteger, U < ConcreteInteger, S < Concrete32BitNumber].(texture_multisampled_2d[S], vec2[T], U) => vec4[S],
 
 
@@ -1307,6 +1315,8 @@ function :textureSampleGrad, {
 # 17.7.13
 function :textureSampleLevel, {
     must_use: true,
+
+    [].(texture_1d[f32], sampler, f32, f32) => vec4[f32],
 
     [].(texture_2d[f32], sampler, vec2[f32], f32) => vec4[f32],
 
@@ -1596,7 +1606,158 @@ function :workgroupBarrier, {
 function :workgroupUniformLoad, {
     must_use: true,
     stage: :compute,
+    validate: true,
+
+    # @must_use fn workgroupUniformLoad(p : ptr<workgroup, atomic<T>, read_write>) -> T
+    [T].(ptr[workgroup, atomic[T]]) => T,
 
     # @must_use fn workgroupUniformLoad(p : ptr<workgroup, T>) -> T
     [T].(ptr[workgroup, T]) => T,
 }
+
+# 17.12. Subgroup Built-in Functions (https://www.w3.org/TR/WGSL/#subgroup-builtin-functions)
+# All subgroup built-in functions may only be used in a fragment or compute shader stage.
+
+# Reduction and prefix-scan operations over a concrete numeric scalar or numeric vector.
+[
+    # 17.12.1 subgroupAdd / 17.12.1.1 subgroupExclusiveAdd / 17.12.1.2 subgroupInclusiveAdd
+    :subgroupAdd,
+    :subgroupExclusiveAdd,
+    :subgroupInclusiveAdd,
+    # 17.12.9 subgroupMul / 17.12.9.1 subgroupExclusiveMul / 17.12.9.2 subgroupInclusiveMul
+    :subgroupMul,
+    :subgroupExclusiveMul,
+    :subgroupInclusiveMul,
+    # 17.12.7 subgroupMax / 17.12.8 subgroupMin
+    :subgroupMax,
+    :subgroupMin,
+    # 17.12.4 subgroupBroadcastFirst
+    :subgroupBroadcastFirst,
+].each do |op|
+    function op, {
+        must_use: true,
+        stage: [:fragment, :compute],
+
+        [T < ConcreteNumber].(T) => T,
+        [T < ConcreteNumber, N].(vec[N][T]) => vec[N][T],
+    }
+end
+
+# Bitwise reduction operations over an integer scalar or vector.
+[
+    # 17.12.2 subgroupAnd
+    :subgroupAnd,
+    # 17.12.10 subgroupOr
+    :subgroupOr,
+    # 17.12.14 subgroupXor
+    :subgroupXor,
+].each do |op|
+    function op, {
+        must_use: true,
+        stage: [:fragment, :compute],
+
+        [T < ConcreteInteger].(T) => T,
+        [T < ConcreteInteger, N].(vec[N][T]) => vec[N][T],
+    }
+end
+
+# Boolean reductions.
+[
+    # 17.12.3 subgroupAll
+    :subgroupAll,
+    # 17.12.3 subgroupAny
+    :subgroupAny,
+].each do |op|
+    function op, {
+        must_use: true,
+        stage: [:fragment, :compute],
+
+        [].(bool) => bool,
+    }
+end
+
+# 17.12.5 subgroupBallot
+function :subgroupBallot, {
+    must_use: true,
+    stage: [:fragment, :compute],
+
+    [].(bool) => vec[4][u32],
+}
+
+# 17.12.6 subgroupElect
+function :subgroupElect, {
+    must_use: true,
+    stage: [:fragment, :compute],
+
+    [].() => bool,
+}
+
+# 17.12.6 subgroupBroadcast: id must be a const-expression in [0, 128).
+function :subgroupBroadcast, {
+    must_use: true,
+    stage: [:fragment, :compute],
+    validate: "validateSubgroupBroadcast",
+
+    [T < ConcreteNumber, U < ConcreteInteger].(T, U) => T,
+    [T < ConcreteNumber, N, U < ConcreteInteger].(vec[N][T], U) => vec[N][T],
+}
+
+# 17.12.12 subgroupShuffle: a const-expression id outside [0, 128) is a shader-creation error.
+function :subgroupShuffle, {
+    must_use: true,
+    stage: [:fragment, :compute],
+    validate: "validateSubgroupShuffle",
+
+    [T < ConcreteNumber, U < ConcreteInteger].(T, U) => T,
+    [T < ConcreteNumber, N, U < ConcreteInteger].(vec[N][T], U) => vec[N][T],
+}
+
+# Relative-shuffle operations with a u32 delta/mask.
+# A const-expression delta/mask outside [0, 128) is a shader-creation error.
+[
+    # 17.12.12.1 subgroupShuffleDown
+    :subgroupShuffleDown,
+    # 17.12.12.2 subgroupShuffleUp
+    :subgroupShuffleUp,
+    # 17.12.12.3 subgroupShuffleXor
+    :subgroupShuffleXor,
+].each do |op|
+    function op, {
+        must_use: true,
+        stage: [:fragment, :compute],
+        validate: "validateSubgroupShuffle",
+
+        [T < ConcreteNumber].(T, u32) => T,
+        [T < ConcreteNumber, N].(vec[N][T], u32) => vec[N][T],
+    }
+end
+
+# 17.13. Quad Built-in Functions (https://www.w3.org/TR/WGSL/#quad-builtin-functions)
+
+# 17.13.1 quadBroadcast: id must be a const-expression in [0, 4).
+function :quadBroadcast, {
+    must_use: true,
+    stage: [:fragment, :compute],
+    validate: "validateQuadBroadcast",
+
+    [T < ConcreteNumber, U < ConcreteInteger].(T, U) => T,
+    [T < ConcreteNumber, N, U < ConcreteInteger].(vec[N][T], U) => vec[N][T],
+}
+
+# Quad swap operations exchanging values within a quad.
+[
+    # 17.13.2 quadSwapDiagonal
+    :quadSwapDiagonal,
+    # 17.13.3 quadSwapX
+    :quadSwapX,
+    # 17.13.4 quadSwapY
+    :quadSwapY,
+].each do |op|
+    function op, {
+        must_use: true,
+        stage: [:fragment, :compute],
+
+        [T < ConcreteNumber].(T) => T,
+        [T < ConcreteNumber, N].(vec[N][T]) => vec[N][T],
+    }
+end

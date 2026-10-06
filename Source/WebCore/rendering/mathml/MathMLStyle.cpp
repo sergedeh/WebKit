@@ -73,7 +73,7 @@ RenderObject* MathMLStyle::getMathMLParentNode(RenderObject* renderer)
 {
     auto* parentRenderer = renderer->parent();
 
-    while (parentRenderer && !(is<RenderMathMLTable>(parentRenderer) || is<RenderMathMLBlock>(parentRenderer)))
+    while (parentRenderer && !isAnyOf<RenderMathMLTable, RenderMathMLBlock>(parentRenderer))
         parentRenderer = parentRenderer->parent();
 
     return parentRenderer;
@@ -96,7 +96,7 @@ void MathMLStyle::resolveMathMLStyle(RenderObject* renderer)
 
     auto oldMathVariant = m_mathVariant;
     auto* parentRenderer = getMathMLParentNode(renderer);
-    const MathMLStyle* parentStyle = getMathMLStyle(parentRenderer);
+    const RefPtr parentStyle = getMathMLStyle(parentRenderer);
 
     // By default, we just inherit the style from our parent.
     m_mathVariant = MathVariant::None;
@@ -111,7 +111,7 @@ void MathMLStyle::resolveMathMLStyle(RenderObject* renderer)
     }
 
     // The mathvariant attributes override the default behavior.
-    if (auto* element = dynamicDowncast<MathMLElement>(downcast<RenderElement>(renderer)->element())) {
+    if (RefPtr element = dynamicDowncast<MathMLElement>(downcast<RenderElement>(renderer)->element())) {
         auto mathVariant = element->specifiedMathVariant();
         if (mathVariant)
             m_mathVariant = mathVariant.value();

@@ -24,7 +24,7 @@
 
 #pragma once
 
-#include <WebCore/CSSPrimitiveKeywordList.h>
+#include <WebCore/CSSKeywordList.h>
 #include <WebCore/CSSPrimitiveNumericConcepts.h>
 #include <WebCore/CSSPrimitiveNumericRaw.h>
 #include <WebCore/CSSUnevaluatedCalc.h>
@@ -61,9 +61,9 @@ template<typename T> struct PrimitiveDataMarkableTraits {
 
 // MARK: - Index
 
-template<Numeric N, PrimitiveKeyword... Ks> struct PrimitiveDataIndex {
+template<Numeric N, SpecificKeyword... Ks> struct PrimitiveDataIndex {
     using NumericType = N;
-    using Keywords = PrimitiveKeywordList<Ks...>;
+    using Keywords = KeywordList<Ks...>;
 
     using Raw = typename N::Raw;
     using Calc = typename N::Calc;
@@ -93,7 +93,7 @@ template<Numeric N, PrimitiveKeyword... Ks> struct PrimitiveDataIndex {
 
     static constexpr Storage indexStorageForUnit(UnitType unit)
     {
-        return indexStorageForFirstRaw + enumToUnderlyingType(unit);
+        return indexStorageForFirstRaw + std::to_underlying(unit);
     }
 
     static consteval Storage indexStorageForKeyword(ValidKeywordForList<Keywords> auto keyword)
@@ -171,10 +171,10 @@ template<Numeric N, PrimitiveKeyword... Ks> struct PrimitiveDataIndex {
 
     // MARK: Keyword
 
-    template<typename F> constexpr decltype(auto) visitKeyword(F&& f) const
+    template<typename F> constexpr decltype(auto) visitKeyword(NOESCAPE const F& f) const
     {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(storage <= indexStorageForLastKeyword);
-        return Keywords::visitKeywordAtOffset(storage - indexStorageForFirstKeyword, std::forward<F>(f));
+        return Keywords::visitKeywordAtOffset(storage - indexStorageForFirstKeyword, f);
     }
 
     // MARK: Predicates
@@ -234,7 +234,7 @@ union PrimitiveDataPayload {
 
 // MARK: - PrimitiveData
 
-template<Numeric N, PrimitiveKeyword... Ks> struct PrimitiveData {
+template<Numeric N, SpecificKeyword... Ks> struct PrimitiveData {
     using Index = PrimitiveDataIndex<N, Ks...>;
     using Payload = PrimitiveDataPayload;
 
@@ -251,7 +251,7 @@ template<Numeric N, PrimitiveKeyword... Ks> struct PrimitiveData {
     }
 
     PrimitiveData(Calc calc)
-        : payload { &calc.protectedCalc().leakRef() }
+        : payload { &calc.leakRef() }
         , index { calc }
     {
     }
@@ -471,13 +471,13 @@ template<Numeric N, PrimitiveKeyword... Ks> struct PrimitiveData {
             return index.isKeyword(T { });
     }
 
-    template<typename F> decltype(auto) visit(F&& f) const
+    template<typename F> decltype(auto) visit(NOESCAPE const F& f) const
     {
         if (isRaw())
             return f(asRaw());
         if (isCalc())
             return f(asCalc());
-        return index.visitKeyword(std::forward<F>(f));
+        return index.visitKeyword(f);
     }
 
     void setAsMovedFrom()

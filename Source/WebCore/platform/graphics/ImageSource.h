@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,11 +27,18 @@
 
 #include <WebCore/ImageFrame.h>
 #include <WebCore/ImageOrientation.h>
+#include <WebCore/ImagePaintingOptions.h>
+#include <WebCore/ImageResolution.h>
 #include <WebCore/ImageTypes.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 
+#if ENABLE(SPATIAL_IMAGE_DETECTION)
+#include <WebCore/SpatialImageTypes.h>
+#endif
+
 namespace WebCore {
 
+class FloatRect;
 class FragmentedSharedBuffer;
 
 class ImageSource : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ImageSource> {
@@ -54,6 +61,7 @@ public:
     virtual bool hasEverAnimated() const { return false; }
 
     // Decoding
+    virtual DecodingDestination preferredDecodingDestination(GraphicsContext&, ImagePaintingOptions) const { return DecodingDestination::Base; }
     virtual bool isLargeForDecoding() const { return false; }
     virtual void stopDecodingWorkQueue() { RELEASE_ASSERT_NOT_REACHED(); }
     virtual void decode(Function<void(DecodingStatus)>&&)  { RELEASE_ASSERT_NOT_REACHED(); }
@@ -71,17 +79,22 @@ public:
 
     virtual RefPtr<NativeImage> nativeImageAtIndex(unsigned) { return primaryNativeImage(); }
 
-    virtual Expected<Ref<NativeImage>, DecodingStatus> primaryNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
-    virtual Expected<Ref<NativeImage>, DecodingStatus> currentNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
+    virtual std::expected<Ref<NativeImage>, DecodingStatus> primaryNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
+    virtual std::expected<Ref<NativeImage>, DecodingStatus> currentNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
+
+    // Overridden by BitmapImageSource to keep decoded-size accounting in step with the
+    // platform-image replacement the GPU process performs while the image is drawn.
+    virtual void drawNativeImage(GraphicsContext&, NativeImage&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions);
 
     // Image Metadata
     virtual IntSize size(ImageOrientation = ImageOrientation::Orientation::FromImage) const = 0;
     virtual IntSize sourceSize(ImageOrientation orientation = ImageOrientation::Orientation::FromImage) const { return size(orientation); }
+    virtual FloatSize density() const { return { ImageResolution::DefaultResolution, ImageResolution::DefaultResolution }; }
     virtual bool hasDensityCorrectedSize() const { return false; }
     virtual ImageOrientation orientation() const { return ImageOrientation::Orientation::None; }
     virtual unsigned primaryFrameIndex() const { return 0; }
     virtual unsigned frameCount() const { return 1; }
-    virtual DestinationColorSpace colorSpace() const = 0;
+    virtual ColorSpace colorSpace() const = 0;
     virtual std::optional<Color> singlePixelSolidColor() const = 0;
     virtual bool hasHDRGainMap() const { return false; }
     virtual bool hasHDRContent() const = 0;
@@ -96,11 +109,14 @@ public:
     virtual SubsamplingLevel subsamplingLevelForScaleFactor(GraphicsContext&, const FloatSize&, AllowImageSubsampling) { return SubsamplingLevel::Default; }
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
-    virtual bool shouldUseQuickLookForFullscreen() const { return false; }
+    virtual bool isPanorama() const { return false; }
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_DETECTION)
     virtual bool isSpatial() const { return false; }
+    virtual std::optional<unsigned> spatialLeftEyeFrameIndex() const { return std::nullopt; }
+    virtual std::optional<unsigned> spatialRightEyeFrameIndex() const { return std::nullopt; }
+    virtual std::optional<SpatialImageEyeProperties> spatialEyePropertiesAtIndex(unsigned) const { return std::nullopt; }
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_CONTROLS)

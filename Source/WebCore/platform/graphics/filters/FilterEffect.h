@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include <WebCore/DestinationColorSpace.h>
+#include <WebCore/ColorSpace.h>
 #include <WebCore/FilterEffectApplier.h>
 #include <WebCore/FilterFunction.h>
 #include <WebCore/FilterImageVector.h>
@@ -45,8 +45,12 @@ class FilterEffect : public FilterFunction, public CanMakeThreadSafeCheckedPtr<F
 public:
     virtual bool operator==(const FilterEffect&) const;
 
-    const DestinationColorSpace& operatingColorSpace() const { return m_operatingColorSpace; }
-    virtual void setOperatingColorSpace(const DestinationColorSpace& colorSpace) { m_operatingColorSpace = colorSpace; }
+    const ColorSpace& operatingColorSpace() const LIFETIME_BOUND { return m_operatingColorSpace; }
+    virtual void setOperatingColorSpace(const ColorSpace& colorSpace) { m_operatingColorSpace = colorSpace; }
+
+    // §16.3: output is tainted (currentColor on flood/lighting, cross-origin feImage, or input propagation).
+    bool taintsOrigin() const { return m_taintsOrigin; }
+    void setTaintsOrigin(bool taintsOrigin) { m_taintsOrigin = taintsOrigin; }
 
     unsigned numberOfImageInputs() const { return filterType() == FilterEffect::Type::SourceGraphic ? 1 : numberOfEffectInputs(); }
     FilterImageVector takeImageInputs(FilterImageVector& stack) const;
@@ -57,7 +61,7 @@ public:
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const override;
 
 protected:
-    explicit FilterEffect(Type, DestinationColorSpace = DestinationColorSpace::SRGB(), std::optional<RenderingResourceIdentifier> = std::nullopt);
+    explicit FilterEffect(Type, ColorSpace = ColorSpace::SRGB(), std::optional<RenderingResourceIdentifier> = std::nullopt);
 
     template<typename FilterEffectType>
     static bool areEqual(const FilterEffectType& a, const FilterEffect& b)
@@ -77,11 +81,11 @@ protected:
 
     virtual bool resultIsValidPremultiplied() const { return true; }
 
-    virtual const DestinationColorSpace& resultColorSpace(std::span<const Ref<FilterImage>>) const { return m_operatingColorSpace; }
+    virtual const ColorSpace& resultColorSpace(std::span<const Ref<FilterImage>>) const { return m_operatingColorSpace; }
 
     virtual void transformInputsColorSpace(std::span<const Ref<FilterImage>> inputs) const;
     
-    void correctPremultipliedInputs(std::span<const Ref<FilterImage>> inputs) const;
+    void NODELETE correctPremultipliedInputs(std::span<const Ref<FilterImage>> inputs) const;
 
     std::unique_ptr<FilterEffectApplier> createApplier(const Filter&) const;
 
@@ -92,7 +96,8 @@ protected:
     RefPtr<FilterImage> apply(const Filter&, FilterImage& input, FilterResults&) override;
     FilterStyleVector createFilterStyles(GraphicsContext&, const Filter&, const FilterStyle& input) const override;
 
-    DestinationColorSpace m_operatingColorSpace { DestinationColorSpace::SRGB() };
+    ColorSpace m_operatingColorSpace { ColorSpace::SRGB() };
+    bool m_taintsOrigin { false };
 };
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const FilterEffect&);

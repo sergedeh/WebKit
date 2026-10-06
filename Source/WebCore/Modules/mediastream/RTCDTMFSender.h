@@ -27,11 +27,11 @@
 
 #if ENABLE(WEB_RTC)
 
-#include <WebCore/ActiveDOMObject.h>
-#include <WebCore/EventTarget.h>
-#include <WebCore/EventTargetInterfaces.h>
-#include <WebCore/ScriptWrappable.h>
-#include <WebCore/Timer.h>
+#include "ActiveDOMObject.h"
+#include "EventTarget.h"
+#include "EventTargetInterfaces.h"
+#include "ScriptWrappable.h"
+#include "Timer.h"
 
 namespace WebCore {
 
@@ -52,7 +52,7 @@ public:
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
     bool canInsertDTMF() const;
-    String toneBuffer() const;
+    String NODELETE toneBuffer() const;
 
     ExceptionOr<void> insertDTMF(const String& tones, size_t duration, size_t interToneGap);
 
@@ -63,8 +63,7 @@ private:
     void stop() final;
 
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::RTCDTMFSender; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
     bool virtualHasPendingActivity() const final { return m_isPendingPlayoutTask; }
 
     void refEventTarget() final { ref(); }

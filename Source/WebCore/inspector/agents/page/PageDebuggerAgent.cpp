@@ -105,7 +105,7 @@ String PageDebuggerAgent::sourceMapURLForScript(const JSC::Debugger::Script& scr
         if (!localMainFrame)
             return String();
 
-        CachedResource* resource = ResourceUtilities::cachedResource(localMainFrame.get(), URL({ }, script.url));
+        RefPtr resource = ResourceUtilities::cachedResource(localMainFrame.get(), URL({ }, script.url));
         if (resource) {
             String sourceMapHeader = resource->response().httpHeaderField(StringView { sourceMapHTTPHeader });
             if (!sourceMapHeader.isEmpty())
@@ -157,7 +157,7 @@ InjectedScript PageDebuggerAgent::injectedScriptForEval(Inspector::Protocol::Err
     if (!executionContextId)
         return injectedScriptManager().injectedScriptFor(&mainWorldGlobalObject(*localMainFrame));
 
-    InjectedScript injectedScript = injectedScriptManager().injectedScriptForId(*executionContextId);
+    auto injectedScript = injectedScriptManager().injectedScriptForId(*executionContextId);
     if (injectedScript.hasNoValue())
         errorString = "Missing injected script for given executionContextId."_s;
 

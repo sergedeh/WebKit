@@ -29,6 +29,7 @@
 #include "IDBBindingUtilities.h"
 #include "JSDOMBinding.h"
 #include "JSIDBCursorWithValue.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "WebCoreOpaqueRootInlines.h"
 
 namespace WebCore {
@@ -38,7 +39,7 @@ JSC::JSValue JSIDBCursor::key(JSC::JSGlobalObject& lexicalGlobalObject) const
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
     return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().keyWrapper(), [&](JSC::ThrowScope&) {
-        return toJS(lexicalGlobalObject, lexicalGlobalObject, wrapped().key());
+        return toJS(lexicalGlobalObject, lexicalGlobalObject, protect(wrapped().key()));
     });
 }
 
@@ -46,20 +47,21 @@ JSC::JSValue JSIDBCursor::primaryKey(JSC::JSGlobalObject& lexicalGlobalObject) c
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
     return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().primaryKeyWrapper(), [&](JSC::ThrowScope&) {
-        return toJS(lexicalGlobalObject, lexicalGlobalObject, wrapped().primaryKey());
+        return toJS(lexicalGlobalObject, lexicalGlobalObject, protect(wrapped().primaryKey()));
     });
 }
 
 template<typename Visitor>
-void JSIDBCursor::visitAdditionalChildren(Visitor& visitor)
+void JSIDBCursor::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     auto& cursor = wrapped();
-    if (auto* request = cursor.request())
+    // Cannot ref on the GC thread.
+    if (SUPPRESS_UNCOUNTED_LOCAL auto* request = cursor.request())
         addWebCoreOpaqueRoot(visitor, *request);
-    cursor.keyWrapper().visit(visitor);
-    cursor.primaryKeyWrapper().visit(visitor);
+    cursor.keyWrapper().visitInGCThread(visitor);
+    cursor.primaryKeyWrapper().visitInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSIDBCursor);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSIDBCursor);
 
 } // namespace WebCore

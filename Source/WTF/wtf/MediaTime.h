@@ -58,29 +58,29 @@ public:
     constexpr MediaTime(int64_t value, uint32_t scale, uint8_t flags = Valid);
     MediaTime(const MediaTime&) = default;
 
-    static MediaTime createWithFloat(float floatTime);
+    static MediaTime NODELETE createWithFloat(float floatTime);
     static MediaTime createWithFloat(float floatTime, uint32_t timeScale);
-    static MediaTime createWithDouble(double doubleTime);
+    static MediaTime NODELETE createWithDouble(double doubleTime);
     static MediaTime createWithDouble(double doubleTime, uint32_t timeScale);
     static MediaTime createWithSeconds(Seconds seconds) { return createWithDouble(seconds.value()); }
 
-    float toFloat() const;
-    double toDouble() const;
-    int64_t toMicroseconds() const;
+    float NODELETE toFloat() const;
+    double NODELETE toDouble() const;
+    int64_t NODELETE toMicroseconds() const;
 
-    MediaTime& operator=(const MediaTime&) = default;
+    MediaTime& NODELETE operator=(const MediaTime&) = default;
     MediaTime& operator+=(const MediaTime& rhs) { return *this = *this + rhs; }
     MediaTime& operator-=(const MediaTime& rhs) { return *this = *this - rhs; }
     MediaTime operator+(const MediaTime& rhs) const;
     MediaTime operator-(const MediaTime& rhs) const;
-    MediaTime operator-() const;
+    MediaTime NODELETE operator-() const;
     MediaTime operator*(int32_t) const;
-    bool operator!() const;
+    bool NODELETE operator!() const;
     explicit operator bool() const;
 
     WTF_EXPORT_PRIVATE friend std::partial_ordering operator<=>(const MediaTime&, const MediaTime&);
     friend bool operator==(const MediaTime& a, const MediaTime& b) { return is_eq(a <=> b); }
-    bool isBetween(const MediaTime&, const MediaTime&) const;
+    bool NODELETE isBetween(const MediaTime&, const MediaTime&) const;
 
     bool isValid() const { return m_timeFlags & Valid; }
     bool isInvalid() const { return !isValid(); }
@@ -92,14 +92,14 @@ public:
     bool hasDoubleValue() const { return m_timeFlags & DoubleValue; }
     uint8_t timeFlags() const { return m_timeFlags; }
 
-    static const MediaTime& zeroTime();
-    static const MediaTime& invalidTime();
-    static const MediaTime& positiveInfiniteTime();
-    static const MediaTime& negativeInfiniteTime();
-    static const MediaTime& indefiniteTime();
+    static const MediaTime& NODELETE zeroTime();
+    static const MediaTime& NODELETE invalidTime();
+    static const MediaTime& NODELETE positiveInfiniteTime();
+    static const MediaTime& NODELETE negativeInfiniteTime();
+    static const MediaTime& NODELETE indefiniteTime();
 
-    const int64_t& timeValue() const { return m_timeValue; }
-    const uint32_t& timeScale() const { return m_timeScale; }
+    int64_t timeValue() const { return m_timeValue; }
+    uint32_t timeScale() const { return m_timeScale; }
 
     void dump(PrintStream& out) const;
     String toString() const;
@@ -112,7 +112,7 @@ public:
     operator int() const = delete;
     MediaTime(int) = delete;
 
-    friend WTF_EXPORT_PRIVATE MediaTime abs(const MediaTime& rhs);
+    friend WTF_EXPORT_PRIVATE MediaTime NODELETE abs(const MediaTime& rhs);
 
     static const uint32_t DefaultTimeScale = 10000000;
     static const uint32_t MaximumTimeScale;
@@ -126,7 +126,7 @@ public:
     };
 
     MediaTime toTimeScale(uint32_t, RoundingFlags = RoundingFlags::HalfAwayFromZero) const;
-    MediaTime isolatedCopy() const;
+    MediaTime NODELETE isolatedCopy() const;
 
 private:
     void setTimeScale(uint32_t, RoundingFlags = RoundingFlags::HalfAwayFromZero);

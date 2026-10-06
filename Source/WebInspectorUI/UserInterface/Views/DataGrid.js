@@ -59,7 +59,7 @@ WI.DataGrid = class DataGrid extends WI.View
 
         this._cachedScrollTop = NaN;
         this._cachedScrollableOffsetHeight = NaN;
-        this._previousRevealedRowCount = NaN;
+        this._revealedRows = null;
         this._topDataTableMarginHeight = NaN;
         this._bottomDataTableMarginHeight = NaN;
 
@@ -592,15 +592,10 @@ WI.DataGrid = class DataGrid extends WI.View
             return;
 
         let node = this.dataGridNodeFromNode(target);
-        if (!node.editable)
+        if (!node?.editable)
             return;
 
         this._editingNode = node;
-        if (!this._editingNode) {
-            if (!this.placeholderNode)
-                return;
-            this._editingNode = this.placeholderNode;
-        }
 
         // Force editing the 1st column when editing the placeholder node
         if (this._editingNode.isPlaceholderNode)
@@ -771,7 +766,7 @@ WI.DataGrid = class DataGrid extends WI.View
 
         this.orderedColumns.splice(insertionIndex, 0, columnIdentifier);
 
-        for (var [identifier, existingColumn] of this.columns) {
+        for (let existingColumn of this.columns.values()) {
             var ordinal = existingColumn["ordinal"];
             if (ordinal >= insertionIndex) // Also adjust the "old" column at insertion index.
                 existingColumn["ordinal"] = ordinal + 1;
@@ -867,7 +862,7 @@ WI.DataGrid = class DataGrid extends WI.View
         this.orderedColumns.splice(this.orderedColumns.indexOf(columnIdentifier), 1);
 
         var removedOrdinal = removedColumn["ordinal"];
-        for (var [identifier, column] of this.columns) {
+        for (let column of this.columns.values()) {
             var ordinal = column["ordinal"];
             if (ordinal > removedOrdinal)
                 column["ordinal"] = ordinal - 1;
@@ -1095,7 +1090,7 @@ WI.DataGrid = class DataGrid extends WI.View
 
     _noteRowsChanged()
     {
-        this._previousRevealedRowCount = NaN;
+        this._revealedRows = null;
 
         this.needsLayout();
     }
@@ -1149,6 +1144,8 @@ WI.DataGrid = class DataGrid extends WI.View
         let updateOffsetThreshold = rowHeight * 5;
         let overflowPadding = updateOffsetThreshold * 3;
 
+        let heightChanged = isNaN(this._cachedScrollableOffsetHeight);
+
         if (isNaN(this._cachedScrollTop))
             this._cachedScrollTop = this._scrollContainerElement.scrollTop;
 
@@ -1165,23 +1162,21 @@ WI.DataGrid = class DataGrid extends WI.View
             let belowTopThreshold = !currentTopMargin || this._cachedScrollTop > currentTopMargin + updateOffsetThreshold;
             let aboveBottomThreshold = !currentBottomMargin || this._cachedScrollTop + this._cachedScrollableOffsetHeight < currentTableBottom - updateOffsetThreshold;
 
-            if (belowTopThreshold && aboveBottomThreshold && !isNaN(this._previousRevealedRowCount))
+            if (belowTopThreshold && aboveBottomThreshold && !heightChanged && this._revealedRows)
                 return;
         }
 
-        let revealedRows = this._rows.filter((row) => row.revealed && !row.hidden);
-
-        this._previousRevealedRowCount = revealedRows.length;
+        this._revealedRows ||= this._rows.filter((row) => row.revealed && !row.hidden);
 
         if (focusedDataGridNode) {
-            let focusedIndex = revealedRows.indexOf(focusedDataGridNode);
+            let focusedIndex = this._revealedRows.indexOf(focusedDataGridNode);
             let firstVisibleRowIndex = this._cachedScrollTop / rowHeight;
             if (focusedIndex < firstVisibleRowIndex || focusedIndex > firstVisibleRowIndex + visibleRowCount)
                 this._scrollContainerElement.scrollTop = this._cachedScrollTop = (focusedIndex * rowHeight) - (this._cachedScrollableOffsetHeight / 2) + (rowHeight / 2);
         }
 
         let topHiddenRowCount = Math.max(0, Math.floor((this._cachedScrollTop - overflowPadding) / rowHeight));
-        let bottomHiddenRowCount = Math.max(0, this._previousRevealedRowCount - topHiddenRowCount - visibleRowCount);
+        let bottomHiddenRowCount = Math.max(0, this._revealedRows.length - topHiddenRowCount - visibleRowCount);
 
         let marginTop = topHiddenRowCount * rowHeight;
         let marginBottom = bottomHiddenRowCount * rowHeight;
@@ -1191,7 +1186,7 @@ WI.DataGrid = class DataGrid extends WI.View
             this._topDataTableMarginElement.style.height = marginTop + "px";
         }
 
-        if (this._bottomDataTableMarginElement !== marginBottom) {
+        if (this._bottomDataTableMarginHeight !== marginBottom) {
             this._bottomDataTableMarginHeight = marginBottom;
             this._bottomDataTableMarginElement.style.height = marginBottom + "px";
         }
@@ -1201,14 +1196,16 @@ WI.DataGrid = class DataGrid extends WI.View
 
         this.dataTableBodyElement.removeChildren();
 
+        let dataTableBodyElementFragment = document.createDocumentFragment();
         for (let i = topHiddenRowCount; i < topHiddenRowCount + visibleRowCount; ++i) {
-            let rowDataGridNode = revealedRows[i];
+            let rowDataGridNode = this._revealedRows[i];
             if (!rowDataGridNode)
                 continue;
-            this.dataTableBodyElement.appendChild(rowDataGridNode.element);
+            dataTableBodyElementFragment.appendChild(rowDataGridNode.element);
         }
 
-        this.dataTableBodyElement.appendChild(this._fillerRowElement);
+        dataTableBodyElementFragment.appendChild(this._fillerRowElement);
+        this.dataTableBodyElement.appendChild(dataTableBodyElementFragment);
     }
 
     addPlaceholderNode()
@@ -1380,6 +1377,8 @@ WI.DataGrid = class DataGrid extends WI.View
             return reverseFactor * comparator(aNode, bNode);
         }
 
+        if (this._sortNodesRequestId)
+            window.cancelAnimationFrame(this._sortNodesRequestId);
         this._sortNodesRequestId = undefined;
         this._sortNodesComparator = null;
 
@@ -1916,7 +1915,7 @@ WI.DataGrid = class DataGrid extends WI.View
 
         dragPoint = Number.constrain(dragPoint, leftMinimum, rightMaximum);
 
-        resizer.element.style.setProperty(isRTL ? "right" : "left", `${dragPoint - this.CenterResizerOverBorderAdjustment}px`);
+        resizer.element.style.setProperty(isRTL ? "right" : "left", `${dragPoint - WI.DataGrid.CenterResizerOverBorderAdjustment}px`);
 
         let percentLeftColumn = (((dragPoint - leadingEdgeOfPreviousColumn) / this._dataTableElement.offsetWidth) * 100) + "%";
         this._headerTableColumnGroupElement.children[leftColumnIndex].style.width = percentLeftColumn;
@@ -1941,8 +1940,6 @@ WI.DataGrid = class DataGrid extends WI.View
             child.didResizeColumn(rightColumnIdentifier);
             child = child.traverseNextNode(skipHidden, this, dontPopulate);
         }
-
-        event.preventDefault();
     }
 
     resizerDragEnded(resizer)
@@ -2111,7 +2108,7 @@ WI.DataGrid = class DataGrid extends WI.View
 
         const skipUnrevealed = true;
         const dontPopulate = true;
-        while (dataGridNode = dataGridNode.traversePreviousNode(skipUnrevealed, dontPopulate)) {
+        while ((dataGridNode = dataGridNode.traversePreviousNode(skipUnrevealed, dontPopulate))) {
             if (dataGridNode.selectable && (!dataGridNode.isPlaceholderNode || operation === WI.SelectionController.Operation.Direct))
                 return this.selectionItemForDataGridNode(dataGridNode);
         }
@@ -2129,7 +2126,7 @@ WI.DataGrid = class DataGrid extends WI.View
         const skipUnrevealed = true;
         const stayWithin = null;
         const dontPopulate = true;
-        while (dataGridNode = dataGridNode.traverseNextNode(skipUnrevealed, stayWithin, dontPopulate)) {
+        while ((dataGridNode = dataGridNode.traverseNextNode(skipUnrevealed, stayWithin, dontPopulate))) {
             if (dataGridNode.selectable && (!dataGridNode.isPlaceholderNode || operation === WI.SelectionController.Operation.Direct))
                 return this.selectionItemForDataGridNode(dataGridNode);
         }

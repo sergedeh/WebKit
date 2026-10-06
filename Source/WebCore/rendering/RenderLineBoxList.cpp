@@ -38,8 +38,8 @@
 #include "RenderLineBreak.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGInline.h"
-#include "RenderStyle+GettersInlines.h"
 #include "RenderView.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 
@@ -124,7 +124,7 @@ void RenderLineBoxList::shiftLinesBy(LayoutUnit shiftX, LayoutUnit shiftY)
 
 void RenderLineBoxList::dirtyLineFromChangedChild(RenderBoxModelObject& container)
 {
-    ASSERT(is<RenderInline>(container) || is<RenderBlockFlow>(container));
+    ASSERT(is<RenderSVGInline>(container) || is<RenderBlockFlow>(container));
     if (!container.isSVGRenderer())
         return;
 
@@ -138,7 +138,7 @@ void RenderLineBoxList::dirtyLineFromChangedChild(RenderBoxModelObject& containe
     }
     // For an empty inline, propagate the check up to our parent.
     if (inlineContainer && inlineContainer->everHadLayout()) {
-        auto* parent = inlineContainer->parent();
+        CheckedPtr parent = inlineContainer->parent();
         parent->dirtyLineFromChangedChild();
         parent->setNeedsLayout();
     }

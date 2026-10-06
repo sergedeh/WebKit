@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "MonotonicObjectIdentifier.h"
+#include <wtf/MonotonicObjectIdentifier.h>
 #include <wtf/ObjectIdentifier.h>
 
 namespace WebKit {
@@ -47,5 +47,10 @@ using EditorStateIdentifier = MonotonicObjectIdentifier<EditorStateIdentifierTyp
 
 struct FocusedElementInformationIdentifierType;
 using FocusedElementInformationIdentifier = MonotonicObjectIdentifier<FocusedElementInformationIdentifierType>;
+
+#if ENABLE(WEBDRIVER_BIDI)
+struct RealmIdentifierType;
+using RealmIdentifier = ObjectIdentifier<RealmIdentifierType>;
+#endif
 
 } // namespace WebKit

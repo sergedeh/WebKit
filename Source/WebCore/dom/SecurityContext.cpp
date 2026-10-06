@@ -68,11 +68,6 @@ SecurityOrigin* SecurityContext::securityOrigin() const
     return &policy->origin();
 }
 
-RefPtr<SecurityOrigin> SecurityContext::protectedSecurityOrigin() const
-{
-    return securityOrigin();
-}
-
 SecurityOriginPolicy* SecurityContext::securityOriginPolicy() const
 {
     if (!m_securityOriginPolicy && m_hasEmptySecurityOriginPolicy)
@@ -211,6 +206,7 @@ PolicyContainer SecurityContext::policyContainer() const
         CheckedRef { *m_contentSecurityPolicy }->responseHeaders(),
         crossOriginEmbedderPolicy(),
         crossOriginOpenerPolicy(),
+        documentIsolationPolicy(),
         referrerPolicy(),
         ipAddressSpace()
     };
@@ -221,16 +217,12 @@ void SecurityContext::inheritPolicyContainerFrom(const PolicyContainer& policyCo
     if (!contentSecurityPolicy())
         setContentSecurityPolicy(makeUnique<ContentSecurityPolicy>(URL { }, nullptr, nullptr));
 
-    checkedContentSecurityPolicy()->inheritHeadersFrom(policyContainer.contentSecurityPolicyResponseHeaders);
+    protect(contentSecurityPolicy())->inheritHeadersFrom(policyContainer.contentSecurityPolicyResponseHeaders);
     setCrossOriginOpenerPolicy(policyContainer.crossOriginOpenerPolicy);
     setCrossOriginEmbedderPolicy(policyContainer.crossOriginEmbedderPolicy);
+    setDocumentIsolationPolicy(policyContainer.documentIsolationPolicy);
     setReferrerPolicy(policyContainer.referrerPolicy);
     setIPAddressSpace(policyContainer.ipAddressSpace);
-}
-
-CheckedPtr<ContentSecurityPolicy> SecurityContext::checkedContentSecurityPolicy()
-{
-    return contentSecurityPolicy();
 }
 
 const IntegrityPolicy* SecurityContext::integrityPolicy() const

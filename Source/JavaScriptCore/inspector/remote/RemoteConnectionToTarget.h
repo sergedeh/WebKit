@@ -72,12 +72,11 @@ public:
     std::optional<TargetID> targetIdentifier() const WTF_REQUIRES_LOCK(m_targetMutex);
 #if PLATFORM(COCOA)
     NSString *connectionIdentifier() const;
-    RetainPtr<NSString> protectedConnectionIdentifier() const;
     NSString *destination() const;
 
-    Lock& queueMutex() { return m_queueMutex; }
-    const RemoteTargetQueue& queue() const { return m_queue; }
-    RemoteTargetQueue takeQueue();
+    Lock& queueMutex() LIFETIME_BOUND WTF_RETURNS_LOCK(m_queueMutex) { return m_queueMutex; }
+    const RemoteTargetQueue& queue() const LIFETIME_BOUND WTF_REQUIRES_LOCK(m_queueMutex) { return m_queue; }
+    RemoteTargetQueue takeQueue() WTF_REQUIRES_LOCK(m_queueMutex);
 #endif
 
     // FrontendChannel overrides.
@@ -103,7 +102,7 @@ private:
     // we setup our run loop sources on that specific run loop.
     RetainPtr<CFRunLoopRef> m_runLoop;
     RetainPtr<CFRunLoopSourceRef> m_runLoopSource;
-    RemoteTargetQueue m_queue;
+    RemoteTargetQueue m_queue WTF_GUARDED_BY_LOCK(m_queueMutex);
     Lock m_queueMutex;
 #endif
 

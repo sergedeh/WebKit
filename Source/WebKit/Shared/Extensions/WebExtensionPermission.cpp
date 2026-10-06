@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2024 Igalia S.L. All rights reserved.
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -92,17 +93,24 @@ String WebExtensionPermission::notifications()
     return "notifications"_s;
 }
 
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+String WebExtensionPermission::offscreen()
+{
+    return "offscreen"_s;
+}
+#endif
+
 String WebExtensionPermission::scripting()
 {
     return "scripting"_s;
 }
 
-#if ENABLE(WK_WEB_EXTENSION_SIDEBAR)
+#if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
 String WebExtensionPermission::sidePanel()
 {
     return "sidePanel"_s;
 }
-#endif // ENABLE(WK_WEB_EXTENSION_SIDEBAR)
+#endif // ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
 
 String WebExtensionPermission::storage()
 {

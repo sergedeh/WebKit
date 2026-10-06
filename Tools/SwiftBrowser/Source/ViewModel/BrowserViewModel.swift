@@ -26,6 +26,7 @@ import Foundation
 import Observation
 import UniformTypeIdentifiers
 @_spi(Private) @_spi(CrossImportOverlay) import WebKit
+import WebKit_Private
 import os
 
 struct PDF {
@@ -48,9 +49,25 @@ struct OpenRequest: Equatable {
 final class BrowserViewModel {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: String(describing: BrowserViewModel.self))
 
-    private static func decideSensorAuthorization(permission: WebPage.DeviceSensorAuthorization.Permission, frame: WebPage.FrameInfo, origin: WKSecurityOrigin) async -> WKPermissionDecision {
-        let mediaCaptureAuthorization = WKPermissionDecision(rawValue: UserDefaults.standard.integer(forKey: AppStorageKeys.mediaCaptureAuthorization))!
-        let orientationAndMotionAuthorization = WKPermissionDecision(rawValue: UserDefaults.standard.integer(forKey: AppStorageKeys.orientationAndMotionAuthorization))!
+    private static func decideSensorAuthorization(
+        permission: WebPage.DeviceSensorAuthorization.Permission,
+        frame: WebPage.FrameInfo,
+        origin: WKSecurityOrigin
+    ) async -> WKPermissionDecision {
+        guard
+            let mediaCaptureAuthorization = WKPermissionDecision(
+                rawValue: UserDefaults.standard.integer(forKey: AppStorageKeys.mediaCaptureAuthorization)
+            )
+        else {
+            preconditionFailure()
+        }
+        guard
+            let orientationAndMotionAuthorization = WKPermissionDecision(
+                rawValue: UserDefaults.standard.integer(forKey: AppStorageKeys.orientationAndMotionAuthorization)
+            )
+        else {
+            preconditionFailure()
+        }
 
         return switch permission {
         case .deviceOrientationAndMotion: orientationAndMotionAuthorization
@@ -62,9 +79,12 @@ final class BrowserViewModel {
 
     init() {
         var configuration = WebPage.Configuration()
-        configuration.deviceSensorAuthorization = WebPage.DeviceSensorAuthorization(decisionHandler: Self.decideSensorAuthorization(permission:frame:origin:))
+        configuration.deviceSensorAuthorization = WebPage.DeviceSensorAuthorization(
+            decisionHandler: Self.decideSensorAuthorization(permission:frame:origin:)
+        )
 
         self.page = WebPage(configuration: configuration, navigationDecider: self.navigationDecider, dialogPresenter: self.dialogPresenter)
+        self.page.isInspectable = true
 
         self.navigationDecider.owner = self
         self.dialogPresenter.owner = self
@@ -131,11 +151,19 @@ final class BrowserViewModel {
         assert(url.isFileURL)
 
         let data = try! Data(contentsOf: url)
-        page.load(data, mimeType: "text/html", characterEncoding: .utf8, baseURL: URL(string: "about:blank")!)
+
+        let isWebArchive = UTType(filenameExtension: url.pathExtension)?.conforms(to: .webArchive) ?? false
+        let mimeType = isWebArchive ? "application/x-webarchive" : "text/html"
+
+        // The `about:blank` URL will never be `nil`.
+        // swift-format-ignore: NeverForceUnwrap
+        page.load(data, mimeType: mimeType, characterEncoding: .utf8, baseURL: URL(string: "about:blank")!)
     }
 
     func didReceiveNavigationEvent(_ event: WebPage.NavigationEvent) {
-        Self.logger.info("Did receive navigation event \(String(describing: event))")
+        Self.logger.info(
+            "Did receive navigation event \(String(describing: event)) (url: \(self.page.url?.absoluteString ?? "nil", privacy: .sensitive))"
+        )
 
         if event == .committed {
             displayedURL = page.url?.absoluteString ?? ""
@@ -143,7 +171,7 @@ final class BrowserViewModel {
     }
 
     func navigateToSubmittedURL() {
-        guard let url = URL(string: displayedURL) else {
+        guard let url = URL(userTypedString: displayedURL) else {
             return
         }
 
@@ -151,35 +179,48 @@ final class BrowserViewModel {
         page.load(request)
     }
 
+    func reload() async {
+        do {
+            for try await _ in page.reload() {
+            }
+        } catch {
+            Self.logger.error("Reload failed: \(error)")
+        }
+    }
+
     func exportAsPDF() {
         Task {
-            let data = try await page.exported(as: .pdf)
+            guard let data = try? await page.exported(as: .pdf) else {
+                return
+            }
             exportedPDF = PDF(data: data, title: !page.title.isEmpty ? page.title : nil)
         }
     }
 
     func didExportPDF(result: Result<URL, any Error>) {
         switch result {
-        case let .success(url):
-            Self.logger.info("Exported PDF to \(url)")
+        case .success(let url):
+            Self.logger.info("Exported PDF to \(url.absoluteString, privacy: .sensitive)")
 
-        case let .failure(error):
+        case .failure(let error):
             Self.logger.error("Failed to export PDF: \(error)")
         }
     }
 
     func didImportFiles(result: Result<[URL], any Error>) {
-        precondition(currentFilePicker != nil)
-
-        switch result {
-        case let .success(urls):
-            currentFilePicker!.completion(.selected(urls))
-
-        case .failure:
-            currentFilePicker!.completion(.cancel)
+        guard let currentFilePicker else {
+            preconditionFailure()
         }
 
-        currentFilePicker = nil
+        switch result {
+        case .success(let urls):
+            currentFilePicker.completion(.selected(urls))
+
+        case .failure:
+            currentFilePicker.completion(.cancel)
+        }
+
+        self.currentFilePicker = nil
     }
 
     func setCameraCaptureState(_ state: WKMediaCaptureState) {
@@ -203,5 +244,23 @@ final class BrowserViewModel {
 
             preferences._setEnabled(value, for: feature)
         }
+
+        var overlayRegions: _WKDebugOverlayRegions = []
+        if UserDefaults.standard.bool(forKey: AppStorageKeys.debugOverlayNonFastScrollableRegion) {
+            overlayRegions.insert(.nonFastScrollableRegion)
+        }
+        if UserDefaults.standard.bool(forKey: AppStorageKeys.debugOverlayWheelEventHandlerRegion) {
+            overlayRegions.insert(.wheelEventHandlerRegion)
+        }
+        if UserDefaults.standard.bool(forKey: AppStorageKeys.debugOverlayTouchActionRegion) {
+            overlayRegions.insert(.touchActionRegion)
+        }
+        if UserDefaults.standard.bool(forKey: AppStorageKeys.debugOverlayInteractionRegion) {
+            overlayRegions.insert(.interactionRegion)
+        }
+        if UserDefaults.standard.bool(forKey: AppStorageKeys.debugOverlayEnhancedSecurityRegion) {
+            overlayRegions.insert(.enhancedSecurityRegion)
+        }
+        preferences._visibleDebugOverlayRegions = overlayRegions
     }
 }

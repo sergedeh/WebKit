@@ -1,7 +1,7 @@
 <!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
 <html>
 <head>
-<script src="../resources/js-test-pre.js"></script>
+<script src="../resources/js-test.js"></script>
 <script src="../resources/accessibility-helper.js"></script>
 </head>
 
@@ -48,7 +48,10 @@
             });
             debug("Dialog is displaying")
             shouldBeFalse("backgroundAccessible()");
-            window.okButton = accessibilityController.accessibleElementById("ok");
+            await waitFor(() => {
+                window.okButton = accessibilityController.accessibleElementById("ok");
+                return window.okButton && !window.okButton.isIgnored;
+            });
             shouldBeFalse("okButton.isIgnored");
 
             // Test the case that aria-modal=true when dialog is not displaying won't affect other objects.
@@ -152,6 +155,5 @@
         }
     }
 </script>
-<script src="../resources/js-test-post.js"></script>
 </body>
 </html>

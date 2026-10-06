@@ -21,15 +21,18 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && compiler(>=6.0)
+#if ENABLE_SWIFTUI
 
 import Foundation
 
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 extension WebPage {
     /// A particular state that occurs during the progression of a navigation.
-    @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-    @available(watchOS, unavailable)
-    @available(tvOS, unavailable)
+    @available(anyAppleOSAndDownlevels 26.0, *)
+    @_spi_available(watchOSAndOpenSourceTBA, *)
+    @_spi_available(tvOSAndOpenSourceTBA, *)
     public enum NavigationEvent: Hashable, Sendable {
         /// This event occurs when the page receives provisional approval to process a navigation request,
         /// but before it receives a response to that request.
@@ -48,9 +51,9 @@ extension WebPage {
     }
 
     /// A specific error that caused a navigation to fail.
-    @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
-    @available(watchOS, unavailable)
-    @available(tvOS, unavailable)
+    @available(anyAppleOSAndDownlevels 26.0, *)
+    @_spi_available(watchOSAndOpenSourceTBA, *)
+    @_spi_available(tvOSAndOpenSourceTBA, *)
     public enum NavigationError: Error {
         /// An error occurred during the early navigation process.
         case failedProvisionalNavigation(any Error)
@@ -66,4 +69,4 @@ extension WebPage {
     }
 }
 
-#endif // ENABLE_SWIFTUI && compiler(>=6.0)
+#endif // ENABLE_SWIFTUI

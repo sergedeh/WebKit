@@ -29,7 +29,6 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "JSWebAssemblyInstance.h"
-#include "WasmDebugServer.h"
 #include "WasmIPIntPlan.h"
 #include "WasmInstanceAnchor.h"
 #include "WasmMergedProfile.h"
@@ -40,39 +39,37 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace Wasm {
 
-Module::Module(IPIntPlan& plan)
+Module::Module(IPIntPlan& plan, Name&& sourceURL)
     : m_moduleInformation(plan.takeModuleInformation())
-    , m_ipintCallees(IPIntCallees::createFromVector(plan.takeCallees()))
+    , m_ipintCallees(plan.takeCallees())
     , m_wasmToJSExitStubs(plan.takeWasmToJSExitStubs())
 {
-    if (Options::enableWasmDebugger()) [[unlikely]]
-        Wasm::DebugServer::singleton().trackModule(*this);
+    if (!sourceURL.isEmpty())
+        m_moduleInformation->sourceURL = WTF::move(sourceURL);
 }
 
 Module::~Module()
 {
-    if (Options::enableWasmDebugger()) [[unlikely]]
-        Wasm::DebugServer::singleton().untrackModule(*this);
 }
 
-Wasm::TypeIndex Module::typeIndexFromFunctionIndexSpace(FunctionSpaceIndex functionIndexSpace) const
+Wasm::RTT const& Module::rttFromFunctionIndexSpace(FunctionSpaceIndex functionIndexSpace) const
 {
-    return m_moduleInformation->typeIndexFromFunctionIndexSpace(functionIndexSpace);
+    return m_moduleInformation->rtt(functionIndexSpace);
 }
 
-static Module::ValidationResult makeValidationResult(IPIntPlan& plan)
+static Module::ValidationResult makeValidationResult(IPIntPlan& plan, Name&& sourceURL = { })
 {
     ASSERT(!plan.hasWork());
     if (plan.failed())
-        return Unexpected<String>(plan.errorMessage());
-    return Module::ValidationResult(Module::create(plan));
+        return std::unexpected<String>(plan.errorMessage());
+    return Module::ValidationResult(Module::create(plan, WTF::move(sourceURL)));
 }
 
-static Plan::CompletionTask makeValidationCallback(Module::AsyncValidationCallback&& callback)
+static Plan::CompletionTask makeValidationCallback(Name&& sourceURL, Module::AsyncValidationCallback&& callback)
 {
-    return createSharedTask<Plan::CallbackType>([callback = WTF::move(callback)] (Plan& plan) {
+    return createSharedTask<Plan::CallbackType>([sourceURL = WTF::move(sourceURL), callback = WTF::move(callback)] (Plan& plan) mutable {
         ASSERT(!plan.hasWork());
-        callback->run(makeValidationResult(static_cast<IPIntPlan&>(plan)));
+        callback->run(makeValidationResult(static_cast<IPIntPlan&>(plan), WTF::move(sourceURL)));
     });
 }
 
@@ -86,7 +83,12 @@ Module::ValidationResult Module::validateSync(VM& vm, Vector<uint8_t>&& source)
 
 void Module::validateAsync(VM& vm, Vector<uint8_t>&& source, Module::AsyncValidationCallback&& callback)
 {
-    Ref<Plan> plan = adoptRef(*new IPIntPlan(vm, WTF::move(source), CompilerMode::Validation, makeValidationCallback(WTF::move(callback))));
+    validateAsync(vm, WTF::move(source), { }, WTF::move(callback));
+}
+
+void Module::validateAsync(VM& vm, Vector<uint8_t>&& source, Name&& sourceURL, Module::AsyncValidationCallback&& callback)
+{
+    Ref<Plan> plan = adoptRef(*new IPIntPlan(vm, WTF::move(source), CompilerMode::Validation, makeValidationCallback(WTF::move(sourceURL), WTF::move(callback))));
     Wasm::ensureWorklist().enqueue(WTF::move(plan));
 }
 
@@ -164,9 +166,6 @@ std::unique_ptr<MergedProfile> Module::createMergedProfile(const IPIntCallee& ca
     }
     return result;
 }
-
-uint32_t Module::debugId() const { return m_moduleInformation->debugInfo->id; }
-void Module::setDebugId(uint32_t id) { m_moduleInformation->debugInfo->id = id; }
 
 } } // namespace JSC::Wasm
 

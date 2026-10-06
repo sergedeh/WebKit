@@ -32,6 +32,7 @@
 #include "NetworkLoadParameters.h"
 #include "NetworkProcess.h"
 #include "NetworkSession.h"
+#include <WebCore/FormData.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ResourceError.h>
 #include <WebCore/ResourceRequest.h>
@@ -70,10 +71,6 @@ Ref<NetworkDataTask> NetworkDataTask::create(NetworkSession& session, NetworkDat
 #endif
     }();
 
-#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    dataTask->setEmulatedConditions(session.bytesPerSecondLimit());
-#endif
-
     return dataTask;
 }
 
@@ -106,7 +103,7 @@ NetworkDataTask::NetworkDataTask(NetworkSession& session, NetworkDataTaskClient&
         return;
     }
 
-    checkedNetworkSession()->registerNetworkDataTask(*this);
+    protect(networkSession())->registerNetworkDataTask(*this);
 }
 
 NetworkDataTask::~NetworkDataTask()
@@ -116,6 +113,22 @@ NetworkDataTask::~NetworkDataTask()
 
     if (CheckedPtr session = m_session.get())
         session->unregisterNetworkDataTask(*this);
+}
+
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+
+void NetworkDataTask::notifyEmulatedConditionsChanged()
+{
+    if (RefPtr client = m_client.get())
+        client->emulatedConditionsDidChange();
+}
+
+#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
+
+bool NetworkDataTask::hasPendingStreamBody() const
+{
+    RefPtr body = m_firstRequest.httpBody();
+    return body && body->isPendingStream();
 }
 
 void NetworkDataTask::scheduleFailure(FailureType type)
@@ -203,7 +216,7 @@ String NetworkDataTask::description() const
     return emptyString();
 }
 
-void NetworkDataTask::setH2PingCallback(const URL& url, CompletionHandler<void(Expected<WTF::Seconds, WebCore::ResourceError>&&)>&& completionHandler)
+void NetworkDataTask::setH2PingCallback(const URL& url, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&& completionHandler)
 {
     ASSERT_NOT_REACHED();
     completionHandler(makeUnexpected(internalError(url)));
@@ -219,7 +232,7 @@ void NetworkDataTask::restrictRequestReferrerToOriginIfNeeded(WebCore::ResourceR
 
 String NetworkDataTask::attributedBundleIdentifier(WebPageProxyIdentifier pageID)
 {
-    if (CheckedPtr session = m_session.get())
+    if (auto* session = m_session.get())
         return session->attributedBundleIdentifierFromPageIdentifier(pageID);
     return { };
 }

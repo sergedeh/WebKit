@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <numeric>
 #include <wtf/CommaPrinter.h>
 #include <wtf/DataLog.h>
 #include <wtf/FastMalloc.h>
@@ -47,6 +48,7 @@ namespace WTF {
 template<typename T, typename Value, size_t cacheLinesPerNode = 1>
     requires std::is_trivially_destructible_v<T> && std::is_trivially_destructible_v<Value>
 class IntervalSet {
+    WTF_MAKE_NONCOPYABLE(IntervalSet);
 public:
     using Interval = Range<T>;
 
@@ -74,6 +76,103 @@ public:
     static_assert(innerOrder >= 2, "cacheLinesPerNode parameter too small: InnerNode order must be at least 2 for a valid B+ tree");
 
     IntervalSet() = default;
+
+    // Build a set from a run of non-overlapping intervals in ascending order that all map to the
+    // same value. Laying the nodes out level by level costs one pass, where the equivalent run of
+    // insert() calls pays a root-to-leaf descent per interval plus a split or a redistribution with
+    // a cousin every time a node fills up.
+    IntervalSet(std::span<const Interval> intervals, const Value& value)
+    {
+        if (intervals.empty())
+            return;
+
+        // Cut numEntries into as few groups of at most maxPerNode as possible, sized as evenly as
+        // that allows, and collect the node makeNode() builds for each group.
+        auto buildLevel = [](size_t numEntries, size_t maxPerNode, const Invocable<NodeRef(size_t, size_t)> auto& makeNode) {
+            size_t numNodes = (numEntries + maxPerNode - 1) / maxPerNode;
+            size_t base = numEntries / numNodes;
+            size_t remainder = numEntries % numNodes;
+            Vector<NodeRef, 16> level;
+            level.reserveInitialCapacity(numNodes);
+            for (size_t i = 0, first = 0; i < numNodes; ++i) {
+                size_t count = base + (i < remainder);
+                level.append(makeNode(first, count));
+                first += count;
+            }
+            return level;
+        };
+
+        auto coverageOf = [&](NodeRef nodeRef) {
+            if (!m_height)
+                return nodeRef.asLeaf()->coverage(nodeRef.size());
+            return nodeRef.asInner()->coverage(nodeRef.size());
+        };
+
+        auto level = buildLevel(intervals.size(), leafOrder,
+            [&](size_t first, size_t count) {
+                LeafNode* leaf = allocNode<LeafNode>();
+                for (size_t i = 0; i < count; ++i) {
+                    ASSERT(intervals[first + i]);
+                    ASSERT_IMPLIES(first + i, intervals[first + i - 1].end() <= intervals[first + i].begin());
+                    leaf->interval(i) = intervals[first + i];
+                    leaf->value(i) = value;
+                }
+                return NodeRef(leaf, count);
+            });
+
+        while (level.size() > 1) {
+            auto parents = buildLevel(level.size(), innerOrder,
+                [&](size_t first, size_t count) {
+                    InnerNode* inner = allocNode<InnerNode>();
+                    for (size_t i = 0; i < count; ++i) {
+                        inner->interval(i) = coverageOf(level[first + i]);
+                        inner->child(i) = level[first + i];
+                    }
+                    return NodeRef(inner, count);
+                });
+            level = WTF::move(parents);
+            ++m_height;
+        }
+
+        m_root = level[0];
+        m_rootInterval = coverageOf(m_root);
+    }
+
+    IntervalSet(IntervalSet&& other)
+        : m_root(other.m_root)
+        , m_rootInterval(other.m_rootInterval)
+        , m_height(other.m_height)
+#if ASSERT_ENABLED
+        , assertOnlyNumNodes(other.assertOnlyNumNodes)
+#endif
+    {
+        other.m_root = { };
+        other.m_rootInterval = { };
+        other.m_height = 0;
+#if ASSERT_ENABLED
+        other.assertOnlyNumNodes = 0;
+#endif
+    }
+
+    IntervalSet& operator=(IntervalSet&& other)
+    {
+        if (this != &other) {
+            freeAllNodes();
+            m_root = other.m_root;
+            m_rootInterval = other.m_rootInterval;
+            m_height = other.m_height;
+#if ASSERT_ENABLED
+            assertOnlyNumNodes = other.assertOnlyNumNodes;
+#endif
+            other.m_root = { };
+            other.m_rootInterval = { };
+            other.m_height = 0;
+#if ASSERT_ENABLED
+            other.assertOnlyNumNodes = 0;
+#endif
+        }
+        return *this;
+    }
 
     ~IntervalSet()
     {
@@ -676,7 +775,7 @@ private:
 
     void verifyCoverageConsistency(const Path& path, int depth, Interval coverage)
     {
-#ifdef ASSERT_ENABLED
+#if ASSERT_ENABLED
         ASSERT(depth >= 0);
         depth--;
         while (depth >= 0) {
@@ -689,6 +788,10 @@ private:
         if (m_rootInterval != coverage)
             dataLogLn("FAIL: m_rootInterval=", m_rootInterval, " coverage=", coverage, " Tree=", *this);
         ASSERT(m_rootInterval == coverage);
+#else
+        UNUSED_PARAM(path);
+        UNUSED_PARAM(depth);
+        UNUSED_PARAM(coverage);
 #endif
     }
 
@@ -743,7 +846,7 @@ private:
             return false;
 
         auto leftNode = leftNodeRef->template as<NodeType>();
-        size_t newSize = (leftNodeSize + nodeSize) / 2;
+        size_t newSize = std::midpoint(leftNodeSize, nodeSize);
         ASSERT(newSize < NodeType::capacity);
         size_t numToMove = nodeSize - newSize;
         leftNode->shiftLeftFrom(leftNodeSize, node, nodeSize, numToMove);
@@ -788,7 +891,7 @@ private:
         }
         // Now, we know that insertionINdex < capacity, so if there's only one empty slot between both nodes,
         // we should put it in the left node and the insertion point will still always be in the left node.
-        size_t newSize = (rightNodeSize + nodeSize) / 2;
+        size_t newSize = std::midpoint(rightNodeSize, nodeSize);
         ASSERT(newSize < NodeType::capacity);
         size_t numToMove = nodeSize - newSize;
         node->shiftRightTo(nodeSize, rightNode, rightNodeSize, numToMove);

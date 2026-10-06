@@ -47,12 +47,12 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-static bool isListOrIndentBlockquote(const Node& node)
+static bool NODELETE isListOrIndentBlockquote(const Node& node)
 {
     return node.hasTagName(ulTag) || node.hasTagName(olTag) || node.hasTagName(blockquoteTag);
 }
 
-IndentOutdentCommand::IndentOutdentCommand(Ref<Document>&& document, EIndentType typeOfAction)
+IndentOutdentCommand::IndentOutdentCommand(Ref<Document>&& document, IndentType typeOfAction)
     : ApplyBlockElementCommand(WTF::move(document), blockquoteTag, "margin: 0 0 0 40px; border: none; padding: 0px;"_s)
     , m_typeOfAction(typeOfAction)
 {
@@ -99,15 +99,15 @@ void IndentOutdentCommand::indentIntoBlockquote(const Position& start, const Pos
     auto nodeToSplitTo = [&]() -> RefPtr<Node> {
         if (enclosingCell)
             return enclosingCell;
-        if (enclosingList(start.containerNode()))
-            return enclosingBlock(start.protectedContainerNode());
+        if (enclosingList(protect(start.containerNode())))
+            return enclosingBlock(protect(start.containerNode()));
         return editableRootForPosition(start);
     }();
 
     if (!nodeToSplitTo)
         return;
 
-    RefPtr<Node> outerBlock = (start.containerNode() == nodeToSplitTo) ? RefPtr { start.containerNode() } : splitTreeToNode(*start.containerNode(), *nodeToSplitTo);
+    RefPtr<Node> outerBlock = (start.containerNode() == nodeToSplitTo) ? protect(start.containerNode()) : splitTreeToNode(*protect(start.containerNode()), *nodeToSplitTo);
     if (!outerBlock)
         return;
 
@@ -124,7 +124,7 @@ void IndentOutdentCommand::indentIntoBlockquote(const Position& start, const Pos
             removeNode(*targetBlockquote);
             return;
         }
-        startOfContents = positionInParentAfterNode(targetBlockquote.get());
+        startOfContents = positionInParentAfterNode(*targetBlockquote);
     }
     
     if (startOfContents.deepEquivalent().containerNode() && !startOfContents.deepEquivalent().containerNode()->isDescendantOf(outerBlock.get()) && startOfContents.deepEquivalent().containerNode()->parentNode() != outerBlock->parentNode())
@@ -139,7 +139,7 @@ void IndentOutdentCommand::outdentParagraph()
     VisiblePosition visibleEndOfParagraph = endOfParagraph(visibleStartOfParagraph);
 
     RefPtr enclosingNode = downcast<HTMLElement>(enclosingNodeOfType(visibleStartOfParagraph.deepEquivalent(), &isListOrIndentBlockquote));
-    if (!enclosingNode || !enclosingNode->parentNode() || !enclosingNode->parentNode()->hasEditableStyle()) // We can't outdent if there is no place to go!
+    if (!enclosingNode || !enclosingNode->parentNode() || !protect(enclosingNode->parentNode())->hasEditableStyle()) // We can't outdent if there is no place to go!
         return;
 
     // Use InsertListCommand to remove the selection from the list
@@ -153,11 +153,11 @@ void IndentOutdentCommand::outdentParagraph()
     }
     
     // The selection is inside a blockquote i.e. enclosingNode is a blockquote
-    VisiblePosition positionInEnclosingBlock = VisiblePosition(firstPositionInNode(enclosingNode.get()));
+    VisiblePosition positionInEnclosingBlock = VisiblePosition(firstPositionInNode(*enclosingNode));
     // If the blockquote is inline, the start of the enclosing block coincides with
     // positionInEnclosingBlock.
     VisiblePosition startOfEnclosingBlock = (enclosingNode->renderer() && enclosingNode->renderer()->isInline()) ? positionInEnclosingBlock : startOfBlock(positionInEnclosingBlock);
-    VisiblePosition lastPositionInEnclosingBlock = VisiblePosition(lastPositionInNode(enclosingNode.get()));
+    VisiblePosition lastPositionInEnclosingBlock = VisiblePosition(lastPositionInNode(*enclosingNode));
     VisiblePosition endOfEnclosingBlock = endOfBlock(lastPositionInEnclosingBlock);
     if (visibleStartOfParagraph == startOfEnclosingBlock &&
         visibleEndOfParagraph == endOfEnclosingBlock) {
@@ -171,12 +171,12 @@ void IndentOutdentCommand::outdentParagraph()
                 if (splitPointParent->hasTagName(blockquoteTag)
                     && !splitPoint->hasTagName(blockquoteTag)
                     && splitPointParent->parentNode()
-                    && splitPointParent->parentNode()->hasEditableStyle()) // We can't outdent if there is no place to go!
+                    && protect(splitPointParent->parentNode())->hasEditableStyle()) // We can't outdent if there is no place to go!
                     splitElement(*splitPointParent, *splitPoint);
             }
         }
 
-        document().updateLayoutIgnorePendingStylesheets();
+        protect(document())->updateLayoutIgnorePendingStylesheets();
         visibleStartOfParagraph = VisiblePosition(visibleStartOfParagraph.deepEquivalent());
         visibleEndOfParagraph = VisiblePosition(visibleEndOfParagraph.deepEquivalent());
         if (visibleStartOfParagraph.isNotNull() && !isStartOfParagraph(visibleStartOfParagraph))
@@ -195,7 +195,7 @@ void IndentOutdentCommand::outdentParagraph()
     else {
         // We split the blockquote at where we start outdenting.
         RefPtr highestInlineNode = highestEnclosingNodeOfType(visibleStartOfParagraph.deepEquivalent(), isInline, CannotCrossEditingBoundary, enclosingBlockFlow.get());
-        splitElement(*enclosingNode, highestInlineNode ? *highestInlineNode : *visibleStartOfParagraph.deepEquivalent().deprecatedNode());
+        splitElement(*enclosingNode, highestInlineNode ? *highestInlineNode : *protect(visibleStartOfParagraph.deepEquivalent().deprecatedNode()));
     }
 
     Ref placeholder = HTMLBRElement::create(document());
@@ -209,7 +209,7 @@ void IndentOutdentCommand::outdentParagraph()
     auto visibleEndOfParagraphToMove = endOfParagraph(visibleEndOfParagraph);
     if (visibleStartOfParagraphToMove.isNull() || visibleEndOfParagraphToMove.isNull())
         return;
-    moveParagraph(visibleStartOfParagraphToMove, visibleEndOfParagraphToMove, positionBeforeNode(placeholder.ptr()), true);
+    moveParagraph(visibleStartOfParagraphToMove, visibleEndOfParagraphToMove, positionBeforeNode(placeholder), true);
 }
 
 // FIXME: We should merge this function with ApplyBlockElementCommand::formatSelection
@@ -257,7 +257,7 @@ void IndentOutdentCommand::outdentRegion(const VisiblePosition& startOfSelection
 
 void IndentOutdentCommand::formatSelection(const VisiblePosition& startOfSelection, const VisiblePosition& endOfSelection)
 {
-    if (m_typeOfAction == Indent)
+    if (m_typeOfAction == IndentType::Indent)
         ApplyBlockElementCommand::formatSelection(startOfSelection, endOfSelection);
     else
         outdentRegion(startOfSelection, endOfSelection);

@@ -20,7 +20,6 @@ symbols = [
     "_CFProcessPath",
     "_CFXPCCreateCFObjectFromXPCMessage",
     "_CFXPCCreateXPCMessageWithCFObject",
-    "_dyld_get_dlopen_image_header",
     "_dyld_get_image_uuid",
     "_dyld_get_shared_cache_uuid",
     "cache_simulate_memory_warning_event",
@@ -34,4 +33,3 @@ symbols = ["dyld_get_program_sdk_version"]
 # In internal builds, usage may be dead-stripped depending on WebKitAdditions
 # code in RuntimeApplicationChecks.
 allow-unused = true
-

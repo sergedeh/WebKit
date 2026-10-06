@@ -154,7 +154,7 @@
 
     if (_innerFrames.size()) {
         auto corePath = WebCore::PathUtilities::pathWithShrinkWrappedRects(_innerFrames, _cornerRadii);
-        [path appendPath:[UIBezierPath bezierPathWithCGPath:corePath.platformPath()]];
+        [path appendPath:[UIBezierPath bezierPathWithCGPath:protect(corePath.platformPath()).get()]];
     } else {
         for (auto& quad : _innerQuads) {
             UIBezierPath *subpath = [UIBezierPath bezierPath];
@@ -167,25 +167,25 @@
         }
     }
 
-    auto context = UIGraphicsGetCurrentContext();
-    CGContextSaveGState(context);
+    RetainPtr context = UIGraphicsGetCurrentContext();
+    CGContextSaveGState(context.get());
 
     if (!_innerQuads.isEmpty())
-        CGContextSetLineWidth(context, 4 * _minimumCornerRadius);
+        CGContextSetLineWidth(context.get(), 4 * _minimumCornerRadius);
 
-    CGContextSetLineJoin(context, kCGLineJoinRound);
+    CGContextSetLineJoin(context.get(), kCGLineJoinRound);
 
-    auto alpha = CGColorGetAlpha([_color CGColor]);
+    auto alpha = CGColorGetAlpha(protect([_color CGColor]));
 
     [[_color colorWithAlphaComponent:1] set];
 
-    CGContextSetAlpha(context, alpha);
-    CGContextBeginTransparencyLayer(context, nil);
-    CGContextAddPath(context, path.CGPath);
-    CGContextDrawPath(context, kCGPathFillStroke);
-    CGContextEndTransparencyLayer(context);
+    CGContextSetAlpha(context.get(), alpha);
+    CGContextBeginTransparencyLayer(context.get(), nil);
+    CGContextAddPath(context.get(), protect(path.CGPath));
+    CGContextDrawPath(context.get(), kCGPathFillStroke);
+    CGContextEndTransparencyLayer(context.get());
 
-    CGContextRestoreGState(context);
+    CGContextRestoreGState(context.get());
 }
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event

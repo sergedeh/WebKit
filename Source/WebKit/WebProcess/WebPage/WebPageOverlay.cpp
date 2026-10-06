@@ -37,7 +37,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-static HashMap<WeakRef<PageOverlay>, WeakRef<WebPageOverlay>>& overlayMap()
+static HashMap<WeakRef<PageOverlay>, WeakRef<WebPageOverlay>>& NODELETE overlayMap()
 {
     static NeverDestroyed<HashMap<WeakRef<PageOverlay>, WeakRef<WebPageOverlay>>> map;
     return map;
@@ -73,17 +73,17 @@ WebPageOverlay* WebPageOverlay::fromCoreOverlay(PageOverlay& overlay)
 
 void WebPageOverlay::setNeedsDisplay(const IntRect& dirtyRect)
 {
-    protectedCoreOverlay()->setNeedsDisplay(dirtyRect);
+    protect(coreOverlay())->setNeedsDisplay(dirtyRect);
 }
 
 void WebPageOverlay::setNeedsDisplay()
 {
-    protectedCoreOverlay()->setNeedsDisplay();
+    protect(coreOverlay())->setNeedsDisplay();
 }
 
 void WebPageOverlay::clear()
 {
-    protectedCoreOverlay()->clear();
+    protect(coreOverlay())->clear();
 }
 
 void WebPageOverlay::willMoveToPage(PageOverlay&, Page* page)

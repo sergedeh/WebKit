@@ -7,11 +7,8 @@
 //   ANGLE GL state serialization.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_libc_calls
-#endif
-
 #include "libANGLE/capture/serialize.h"
+#include "common/unsafe_buffers.h"
 
 #include "common/Color.h"
 #include "common/MemoryBuffer.h"
@@ -120,7 +117,8 @@ class [[nodiscard]] GroupScope
     {
         constexpr size_t kBufSize = 255;
         char buf[kBufSize + 1]    = {};
-        snprintf(buf, kBufSize, "%s%s%03d", name.c_str(), name.empty() ? "" : " ", index);
+        ANGLE_UNSAFE_TODO(
+            snprintf(buf, kBufSize, "%s%s%03d", name.c_str(), name.empty() ? "" : " ", index));
         mJson->startGroup(buf);
     }
 
@@ -320,7 +318,7 @@ Result SerializeFramebufferAttachment(const gl::Context *context,
             MemoryBuffer *pixelsPtr = nullptr;
             ANGLE_TRY(ReadPixelsFromAttachment(context, framebuffer, framebufferAttachment,
                                                scratchBuffer, &pixelsPtr));
-            json->addBlob("Data", pixelsPtr->data(), pixelsPtr->size());
+            json->addBlob("Data", *pixelsPtr);
         }
         else
         {
@@ -688,7 +686,6 @@ void SerializeContextState(JsonSerializer *json, const gl::State &state)
     json->addScalar("PrimitiveRestartEnabled", state.isPrimitiveRestartEnabled());
     json->addScalar("MultisamplingEnabled", state.isMultisamplingEnabled());
     json->addScalar("SampleAlphaToOneEnabled", state.isSampleAlphaToOneEnabled());
-    json->addScalar("CoverageModulation", state.getCoverageModulation());
     json->addScalar("FramebufferSRGB", state.getFramebufferSRGB());
     json->addScalar("RobustResourceInitEnabled", state.isRobustResourceInitEnabled());
     json->addScalar("ProgramBinaryCacheEnabled", state.isProgramBinaryCacheEnabled());
@@ -729,7 +726,7 @@ Result SerializeBuffer(const gl::Context *context,
             const_cast<gl::Context *>(context),
             scratchBuffer->getInitialized(static_cast<size_t>(buffer->getSize()), &dataPtr, 0));
         ANGLE_TRY(buffer->getSubData(context, 0, dataPtr->size(), dataPtr->data()));
-        json->addBlob("data", dataPtr->data(), dataPtr->size());
+        json->addBlob("data", *dataPtr);
     }
     else
     {
@@ -847,7 +844,7 @@ Result SerializeRenderbuffer(const gl::Context *context,
 
             ANGLE_TRY(renderbuffer->getImplementation()->getRenderbufferImage(
                 context, packState, nullptr, readFormat, readType, pixelsPtr->data()));
-            json->addBlob("Pixels", pixelsPtr->data(), pixelsPtr->size());
+            json->addBlob("Pixels", *pixelsPtr);
         }
     }
     else
@@ -949,7 +946,6 @@ void SerializeCompiledShaderState(JsonSerializer *json, const gl::SharedCompiled
     SerializeShaderVariablesVector(json, state->activeAttributes);
     SerializeShaderVariablesVector(json, state->activeOutputVariables);
     json->addScalar("NumViews", state->numViews);
-    json->addScalar("SpecConstUsageBits", state->specConstUsageBits.bits());
     json->addScalar("MetadataFlags", state->metadataFlags.bits());
     json->addScalar("AdvancedBlendEquations", state->advancedBlendEquations.bits());
     json->addString("GeometryShaderInputPrimitiveType",
@@ -1308,7 +1304,7 @@ Result SerializeTextureData(JsonSerializer *json,
                 ANGLE_TRY(texture->getTexImage(context, packState, nullptr, index.getTarget(),
                                                index.getLevelIndex(), glFormat, glType,
                                                texelsPtr->data()));
-                json->addBlob(label.str(), texelsPtr->data(), texelsPtr->size());
+                json->addBlob(label.str(), *texelsPtr);
             }
         }
         else

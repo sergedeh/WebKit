@@ -25,13 +25,14 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <algorithm>
 #include <thread>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ThreadSafeWeakHashSet.h>
 #include <wtf/WeakHashMap.h>
@@ -89,6 +90,7 @@ template<typename T, typename U> using WeakHashMap = WTF::WeakHashMap<T, U, Weak
 template<typename T> using WeakHashSet = WTF::WeakHashSet<T, WeakPtrImplWithCounter>;
 template<typename T> using WeakListHashSet = WTF::WeakListHashSet<T, WeakPtrImplWithCounter>;
 template<typename T> using WeakPtr = WTF::WeakPtr<T, WeakPtrImplWithCounter>;
+template<typename T> using WeakRef = WTF::WeakRef<T, WeakPtrImplWithCounter>;
 template<typename T> using WeakPtrFactory = WTF::WeakPtrFactory<T, WeakPtrImplWithCounter>;
 
 struct Int : public CanMakeWeakPtr<Int> {
@@ -616,6 +618,62 @@ TEST(WTF_WeakPtr, WeakHashSetBasic)
         EXPECT_TRUE(weakHashSet.contains(object2));
         EXPECT_FALSE(weakHashSet.contains(object3));
         EXPECT_EQ(s_baseWeakReferences, 2u);
+        EXPECT_EQ(computeSizeOfWeakHashSet(weakHashSet), 1u);
+        weakHashSet.checkConsistency();
+    }
+    EXPECT_EQ(s_baseWeakReferences, 0u);
+}
+
+TEST(WTF_WeakPtr, WeakHashSetRemoveIf)
+{
+    {
+        WeakHashSet<Base> weakHashSet;
+        Base object1;
+        Base object2;
+        Base object3;
+        weakHashSet.add(object1);
+        weakHashSet.add(object2);
+        weakHashSet.add(object3);
+        EXPECT_EQ(computeSizeOfWeakHashSet(weakHashSet), 3u);
+
+        bool removedAny = weakHashSet.removeIf([&](Base& item) {
+            return &item == &object2;
+        });
+        EXPECT_TRUE(removedAny);
+        EXPECT_TRUE(weakHashSet.contains(object1));
+        EXPECT_FALSE(weakHashSet.contains(object2));
+        EXPECT_TRUE(weakHashSet.contains(object3));
+        EXPECT_EQ(computeSizeOfWeakHashSet(weakHashSet), 2u);
+
+        bool removedNone = weakHashSet.removeIf([](Base&) {
+            return false;
+        });
+        EXPECT_FALSE(removedNone);
+        EXPECT_EQ(computeSizeOfWeakHashSet(weakHashSet), 2u);
+        weakHashSet.checkConsistency();
+    }
+    EXPECT_EQ(s_baseWeakReferences, 0u);
+
+    {
+        // removeIf() drops dead (null) weak references as it iterates and reports them
+        // as removed, but never invokes the predicate for them.
+        WeakHashSet<Base> weakHashSet;
+        auto object1 = makeUnique<Base>();
+        Base object2;
+        weakHashSet.add(*object1);
+        weakHashSet.add(object2);
+        EXPECT_EQ(s_baseWeakReferences, 2u);
+        object1 = nullptr;
+
+        unsigned predicateCalls = 0;
+        bool removedAny = weakHashSet.removeIf([&](Base& item) {
+            ++predicateCalls;
+            EXPECT_EQ(&item, &object2);
+            return false;
+        });
+        EXPECT_TRUE(removedAny);
+        EXPECT_EQ(predicateCalls, 1u);
+        EXPECT_TRUE(weakHashSet.contains(object2));
         EXPECT_EQ(computeSizeOfWeakHashSet(weakHashSet), 1u);
         weakHashSet.checkConsistency();
     }
@@ -1223,17 +1281,17 @@ TEST(WTF_WeakPtr, WeakHashMapConstObjects)
         EXPECT_EQ(s_baseWeakReferences, 1u);
         EXPECT_EQ(computeSizeOfWeakHashMap(weakHashMap), 1u);
         EXPECT_TRUE(weakHashMap.contains(object));
-        EXPECT_STREQ(weakHashMap.get(object).utf8().data(), "hello");
+        EXPECT_EQ(weakHashMap.get(object), "hello"_s);
         weakHashMap.checkConsistency();
         weakHashMap.add(object, "world"_s);
         EXPECT_TRUE(weakHashMap.contains(object));
-        EXPECT_STREQ(weakHashMap.get(object).utf8().data(), "hello");
+        EXPECT_EQ(weakHashMap.get(object), "hello"_s);
         EXPECT_EQ(s_baseWeakReferences, 1u);
         EXPECT_EQ(computeSizeOfWeakHashMap(weakHashMap), 1u);
         weakHashMap.checkConsistency();
         weakHashMap.set(object, "WebKit"_s);
         EXPECT_TRUE(weakHashMap.contains(object));
-        EXPECT_STREQ(weakHashMap.get(object).utf8().data(), "WebKit");
+        EXPECT_EQ(weakHashMap.get(object), "WebKit"_s);
         EXPECT_EQ(s_baseWeakReferences, 1u);
         EXPECT_EQ(computeSizeOfWeakHashMap(weakHashMap), 1u);
         weakHashMap.checkConsistency();
@@ -2151,6 +2209,62 @@ TEST(WTF_WeakPtr, WeakListHashMapConstObjects)
     }
 }
 
+TEST(WTF_WeakPtr, WeakListHashSetRemoveIf)
+{
+    {
+        WeakListHashSet<Base> weakListHashSet;
+        Base object1;
+        Base object2;
+        Base object3;
+        Base object4;
+        weakListHashSet.add(object1);
+        weakListHashSet.add(object2);
+        weakListHashSet.add(object3);
+        weakListHashSet.add(object4);
+        EXPECT_EQ(computeSizeOfWeakListHashSet(weakListHashSet), 4u);
+
+        // Remove object2 and object3; object1 and object4 must remain in insertion order.
+        bool removedAny = weakListHashSet.removeIf([&](Base& item) {
+            return &item == &object2 || &item == &object3;
+        });
+        EXPECT_TRUE(removedAny);
+        EXPECT_EQ(computeSizeOfWeakListHashSet(weakListHashSet), 2u);
+
+        Vector<Base*> objectsInIterationOrder;
+        for (auto& object : weakListHashSet)
+            objectsInIterationOrder.append(&object);
+        EXPECT_EQ(objectsInIterationOrder.size(), 2u);
+        EXPECT_EQ(objectsInIterationOrder[0], &object1);
+        EXPECT_EQ(objectsInIterationOrder[1], &object4);
+        weakListHashSet.checkConsistency();
+    }
+    EXPECT_EQ(s_baseWeakReferences, 0u);
+
+    {
+        // removeIf() drops dead (null) weak references without invoking the predicate.
+        WeakListHashSet<Base> weakListHashSet;
+        auto object1 = makeUnique<Base>();
+        Base object2;
+        weakListHashSet.add(*object1);
+        weakListHashSet.add(object2);
+        EXPECT_EQ(s_baseWeakReferences, 2u);
+        object1 = nullptr;
+
+        unsigned predicateCalls = 0;
+        bool removedAny = weakListHashSet.removeIf([&](Base& item) {
+            ++predicateCalls;
+            EXPECT_EQ(&item, &object2);
+            return false;
+        });
+        EXPECT_TRUE(removedAny);
+        EXPECT_EQ(predicateCalls, 1u);
+        EXPECT_TRUE(weakListHashSet.contains(object2));
+        EXPECT_EQ(computeSizeOfWeakListHashSet(weakListHashSet), 1u);
+        weakListHashSet.checkConsistency();
+    }
+    EXPECT_EQ(s_baseWeakReferences, 0u);
+}
+
 TEST(WTF_WeakPtr, WeakListHashSetRemoveIterator)
 {
     WeakListHashSet<Base> weakListHashSet;
@@ -2832,7 +2946,7 @@ TEST(WTF_ThreadSafeWeakPtr, ThreadSafety)
 
 TEST(WTF_ThreadSafeWeakPtr, UseAfterMoveResistance)
 {
-    auto counter = adoptRef(*new ThreadSafeInstanceCounter());
+    Ref counter = adoptRef(*new ThreadSafeInstanceCounter());
     auto weakPtr = ThreadSafeWeakPtr { counter.get() };
     auto movedTo = WTF::move(weakPtr);
     SUPPRESS_USE_AFTER_MOVE EXPECT_NULL(weakPtr.get());
@@ -3021,7 +3135,7 @@ TEST(WTF_ThreadSafeWeakPtr, ThreadSafeWeakHashAmortizedCleanupWhenOnlyAdding)
 
     ThreadSafeWeakHashSet<Struct> set;
     for (int i = 0; i < 10000; ++i) {
-        auto obj = adoptRef(*new Struct);
+        Ref obj = adoptRef(*new Struct);
         set.add(obj.get());
     }
     EXPECT_LT(set.sizeIncludingEmptyEntriesForTesting(), 1000u);
@@ -3037,7 +3151,7 @@ TEST(WTF_ThreadSafeWeakPtr, AmortizedCleanupNotQuadratic)
     ThreadSafeWeakHashSet<Struct> set;
     HashSet<Ref<Struct>> strongSet;
     for (int i = 0; i < 1000000; ++i) {
-        auto obj = adoptRef(*new Struct);
+        Ref obj = adoptRef(*new Struct);
         set.add(obj.get());
         strongSet.add(WTF::move(obj));
     }
@@ -3085,7 +3199,7 @@ TEST(WTF_ThreadSafeWeakPtr, MultipleInheritance)
     ThreadSafeWeakHashSet<Dog> dogs;
     ThreadSafeWeakHashSet<Cat> cats;
     {
-        auto catDog = adoptRef(*new CatDog);
+        Ref catDog = adoptRef(*new CatDog);
         Cat* catPointer { nullptr };
         Dog* dogPointer { nullptr };
 
@@ -3106,12 +3220,12 @@ TEST(WTF_ThreadSafeWeakPtr, MultipleInheritance)
     EXPECT_TRUE(dogs.isEmptyIgnoringNullReferences());
     EXPECT_TRUE(cats.isEmptyIgnoringNullReferences());
 
-    auto keepCat = adoptRef(new CatDog);
+    RefPtr keepCat = adoptRef(new CatDog);
     RefPtr<Cat> cat(keepCat.get());
     keepCat = nullptr;
     cat = nullptr;
 
-    auto keepDog = adoptRef(new CatDog);
+    RefPtr keepDog = adoptRef(new CatDog);
     RefPtr<Dog> dog(keepDog.get());
     keepDog = nullptr;
     dog = nullptr;
@@ -3164,6 +3278,284 @@ TEST(WTF_ThreadSafeWeakPtr, RemoveInDestructor)
     }
 }
 
+// The four tests below reproduce races in ThreadSafeWeakPtr and ThreadSafeWeakHashSet. Each runs
+// its accesses twice: once unguarded, which is where the race lives, and once with every access to
+// the shared handle under a single lock. The guarded run is the control -- if only the unguarded
+// run trips an oracle or a sanitizer, the cause is the missing synchronization rather than the
+// access pattern itself.
+enum class GuardWithLock : bool { No, Yes };
+
+template<typename Function>
+static void performWithOptionalLock(Lock& lock, GuardWithLock guard, const Function& function)
+{
+    if (guard == GuardWithLock::Yes) {
+        Locker locker { lock };
+        function();
+    } else
+        function();
+}
+
+static void testTornPairOnAssignment(GuardWithLock guard)
+{
+    constexpr unsigned iterations = 200000;
+
+    Lock lock;
+    ThreadSafeWeakPtr<ThreadSafeInstanceCounter> sharedWeak;
+    std::atomic<bool> readerShouldStop { false };
+
+    RefPtr counter = adoptRef(*new ThreadSafeInstanceCounter);
+    sharedWeak = *counter;
+
+    std::thread reader { [&] {
+        while (!readerShouldStop.load(std::memory_order_relaxed)) {
+            performWithOptionalLock(lock, guard, [&] {
+                // A torn read pairs the old control block with the new null object pointer, so it
+                // resolves to null rather than to a bad object. The damage it does is the
+                // unmatched strong reference asserted after the join.
+                RefPtr strong = sharedWeak.get();
+            });
+        }
+    } };
+
+    std::thread writer { [&] {
+        for (unsigned i = 0; i < iterations; ++i) {
+            performWithOptionalLock(lock, guard, [&] {
+                sharedWeak = nullptr;
+                sharedWeak = *counter;
+            });
+        }
+        readerShouldStop.store(true, std::memory_order_relaxed);
+    } };
+
+    writer.join();
+    reader.join();
+
+    // Only this function's RefPtr should hold a strong reference now. Any extra count is a torn
+    // read that incremented m_strongReferenceCount and returned adoptRef(nullptr).
+    EXPECT_EQ(counter->refCount(), 1u);
+
+    sharedWeak = nullptr;
+    counter = nullptr;
+    EXPECT_EQ(ThreadSafeInstanceCounter::instanceCount, 0u);
+}
+
+TEST(WTF_ThreadSafeWeakPtr, TornPairOnAssignment)
+{
+    testTornPairOnAssignment(GuardWithLock::No);
+    testTornPairOnAssignment(GuardWithLock::Yes);
+}
+
+static void testControlBlockFreedUnderReader(GuardWithLock guard)
+{
+    constexpr unsigned iterations = 200000;
+
+    Lock lock;
+    ThreadSafeWeakPtr<ThreadSafeInstanceCounter> sharedWeak;
+    std::atomic<bool> readerShouldStop { false };
+
+    std::thread reader { [&] {
+        while (!readerShouldStop.load(std::memory_order_relaxed)) {
+            performWithOptionalLock(lock, guard, [&] {
+                RefPtr strong = sharedWeak.get();
+            });
+        }
+    } };
+
+    std::thread writer { [&] {
+        for (unsigned i = 0; i < iterations; ++i) {
+            performWithOptionalLock(lock, guard, [&] {
+                {
+                    RefPtr victim = adoptRef(*new ThreadSafeInstanceCounter);
+                    sharedWeak = *victim;
+                }
+                // The pointee is gone and sharedWeak holds the last weak reference, so this
+                // assignment is the one that frees the control block.
+                sharedWeak = nullptr;
+            });
+        }
+        readerShouldStop.store(true, std::memory_order_relaxed);
+    } };
+
+    writer.join();
+    reader.join();
+
+    EXPECT_NULL(sharedWeak.get());
+    EXPECT_EQ(ThreadSafeInstanceCounter::instanceCount, 0u);
+}
+
+TEST(WTF_ThreadSafeWeakPtr, ControlBlockFreedUnderReader)
+{
+    testControlBlockFreedUnderReader(GuardWithLock::No);
+    testControlBlockFreedUnderReader(GuardWithLock::Yes);
+}
+
+static void testDoubleWeakDeref(GuardWithLock guard)
+{
+    constexpr unsigned balanceIterations = 200000;
+    constexpr unsigned hashSetIterations = 20000;
+
+    Lock lock;
+    ThreadSafeWeakPtr<ThreadSafeInstanceCounter> sharedWeak;
+    auto assignSharedWeak = [&](ThreadSafeInstanceCounter& object) {
+        performWithOptionalLock(lock, guard, [&] { sharedWeak = object; });
+    };
+    auto clearSharedWeak = [&] {
+        performWithOptionalLock(lock, guard, [&] { sharedWeak = nullptr; });
+    };
+
+    {
+        RefPtr a = adoptRef(*new ThreadSafeInstanceCounter);
+        RefPtr b = adoptRef(*new ThreadSafeInstanceCounter);
+
+        // One long-lived weak reference each, so the expected final count is exactly 1.
+        ThreadSafeWeakPtr keeperA { *a };
+        ThreadSafeWeakPtr keeperB { *b };
+
+        std::thread writerA { [&] {
+            for (unsigned i = 0; i < balanceIterations; ++i)
+                assignSharedWeak(*a);
+        } };
+        std::thread writerB { [&] {
+            for (unsigned i = 0; i < balanceIterations; ++i)
+                assignSharedWeak(*b);
+        } };
+        writerA.join();
+        writerB.join();
+
+        clearSharedWeak();
+        EXPECT_EQ(a->weakRefCount(), 1u);
+        EXPECT_EQ(b->weakRefCount(), 1u);
+    }
+
+    {
+        ThreadSafeWeakHashSet<ThreadSafeInstanceCounter> set;
+
+        // Phase 2 needs the two writers to overlap on the SAME assignment, so they are released one
+        // iteration at a time instead of running free.
+        std::atomic<unsigned> generation { 0 };
+        std::atomic<unsigned> workersDone { 0 };
+        std::atomic<bool> finished { false };
+
+        // A worker counts the rounds it has served rather than latching whichever generation it
+        // happens to observe first: main may already have published a round by the time a worker
+        // starts running, and a worker that then waited for the generation to change again would
+        // wait forever against main waiting for that same round to be served.
+        auto worker = [&] {
+            for (unsigned roundsServed = 0; ; ++roundsServed) {
+                while (generation.load(std::memory_order_acquire) == roundsServed) {
+                    if (finished.load(std::memory_order_acquire))
+                        return;
+                }
+                if (finished.load(std::memory_order_acquire))
+                    return;
+                clearSharedWeak();
+                workersDone.fetch_add(1, std::memory_order_release);
+            }
+        };
+
+        std::thread writerA { worker };
+        std::thread writerB { worker };
+
+        for (unsigned i = 0; i < hashSetIterations; ++i) {
+            {
+                RefPtr victim = adoptRef(*new ThreadSafeInstanceCounter);
+                set.add(*victim);
+                assignSharedWeak(*victim);
+            }
+            // The block now has two weak references (the set's bucket and sharedWeak) and no strong
+            // ones. Let both writers clear sharedWeak at once.
+            workersDone.store(0, std::memory_order_release);
+            generation.fetch_add(1, std::memory_order_release);
+            while (workersDone.load(std::memory_order_acquire) < 2) { }
+
+            // Drives amortizedCleanupIfNeeded() -> objectHasStartedDeletion() over the buckets.
+            EXPECT_TRUE(set.isEmptyIgnoringNullReferences());
+        }
+
+        finished.store(true, std::memory_order_release);
+        generation.fetch_add(1, std::memory_order_release);
+        writerA.join();
+        writerB.join();
+    }
+
+    EXPECT_EQ(ThreadSafeInstanceCounter::instanceCount, 0u);
+}
+
+TEST(WTF_ThreadSafeWeakPtr, DoubleWeakDeref)
+{
+    testDoubleWeakDeref(GuardWithLock::No);
+    testDoubleWeakDeref(GuardWithLock::Yes);
+}
+
+static void testWeakHashSetTimeOfCheckTimeOfUse(GuardWithLock guard)
+{
+    constexpr unsigned iterations = 200000;
+
+    Lock lock;
+    ThreadSafeWeakHashSet<ThreadSafeInstanceCounter> set;
+    ThreadSafeWeakPtr<ThreadSafeInstanceCounter> sharedWeak;
+    std::atomic<bool> shouldStop { false };
+
+    // The object outlives every thread below, so every set operation is in contract.
+    RefPtr keepAlive = adoptRef(*new ThreadSafeInstanceCounter);
+
+    std::thread setUser { [&] {
+        for (size_t i = 0; !shouldStop.load(std::memory_order_relaxed); ++i) {
+            performWithOptionalLock(lock, guard, [&] {
+                switch (i % 3) {
+                case 0:
+                    set.add(*keepAlive);
+                    break;
+                case 1:
+                    (void)set.contains(*keepAlive);
+                    break;
+                default:
+                    (void)set.remove(*keepAlive);
+                    break;
+                }
+            });
+        }
+    } };
+
+    auto churnHandle = [&](bool assignObject) {
+        for (unsigned i = 0; i < iterations; ++i) {
+            performWithOptionalLock(lock, guard, [&] {
+                if (assignObject)
+                    sharedWeak = *keepAlive;
+                else
+                    sharedWeak = nullptr;
+            });
+        }
+    };
+
+    std::thread writerA { [&] {
+        churnHandle(true);
+    } };
+    std::thread writerB { [&] {
+        churnHandle(false);
+    } };
+
+    writerA.join();
+    writerB.join();
+    shouldStop.store(true, std::memory_order_relaxed);
+    setUser.join();
+
+    // The set holds 0 or 1 weak references here and sharedWeak holds 0 or 1, so 0..2 is in range.
+    // Anything larger is a corrupted count; see the sanitizer output for the race itself.
+    EXPECT_LE(keepAlive->weakRefCount(), 2u);
+
+    sharedWeak = nullptr;
+    set.clear();
+    keepAlive = nullptr;
+    EXPECT_EQ(ThreadSafeInstanceCounter::instanceCount, 0u);
+}
+
+TEST(WTF_ThreadSafeWeakPtr, WeakHashSetTimeOfCheckTimeOfUse)
+{
+    testWeakHashSetTimeOfCheckTimeOfUse(GuardWithLock::No);
+    testWeakHashSetTimeOfCheckTimeOfUse(GuardWithLock::Yes);
+}
+
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DidUpdateRefCountWeakPtrImpl);
 
 class DidUpdateRefCountWeakPtrImpl final {
@@ -3176,7 +3568,13 @@ public:
     }
 
     explicit operator bool() const { return m_ptr; }
-    void clear() { m_ptr = nullptr; }
+    void clear()
+    {
+        m_ptr = nullptr;
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        m_thread = anyThreadLike;
+#endif
+    }
 
     template<typename T>
     explicit DidUpdateRefCountWeakPtrImpl(T* ptr)
@@ -3184,8 +3582,10 @@ public:
     {
     }
 
-#if ASSERT_ENABLED
-    bool wasConstructedOnMainThread() const { return true; }
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+    ~DidUpdateRefCountWeakPtrImpl() { m_thread = anyThreadLike; }
+
+    const ThreadLikeAssertion& threadAssertion() const { return m_thread; }
 #endif
 
     void resetDidUpdateRefCount() { m_didUpdateRefCount = false; }
@@ -3211,6 +3611,9 @@ private:
     mutable uint32_t m_refCount { 1 };
     void* m_ptr;
     mutable bool m_didUpdateRefCount { false };
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+    NO_UNIQUE_ADDRESS mutable ThreadLikeAssertion m_thread { mainThreadLike };
+#endif
 };
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DidUpdateRefCountWeakPtrImpl);
 
@@ -3323,6 +3726,67 @@ TEST(WTF_WeakRef, HashCountedSetLookupFromRawRef)
     EXPECT_TRUE(set.remove(object));
     EXPECT_EQ(set.size(), 0U);
     set.add(object);
+}
+
+TEST(WTF_WeakPtr, AssignFromWeakRef)
+{
+    Derived derived;
+
+    {
+        // Copy assign WeakRef<Derived> to WeakPtr<Derived> (same type).
+        WeakRef<Derived> derivedWeakRef { derived };
+        WeakPtr<Derived> derivedWeakPtr;
+        derivedWeakPtr = derivedWeakRef;
+        EXPECT_EQ(derivedWeakPtr.get(), &derived);
+        EXPECT_EQ(&derivedWeakRef.get(), &derived);
+    }
+
+    {
+        // Move assign WeakRef<Derived> to WeakPtr<Derived> (same type).
+        WeakRef<Derived> derivedWeakRef { derived };
+        WeakPtr<Derived> derivedWeakPtr;
+        derivedWeakPtr = WTF::move(derivedWeakRef);
+        EXPECT_EQ(derivedWeakPtr.get(), &derived);
+    }
+
+    {
+        // Copy assign WeakRef<Derived> to WeakPtr<Base> (cross-type).
+        WeakRef<Derived> derivedWeakRef { derived };
+        WeakPtr<Base> baseWeakPtr;
+        baseWeakPtr = derivedWeakRef;
+        EXPECT_EQ(baseWeakPtr.get(), &derived);
+        EXPECT_EQ(&derivedWeakRef.get(), &derived);
+    }
+
+    {
+        // Move assign WeakRef<Derived> to WeakPtr<Base> (cross-type).
+        WeakRef<Derived> derivedWeakRef { derived };
+        WeakPtr<Base> baseWeakPtr;
+        baseWeakPtr = WTF::move(derivedWeakRef);
+        EXPECT_EQ(baseWeakPtr.get(), &derived);
+    }
+}
+
+TEST(WTF_WeakPtr, AssignFromWeakRefConst)
+{
+    const Derived derived;
+
+    {
+        // Copy assign WeakRef<const Derived> to WeakPtr<const Base> (cross-type).
+        WeakRef<const Derived> derivedWeakRef { derived };
+        WeakPtr<const Base> baseWeakPtr;
+        baseWeakPtr = derivedWeakRef;
+        EXPECT_EQ(baseWeakPtr.get(), &derived);
+        EXPECT_EQ(&derivedWeakRef.get(), &derived);
+    }
+
+    {
+        // Move assign WeakRef<const Derived> to WeakPtr<const Base> (cross-type).
+        WeakRef<const Derived> derivedWeakRef { derived };
+        WeakPtr<const Base> baseWeakPtr;
+        baseWeakPtr = WTF::move(derivedWeakRef);
+        EXPECT_EQ(baseWeakPtr.get(), &derived);
+    }
 }
 
 } // namespace TestWebKitAPI

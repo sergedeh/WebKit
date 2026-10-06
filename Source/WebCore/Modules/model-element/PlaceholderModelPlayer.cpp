@@ -63,7 +63,7 @@ PlaceholderModelPlayer::PlaceholderModelPlayer(bool suspended, const ModelPlayer
 
 PlaceholderModelPlayer::~PlaceholderModelPlayer() = default;
 
-std::optional<ModelPlayerAnimationState> PlaceholderModelPlayer::currentAnimationState() const
+std::optional<ModelPlayerAnimationState> PlaceholderModelPlayer::currentAnimationState(NodeIdentifier) const
 {
     if (!m_lastPausedStateIfSuspended || *m_lastPausedStateIfSuspended)
         return m_animationState;
@@ -74,29 +74,29 @@ std::optional<ModelPlayerAnimationState> PlaceholderModelPlayer::currentAnimatio
     return unsuspendedAnimationState;
 }
 
-std::optional<std::unique_ptr<ModelPlayerTransformState>> PlaceholderModelPlayer::currentTransformState() const
+std::optional<std::unique_ptr<ModelPlayerTransformState>> PlaceholderModelPlayer::currentTransformState(NodeIdentifier) const
 {
     return m_transformState->clone();
 }
 
-void PlaceholderModelPlayer::load(Model&, LayoutSize)
+void PlaceholderModelPlayer::load(NodeIdentifier, Model&, LayoutSize, bool)
 {
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void PlaceholderModelPlayer::reload(Model&, LayoutSize, ModelPlayerAnimationState&, std::unique_ptr<ModelPlayerTransformState>&&)
+void PlaceholderModelPlayer::reload(NodeIdentifier, Model&, LayoutSize, ModelPlayerAnimationState&, std::unique_ptr<ModelPlayerTransformState>&&)
 {
     RELEASE_ASSERT_NOT_REACHED();
 }
 
 #if ENABLE(MODEL_ELEMENT_BOUNDING_BOX)
 
-std::optional<WebCore::FloatPoint3D> PlaceholderModelPlayer::boundingBoxCenter() const
+std::optional<WebCore::FloatPoint3D> PlaceholderModelPlayer::boundingBoxCenter(NodeIdentifier) const
 {
     return m_transformState->boundingBoxCenter();
 }
 
-std::optional<WebCore::FloatPoint3D> PlaceholderModelPlayer::boundingBoxExtents() const
+std::optional<WebCore::FloatPoint3D> PlaceholderModelPlayer::boundingBoxExtents(NodeIdentifier) const
 {
     return m_transformState->boundingBoxExtents();
 }
@@ -105,13 +105,13 @@ std::optional<WebCore::FloatPoint3D> PlaceholderModelPlayer::boundingBoxExtents(
 
 #if ENABLE(MODEL_ELEMENT_ENTITY_TRANSFORM)
 
-std::optional<WebCore::TransformationMatrix> PlaceholderModelPlayer::entityTransform() const
+std::optional<WebCore::TransformationMatrix> PlaceholderModelPlayer::entityTransform(NodeIdentifier) const
 {
     return m_transformState->entityTransform();
 }
 
 /// This comes from JS side, so we need to tell Model Process about it. Not to be confused with didUpdateEntityTransform().
-void PlaceholderModelPlayer::setEntityTransform(WebCore::TransformationMatrix transform)
+void PlaceholderModelPlayer::setEntityTransform(NodeIdentifier, TransformationMatrix transform)
 {
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE)
     ASSERT(m_transformState->stageMode() == StageModeOperation::None);
@@ -128,20 +128,20 @@ bool PlaceholderModelPlayer::supportsTransform(WebCore::TransformationMatrix tra
 
 #if ENABLE(MODEL_ELEMENT_ANIMATIONS_CONTROL)
 
-void PlaceholderModelPlayer::setAutoplay(bool autoplay)
+void PlaceholderModelPlayer::setAutoplay(NodeIdentifier, bool autoplay)
 {
     m_animationState.setAutoplay(autoplay);
 }
 
-void PlaceholderModelPlayer::setLoop(bool loop)
+void PlaceholderModelPlayer::setLoop(NodeIdentifier, bool loop)
 {
     m_animationState.setLoop(loop);
 }
 
-void PlaceholderModelPlayer::setPlaybackRate(double playbackRate, CompletionHandler<void(double effectivePlaybackRate)>&& completionHandler)
+void PlaceholderModelPlayer::setPlaybackRate(NodeIdentifier, double playbackRate, CompletionHandler<void(double effectivePlaybackRate)>&& completionHandler)
 {
     if (m_animationState.effectivePlaybackRate() == playbackRate)
-        return;
+        return completionHandler(playbackRate);
 
     m_animationState.setCurrentTime(m_animationState.currentTime(), MonotonicTime::now());
     m_animationState.setPlaybackRate(playbackRate);
@@ -149,32 +149,32 @@ void PlaceholderModelPlayer::setPlaybackRate(double playbackRate, CompletionHand
     completionHandler(effectivePlaybackRate ? *effectivePlaybackRate : 1.0);
 }
 
-double PlaceholderModelPlayer::duration() const
+double PlaceholderModelPlayer::duration(NodeIdentifier) const
 {
     return m_animationState.duration().seconds();
 }
 
-bool PlaceholderModelPlayer::paused() const
+bool PlaceholderModelPlayer::paused(NodeIdentifier) const
 {
     return m_animationState.paused();
 }
 
-void PlaceholderModelPlayer::setPaused(bool paused, CompletionHandler<void(bool succeeded)>&& completionHandler)
+void PlaceholderModelPlayer::setPaused(NodeIdentifier, bool paused, CompletionHandler<void(bool succeeded)>&& completionHandler)
 {
     if (m_animationState.paused() == paused)
-        return;
+        return completionHandler(true);
 
     m_animationState.setCurrentTime(m_animationState.currentTime(), MonotonicTime::now());
     m_animationState.setPaused(paused);
     completionHandler(true);
 }
 
-Seconds PlaceholderModelPlayer::currentTime() const
+Seconds PlaceholderModelPlayer::currentTime(NodeIdentifier) const
 {
     return m_animationState.currentTime();
 }
 
-void PlaceholderModelPlayer::setCurrentTime(Seconds currentTime, CompletionHandler<void()>&& completionHandler)
+void PlaceholderModelPlayer::setCurrentTime(NodeIdentifier, Seconds currentTime, CompletionHandler<void()>&& completionHandler)
 {
     double durationSeconds = m_animationState.duration().seconds();
     if (durationSeconds)
@@ -229,52 +229,49 @@ void PlaceholderModelPlayer::handleMouseUp(const LayoutPoint&, MonotonicTime)
 {
 }
 
-void PlaceholderModelPlayer::getCamera(CompletionHandler<void(std::optional<WebCore::HTMLModelElementCamera>&&)>&&)
+void PlaceholderModelPlayer::getCamera(CompletionHandler<void(std::optional<WebCore::HTMLModelElementCamera>&&)>&& completionHandler)
 {
+    completionHandler(std::nullopt);
 }
 
-void PlaceholderModelPlayer::setCamera(WebCore::HTMLModelElementCamera, CompletionHandler<void(bool success)>&&)
+void PlaceholderModelPlayer::setCamera(WebCore::HTMLModelElementCamera, CompletionHandler<void(bool success)>&& completionHandler)
 {
+    completionHandler(false);
 }
 
-void PlaceholderModelPlayer::isPlayingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&)
+void PlaceholderModelPlayer::isPlayingAnimation(NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&& completionHandler)
 {
+    completionHandler(std::nullopt);
 }
 
-void PlaceholderModelPlayer::setAnimationIsPlaying(bool, CompletionHandler<void(bool success)>&&)
+void PlaceholderModelPlayer::setAnimationIsPlaying(NodeIdentifier, bool, CompletionHandler<void(bool success)>&& completionHandler)
 {
+    completionHandler(false);
 }
 
-void PlaceholderModelPlayer::isLoopingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&)
+void PlaceholderModelPlayer::isLoopingAnimation(NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&& completionHandler)
 {
+    completionHandler(std::nullopt);
 }
 
-void PlaceholderModelPlayer::setIsLoopingAnimation(bool, CompletionHandler<void(bool success)>&&)
+void PlaceholderModelPlayer::setIsLoopingAnimation(NodeIdentifier, bool, CompletionHandler<void(bool success)>&& completionHandler)
 {
+    completionHandler(false);
 }
 
-void PlaceholderModelPlayer::animationDuration(CompletionHandler<void(std::optional<Seconds>&&)>&&)
+void PlaceholderModelPlayer::animationDuration(NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&& completionHandler)
 {
+    completionHandler(std::nullopt);
 }
 
-void PlaceholderModelPlayer::animationCurrentTime(CompletionHandler<void(std::optional<Seconds>&&)>&&)
+void PlaceholderModelPlayer::animationCurrentTime(NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&& completionHandler)
 {
+    completionHandler(std::nullopt);
 }
 
-void PlaceholderModelPlayer::setAnimationCurrentTime(Seconds, CompletionHandler<void(bool success)>&&)
+void PlaceholderModelPlayer::setAnimationCurrentTime(NodeIdentifier, Seconds, CompletionHandler<void(bool success)>&& completionHandler)
 {
-}
-
-void PlaceholderModelPlayer::hasAudio(CompletionHandler<void(std::optional<bool>&&)>&&)
-{
-}
-
-void PlaceholderModelPlayer::isMuted(CompletionHandler<void(std::optional<bool>&&)>&&)
-{
-}
-
-void PlaceholderModelPlayer::setIsMuted(bool, CompletionHandler<void(bool success)>&&)
-{
+    completionHandler(false);
 }
 
 #if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)

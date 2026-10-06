@@ -60,6 +60,7 @@ public:
         ElementUpgrade,
         Connected,
         Disconnected,
+        ConnectedMove,
         Adopted,
         AttributeChanged,
         FormAssociated,
@@ -129,6 +130,7 @@ public:
     static void tryToUpgradeElement(Element&);
     static void enqueueConnectedCallbackIfNeeded(Element&);
     static void enqueueDisconnectedCallbackIfNeeded(Element&);
+    static void enqueueConnectedMoveCallbackIfNeeded(Element&);
     static void enqueueAdoptedCallbackIfNeeded(Element&, Document& oldDocument, Document& newDocument);
     static void enqueueAttributeChangedCallbackIfNeeded(Element&, const QualifiedName&, const AtomString& oldValue, const AtomString& newValue);
     static void enqueueFormAssociatedCallbackIfNeeded(Element&, HTMLFormElement*);
@@ -137,12 +139,12 @@ public:
     static void enqueueFormStateRestoreCallbackIfNeeded(Element&, CustomElementFormValue&&);
     static void enqueuePostUpgradeReactions(Element&);
 
-    bool observesStyleAttribute() const;
-    bool isElementInternalsDisabled() const;
-    bool isElementInternalsAttached() const;
-    void setElementInternalsAttached();
-    bool isFormAssociated() const;
-    bool hasFormStateRestoreCallback() const;
+    bool NODELETE observesStyleAttribute() const;
+    bool NODELETE isElementInternalsDisabled() const;
+    bool isElementInternalsAttached() const { return m_elementInternalsAttached; }
+    void NODELETE setElementInternalsAttached();
+    bool NODELETE isFormAssociated() const;
+    bool NODELETE hasFormStateRestoreCallback() const;
 
     void invokeAll(Element&);
     void clear();

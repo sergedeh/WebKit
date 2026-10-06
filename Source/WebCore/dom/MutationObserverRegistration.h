@@ -59,12 +59,11 @@ public:
     HashSet<GCReachableRef<Node>> takeTransientRegistrations();
     bool hasTransientRegistrations() const { return !m_transientRegistrationNodes.isEmpty(); }
 
-    bool shouldReceiveMutationFrom(Node&, MutationObserverOptionType, const QualifiedName* attributeName) const;
+    bool NODELETE shouldReceiveMutationFrom(Node&, MutationObserverOptionType, const QualifiedName* attributeName) const;
     bool isSubtree() const { return m_options.contains(MutationObserverOptionType::Subtree); }
 
     MutationObserver& observer() { return m_observer.get(); }
     Node& node() { return m_node; }
-    Ref<Node> protectedNode() { return m_node; };
     MutationRecordDeliveryOptions deliveryOptions() const { return m_options & MutationObserver::AllDeliveryFlags; }
     MutationObserverOptions mutationTypes() const { return m_options & MutationObserver::AllMutationTypes; }
 

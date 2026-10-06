@@ -31,7 +31,7 @@
   EnabledBySetting=NavigationAPIEnabled,
   Exposed=Window
 ] interface NavigateEvent : Event {
-  constructor([AtomString] DOMString type, NavigateEventInit eventInitDict);
+  [CallWith=CurrentGlobalObject] constructor([AtomString] DOMString type, NavigateEventInit eventInitDict);
 
   readonly attribute NavigationNavigationType navigationType;
   readonly attribute NavigationDestination destination;
@@ -43,15 +43,13 @@
   readonly attribute DOMString? downloadRequest;
   readonly attribute any info;
   readonly attribute Element? sourceElement;
-  [EnabledBySetting=UAVisualTransitionDetectionEnabled] readonly attribute boolean hasUAVisualTransition;
+  readonly attribute boolean hasUAVisualTransition;
 
   [CallWith=RelevantDocument] undefined intercept(optional NavigationInterceptOptions options = {});
   [CallWith=RelevantDocument] undefined scroll();
 };
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary NavigateEventInit : EventInit {
+dictionary NavigateEventInit : EventInit {
   NavigationNavigationType navigationType = "push";
   required NavigationDestination destination;
   boolean canIntercept = false;
@@ -61,13 +59,12 @@
   DOMFormData? formData = null;
   DOMString? downloadRequest = null;
   any info;
+  boolean hasUAVisualTransition = false;
   Element? sourceElement = null;
-  [EnabledBySetting=UAVisualTransitionDetectionEnabled] boolean hasUAVisualTransition = false;
 };
 
-[
-    LegacyNativeDictionaryRequiredInterfaceNullability,
-] dictionary NavigationInterceptOptions {
+dictionary NavigationInterceptOptions {
+  [EnabledBySetting=NavigationAPIPrecommitHandlerEnabled] NavigationPrecommitHandler precommitHandler;
   NavigationInterceptHandler handler;
   NavigationFocusReset focusReset;
   NavigationScrollBehavior scroll;

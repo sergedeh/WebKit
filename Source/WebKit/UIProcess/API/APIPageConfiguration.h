@@ -77,6 +77,7 @@ class WebPageGroup;
 class WebPageProxy;
 class WebPreferences;
 class WebProcessPool;
+class WebProcessProxy;
 class WebUserContentControllerProxy;
 class WebsiteDataStore;
 
@@ -117,6 +118,7 @@ public:
 
     Ref<PageConfiguration> copy() const;
     void copyDataFrom(const PageConfiguration&);
+    void ensureLazyInitializedRefsAreInitialized();
 
     struct OpenerInfo {
         Ref<WebKit::WebProcessProxy> process;
@@ -125,75 +127,71 @@ public:
         WebCore::SecurityOriginData securityOrigin;
         bool operator==(const OpenerInfo&) const;
     };
-    const std::optional<OpenerInfo>& openerInfo() const;
+    const std::optional<OpenerInfo>& NODELETE openerInfo() const;
     void setOpenerInfo(std::optional<OpenerInfo>&&);
     void consumeOpenerInfo();
 
-    const WebCore::Site& openedSite() const;
+    const WebCore::Site& NODELETE openedSite() const;
     void setOpenedSite(const WebCore::Site&);
 
-    const WTF::String& openedMainFrameName() const;
+    bool processInheritedFromOpener() const { return m_data.processInheritedFromOpener; }
+    void setProcessInheritedFromOpener(bool value) { m_data.processInheritedFromOpener = value; }
+
+    const WTF::String& NODELETE openedMainFrameName() const;
     void setOpenedMainFrameName(const WTF::String&);
 
     WebCore::SandboxFlags initialSandboxFlags() const { return m_data.initialSandboxFlags; }
-    void setInitialSandboxFlags(WebCore::SandboxFlags);
+    void NODELETE setInitialSandboxFlags(WebCore::SandboxFlags);
 
     WebCore::ReferrerPolicy initialReferrerPolicy() const { return m_data.initialReferrerPolicy; }
-    void setInitialReferrerPolicy(WebCore::ReferrerPolicy);
+    void NODELETE setInitialReferrerPolicy(WebCore::ReferrerPolicy);
 
-    const std::optional<WebCore::WindowFeatures>& windowFeatures() const;
+    const std::optional<WebCore::WindowFeatures>& NODELETE windowFeatures() const;
     void setWindowFeatures(WebCore::WindowFeatures&&);
 
     WebKit::WebProcessPool& processPool() const;
-    Ref<WebKit::WebProcessPool> protectedProcessPool() const;
     void setProcessPool(RefPtr<WebKit::WebProcessPool>&&);
 
     WebKit::WebUserContentControllerProxy& userContentController() const;
-    Ref<WebKit::WebUserContentControllerProxy> protectedUserContentController() const;
     void setUserContentController(RefPtr<WebKit::WebUserContentControllerProxy>&&);
 
 #if ENABLE(WK_WEB_EXTENSIONS)
-    const WTF::URL& requiredWebExtensionBaseURL() const;
+    const WTF::URL& NODELETE requiredWebExtensionBaseURL() const;
     void setRequiredWebExtensionBaseURL(WTF::URL&&);
 
-    WebKit::WebExtensionController* webExtensionController() const;
-    RefPtr<WebKit::WebExtensionController> protectedWebExtensionController() const;
+    WebKit::WebExtensionController* NODELETE webExtensionController() const;
     void setWebExtensionController(RefPtr<WebKit::WebExtensionController>&&);
 
-    WebKit::WebExtensionController* weakWebExtensionController() const;
-    RefPtr<WebKit::WebExtensionController> protectedWeakWebExtensionController() const;
-    void setWeakWebExtensionController(WebKit::WebExtensionController*);
+    WebKit::WebExtensionController* NODELETE weakWebExtensionController() const;
+    void NODELETE setWeakWebExtensionController(WebKit::WebExtensionController*);
 #endif
 
-    WebKit::WebPageGroup* pageGroup();
+    WebKit::WebPageGroup* NODELETE pageGroup();
     void setPageGroup(RefPtr<WebKit::WebPageGroup>&&);
 
     WebKit::WebPreferences& preferences() const;
-    Ref<WebKit::WebPreferences> protectedPreferences() const;
     void setPreferences(RefPtr<WebKit::WebPreferences>&&);
 
-    WebKit::WebPageProxy* relatedPage() const;
+    WebKit::WebPageProxy* NODELETE relatedPage() const;
     void setRelatedPage(WeakPtr<WebKit::WebPageProxy>&& relatedPage) { m_data.relatedPage = WTF::move(relatedPage); }
-    RefPtr<WebKit::WebPageProxy> protectedRelatedPage() const;
 
-    WebKit::WebPageProxy* pageToCloneSessionStorageFrom() const;
-    void setPageToCloneSessionStorageFrom(WeakPtr<WebKit::WebPageProxy>&&);
+    WebKit::WebProcessProxy* NODELETE preferredProcessFromOpener() const;
+    void setPreferredProcessFromOpener(WeakPtr<WebKit::WebProcessProxy>&& process) { m_data.preferredProcessFromOpener = WTF::move(process); }
 
-    WebKit::WebPageProxy* alternateWebViewForNavigationGestures() const;
-    void setAlternateWebViewForNavigationGestures(WeakPtr<WebKit::WebPageProxy>&&);
+    WebKit::WebPageProxy* NODELETE pageToCloneSessionStorageFrom() const;
+    void NODELETE setPageToCloneSessionStorageFrom(WeakPtr<WebKit::WebPageProxy>&&);
+
+    WebKit::WebPageProxy* NODELETE alternateWebViewForNavigationGestures() const;
+    void NODELETE setAlternateWebViewForNavigationGestures(WeakPtr<WebKit::WebPageProxy>&&);
 
     WebKit::VisitedLinkStore& visitedLinkStore() const;
-    Ref<WebKit::VisitedLinkStore> protectedVisitedLinkStore() const;
     void setVisitedLinkStore(RefPtr<WebKit::VisitedLinkStore>&&);
 
     WebKit::WebsiteDataStore& websiteDataStore() const;
-    WebKit::WebsiteDataStore* websiteDataStoreIfExists() const;
-    RefPtr<WebKit::WebsiteDataStore> protectedWebsiteDataStoreIfExists() const;
-    Ref<WebKit::WebsiteDataStore> protectedWebsiteDataStore() const;
+    WebKit::WebsiteDataStore* NODELETE websiteDataStoreIfExists() const;
     void setWebsiteDataStore(RefPtr<WebKit::WebsiteDataStore>&&);
 
     WebsitePolicies& defaultWebsitePolicies() const;
-    Ref<WebsitePolicies> protectedDefaultWebsitePolicies() const;
     void setDefaultWebsitePolicies(RefPtr<WebsitePolicies>&&);
 
 #if PLATFORM(IOS_FAMILY)
@@ -260,14 +258,14 @@ public:
     bool isControlledByAutomation() const { return m_data.controlledByAutomation; }
     void setControlledByAutomation(bool controlledByAutomation) { m_data.controlledByAutomation = controlledByAutomation; }
 
-    const WTF::String& overrideContentSecurityPolicy() const { return m_data.overrideContentSecurityPolicy; }
+    const WTF::String& overrideContentSecurityPolicy() const LIFETIME_BOUND { return m_data.overrideContentSecurityPolicy; }
     void setOverrideContentSecurityPolicy(const WTF::String& overrideContentSecurityPolicy) { m_data.overrideContentSecurityPolicy = overrideContentSecurityPolicy; }
 
 #if PLATFORM(COCOA)
     ClassStructPtr attachmentFileWrapperClassSingleton() const { return m_data.attachmentFileWrapperClass.get(); }
     void setAttachmentFileWrapperClass(ClassStructPtr c) { m_data.attachmentFileWrapperClass = c; }
 
-    const std::optional<Vector<WTF::String>>& additionalSupportedImageTypes() const { return m_data.additionalSupportedImageTypes; }
+    const std::optional<Vector<WTF::String>>& additionalSupportedImageTypes() const LIFETIME_BOUND { return m_data.additionalSupportedImageTypes; }
     void setAdditionalSupportedImageTypes(std::optional<Vector<WTF::String>>&& additionalSupportedImageTypes) { m_data.additionalSupportedImageTypes = WTF::move(additionalSupportedImageTypes); }
 
     bool clientNavigationsRunAtForegroundPriority() const { return m_data.clientNavigationsRunAtForegroundPriority; }
@@ -278,16 +276,15 @@ public:
 #endif
 
 #if ENABLE(APPLICATION_MANIFEST)
-    ApplicationManifest* applicationManifest() const;
-    RefPtr<ApplicationManifest> protectedApplicationManifest() const;
+    ApplicationManifest* NODELETE applicationManifest() const;
     void setApplicationManifest(RefPtr<ApplicationManifest>&&);
 #endif
 
     RefPtr<WebKit::WebURLSchemeHandler> urlSchemeHandlerForURLScheme(const WTF::String&);
     void setURLSchemeHandlerForURLScheme(Ref<WebKit::WebURLSchemeHandler>&&, const WTF::String&);
-    const HashMap<WTF::String, Ref<WebKit::WebURLSchemeHandler>>& urlSchemeHandlers() { return m_data.urlSchemeHandlers; }
+    const HashMap<WTF::String, Ref<WebKit::WebURLSchemeHandler>>& urlSchemeHandlers() LIFETIME_BOUND { return m_data.urlSchemeHandlers; }
 
-    const Vector<WTF::String>& corsDisablingPatterns() const { return m_data.corsDisablingPatterns; }
+    const Vector<WTF::String>& corsDisablingPatterns() const LIFETIME_BOUND { return m_data.corsDisablingPatterns; }
     void setCORSDisablingPatterns(Vector<WTF::String>&& patterns) { m_data.corsDisablingPatterns = WTF::move(patterns); }
 
     HashSet<WTF::String> maskedURLSchemes() const;
@@ -296,13 +293,13 @@ public:
     bool crossOriginAccessControlCheckEnabled() const { return m_data.crossOriginAccessControlCheckEnabled; }
     void setCrossOriginAccessControlCheckEnabled(bool enabled) { m_data.crossOriginAccessControlCheckEnabled = enabled; }
 
-    const WTF::String& processDisplayName() const { return m_data.processDisplayName; }
+    const WTF::String& processDisplayName() const LIFETIME_BOUND { return m_data.processDisplayName; }
     void setProcessDisplayName(const WTF::String& name) { m_data.processDisplayName = name; }
 
     bool loadsSubresources() const { return m_data.loadsSubresources; }
     void setLoadsSubresources(bool loads) { m_data.loadsSubresources = loads; }
 
-    const std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<WTF::String>>& allowedNetworkHosts() const { return m_data.allowedNetworkHosts; }
+    const std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<WTF::String>>& allowedNetworkHosts() const LIFETIME_BOUND { return m_data.allowedNetworkHosts; }
     void setAllowedNetworkHosts(std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<WTF::String>>&& hosts) { m_data.allowedNetworkHosts = WTF::move(hosts); }
 
 #if ENABLE(APP_BOUND_DOMAINS)
@@ -347,7 +344,7 @@ public:
 
 #if ENABLE(APPLE_PAY)
     bool applePayEnabled() const;
-    void setApplePayEnabled(bool);
+    void NODELETE setApplePayEnabled(bool);
 #endif
 
 #if ENABLE(APP_HIGHLIGHTS)
@@ -360,13 +357,13 @@ public:
     void setMultiRepresentationHEICInsertionEnabled(bool enabled) { m_data.multiRepresentationHEICInsertionEnabled = enabled; }
 #endif
 
-    const WTF::String& groupIdentifier() const { return m_data.groupIdentifier; }
+    const WTF::String& groupIdentifier() const LIFETIME_BOUND { return m_data.groupIdentifier; }
     void setGroupIdentifier(WTF::String&& identifier) { m_data.groupIdentifier = WTF::move(identifier); }
 
-    const WTF::String& mediaContentTypesRequiringHardwareSupport() const { return m_data.mediaContentTypesRequiringHardwareSupport; }
+    const WTF::String& mediaContentTypesRequiringHardwareSupport() const LIFETIME_BOUND { return m_data.mediaContentTypesRequiringHardwareSupport; }
     void setMediaContentTypesRequiringHardwareSupport(WTF::String&& types) { m_data.mediaContentTypesRequiringHardwareSupport = WTF::move(types); }
 
-    const std::optional<WTF::String>& applicationNameForUserAgent() const { return m_data.applicationNameForUserAgent; }
+    const std::optional<WTF::String>& applicationNameForUserAgent() const LIFETIME_BOUND { return m_data.applicationNameForUserAgent; }
     void setApplicationNameForUserAgent(std::optional<WTF::String>&& name) { m_data.applicationNameForUserAgent = WTF::move(name); }
 
     double sampledPageTopColorMaxDifference() const { return m_data.sampledPageTopColorMaxDifference; }
@@ -414,9 +411,6 @@ public:
     bool shouldSendConsoleLogsToUIProcessForTesting() const { return m_data.shouldSendConsoleLogsToUIProcessForTesting; }
     void setShouldSendConsoleLogsToUIProcessForTesting(bool should) { m_data.shouldSendConsoleLogsToUIProcessForTesting = should; }
 
-    bool shouldDeferAsynchronousScriptsUntilAfterDocumentLoad() const { return m_data.shouldDeferAsynchronousScriptsUntilAfterDocumentLoad; }
-    void setShouldDeferAsynchronousScriptsUntilAfterDocumentLoad(bool defer) { m_data.shouldDeferAsynchronousScriptsUntilAfterDocumentLoad = defer; }
-
     bool undoManagerAPIEnabled() const { return m_data.undoManagerAPIEnabled; }
     void setUndoManagerAPIEnabled(bool enabled) { m_data.undoManagerAPIEnabled = enabled; }
 
@@ -444,7 +438,7 @@ public:
     WebCore::ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking() const { return m_data.shouldRelaxThirdPartyCookieBlocking; }
 
     void setAttributedBundleIdentifier(WTF::String&& identifier) { m_data.attributedBundleIdentifier = WTF::move(identifier); }
-    const WTF::String& attributedBundleIdentifier() const { return m_data.attributedBundleIdentifier; }
+    const WTF::String& attributedBundleIdentifier() const LIFETIME_BOUND { return m_data.attributedBundleIdentifier; }
 
 #if HAVE(TOUCH_BAR)
     bool requiresUserActionForEditingControlsManager() const { return m_data.requiresUserActionForEditingControlsManager; }
@@ -471,11 +465,18 @@ public:
     void setDelaysWebProcessLaunchUntilFirstLoad(bool);
     bool delaysWebProcessLaunchUntilFirstLoad() const;
 
-    void setAllowPostingLegacySynchronousMessages(bool);
-    bool allowPostingLegacySynchronousMessages() const;
+    void NODELETE setAllowPostingLegacySynchronousMessages(bool);
+    bool NODELETE allowPostingLegacySynchronousMessages() const;
 
     void setContentSecurityPolicyModeForExtension(WebCore::ContentSecurityPolicyModeForExtension mode) { m_data.contentSecurityPolicyModeForExtension = mode; }
     WebCore::ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension() const { return m_data.contentSecurityPolicyModeForExtension; }
+
+    void setBackgroundTextExtractionEnabled(bool enabled) { m_data.backgroundTextExtractionEnabled = enabled; }
+    bool backgroundTextExtractionEnabled() const { return m_data.backgroundTextExtractionEnabled; }
+
+    WebKit::BrowsingContextGroup* preferredBrowsingContextGroup() const;
+
+    WebCore::CrossOriginMode crossOriginMode() const;
 
 #if PLATFORM(VISION)
 
@@ -489,16 +490,23 @@ public:
     void setCSSTransformStyleSeparatedEnabled(bool value) { m_data.cssTransformStyleSeparatedEnabled = value; }
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    bool allowsImmersiveEnvironments() const { return m_data.allowsImmersiveEnvironments; }
+    void setAllowsImmersiveEnvironments(bool allows) { m_data.allowsImmersiveEnvironments = allows; }
+#endif
+
 #endif // PLATFORM(VISION)
 
 private:
+    bool defaultDelaysWebProcessLaunchUntilFirstLoad() const;
     struct Data {
         Data();
 
         template<typename T, Ref<T>(*initializer)()> class LazyInitializedRef {
         public:
             LazyInitializedRef() = default;
-            void operator=(const LazyInitializedRef& other) { m_value = other.get(); }
+            LazyInitializedRef(const LazyInitializedRef&) = default;
+            void operator=(const LazyInitializedRef& other) { m_value = other.m_value; }
             void operator=(RefPtr<T>&& t) { m_value = WTF::move(t); }
             T& get() const
             {
@@ -520,7 +528,7 @@ private:
         static WebKit::DragLiftDelay defaultDragLiftDelay();
 #endif
 #if PLATFORM(COCOA)
-        uintptr_t defaultMediaTypesRequiringUserActionForPlayback();
+        uintptr_t NODELETE defaultMediaTypesRequiringUserActionForPlayback();
 #endif
 
         LazyInitializedRef<WebKit::WebProcessPool, createWebProcessPool> processPool;
@@ -537,8 +545,10 @@ private:
 #endif
         RefPtr<WebKit::WebPageGroup> pageGroup;
         WeakPtr<WebKit::WebPageProxy> relatedPage;
+        WeakPtr<WebKit::WebProcessProxy> preferredProcessFromOpener;
         Box<std::optional<OpenerInfo>> openerInfo;
         WebCore::Site openedSite;
+        bool processInheritedFromOpener { false };
         WTF::String openedMainFrameName;
         std::optional<WebCore::WindowFeatures> windowFeatures;
         WebCore::SandboxFlags initialSandboxFlags;
@@ -647,7 +657,6 @@ private:
         bool allowMediaContentTypesRequiringHardwareSupportAsFallback { true };
         bool colorFilterEnabled { false };
         bool incompleteImageBorderEnabled { false };
-        bool shouldDeferAsynchronousScriptsUntilAfterDocumentLoad { true };
         bool undoManagerAPIEnabled { false };
         bool mainContentUserGestureOverrideEnabled { false };
         bool invisibleAutoplayForbidden { false };
@@ -659,6 +668,7 @@ private:
         bool showsSystemScreenTimeBlockingView { true };
         bool shouldSendConsoleLogsToUIProcessForTesting { false };
         bool allowPostingLegacySynchronousMessages { false };
+        bool backgroundTextExtractionEnabled { false };
 
 #if PLATFORM(VISION)
 
@@ -668,6 +678,10 @@ private:
 
 #if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
         bool cssTransformStyleSeparatedEnabled { false };
+#endif
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+        bool allowsImmersiveEnvironments { false };
 #endif
 
 #endif // PLATFORM(VISION)

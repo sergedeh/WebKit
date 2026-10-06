@@ -11,6 +11,9 @@
 #ifndef INCLUDE_LIBYUV_CONVERT_H_
 #define INCLUDE_LIBYUV_CONVERT_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "libyuv/basic_types.h"
 
 #include "libyuv/rotate.h"  // For enum RotationMode.
@@ -24,6 +27,8 @@
 namespace libyuv {
 extern "C" {
 #endif
+
+struct ArgbConstants;
 
 // Convert I444 to I420.
 LIBYUV_API
@@ -831,6 +836,20 @@ int ARGBToI420(const uint8_t* src_argb,
                int width,
                int height);
 
+// RGB to I420 with matrix. See ArgbConstants in convert_from_argb.h for usage.
+LIBYUV_API
+int ARGBToI420Matrix(const uint8_t* src_argb,
+                     int src_stride_argb,
+                     uint8_t* dst_y,
+                     int dst_stride_y,
+                     uint8_t* dst_u,
+                     int dst_stride_u,
+                     uint8_t* dst_v,
+                     int dst_stride_v,
+                     const struct ArgbConstants* argbconstants,
+                     int width,
+                     int height);
+
 // Convert ARGB to I420 with Alpha
 LIBYUV_API
 int ARGBToI420Alpha(const uint8_t* src_argb,
@@ -863,6 +882,45 @@ int BGRAToI420(const uint8_t* src_bgra,
 LIBYUV_API
 int ABGRToI420(const uint8_t* src_abgr,
                int src_stride_abgr,
+               uint8_t* dst_y,
+               int dst_stride_y,
+               uint8_t* dst_u,
+               int dst_stride_u,
+               uint8_t* dst_v,
+               int dst_stride_v,
+               int width,
+               int height);
+
+// BGRA little endian (argb in memory) to I422.
+LIBYUV_API
+int BGRAToI422(const uint8_t* src_bgra,
+               int src_stride_bgra,
+               uint8_t* dst_y,
+               int dst_stride_y,
+               uint8_t* dst_u,
+               int dst_stride_u,
+               uint8_t* dst_v,
+               int dst_stride_v,
+               int width,
+               int height);
+
+// ABGR little endian (rgba in memory) to I422.
+LIBYUV_API
+int ABGRToI422(const uint8_t* src_abgr,
+               int src_stride_abgr,
+               uint8_t* dst_y,
+               int dst_stride_y,
+               uint8_t* dst_u,
+               int dst_stride_u,
+               uint8_t* dst_v,
+               int dst_stride_v,
+               int width,
+               int height);
+
+// RGBA little endian (abgr in memory) to I422.
+LIBYUV_API
+int RGBAToI422(const uint8_t* src_rgba,
+               int src_stride_rgba,
                uint8_t* dst_y,
                int dst_stride_y,
                uint8_t* dst_u,

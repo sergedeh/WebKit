@@ -35,7 +35,6 @@
 #include <pal/SessionID.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/CompletionHandler.h>
-#include <wtf/Expected.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -77,7 +76,7 @@ public:
     NetworkMDNSRegister(NetworkConnectionToWebProcess&);
     ~NetworkMDNSRegister();
 
-    void ref() const;
+    void NODELETE ref() const;
     void deref() const;
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
@@ -88,7 +87,7 @@ public:
 
     bool hasRegisteredName(const String&) const;
 
-    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+    std::optional<SharedPreferencesForWebProcess> NODELETE sharedPreferencesForWebProcess() const;
 
     struct PendingRegistrationRequestIdentifierType { };
     using PendingRegistrationRequestIdentifier = ObjectIdentifier<PendingRegistrationRequestIdentifierType>;
@@ -111,7 +110,7 @@ private:
     void unregisterMDNSNames(WebCore::ScriptExecutionContextIdentifier);
     void registerMDNSName(WebCore::ScriptExecutionContextIdentifier, const String& ipAddress, CompletionHandler<void(const String&, std::optional<WebCore::MDNSRegisterError>)>&&);
 
-    PAL::SessionID sessionID() const;
+    PAL::SessionID NODELETE sessionID() const;
 
     WeakRef<NetworkConnectionToWebProcess> m_connection;
     HashSet<String> m_registeredNames;

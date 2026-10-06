@@ -35,7 +35,6 @@
 #include "NodeDocument.h"
 #include "NodeList.h"
 #include "NodeRareData.h"
-#include "NodeInlines.h"
 #include "Text.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -61,7 +60,9 @@ Ref<HTMLTableRowElement> HTMLTableRowElement::create(const QualifiedName& tagNam
     return adoptRef(*new HTMLTableRowElement(tagName, document));
 }
 
-static inline RefPtr<HTMLTableElement> findTable(const HTMLTableRowElement& row)
+HTMLTableRowElement::~HTMLTableRowElement() = default;
+
+static inline RefPtr<HTMLTableElement> NODELETE findTable(const HTMLTableRowElement& row)
 {
     auto* parent = row.parentNode();
     if (auto* table = dynamicDowncast<HTMLTableElement>(parent))
@@ -122,7 +123,7 @@ ExceptionOr<Ref<HTMLTableCellElement>> HTMLTableRowElement::insertCell(int index
     int numCells = children->length();
     if (index > numCells)
         return Exception { ExceptionCode::IndexSizeError };
-    Ref cell = HTMLTableCellElement::create(tdTag, protectedDocument());
+    Ref cell = HTMLTableCellElement::create(tdTag, protect(document()));
     ExceptionOr<void> result;
     if (numCells == index || index == -1)
         result = appendChild(cell);
@@ -149,7 +150,7 @@ ExceptionOr<void> HTMLTableRowElement::deleteCell(int index)
 
 Ref<HTMLCollection> HTMLTableRowElement::cells()
 {
-    return ensureRareData().ensureNodeLists().addCachedCollection<GenericCachedHTMLCollection<CollectionTypeTraits<CollectionType::TRCells>::traversalType>>(*this, CollectionType::TRCells);
+    return ensureRareData().ensureNodeLists().addCachedCollection<HTMLTRCellsCollection>(*this);
 }
 
 }

@@ -32,6 +32,8 @@
 #include "ExceptionOr.h"
 #include "FileSystemDirectoryHandle.h"
 #include "FileSystemStorageConnection.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertInterface.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSFileSystemDirectoryHandle.h"
 #include "JSStorageManager.h"
@@ -92,7 +94,7 @@ static ExceptionOr<ConnectionInfo> connectionInfo(NavigatorBase* navigator, Exce
 
 void StorageManager::persisted(DOMPromiseDeferred<IDLBoolean>&& promise)
 {
-    auto connectionInfoOrException = connectionInfo(protectedNavigator().get(), ExceptionCode::TypeError);
+    auto connectionInfoOrException = connectionInfo(protect(m_navigator).get(), ExceptionCode::TypeError);
     if (connectionInfoOrException.hasException())
         return promise.reject(connectionInfoOrException.releaseException());
 
@@ -104,7 +106,7 @@ void StorageManager::persisted(DOMPromiseDeferred<IDLBoolean>&& promise)
 
 void StorageManager::persist(DOMPromiseDeferred<IDLBoolean>&& promise)
 {
-    auto connectionInfoOrException = connectionInfo(protectedNavigator().get(), ExceptionCode::TypeError);
+    auto connectionInfoOrException = connectionInfo(protect(m_navigator).get(), ExceptionCode::TypeError);
     if (connectionInfoOrException.hasException())
         return promise.reject(connectionInfoOrException.releaseException());
 
@@ -116,7 +118,7 @@ void StorageManager::persist(DOMPromiseDeferred<IDLBoolean>&& promise)
 
 void StorageManager::estimate(DOMPromiseDeferred<IDLDictionary<StorageEstimate>>&& promise)
 {
-    auto connectionInfoOrException = connectionInfo(protectedNavigator().get(), ExceptionCode::TypeError);
+    auto connectionInfoOrException = connectionInfo(protect(m_navigator).get(), ExceptionCode::TypeError);
     if (connectionInfoOrException.hasException())
         return promise.reject(connectionInfoOrException.releaseException());
 
@@ -128,7 +130,7 @@ void StorageManager::estimate(DOMPromiseDeferred<IDLDictionary<StorageEstimate>>
 
 void StorageManager::fileSystemGetDirectory(DOMPromiseDeferred<IDLInterface<FileSystemDirectoryHandle>>&& promise)
 {
-    auto connectionInfoOrException = connectionInfo(protectedNavigator().get(), ExceptionCode::SecurityError);
+    auto connectionInfoOrException = connectionInfo(protect(m_navigator).get(), ExceptionCode::SecurityError);
     if (connectionInfoOrException.hasException())
         return promise.reject(connectionInfoOrException.releaseException());
 
@@ -137,20 +139,16 @@ void StorageManager::fileSystemGetDirectory(DOMPromiseDeferred<IDLInterface<File
         if (result.hasException())
             return promise.reject(result.releaseException());
 
-        auto [identifier, connection] = result.releaseReturnValue();
+        auto info = result.releaseReturnValue();
         RefPtr context = weakNavigator ? weakNavigator->scriptExecutionContext() : nullptr;
         if (!context) {
-            connection->closeHandle(identifier);
+            info.connection->closeHandle(info.identifier);
             return promise.reject(Exception { ExceptionCode::InvalidStateError, "Context has stopped"_s });
         }
 
-        promise.resolve(FileSystemDirectoryHandle::create(*context, { }, identifier, Ref { *connection }));
+        Ref handle = FileSystemDirectoryHandle::create(*context, String { emptyString() }, info.globalIdentifier, info.identifier, protect(*info.connection));
+        promise.resolve(handle);
     });
-}
-
-RefPtr<NavigatorBase> StorageManager::protectedNavigator() const
-{
-    return m_navigator.get();
 }
 
 } // namespace WebCore

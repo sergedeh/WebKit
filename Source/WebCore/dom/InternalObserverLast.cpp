@@ -28,13 +28,16 @@
 
 #include "AbortController.h"
 #include "AbortSignal.h"
+#include "ContextDestructionObserverInlines.h"
 #include "Exception.h"
 #include "ExceptionCode.h"
 #include "InternalObserver.h"
+#include "JSDOMConvertAny.h"
 #include "JSDOMPromiseDeferred.h"
-#include "JSValueInWrappedObject.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "Observable.h"
 #include "ScriptExecutionContext.h"
+#include "ScriptWrappableInlines.h"
 #include "SubscribeOptions.h"
 #include "Subscriber.h"
 #include "SubscriberCallback.h"
@@ -54,12 +57,19 @@ public:
 private:
     void next(JSC::JSValue value) final
     {
-        m_lastValue.setWeakly(value);
+        RefPtr context = scriptExecutionContext();
+        if (!context)
+            return;
+        auto* globalObject = context->globalObject();
+        if (!globalObject)
+            return;
+        auto* owner = subscriber() ? subscriber()->wrapper() : nullptr;
+        m_lastValue.set(*globalObject, owner, value);
     }
 
     void error(JSC::JSValue value) final
     {
-        protectedPromise()->reject<IDLAny>(value);
+        protect(m_promise)->reject<IDLAny>(value);
     }
 
     void complete() final
@@ -67,17 +77,15 @@ private:
         InternalObserver::complete();
 
         if (!m_lastValue) [[unlikely]]
-            return protectedPromise()->reject(Exception { ExceptionCode::RangeError, "No values in Observable"_s });
+            return protect(m_promise)->reject(Exception { ExceptionCode::RangeError, "No values in Observable"_s });
 
-        protectedPromise()->resolve<IDLAny>(m_lastValue.getValue());
+        protect(m_promise)->resolve<IDLAny>(m_lastValue.getValue());
     }
 
-    void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
+    void visitAdditionalChildrenInGCThread(JSC::AbstractSlotVisitor& visitor) const final
     {
-        m_lastValue.visit(visitor);
+        m_lastValue.visitInGCThread(visitor);
     }
-
-    Ref<DeferredPromise> protectedPromise() const { return m_promise; }
 
     InternalObserverLast(ScriptExecutionContext& context, Ref<DeferredPromise>&& promise)
         : InternalObserver(context)

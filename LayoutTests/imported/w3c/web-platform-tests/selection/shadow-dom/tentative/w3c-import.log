@@ -10,12 +10,11 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/Range-isPointInRange.html
 /LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/Selection-collapse-and-extend.html
+/LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html
 /LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/Selection-direction.html
 /LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html
 /LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html
@@ -24,3 +23,4 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/Selection-getComposedRanges.html
 /LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/Selection-isCollapsed.html
 /LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/Selection-later-become-slotted-content.html
+/LayoutTests/imported/w3c/web-platform-tests/selection/shadow-dom/tentative/WEB_FEATURES.yml

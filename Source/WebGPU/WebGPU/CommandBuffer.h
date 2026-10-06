@@ -26,24 +26,26 @@
 #pragma once
 
 #import <Metal/Metal.h>
+#import <WebGPU/WebGPUCpp.h>
+#import <atomic>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
-#import <wtf/RetainReleaseSwift.h>
+#import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
+#import <wtf/ThreadSafeWeakPtr.h>
 #import <wtf/WeakPtr.h>
 #import <wtf/threads/BinarySemaphore.h>
 
 struct WGPUCommandBufferImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class CommandEncoder;
 class Device;
 
 // https://gpuweb.github.io/gpuweb/#gpucommandbuffer
-class CommandBuffer : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<CommandBuffer>, public WGPUCommandBufferImpl {
+class CommandBuffer final : public WebGPU::CommandBuffer, public WGPUCommandBufferImpl {
     WTF_MAKE_TZONE_ALLOCATED(CommandBuffer);
 public:
     static Ref<CommandBuffer> create(id<MTLCommandBuffer> commandBuffer, Device& device, id<MTLSharedEvent> sharedEvent, uint64_t sharedEventSignalValue, Vector<Function<bool(CommandBuffer&, CommandEncoder&)>>&& onCommitHandlers, CommandEncoder& commandEncoder)
@@ -57,9 +59,9 @@ public:
 
     ~CommandBuffer();
 
-    void setLabel(String&&);
+    void setLabel(String&&) final;
 
-    bool isValid() const { return m_commandBuffer; }
+    bool isValid() const final { return m_commandBuffer; }
 
     id<MTLCommandBuffer> commandBuffer() const { return m_commandBuffer; }
 
@@ -69,11 +71,13 @@ public:
     void setBufferMapCount(int bufferMapCount) { m_bufferMapCount = bufferMapCount; }
     int bufferMapCount() const { return m_bufferMapCount; }
 
-    NSString* lastError() const;
+    NSString* NODELETE lastError() const;
     bool waitForCompletion();
     bool preCommitHandler();
     void postCommitHandler();
     void addPostCommitHandler(Function<void(id<MTLCommandBuffer>)>&&);
+
+    double gpuExecutionDurationSeconds() const { return m_gpuExecutionDurationSeconds.load(std::memory_order_relaxed); }
 
 private:
     CommandBuffer(id<MTLCommandBuffer>, Device&, id<MTLSharedEvent>, uint64_t sharedEventSignalValue, Vector<Function<bool(CommandBuffer&, CommandEncoder&)>>&&, CommandEncoder&);
@@ -93,16 +97,19 @@ private:
     // FIXME: we should not need this semaphore - https://bugs.webkit.org/show_bug.cgi?id=272353
     BinarySemaphore m_commandBufferComplete;
     RefPtr<CommandEncoder> m_commandEncoder;
-} SWIFT_SHARED_REFERENCE(refCommandBuffer, derefCommandBuffer);
+    std::atomic<double> m_gpuExecutionDurationSeconds { 0 };
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refCommandBuffer, derefCommandBuffer);
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
-inline void refCommandBuffer(WebGPU::CommandBuffer* obj)
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+inline void refCommandBuffer(WebGPU::Metal::CommandBuffer* obj)
 {
-    WTF::ref(obj);
+    obj->ref();
 }
 
-inline void derefCommandBuffer(WebGPU::CommandBuffer* obj)
+inline void derefCommandBuffer(WebGPU::Metal::CommandBuffer* obj)
 {
-    WTF::deref(obj);
+    obj->deref();
 }
+#endif

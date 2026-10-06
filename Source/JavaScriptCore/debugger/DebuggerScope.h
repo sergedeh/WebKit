@@ -55,10 +55,7 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject) 
-    {
-        return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info()); 
-    } 
+    static Structure* createStructure(VM&, JSGlobalObject*);
     class iterator {
     public:
         iterator(DebuggerScope* node)
@@ -80,15 +77,15 @@ public:
     iterator end() LIFETIME_BOUND;
     DebuggerScope* next();
 
-    void invalidateChain();
+    void NODELETE invalidateChain();
     bool isValid() const { return !!m_scope; }
 
     bool isCatchScope() const;
     bool isFunctionNameScope() const;
-    bool isWithScope() const;
-    bool isGlobalScope() const;
+    bool NODELETE isWithScope() const;
+    bool NODELETE isGlobalScope() const;
     bool isClosureScope() const;
-    bool isGlobalLexicalEnvironment() const;
+    bool NODELETE isGlobalLexicalEnvironment() const;
     bool isNestedLexicalScope() const;
 
     String name() const;
@@ -100,7 +97,7 @@ private:
     DebuggerScope(VM&, Structure*, JSScope*);
     DECLARE_DEFAULT_FINISH_CREATION;
 
-    JSScope* jsScope() const { return m_scope.get(); }
+    JSScope* jsScope() const LIFETIME_BOUND { return m_scope.get(); }
 
     WriteBarrier<JSScope> m_scope;
     WriteBarrier<DebuggerScope> m_next;

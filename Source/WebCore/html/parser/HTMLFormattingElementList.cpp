@@ -135,7 +135,7 @@ void HTMLFormattingElementList::clearToLastMarker()
     }
 }
 
-static bool itemsHaveMatchingNames(const HTMLStackItem& a, const HTMLStackItem& b)
+static bool NODELETE itemsHaveMatchingNames(const HTMLStackItem& a, const HTMLStackItem& b)
 {
     if (a.elementName() != b.elementName())
         return false;
@@ -210,7 +210,7 @@ void HTMLFormattingElementList::ensureNoahsArkCondition(HTMLStackItem& newItem)
     // however, that we will spin the loop more than once because of how the
     // formatting element list gets permuted.
     for (size_t i = kNoahsArkCapacity - 1; i < candidates.size(); ++i)
-        remove(candidates[i]->protectedElement());
+        remove(protect(candidates[i]->element()));
 }
 
 #if ENABLE(TREE_DEBUGGING)

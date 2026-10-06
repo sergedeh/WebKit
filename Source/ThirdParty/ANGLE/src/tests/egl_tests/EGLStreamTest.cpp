@@ -7,11 +7,8 @@
 //   Tests pertaining to egl::Stream.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_libc_calls
-#endif
-
 #include <gtest/gtest.h>
+#include "common/unsafe_buffers.h"
 
 #include <d3d11.h>
 #include <vector>
@@ -70,7 +67,7 @@ TEST_P(EGLStreamTest, StreamValidationTest)
     EGLWindow *window            = getEGLWindow();
     EGLDisplay display           = window->getDisplay();
     const char *extensionsString = eglQueryString(display, EGL_EXTENSIONS);
-    if (strstr(extensionsString, "EGL_KHR_stream") == nullptr)
+    if (ANGLE_UNSAFE_TODO(strstr(extensionsString, "EGL_KHR_stream")) == nullptr)
     {
         std::cout << "Stream extension not supported" << std::endl;
         return;
@@ -165,7 +162,7 @@ TEST_P(EGLStreamTest, StreamConsumerGLTextureValidationTest)
     EGLWindow *window            = getEGLWindow();
     EGLDisplay display           = window->getDisplay();
     const char *extensionsString = eglQueryString(display, EGL_EXTENSIONS);
-    if (strstr(extensionsString, "EGL_KHR_stream_consumer_gltexture") == nullptr)
+    if (ANGLE_UNSAFE_TODO(strstr(extensionsString, "EGL_KHR_stream_consumer_gltexture")) == nullptr)
     {
         std::cout << "Stream consumer gltexture extension not supported" << std::endl;
         return;
@@ -203,7 +200,8 @@ TEST_P(EGLStreamTest, StreamConsumerGLTextureYUVValidationTest)
     EGLWindow *window            = getEGLWindow();
     EGLDisplay display           = window->getDisplay();
     const char *extensionsString = eglQueryString(display, EGL_EXTENSIONS);
-    if (strstr(extensionsString, "EGL_NV_stream_consumer_gltexture_yuv") == nullptr)
+    if (ANGLE_UNSAFE_TODO(strstr(extensionsString, "EGL_NV_stream_consumer_gltexture_yuv")) ==
+        nullptr)
     {
         std::cout << "Stream consumer gltexture yuv extension not supported" << std::endl;
         return;
@@ -320,7 +318,8 @@ TEST_P(EGLStreamTest, StreamConsumerGLTextureYUVDeletionTest)
     EGLWindow *window            = getEGLWindow();
     EGLDisplay display           = window->getDisplay();
     const char *extensionsString = eglQueryString(display, EGL_EXTENSIONS);
-    if (strstr(extensionsString, "EGL_ANGLE_stream_producer_d3d_texture") == nullptr)
+    if (ANGLE_UNSAFE_TODO(strstr(extensionsString, "EGL_ANGLE_stream_producer_d3d_texture")) ==
+        nullptr)
     {
         std::cout << "Stream producer d3d texture not supported" << std::endl;
         return;
@@ -503,11 +502,11 @@ TEST_P(D3D11TextureStreamSamplingTest, RGBA)
     subres.pSysMem     = texData;
     subres.SysMemPitch = 4;
 
-    ID3D11Texture2D *texture = nullptr;
+    angle::ComPtr<ID3D11Texture2D> texture;
     (void)mD3D->CreateTexture2D(&desc, &subres, &texture);
     ASSERT_NE(nullptr, texture);
 
-    result = eglStreamPostD3DTextureANGLE(mDisplay, mStream, (void *)texture, nullptr);
+    result = eglStreamPostD3DTextureANGLE(mDisplay, mStream, texture.Get(), nullptr);
     ASSERT_EGL_TRUE(result);
     ASSERT_EGL_SUCCESS();
 
@@ -623,11 +622,11 @@ TEST_P(D3D11TextureStreamSamplingTest, NV12)
     subres.pSysMem     = texData;
     subres.SysMemPitch = 2;
 
-    ID3D11Texture2D *texture = nullptr;
+    angle::ComPtr<ID3D11Texture2D> texture;
     (void)mD3D->CreateTexture2D(&desc, &subres, &texture);
     ASSERT_NE(nullptr, texture);
 
-    result = eglStreamPostD3DTextureANGLE(mDisplay, mStream, (void *)texture, nullptr);
+    result = eglStreamPostD3DTextureANGLE(mDisplay, mStream, texture.Get(), nullptr);
     ASSERT_EGL_TRUE(result);
     ASSERT_EGL_SUCCESS();
 
@@ -764,7 +763,7 @@ TEST_P(EGLStreamTest, StreamProducerTextureNV12End2End)
     subres.SysMemPitch      = yuvtest_width;
     subres.SysMemSlicePitch = yuvtest_width * yuvtest_height * 3 / 2;
 
-    ID3D11Texture2D *texture = nullptr;
+    angle::ComPtr<ID3D11Texture2D> texture;
     (void)device->CreateTexture2D(&desc, &subres, &texture);
     ASSERT_NE(nullptr, texture);
 
@@ -817,7 +816,7 @@ TEST_P(EGLStreamTest, StreamProducerTextureNV12End2End)
         0,
         EGL_NONE,
     };
-    result = eglStreamPostD3DTextureANGLE(display, stream, (void *)texture, frameAttributes);
+    result = eglStreamPostD3DTextureANGLE(display, stream, texture.Get(), frameAttributes);
     ASSERT_EGL_TRUE(result);
     ASSERT_EGL_SUCCESS();
 
@@ -839,7 +838,6 @@ TEST_P(EGLStreamTest, StreamProducerTextureNV12End2End)
     ASSERT_EGL_SUCCESS();
 
     eglSwapBuffers(display, window->getSurface());
-    SafeRelease(texture);
 }
 
 // Test P010 texture sampling via EGLStreams
@@ -940,11 +938,11 @@ void main()
     subres.pSysMem     = texData;
     subres.SysMemPitch = 4;
 
-    ID3D11Texture2D *texture = nullptr;
+    angle::ComPtr<ID3D11Texture2D> texture;
     (void)mD3D->CreateTexture2D(&desc, &subres, &texture);
     ASSERT_NE(nullptr, texture);
 
-    result = eglStreamPostD3DTextureANGLE(mDisplay, mStream, (void *)texture, nullptr);
+    result = eglStreamPostD3DTextureANGLE(mDisplay, mStream, texture.Get(), nullptr);
     ASSERT_EGL_TRUE(result);
     ASSERT_EGL_SUCCESS();
 
@@ -974,11 +972,10 @@ void main()
 }
 
 ANGLE_INSTANTIATE_TEST(EGLStreamTest,
-                       ES2_D3D9(),
                        ES2_D3D11(),
                        ES3_D3D11(),
                        ES2_OPENGL(),
                        ES3_OPENGL(),
                        ES2_VULKAN());
-ANGLE_INSTANTIATE_TEST(D3D11TextureStreamSamplingTest, ES2_D3D11(), ES3_D3D11(), ES31_D3D11());
+ANGLE_INSTANTIATE_TEST(D3D11TextureStreamSamplingTest, ES2_D3D11(), ES3_D3D11());
 }  // anonymous namespace

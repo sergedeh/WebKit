@@ -26,7 +26,7 @@
 #include "HTMLNames.h"
 #include "HTMLStyleElement.h"
 #include "ShadowRoot.h"
-#include "StyleScope.h"
+#include "StyleDocumentScope.h"
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -45,13 +45,14 @@ StyleSheetList::StyleSheetList(ShadowRoot& shadowRoot)
 
 StyleSheetList::~StyleSheetList() = default;
 
-inline const Vector<Ref<StyleSheet>>& StyleSheetList::styleSheets() const
+template<typename Func>
+auto StyleSheetList::callOnStyleSheets(NOESCAPE const Func& apply) const
 {
     if (RefPtr document = m_document.get())
-        return document->styleScope().styleSheetsForStyleSheetList();
-    if (RefPtr shadowRoot = m_shadowRoot.get())
-        return shadowRoot->checkedStyleScope()->styleSheetsForStyleSheetList();
-    return m_detachedStyleSheets;
+        return apply(protect(document->styleScope())->styleSheetsForStyleSheetList());
+    if (m_shadowRoot)
+        return apply(protect(m_shadowRoot->styleScope())->styleSheetsForStyleSheetList());
+    return apply(m_detachedStyleSheets);
 }
 
 Node* StyleSheetList::ownerNode() const
@@ -69,7 +70,7 @@ void StyleSheetList::detach()
         m_document = nullptr;
     } else if (RefPtr shadowRoot = m_shadowRoot.get()) {
         ASSERT(!m_document);
-        m_detachedStyleSheets = shadowRoot->checkedStyleScope()->styleSheetsForStyleSheetList();
+        m_detachedStyleSheets = protect(shadowRoot->styleScope())->styleSheetsForStyleSheetList();
         m_shadowRoot = nullptr;
     } else
         ASSERT_NOT_REACHED();
@@ -77,13 +78,16 @@ void StyleSheetList::detach()
 
 unsigned StyleSheetList::length() const
 {
-    return styleSheets().size();
+    return callOnStyleSheets([](auto& sheets) {
+        return sheets.size();
+    });
 }
 
-StyleSheet* StyleSheetList::item(unsigned index)
+RefPtr<StyleSheet> StyleSheetList::item(unsigned index) const
 {
-    const Vector<Ref<StyleSheet>>& sheets = styleSheets();
-    return index < sheets.size() ? sheets[index].ptr() : nullptr;
+    return callOnStyleSheets([index](auto& sheets) -> RefPtr<StyleSheet> {
+        return index < sheets.size() ? sheets[index].ptr() : nullptr;
+    });
 }
 
 CSSStyleSheet* StyleSheetList::namedItem(const AtomString& name) const
@@ -111,7 +115,7 @@ bool StyleSheetList::isSupportedPropertyName(const AtomString& name) const
 Vector<AtomString> StyleSheetList::supportedPropertyNames()
 {
     // FIXME: Should be implemented.
-    return Vector<AtomString>();
+    return { };
 }
 
 } // namespace WebCore

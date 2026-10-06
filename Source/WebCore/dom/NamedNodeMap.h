@@ -41,7 +41,7 @@ public:
     {
     }
 
-    WEBCORE_EXPORT void ref();
+    WEBCORE_EXPORT void NODELETE ref();
     WEBCORE_EXPORT void deref();
 
     bool isSupportedPropertyIndex(unsigned index) const { return index < length(); }
@@ -56,8 +56,7 @@ public:
 
     Vector<String> supportedPropertyNames() const;
 
-    Element& element();
-    Ref<Element> protectedElement() const;
+    Element& NODELETE element() const;
 
 private:
     WeakRef<Element, WeakPtrImplWithEventTargetData> m_element;

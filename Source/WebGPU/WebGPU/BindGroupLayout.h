@@ -26,12 +26,13 @@
 #pragma once
 
 #import "ShaderStage.h"
+#import <WebGPU/WebGPUCpp.h>
 #import <wtf/EnumeratedArray.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
+#import <wtf/HashSet.h>
 #import <wtf/HashTraits.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/Vector.h>
 #import <wtf/WeakPtr.h>
@@ -39,23 +40,43 @@
 struct WGPUBindGroupLayoutImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class BindGroup;
 class Device;
 class PipelineLayout;
 
 // https://gpuweb.github.io/gpuweb/#gpubindgrouplayout
-class BindGroupLayout : public RefCountedAndCanMakeWeakPtr<BindGroupLayout>, public WGPUBindGroupLayoutImpl {
+class BindGroupLayout final : public WebGPU::BindGroupLayout, public WGPUBindGroupLayoutImpl {
     WTF_MAKE_TZONE_ALLOCATED(BindGroupLayout);
 public:
     template <typename T>
     using ShaderStageArray = EnumeratedArray<ShaderStage, T, ShaderStage::Compute>;
     using ArgumentBufferIndices = ShaderStageArray<std::optional<uint32_t>>;
+    struct BufferBindingLayout {
+        WGPUBufferBindingType type { WGPUBufferBindingType_Undefined };
+        bool hasDynamicOffset { false };
+        uint64_t minBindingSize { 0 };
+        uint64_t bufferSizeForBinding { 0 };
+    };
+    struct SamplerBindingLayout {
+        WGPUSamplerBindingType type { WGPUSamplerBindingType_Undefined };
+    };
+    struct TextureBindingLayout {
+        WGPUTextureSampleType sampleType { WGPUTextureSampleType_Undefined };
+        WGPUTextureViewDimension viewDimension { WGPUTextureViewDimension_Undefined };
+        bool multisampled { false };
+    };
+    struct StorageTextureBindingLayout {
+        WGPUStorageTextureAccess access { WGPUStorageTextureAccess_Undefined };
+        WGPUTextureFormat format { WGPUTextureFormat_Undefined };
+        WGPUTextureViewDimension viewDimension { WGPUTextureViewDimension_Undefined };
+    };
+    struct ExternalTextureBindingLayout { };
     struct Entry {
         uint32_t binding;
-        WGPUShaderStageFlags visibility;
-        using BindingLayout = Variant<WGPUBufferBindingLayout, WGPUSamplerBindingLayout, WGPUTextureBindingLayout, WGPUStorageTextureBindingLayout, WGPUExternalTextureBindingLayout>;
+        WGPUShaderStage visibility;
+        using BindingLayout = Variant<BufferBindingLayout, SamplerBindingLayout, TextureBindingLayout, StorageTextureBindingLayout, ExternalTextureBindingLayout>;
         BindingLayout bindingLayout;
         ArgumentBufferIndices argumentBufferIndices;
         ArgumentBufferIndices bufferSizeArgumentBufferIndices;
@@ -66,17 +87,10 @@ public:
     };
     using EntriesContainer = HashMap<uint32_t, Entry, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
-#if USE(METAL_ARGUMENT_ACCESS_ENUMS)
-    using BindingAccess = MTLArgumentAccess;
-    static constexpr auto BindingAccessReadOnly = MTLArgumentAccessReadOnly;
-    static constexpr auto BindingAccessReadWrite = MTLArgumentAccessReadWrite;
-    static constexpr auto BindingAccessWriteOnly = MTLArgumentAccessWriteOnly;
-#else
     using BindingAccess = MTLBindingAccess;
     static constexpr auto BindingAccessReadOnly = MTLBindingAccessReadOnly;
     static constexpr auto BindingAccessReadWrite = MTLBindingAccessReadWrite;
     static constexpr auto BindingAccessWriteOnly = MTLBindingAccessWriteOnly;
-#endif
     using StageMapValue = BindingAccess;
     using StageMapTable = HashMap<uint64_t, StageMapValue, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     using ArgumentIndices = HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
@@ -92,9 +106,9 @@ public:
 
     ~BindGroupLayout();
 
-    void setLabel(String&&);
+    void setLabel(String&&) final;
 
-    bool isValid() const { return m_valid; }
+    bool isValid() const final { return m_valid; }
 
     NSUInteger encodedLength(ShaderStage) const;
 
@@ -102,37 +116,32 @@ public:
     id<MTLArgumentEncoder> fragmentArgumentEncoder() const { return m_fragmentArgumentEncoder; }
     id<MTLArgumentEncoder> computeArgumentEncoder() const { return m_computeArgumentEncoder; }
 
-    std::optional<StageMapValue> bindingAccessForBindingIndex(uint32_t bindingIndex, ShaderStage renderStage) const;
-    NSUInteger argumentBufferIndexForEntryIndex(uint32_t bindingIndex, ShaderStage renderStage) const;
-    std::optional<uint32_t> bufferSizeIndexForEntryIndex(uint32_t bindingIndex, ShaderStage renderStage) const;
+    std::optional<StageMapValue> NODELETE bindingAccessForBindingIndex(uint32_t bindingIndex, ShaderStage renderStage) const;
+    NSUInteger NODELETE argumentBufferIndexForEntryIndex(uint32_t bindingIndex, ShaderStage renderStage) const;
+    std::optional<uint32_t> NODELETE bufferSizeIndexForEntryIndex(uint32_t bindingIndex, ShaderStage renderStage) const;
 
-    static bool isPresent(const WGPUBufferBindingLayout&);
-    static bool isPresent(const WGPUSamplerBindingLayout&);
-    static bool isPresent(const WGPUTextureBindingLayout&);
-    static bool isPresent(const WGPUStorageTextureBindingLayout&);
-
-    const EntriesContainer& entries() const { return m_bindGroupLayoutEntries; }
+    const EntriesContainer& entries() const LIFETIME_BOUND { return m_bindGroupLayoutEntries; }
     const Vector<const Entry*> sortedEntries() const;
-    uint32_t sizeOfVertexDynamicOffsets() const;
-    uint32_t sizeOfFragmentDynamicOffsets() const;
-    uint32_t sizeOfComputeDynamicOffsets() const;
-    const Device& device() const;
-    bool isAutoGenerated() const;
-    const PipelineLayout* autogeneratedPipelineLayout() const;
-    void setAutogeneratedPipelineLayout(const PipelineLayout*);
+    uint32_t NODELETE sizeOfVertexDynamicOffsets() const;
+    uint32_t NODELETE sizeOfFragmentDynamicOffsets() const;
+    uint32_t NODELETE sizeOfComputeDynamicOffsets() const;
+    const Device& NODELETE device() const;
+    bool NODELETE isAutoGenerated() const;
+    RefPtr<const PipelineLayout> autogeneratedPipelineLayout() const;
+    void NODELETE setAutogeneratedPipelineLayout(const PipelineLayout*);
 
-    uint32_t uniformBuffersPerStage(ShaderStage) const;
-    uint32_t storageBuffersPerStage(ShaderStage) const;
-    uint32_t samplersPerStage(ShaderStage) const;
-    uint32_t texturesPerStage(ShaderStage) const;
-    uint32_t storageTexturesPerStage(ShaderStage) const;
-    uint32_t dynamicUniformBuffers() const;
-    uint32_t dynamicStorageBuffers() const;
-    uint32_t dynamicBufferCount() const;
+    uint32_t NODELETE uniformBuffersPerStage(ShaderStage) const;
+    uint32_t NODELETE storageBuffersPerStage(ShaderStage) const;
+    uint32_t NODELETE samplersPerStage(ShaderStage) const;
+    uint32_t NODELETE texturesPerStage(ShaderStage) const;
+    uint32_t NODELETE storageTexturesPerStage(ShaderStage) const;
+    uint32_t NODELETE dynamicUniformBuffers() const;
+    uint32_t NODELETE dynamicStorageBuffers() const;
+    uint32_t NODELETE dynamicBufferCount() const;
     NSString* errorValidatingDynamicOffsets(std::span<const uint32_t>, const BindGroup&, uint32_t& maxOffset) const;
     NSString* errorValidatingBindGroupCompatibility(const BindGroupLayout&) const;
     static bool equalBindingEntries(const BindGroupLayout::Entry::BindingLayout&, const BindGroupLayout::Entry::BindingLayout&);
-    const ArgumentIndices& argumentIndices(ShaderStage) const;
+    const ArgumentIndices& NODELETE argumentIndices(ShaderStage) const;
     uint32_t uniqueId() const { return m_uniqueIdentifier; }
 private:
     BindGroupLayout(StageMapTable&&, id<MTLArgumentEncoder>, id<MTLArgumentEncoder>, id<MTLArgumentEncoder>, EntriesContainer&&, size_t sizeOfVertexDynamicOffsets, size_t sizeOfFragmentDynamicOffsets, size_t sizeOfComputeDynamicOffsets, bool isAutoGenerated, ShaderStageArray<uint32_t>&& uniformBuffersPerStage, ShaderStageArray<uint32_t>&& storageBuffersPerStage, ShaderStageArray<uint32_t>&& samplersPerStage, ShaderStageArray<uint32_t>&& texturesPerStage, ShaderStageArray<uint32_t>&& storageTexturesPerStage, uint32_t dynamicUniformBuffers, uint32_t dynamicStorageBuffers, ShaderStageArray<ArgumentIndices>&&, uint32_t identifier, const Device&);
@@ -151,7 +160,7 @@ private:
     const size_t m_sizeOfFragmentDynamicOffsets { 0 };
     const size_t m_sizeOfComputeDynamicOffsets { 0 };
     Ref<const Device> m_device;
-    WeakPtr<const PipelineLayout> m_autogeneratedPipelineLayout;
+    ThreadSafeWeakPtr<const PipelineLayout> m_autogeneratedPipelineLayout;
     bool m_isAutoGenerated { false };
     ShaderStageArray<uint32_t> m_uniformBuffersPerStage;
     ShaderStageArray<uint32_t> m_storageBuffersPerStage;
@@ -164,4 +173,14 @@ private:
     uint32_t m_uniqueIdentifier { 0 };
 };
 
-} // namespace WebGPU
+// An entry of a bind group layout to create. The entries of the layouts that pipelines generate
+// from their shaders have their own Metal binding per stage, and they include entries for the
+// array lengths of runtime-sized buffers, with the binding type WGPUBufferBindingType_ArrayLength.
+struct ResolvedBindGroupLayoutEntry {
+    uint32_t binding { 0 };
+    std::array<uint32_t, WGPUShaderStage_Compute / 2 + 1> metalBinding { };
+    WGPUShaderStage visibility { WGPUShaderStage_None };
+    BindGroupLayout::Entry::BindingLayout bindingLayout;
+};
+
+} // namespace WebGPU::Metal

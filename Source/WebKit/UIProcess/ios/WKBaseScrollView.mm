@@ -139,6 +139,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     self.allowsKeyboardScrolling = YES;
 #endif
 
+#if PLATFORM(VISION)
+    static BOOL alternateRenderingAvailable = [UIScrollView instancesRespondToSelector:@selector(_setUseVisionAlternateScrollIndicatorRendering:)];
+    if (alternateRenderingAvailable)
+        [self _setUseVisionAlternateScrollIndicatorRendering:YES];
+#endif
+
     _axesToPreventMomentumScrolling = UIAxisNeither;
     [self.panGestureRecognizer addTarget:self action:@selector(_updatePanGestureToPreventScrolling)];
     return self;
@@ -262,6 +268,27 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 #if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
 
+- (void)_associateRelatedLayersForOverlayRegions:(const HashSet<WebCore::PlatformLayerIdentifier>&)relatedLayers with:(const WebKit::RemoteLayerTreeHost&)host
+{
+    auto diff = _overlayRegionAssociatedLayers.symmetricDifferenceWith(relatedLayers);
+    if (diff.isEmpty())
+        return;
+
+    _overlayRegionAssociatedLayers = relatedLayers;
+    if (![self respondsToSelector:@selector(_lookToScrollGroupName)])
+        return;
+
+    NSString *groupName = [self _lookToScrollGroupName];
+    for (auto layerID : relatedLayers) {
+        if (RetainPtr layer = host.layerForID(layerID)) {
+            CARemoteEffectGroup *group = [CARemoteEffectGroup groupWithEffects:@[]];
+            group.groupName = groupName;
+            group.matched = YES;
+            [layer setRemoteEffects:@[ group ]];
+        }
+    }
+}
+
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WKBaseScrollViewAdditions.mm>)
 #import <WebKitAdditions/WKBaseScrollViewAdditions.mm>
 #else
@@ -302,14 +329,6 @@ constexpr float overlayRegionContentFactor = 1.1;
     _overlayRegionRects = overlayRegions;
 }
 
-- (void)_associateRelatedLayersForOverlayRegions:(const HashSet<WebCore::PlatformLayerIdentifier>&)relatedLayers with:(const WebKit::RemoteLayerTreeHost&)host
-{
-    auto diff = _overlayRegionAssociatedLayers.symmetricDifferenceWith(relatedLayers);
-    if (!diff.size())
-        return;
-
-    _overlayRegionAssociatedLayers = relatedLayers;
-}
 #endif
 
 #endif // ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)

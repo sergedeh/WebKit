@@ -37,6 +37,7 @@
 #include "SharedBuffer.h"
 
 #include <array>
+#include <utility>
 #include <wtf/IndexedRange.h>
 
 namespace WebCore {
@@ -58,9 +59,9 @@ struct MathValueRecord {
 };
 
 struct MathConstants {
-    std::array<OpenType::Int16, OpenTypeMathData::ScriptScriptPercentScaleDown - OpenTypeMathData::ScriptPercentScaleDown + 1> intConstants;
-    std::array<OpenType::UInt16, OpenTypeMathData::DisplayOperatorMinHeight - OpenTypeMathData::DelimitedSubFormulaMinHeight + 1> uIntConstants;
-    std::array<OpenType::MathValueRecord, OpenTypeMathData::RadicalKernAfterDegree - OpenTypeMathData::MathLeading + 1> mathValuesConstants;
+    std::array<OpenType::Int16, std::to_underlying(OpenTypeMathData::MathConstant::ScriptScriptPercentScaleDown) - std::to_underlying(OpenTypeMathData::MathConstant::ScriptPercentScaleDown) + 1> intConstants;
+    std::array<OpenType::UInt16, std::to_underlying(OpenTypeMathData::MathConstant::DisplayOperatorMinHeight) - std::to_underlying(OpenTypeMathData::MathConstant::DelimitedSubFormulaMinHeight) + 1> uIntConstants;
+    std::array<OpenType::MathValueRecord, std::to_underlying(OpenTypeMathData::MathConstant::RadicalKernAfterDegree) - std::to_underlying(OpenTypeMathData::MathConstant::MathLeading) + 1> mathValuesConstants;
     OpenType::UInt16 radicalDegreeBottomRaisePercent;
 };
 
@@ -69,7 +70,7 @@ struct MathItalicsCorrectionInfo : TableWithCoverage {
     OpenType::UInt16 italicsCorrectionCount;
     OpenType::MathValueRecord italicsCorrection[1]; // There are italicsCorrectionCount italic correction values.
 
-    std::span<const OpenType::MathValueRecord> italicsCorrections() const { return unsafeMakeSpan(italicsCorrection, static_cast<size_t>(italicsCorrectionCount)); }
+    std::span<const OpenType::MathValueRecord> NODELETE italicsCorrections() const { return unsafeMakeSpan(italicsCorrection, static_cast<size_t>(italicsCorrectionCount)); }
 
     int16_t getItalicCorrection(const SharedBuffer& buffer, Glyph glyph) const
     {
@@ -119,7 +120,7 @@ struct GlyphAssembly : TableBase {
         OpenType::UInt16 partFlags;
     } partRecords[1]; // There are partCount GlyphPartRecord's.
 
-    std::span<const GlyphPartRecord> parts() const { return unsafeMakeSpan(partRecords, static_cast<size_t>(partCount)); }
+    std::span<const GlyphPartRecord> NODELETE parts() const { return unsafeMakeSpan(partRecords, static_cast<size_t>(partCount)); }
 
     // PartFlags enumeration currently uses only one bit:
     // 0x0001 If set, the part can be skipped or repeated.
@@ -150,7 +151,7 @@ struct MathGlyphConstruction : TableBase {
         OpenType::UInt16 advanceMeasurement;
     } mathGlyphVariantRecords[1]; // There are variantCount MathGlyphVariantRecord's.
 
-    std::span<const MathGlyphVariantRecord> variantRecords() const { return unsafeMakeSpan(mathGlyphVariantRecords, static_cast<size_t>(variantCount)); }
+    std::span<const MathGlyphVariantRecord> NODELETE variantRecords() const { return unsafeMakeSpan(mathGlyphVariantRecords, static_cast<size_t>(variantCount)); }
 
     void getSizeVariants(const SharedBuffer& buffer, Vector<Glyph>& variants) const
     {
@@ -179,7 +180,7 @@ struct MathVariants : TableWithCoverage {
     OpenType::UInt16 horizontalGlyphCount;
     OpenType::Offset mathGlyphConstructionsOffset[1]; // There are verticalGlyphCount vertical glyph contructions and horizontalGlyphCount vertical glyph contructions.
 
-    std::span<const OpenType::Offset> mathGlyphConstructionsOffsets() const { return unsafeMakeSpan(mathGlyphConstructionsOffset, static_cast<size_t>(verticalGlyphCount) + static_cast<size_t>(horizontalGlyphCount)); }
+    std::span<const OpenType::Offset> NODELETE mathGlyphConstructionsOffsets() const { return unsafeMakeSpan(mathGlyphConstructionsOffset, static_cast<size_t>(verticalGlyphCount) + static_cast<size_t>(horizontalGlyphCount)); }
 
     const MathGlyphConstruction* mathGlyphConstruction(const SharedBuffer& buffer, Glyph glyph, bool isVertical) const
     {
@@ -255,13 +256,13 @@ OpenTypeMathData::OpenTypeMathData(const FontPlatformData& font)
         return;
     }
 
-    const OpenType::MathConstants* mathConstants = math->mathConstants(*m_mathBuffer);
+    const OpenType::MathConstants* mathConstants = math->mathConstants(protect(*m_mathBuffer));
     if (!mathConstants) {
         m_mathBuffer = nullptr;
         return;
     }
 
-    const OpenType::MathVariants* mathVariants = math->mathVariants(*m_mathBuffer);
+    const OpenType::MathVariants* mathVariants = math->mathVariants(protect(*m_mathBuffer));
     if (!mathVariants)
         m_mathBuffer = nullptr;
 }
@@ -283,27 +284,28 @@ float OpenTypeMathData::getMathConstant(const Font& font, MathConstant constant)
 
     auto* math = OpenType::validateTableSingle<OpenType::MATHTable>(m_mathBuffer);
     ASSERT(math);
-    const OpenType::MathConstants* mathConstants = math->mathConstants(*m_mathBuffer);
+    const OpenType::MathConstants* mathConstants = math->mathConstants(protect(*m_mathBuffer));
     ASSERT(mathConstants);
 
-    if (constant >= 0 && constant <= ScriptScriptPercentScaleDown)
-        value = int16_t(mathConstants->intConstants[constant]);
-    else if (constant >= DelimitedSubFormulaMinHeight && constant <= DisplayOperatorMinHeight)
-        value = uint16_t(mathConstants->uIntConstants[constant - DelimitedSubFormulaMinHeight]);
-    else if (constant >= MathLeading && constant <= RadicalKernAfterDegree)
-        value = int16_t(mathConstants->mathValuesConstants[constant - MathLeading].value);
-    else if (constant == RadicalDegreeBottomRaisePercent)
+    auto index = std::to_underlying(constant);
+    if (constant <= MathConstant::ScriptScriptPercentScaleDown)
+        value = int16_t(mathConstants->intConstants[index]);
+    else if (constant >= MathConstant::DelimitedSubFormulaMinHeight && constant <= MathConstant::DisplayOperatorMinHeight)
+        value = uint16_t(mathConstants->uIntConstants[index - std::to_underlying(MathConstant::DelimitedSubFormulaMinHeight)]);
+    else if (constant >= MathConstant::MathLeading && constant <= MathConstant::RadicalKernAfterDegree)
+        value = int16_t(mathConstants->mathValuesConstants[index - std::to_underlying(MathConstant::MathLeading)].value);
+    else if (constant == MathConstant::RadicalDegreeBottomRaisePercent)
         value = uint16_t(mathConstants->radicalDegreeBottomRaisePercent);
 
-    if (constant == ScriptPercentScaleDown || constant == ScriptScriptPercentScaleDown || constant == RadicalDegreeBottomRaisePercent)
+    if (constant == MathConstant::ScriptPercentScaleDown || constant == MathConstant::ScriptScriptPercentScaleDown || constant == MathConstant::RadicalDegreeBottomRaisePercent)
         return value / 100.0;
 
     return value * font.sizePerUnit();
 #elif USE(HARFBUZZ)
 float OpenTypeMathData::getMathConstant(const Font& font, MathConstant constant) const
 {
-    hb_position_t value = hb_ot_math_get_constant(m_mathFont.get(), static_cast<hb_ot_math_constant_t>(constant));
-    if (constant == ScriptPercentScaleDown || constant == ScriptScriptPercentScaleDown || constant == RadicalDegreeBottomRaisePercent)
+    hb_position_t value = hb_ot_math_get_constant(m_mathFont.get(), static_cast<hb_ot_math_constant_t>(std::to_underlying(constant)));
+    if (constant == MathConstant::ScriptPercentScaleDown || constant == MathConstant::ScriptScriptPercentScaleDown || constant == MathConstant::RadicalDegreeBottomRaisePercent)
         return value / 100.0;
 
     return value * font.sizePerUnit();
@@ -320,15 +322,15 @@ float OpenTypeMathData::getItalicCorrection(const Font& font, Glyph glyph) const
 {
     auto* math = OpenType::validateTableSingle<OpenType::MATHTable>(m_mathBuffer);
     ASSERT(math);
-    const OpenType::MathGlyphInfo* mathGlyphInfo = math->mathGlyphInfo(*m_mathBuffer);
+    const OpenType::MathGlyphInfo* mathGlyphInfo = math->mathGlyphInfo(protect(*m_mathBuffer));
     if (!mathGlyphInfo)
         return 0;
 
-    const OpenType::MathItalicsCorrectionInfo* mathItalicsCorrectionInfo = mathGlyphInfo->mathItalicsCorrectionInfo(*m_mathBuffer);
+    const OpenType::MathItalicsCorrectionInfo* mathItalicsCorrectionInfo = mathGlyphInfo->mathItalicsCorrectionInfo(protect(*m_mathBuffer));
     if (!mathItalicsCorrectionInfo)
         return 0;
 
-    return mathItalicsCorrectionInfo->getItalicCorrection(*m_mathBuffer, glyph) * font.sizePerUnit();
+    return mathItalicsCorrectionInfo->getItalicCorrection(protect(*m_mathBuffer), glyph) * font.sizePerUnit();
 #elif USE(HARFBUZZ)
 float OpenTypeMathData::getItalicCorrection(const Font& font, Glyph glyph) const
 {
@@ -348,15 +350,15 @@ void OpenTypeMathData::getMathVariants(Glyph glyph, bool isVertical, Vector<Glyp
     assemblyParts.clear();
     auto* math = OpenType::validateTableSingle<OpenType::MATHTable>(m_mathBuffer);
     ASSERT(math);
-    const OpenType::MathVariants* mathVariants = math->mathVariants(*m_mathBuffer);
+    const OpenType::MathVariants* mathVariants = math->mathVariants(protect(*m_mathBuffer));
     ASSERT(mathVariants);
 
-    const OpenType::MathGlyphConstruction* mathGlyphConstruction = mathVariants->mathGlyphConstruction(*m_mathBuffer, glyph, isVertical);
+    const OpenType::MathGlyphConstruction* mathGlyphConstruction = mathVariants->mathGlyphConstruction(protect(*m_mathBuffer), glyph, isVertical);
     if (!mathGlyphConstruction)
         return;
 
-    mathGlyphConstruction->getSizeVariants(*m_mathBuffer, sizeVariants);
-    mathGlyphConstruction->getAssemblyParts(*m_mathBuffer, assemblyParts);
+    mathGlyphConstruction->getSizeVariants(protect(*m_mathBuffer), sizeVariants);
+    mathGlyphConstruction->getAssemblyParts(protect(*m_mathBuffer), assemblyParts);
 #elif USE(HARFBUZZ)
 void OpenTypeMathData::getMathVariants(Glyph glyph, bool isVertical, Vector<Glyph>& sizeVariants, Vector<AssemblyPart>& assemblyParts) const
 {
@@ -396,6 +398,35 @@ void OpenTypeMathData::getMathVariants(Glyph, bool, Vector<Glyph>&, Vector<Assem
     ASSERT_NOT_REACHED();
 #endif
 }
+
+#if !ENABLE(OPENTYPE_MATH) && USE(HARFBUZZ)
+Glyph OpenTypeMathData::getMirroredGlyph(char32_t codePoint) const
+{
+    if (!codePoint)
+        return 0;
+
+    HbUniquePtr<hb_buffer_t> buffer(hb_buffer_create());
+    hb_buffer_set_direction(buffer.get(), HB_DIRECTION_RTL);
+    hb_buffer_set_content_type(buffer.get(), HB_BUFFER_CONTENT_TYPE_UNICODE);
+    hb_buffer_add(buffer.get(), codePoint, 0 /* cluster */);
+
+    hb_feature_t rtlmFeature = { HB_TAG('r', 't', 'l', 'm'), 1 /* enabled value */, HB_FEATURE_GLOBAL_START /* start cluster */, HB_FEATURE_GLOBAL_END /* end cluster */ };
+    hb_shape(m_mathFont.get(), buffer.get(), &rtlmFeature, 1 /* number of features */);
+
+    unsigned glyphCount = 0;
+    hb_glyph_info_t* glyphInfos = hb_buffer_get_glyph_infos(buffer.get(), &glyphCount);
+    // We don't support mirroring text with more than one glyph
+    if (glyphCount == 1)
+        return glyphInfos[0].codepoint;
+
+    return 0;
+}
+#else
+Glyph OpenTypeMathData::getMirroredGlyph(char32_t) const
+{
+    return 0;
+}
+#endif
 
 } // namespace WebCore
 

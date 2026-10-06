@@ -25,20 +25,24 @@
 
 #pragma once
 
-#include <WebCore/BoxSides.h>
-#include <WebCore/LayoutRange.h>
-#include <WebCore/RenderBox.h>
-#include <WebCore/StyleInset.h>
-#include <WebCore/StyleMargin.h>
-#include <WebCore/StyleSelfAlignmentData.h>
+#include "BoxSides.h"
+#include "LayoutRange.h"
+#include "RenderBox.h"
+#include "StyleInset.h"
+#include "StyleMargin.h"
+#include "StylePrimitiveNumericTypes+EvaluationMinimum.h"
+#include "StyleSelfAlignmentData.h"
 
 namespace WebCore {
 
 class PositionedLayoutConstraints {
 public:
     PositionedLayoutConstraints(const RenderBox&, LogicalBoxAxis selfAxis);
-    PositionedLayoutConstraints(const RenderBox&, const RenderStyle& selfStyleOverride, LogicalBoxAxis selfAxis);
+    PositionedLayoutConstraints(const RenderBox&, const Style::ComputedStyle& selfStyleOverride, LogicalBoxAxis selfAxis);
     void computeInsets();
+
+    static bool usesStaticPosition(const Style::ComputedStyle&, LogicalBoxAxis, bool isHorizontalWritingMode);
+    static LayoutSize containingBlockOffsetForNonStaticAxes(const RenderBoxModelObject& container, const Style::ComputedStyle& outOfFlowBoxStyle);
 
     /*** The following are available without calling computeInsets(). ***/
 
@@ -54,11 +58,11 @@ public:
     WritingMode containingWritingMode() const { return m_containingWritingMode; }
     WritingMode selfWritingMode() const { return m_writingMode; }
 
-    bool needsAnchor() const;
+    bool NODELETE needsAnchor() const;
     const RenderBoxModelObject* defaultAnchorBox() const { return m_defaultAnchorBox.get(); }
-    const StyleSelfAlignmentData& alignment() const { return m_alignment; }
+    const StyleSelfAlignmentData& alignment() const LIFETIME_BOUND { return m_alignment; }
     ItemPosition resolveAlignmentValue() const; // Convert auto/normal as necessary.
-    bool alignmentAppliesStretch(ItemPosition normalAlignment) const;
+    bool NODELETE alignmentAppliesStretch(ItemPosition normalAlignment) const;
 
     bool isOrthogonal() const { return m_containingWritingMode.isOrthogonal(m_writingMode); }
     inline bool isOpposing() const;
@@ -83,18 +87,20 @@ public:
 
     LayoutUnit insetModifiedContainingSize() const { return m_insetModifiedContainingRange.size(); }
     LayoutRange insetModifiedContainingRange() const { return m_insetModifiedContainingRange; }
-    LayoutUnit availableContentSpace() const { return insetModifiedContainingSize() - marginBeforeValue() - bordersPlusPadding() - marginAfterValue(); } // This may be negative.
+    LayoutUnit availableContentSpace() const { return std::max(0_lu, insetModifiedContainingSize() - marginBeforeValue() - bordersPlusPadding() - marginAfterValue()); }
 
     void resolvePosition(RenderBox::LogicalExtentComputedValues&) const;
     LayoutUnit resolveAlignmentShift(const LayoutUnit unusedSpace, const LayoutUnit itemSize) const;
 
     void fixupLogicalLeftPosition(RenderBox::LogicalExtentComputedValues&) const;
-    void adjustLogicalTopWithLogicalHeightIfNeeded(RenderBox::LogicalExtentComputedValues&) const;
+    void NODELETE adjustLogicalTopWithLogicalHeightIfNeeded(RenderBox::LogicalExtentComputedValues&) const;
 
     LayoutUnit computedInlineStaticDistance() const;
 
 private:
-    bool containingCoordsAreFlipped() const;
+    bool NODELETE containingCoordsAreFlipped() const;
+    bool isOrthogonalToContainingBlockWithFlippedParent() const;
+    bool isParentOpposingContainingBlock() const;
 
     void captureInsets();
     void captureGridArea();
@@ -103,19 +109,21 @@ private:
     LayoutRange adjustForPositionArea(const LayoutRange rangeToAdjust, const LayoutRange anchorArea, const BoxAxis containerAxis);
     std::pair<bool, bool> containerAllowsInfiniteOverflow() const;
 
-    bool needsGridAreaAdjustmentBeforeStaticPositioning() const;
+    bool NODELETE needsGridAreaAdjustmentBeforeStaticPositioning() const;
     std::optional<LayoutUnit> remainingSpaceForStaticAlignment(LayoutUnit itemSize) const;
+    bool shouldAlignStaticPositionInInlineAxis() const;
     void computeStaticPosition();
     LayoutUnit computedBlockStaticDistance() const;
 
     CheckedRef<const RenderBox> m_renderer;
     CheckedPtr<const RenderBoxModelObject> m_container;
     const WritingMode m_containingWritingMode;
+    const WritingMode m_parentWritingMode;
     const WritingMode m_writingMode;
     const LogicalBoxAxis m_selfAxis;
     const LogicalBoxAxis m_containingAxis;
     const BoxAxis m_physicalAxis;
-    const RenderStyle& m_style;
+    const Style::ComputedStyle& m_style;
     StyleSelfAlignmentData m_alignment;
     const CheckedPtr<const RenderBoxModelObject> m_defaultAnchorBox; // Only set if needed.
 

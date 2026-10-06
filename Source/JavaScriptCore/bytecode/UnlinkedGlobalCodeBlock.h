@@ -29,9 +29,29 @@
 
 namespace JSC {
 
+template<typename CodeBlockType>
+class CachedGlobalCodeBlock;
+
 class UnlinkedGlobalCodeBlock : public UnlinkedCodeBlock {
 public:
     typedef UnlinkedCodeBlock Base;
+
+    void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
+    {
+        m_features = features;
+        m_lexicallyScopedFeatures = lexicallyScopedFeatures;
+        m_hasCapturedVariables = hasCapturedVariables;
+    }
+
+    StringImpl* sourceURLDirective() const { return m_sourceURLDirective.get(); }
+    StringImpl* sourceMappingURLDirective() const { return m_sourceMappingURLDirective.get(); }
+    void setSourceURLDirective(const String& sourceURL) { m_sourceURLDirective = sourceURL.impl(); }
+    void setSourceMappingURLDirective(const String& sourceMappingURL) { m_sourceMappingURLDirective = sourceMappingURL.impl(); }
+
+    CodeFeatures codeFeatures() const { return m_features; }
+    bool allowDirectEvalCache() const { return !(m_features & NoEvalCacheFeature); }
+    LexicallyScopedFeatures lexicallyScopedFeatures() const { return m_lexicallyScopedFeatures; }
+    bool hasCapturedVariables() const { return m_hasCapturedVariables; }
 
 protected:
     UnlinkedGlobalCodeBlock(VM& vm, Structure* structure, CodeType codeType, const ExecutableInfo& info, OptionSet<CodeGenerationMode> codeGenerationMode)
@@ -44,6 +64,17 @@ protected:
         : Base(decoder, structure, cachedCodeBlock)
     {
     }
+
+private:
+    template<typename CodeBlockType>
+    friend class CachedGlobalCodeBlock;
+
+    CodeFeatures m_features { NoFeatures };
+    LexicallyScopedFeatures m_lexicallyScopedFeatures { NoLexicallyScopedFeatures };
+    bool m_hasCapturedVariables { false };
+
+    PackedRefPtr<StringImpl> m_sourceURLDirective;
+    PackedRefPtr<StringImpl> m_sourceMappingURLDirective;
 };
 
 }

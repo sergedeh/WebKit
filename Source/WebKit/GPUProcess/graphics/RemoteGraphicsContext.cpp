@@ -34,6 +34,7 @@
 #include "RemoteGraphicsContextMessages.h"
 #include "RemoteImageBuffer.h"
 #include "RemoteSharedResourceCache.h"
+#include "SharedFont.h"
 #include "SharedPreferencesForWebProcess.h"
 #include "SharedVideoFrame.h"
 #include <WebCore/BitmapImage.h>
@@ -68,7 +69,7 @@ RemoteGraphicsContext::~RemoteGraphicsContext() = default;
 Ref<ControlFactory> RemoteGraphicsContext::controlFactory()
 {
     if (!m_controlFactory)
-        m_controlFactory = ControlFactory::create();
+        lazyInitialize(m_controlFactory, ControlFactory::create());
     return *m_controlFactory;
 }
 
@@ -154,14 +155,14 @@ void RemoteGraphicsContext::setFillPatternNativeImage(RenderingResourceIdentifie
 {
     RefPtr tileImage = resourceCache().cachedNativeImage(identifier);
     MESSAGE_CHECK(tileImage);
-    context().setFillPattern(Pattern::create({ tileImage.releaseNonNull() }, parameters));
+    context().setFillPattern(WebCore::Pattern::create({ tileImage.releaseNonNull() }, parameters));
 }
 
 void RemoteGraphicsContext::setFillPatternImageBuffer(RenderingResourceIdentifier identifier, const PatternParameters& parameters)
 {
     RefPtr tileImageBuffer = this->imageBuffer(identifier);
     MESSAGE_CHECK(tileImageBuffer);
-    context().setFillPattern(Pattern::create({ tileImageBuffer.releaseNonNull() }, parameters));
+    context().setFillPattern(WebCore::Pattern::create({ tileImageBuffer.releaseNonNull() }, parameters));
 }
 
 void RemoteGraphicsContext::setFillRule(WindRule rule)
@@ -195,14 +196,14 @@ void RemoteGraphicsContext::setStrokePatternNativeImage(RenderingResourceIdentif
 {
     RefPtr tileImage = resourceCache().cachedNativeImage(identifier);
     MESSAGE_CHECK(tileImage);
-    context().setStrokePattern(Pattern::create({ tileImage.releaseNonNull() }, parameters));
+    context().setStrokePattern(WebCore::Pattern::create({ tileImage.releaseNonNull() }, parameters));
 }
 
 void RemoteGraphicsContext::setStrokePatternImageBuffer(RenderingResourceIdentifier identifier, const PatternParameters& parameters)
 {
     RefPtr tileImageBuffer = imageBuffer(identifier);
     MESSAGE_CHECK(tileImageBuffer);
-    context().setStrokePattern(Pattern::create({ tileImageBuffer.releaseNonNull() }, parameters));
+    context().setStrokePattern(WebCore::Pattern::create({ tileImageBuffer.releaseNonNull() }, parameters));
 }
 
 void RemoteGraphicsContext::setStrokePackedColorAndThickness(PackedColor::RGBA color, float thickness)
@@ -274,11 +275,6 @@ void RemoteGraphicsContext::setShadowsIgnoreTransforms(bool value)
     context().setShadowsIgnoreTransforms(value);
 }
 
-void RemoteGraphicsContext::setDrawLuminanceMask(bool value)
-{
-    context().setDrawLuminanceMask(value);
-}
-
 void RemoteGraphicsContext::setLineCap(LineCap lineCap)
 {
     context().setLineCap(lineCap);
@@ -338,6 +334,15 @@ void RemoteGraphicsContext::clipOutToPath(const Path& path)
 
 void RemoteGraphicsContext::clipPath(const Path& path, WindRule rule)
 {
+    context().clipPath(path, rule);
+}
+
+void RemoteGraphicsContext::clipCachedPath(RemotePathImplIdentifier identifier, WebCore::WindRule rule)
+{
+    RefPtr pathImpl = resourceCache().cachedPathImpl(identifier);
+    MESSAGE_CHECK(pathImpl);
+
+    Path path(pathImpl.releaseNonNull());
     context().clipPath(path, rule);
 }
 
@@ -402,7 +407,9 @@ void RemoteGraphicsContext::drawGlyphs(RenderingResourceIdentifier fontIdentifie
 {
     RefPtr font = resourceCache().cachedFont(fontIdentifier);
     MESSAGE_CHECK(font);
-    context().drawGlyphs(*font, glyphsAdvances.span<0>(), Vector<GlyphBufferAdvance>(glyphsAdvances.span<1>()), localAnchor, fontSmoothingMode);
+    Vector<GlyphBufferGlyph, 128> glyphs { glyphsAdvances.span<0>() };
+    Vector<GlyphBufferAdvance, 128> advances { glyphsAdvances.span<1>() };
+    context().drawGlyphsImmediate(*font, glyphs.span(), advances.span(), localAnchor, fontSmoothingMode);
 }
 
 void RemoteGraphicsContext::drawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect, const FloatRect& srcRect, ImagePaintingOptions options)
@@ -431,9 +438,11 @@ void RemoteGraphicsContext::drawSystemImage(Ref<SystemImage>&& systemImage, cons
 {
 #if USE(SYSTEM_PREVIEW)
     if (auto* badge = dynamicDowncast<ARKitBadgeSystemImage>(systemImage.get())) {
-        RefPtr nativeImage = resourceCache().cachedNativeImage(badge->imageIdentifier());
-        MESSAGE_CHECK(nativeImage);
-        badge->setImage(BitmapImage::create(nativeImage.releaseNonNull()));
+        if (auto imageIdentifier = badge->imageIdentifier()) {
+            RefPtr nativeImage = resourceCache().cachedNativeImage(*imageIdentifier);
+            MESSAGE_CHECK(nativeImage);
+            badge->setImage(BitmapImage::create(nativeImage.releaseNonNull()));
+        }
     }
 #endif
     context().drawSystemImage(systemImage, destinationRect);
@@ -498,14 +507,14 @@ void RemoteGraphicsContext::drawPath(const Path& path)
     context().drawPath(path);
 }
 
-void RemoteGraphicsContext::drawFocusRingPath(const Path& path, float outlineWidth, const Color& color)
+void RemoteGraphicsContext::drawFocusRingPath(const Path& path, float outlineWidth, const Color& color, float zoomFactor)
 {
-    context().drawFocusRing(path, outlineWidth, color);
+    context().drawFocusRing(path, outlineWidth, color, zoomFactor);
 }
 
-void RemoteGraphicsContext::drawFocusRingRects(const Vector<FloatRect>& rects, float outlineOffset, float outlineWidth, const Color& color)
+void RemoteGraphicsContext::drawFocusRingRects(const Vector<FloatRect>& rects, float outlineWidth, const Color& color, float zoomFactor)
 {
-    context().drawFocusRing(rects, outlineOffset, outlineWidth, color);
+    context().drawFocusRing(rects, outlineWidth, color, zoomFactor);
 }
 
 void RemoteGraphicsContext::fillRect(const FloatRect& rect, GraphicsContext::RequiresClipToRect requiresClipToRect)
@@ -543,8 +552,6 @@ void RemoteGraphicsContext::fillRectWithRoundedHole(const FloatRect& rect, const
     context().fillRectWithRoundedHole(rect, roundedHoleRect, color);
 }
 
-#if ENABLE(INLINE_PATH_DATA)
-
 void RemoteGraphicsContext::fillLine(const PathDataLine& line)
 {
     context().fillPath(Path({ PathSegment { line } }));
@@ -570,10 +577,17 @@ void RemoteGraphicsContext::fillBezierCurve(const PathDataBezierCurve& curve)
     context().fillPath(Path({ PathSegment { curve } }));
 }
 
-#endif // ENABLE(INLINE_PATH_DATA)
-
 void RemoteGraphicsContext::fillPath(const Path& path)
 {
+    context().fillPath(path);
+}
+
+void RemoteGraphicsContext::fillCachedPath(RemotePathImplIdentifier identifier)
+{
+    RefPtr pathImpl = resourceCache().cachedPathImpl(identifier);
+    MESSAGE_CHECK(pathImpl);
+
+    Path path(pathImpl.releaseNonNull());
     context().fillPath(path);
 }
 
@@ -592,15 +606,15 @@ SharedVideoFrameReader& RemoteGraphicsContext::sharedVideoFrameReader()
 {
     if (!m_sharedVideoFrameReader) {
         Ref gpuConnectionToWebProcess = m_renderingBackend->gpuConnectionToWebProcess();
-        m_sharedVideoFrameReader = makeUnique<SharedVideoFrameReader>(Ref { gpuConnectionToWebProcess->videoFrameObjectHeap() }, gpuConnectionToWebProcess->webProcessIdentity());
+        lazyInitialize(m_sharedVideoFrameReader, makeUnique<SharedVideoFrameReader>(Ref { gpuConnectionToWebProcess->videoFrameObjectHeap() }, gpuConnectionToWebProcess->webProcessIdentity()));
     }
     return *m_sharedVideoFrameReader;
 }
 
-void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ImageOrientation orientation, bool shouldDiscardAlpha)
+void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
 {
     if (auto videoFrame = sharedVideoFrameReader().read(WTF::move(frame)))
-        context().drawVideoFrame(*videoFrame, destination, orientation, shouldDiscardAlpha);
+        context().drawVideoFrame(*videoFrame, destination, shouldDiscardAlpha, options);
 }
 
 void RemoteGraphicsContext::setSharedVideoFrameSemaphore(IPC::Semaphore&& semaphore)
@@ -619,32 +633,34 @@ void RemoteGraphicsContext::strokeRect(const FloatRect& rect, float lineWidth)
     context().strokeRect(rect, lineWidth);
 }
 
-#if ENABLE(INLINE_PATH_DATA)
-
 void RemoteGraphicsContext::strokeLine(const PathDataLine& line)
 {
-#if ENABLE(INLINE_PATH_DATA)
-    auto path = Path({ PathSegment { PathDataLine { { line.start() }, { line.end() } } } });
-#else
-    Path path;
-    path.moveTo(line.start);
-    path.addLineTo(line.end);
-#endif
-    context().strokePath(path);
+    context().strokeLine(line);
 }
 
-void RemoteGraphicsContext::strokeLineWithColorAndThickness(const PathDataLine& line, std::optional<PackedColor::RGBA> strokeColor, std::optional<float> strokeThickness)
+void RemoteGraphicsContext::strokeLinesWithColorAndThickness(std::span<const PathDataLineColorThickness> lines)
 {
-    if (strokeColor)
-        setStrokePackedColor(*strokeColor);
-    if (strokeThickness)
-        setStrokeThickness(*strokeThickness);
-    strokeLine(line);
+    // Each line carries its stroke color and thickness so the batch is self
+    // describing; only push a state change to the context when it differs from
+    // the previously applied value to avoid redundant CG state changes.
+    std::optional<PackedColor::RGBA> lastColor;
+    std::optional<float> lastThickness;
+    for (const auto& entry : lines) {
+        if (lastColor != entry.color) {
+            setStrokePackedColor(entry.color);
+            lastColor = entry.color;
+        }
+        if (lastThickness != entry.thickness) {
+            setStrokeThickness(std::max(entry.thickness, 0.f));
+            lastThickness = entry.thickness;
+        }
+        context().strokeLine(entry.line);
+    }
 }
 
 void RemoteGraphicsContext::strokeArc(const PathArc& arc)
 {
-    context().strokePath(Path({ PathSegment { arc } }));
+    context().strokeArc(arc);
 }
 
 void RemoteGraphicsContext::strokeClosedArc(const PathClosedArc& closedArc)
@@ -661,8 +677,6 @@ void RemoteGraphicsContext::strokeBezierCurve(const PathDataBezierCurve& curve)
 {
     context().strokePath(Path({ PathSegment { curve } }));
 }
-
-#endif // ENABLE(INLINE_PATH_DATA)
 
 void RemoteGraphicsContext::strokePathSegment(const PathSegment& segment)
 {

@@ -28,13 +28,17 @@
 
 #include "CanvasRenderingContext2DBase.h"
 #include "InspectorCanvasProcessedArguments.h"
+#include "IntSize.h"
 #include "WebGL2RenderingContext.h"
 #include "WebGLRenderingContextBase.h"
 #include <JavaScriptCore/AsyncStackTrace.h>
 #include <JavaScriptCore/InspectorProtocolObjects.h>
 #include <JavaScriptCore/ScriptCallFrame.h>
 #include <JavaScriptCore/ScriptCallStack.h>
+#include <cstdint>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/Variant.h>
 #include <wtf/WeakRef.h>
 
 namespace JSC {
@@ -47,6 +51,7 @@ namespace WebCore {
 class CanvasGradient;
 class CanvasPattern;
 class Element;
+class GPUDevice;
 class HTMLCanvasElement;
 class HTMLImageElement;
 class HTMLVideoElement;
@@ -54,32 +59,45 @@ class ImageBitmap;
 class ImageData;
 class OffscreenCanvas;
 class CSSStyleImageValue;
+class WeakPtrImplWithEventTargetData;
 
 template<typename> struct InspectorCanvasArgumentProcessor;
 
 class InspectorCanvas final : public RefCountedAndCanMakeWeakPtr<InspectorCanvas> {
 public:
     static Ref<InspectorCanvas> create(CanvasRenderingContext&);
+    static Ref<InspectorCanvas> create(GPUDevice&);
+    ~InspectorCanvas();
 
-    const String& identifier() const { return m_identifier; }
+    const String& identifier() const LIFETIME_BOUND { return m_identifier; }
 
-    const CanvasRenderingContext& canvasContext() const { return m_context; }
-    CanvasRenderingContext& canvasContext() { return m_context; }
-    HTMLCanvasElement* canvasElement() const;
+    CanvasRenderingContext* canvasContext() const;
+    GPUDevice* deviceContext() const;
+
+    HashSet<HTMLCanvasElement*> canvasElements() const;
+
+    Vector<IntSize> sizes() const;
+    Vector<String> cssCanvasNames() const;
 
     ScriptExecutionContext* scriptExecutionContext() const;
 
     JSC::JSValue resolveContext(JSC::JSGlobalObject*);
 
-    HashSet<Element*> clientNodes() const;
+    HashSet<Ref<Element>> cssCanvasClientNodes() const;
+    size_t memoryCost() const;
 
-    void canvasChanged();
+    void canvasContentsWillChange();
+
+    bool hasActiveInspectorCanvasCallTracer() const;
+    void setHasActiveInspectorCanvasCallTracer(bool);
 
     void resetRecordingData();
-    bool hasRecordingData() const;
-    bool currentFrameHasData() const;
+    bool NODELETE hasRecordingData() const;
+    bool NODELETE currentFrameHasData() const;
 
     void recordAction(String&&, InspectorCanvasProcessedArguments&& = { });
+    void recordAction(String&&, InspectorCanvasProcessedArgument&& receiver, InspectorCanvasProcessedArguments&& = { });
+    void recordActionResult(InspectorCanvasProcessedArgument&&);
 
     Ref<JSON::ArrayOf<Inspector::Protocol::Recording::Frame>> releaseFrames() { return m_frames.releaseNonNull(); }
 
@@ -89,46 +107,49 @@ public:
     void setRecordingName(const String& name) { m_recordingName = name; }
 
     void setBufferLimit(long);
-    bool hasBufferSpace() const;
+    bool NODELETE hasBufferSpace() const;
     long bufferUsed() const { return m_bufferUsed; }
 
     void setFrameCount(long);
-    bool overFrameCount() const;
+    bool NODELETE overFrameCount() const;
 
     Ref<Inspector::Protocol::Canvas::Canvas> buildObjectForCanvas(bool captureBacktrace);
     Ref<Inspector::Protocol::Recording::Recording> releaseObjectForRecording();
 
     static Inspector::Protocol::ErrorStringOr<String> getContentAsDataURL(CanvasRenderingContext&);
-    Inspector::Protocol::ErrorStringOr<String> getContentAsDataURL() { return getContentAsDataURL(m_context); };
+    Inspector::Protocol::ErrorStringOr<String> getContentAsDataURL();
 
 private:
     template<typename> friend struct InspectorCanvasArgumentProcessor;
 
     explicit InspectorCanvas(CanvasRenderingContext&);
+    explicit InspectorCanvas(GPUDevice&);
 
     void appendActionSnapshotIfNeeded();
+    void recordAction(String&&, InspectorCanvasProcessedArguments&&, RefPtr<JSON::ArrayOf<int>> receiver);
 
     using DuplicateDataVariant = Variant<
-        RefPtr<CanvasGradient>,
-        RefPtr<CanvasPattern>,
-        RefPtr<HTMLCanvasElement>,
-        RefPtr<HTMLImageElement>,
+        Ref<CanvasGradient>,
+        Ref<CanvasPattern>,
+        Ref<HTMLCanvasElement>,
+        Ref<HTMLImageElement>,
 #if ENABLE(VIDEO)
-        RefPtr<HTMLVideoElement>,
+        Ref<HTMLVideoElement>,
 #endif
-        RefPtr<ImageData>,
-        RefPtr<ImageBitmap>,
-        RefPtr<Inspector::ScriptCallStack>,
-        RefPtr<Inspector::AsyncStackTrace>,
-        RefPtr<CSSStyleImageValue>,
+        Ref<ImageData>,
+        Ref<ImageBitmap>,
+        Ref<Inspector::ScriptCallStack>,
+        Ref<Inspector::AsyncStackTrace>,
+        Ref<CSSStyleImageValue>,
         Inspector::ScriptCallFrame,
 #if ENABLE(OFFSCREEN_CANVAS)
-        RefPtr<OffscreenCanvas>,
+        Ref<OffscreenCanvas>,
 #endif
         String
     >;
 
     int indexForData(DuplicateDataVariant);
+    size_t identifierForRecordingObject(RecordingSwizzleType, uintptr_t);
     Ref<JSON::Value> valueIndexForData(DuplicateDataVariant);
     String stringIndexForKey(const String&);
     Ref<Inspector::Protocol::Recording::InitialState> buildInitialState();
@@ -139,7 +160,10 @@ private:
 
     String m_identifier;
 
-    WeakRef<CanvasRenderingContext> m_context;
+    Variant<
+        WeakRef<CanvasRenderingContext>,
+        WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>
+    > m_context;
 
     RefPtr<Inspector::Protocol::Recording::InitialState> m_initialState;
     RefPtr<JSON::ArrayOf<Inspector::Protocol::Recording::Frame>> m_frames;
@@ -147,6 +171,9 @@ private:
     RefPtr<JSON::ArrayOf<JSON::Value>> m_lastRecordedAction;
     RefPtr<JSON::ArrayOf<JSON::Value>> m_serializedDuplicateData;
     Vector<DuplicateDataVariant> m_indexedDuplicateData;
+
+    HashMap<uintptr_t, size_t> m_boundRecordingObjectIdentifiers;
+    HashMap<RecordingSwizzleType, size_t> m_nextRecordingObjectIdentifiers;
 
     String m_recordingName;
     MonotonicTime m_currentFrameStartTime { MonotonicTime::nan() };

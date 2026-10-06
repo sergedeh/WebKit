@@ -42,7 +42,7 @@ extern "C" {
     void SYSV_ABI NOT_TAIL_CALLED vmEntryCustomSetter(JSGlobalObject*, EncodedJSValue, EncodedJSValue, PropertyName, void*);
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryHostFunction(JSGlobalObject*, CallFrame*, void*);
 
-#if CPU(ARM64) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
+#if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryToJavaScriptWith0Arguments(void*, VM*, CodeBlock*, JSObject*, JSValue, JSCell*);
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryToJavaScriptWith1Arguments(void*, VM*, CodeBlock*, JSObject*, JSValue, JSCell*, JSValue);
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryToJavaScriptWith2Arguments(void*, VM*, CodeBlock*, JSObject*, JSValue, JSCell*, JSValue, JSValue);
@@ -101,6 +101,7 @@ MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handleCatchThunk(OpcodeSize);
 
 #if ENABLE(JIT_CAGE)
 MacroAssemblerCodeRef<NativeToJITGatePtrTag> jitCagePtrThunk();
+MacroAssemblerCodeRef<NativeToJITGatePtrTag> jitCageProbeThunk();
 #endif
 
 #if CPU(ARM64E)
@@ -121,6 +122,7 @@ MacroAssemblerCodeRef<JSEntryPtrTag> normalOSRExitTrampolineThunk();
 #if ENABLE(DFG_JIT)
 MacroAssemblerCodeRef<JSEntryPtrTag> checkpointOSRExitTrampolineThunk();
 MacroAssemblerCodeRef<JSEntryPtrTag> checkpointOSRExitFromInlinedCallTrampolineThunk();
+MacroAssemblerCodeRef<JSEntryPtrTag> arraySortComparatorReturnTrampolineThunk();
 MacroAssemblerCodeRef<JSEntryPtrTag> returnLocationThunk(OpcodeID, OpcodeSize);
 #endif
 
@@ -132,6 +134,14 @@ MacroAssemblerCodeRef<JITThunkPtrTag> inPlaceInterpreterTableCatchEntryThunk();
 MacroAssemblerCodeRef<JITThunkPtrTag> inPlaceInterpreterTableCatchRefEntryThunk();
 MacroAssemblerCodeRef<JITThunkPtrTag> inPlaceInterpreterTableCatchAllEntryThunk();
 MacroAssemblerCodeRef<JITThunkPtrTag> inPlaceInterpreterTableCatchAllrefEntryThunk();
+#if CPU(ARM64E)
+MacroAssemblerCodeRef<NativeToJITGatePtrTag> relocateJITReturnPCThunk(void*);
+MacroAssemblerCodeRef<NativeToJITGatePtrTag> exitImplantedSliceGateThunk(void*);
+MacroAssemblerCodeRef<NativeToJITGatePtrTag> getSentinelFrameReturnPCGateThunk(void*);
+#endif
+#if ENABLE(JIT_CAGE)
+MacroAssemblerCodeRef<NativeToJITGatePtrTag> wasmRestoreFrameGateThunk();
+#endif // ENABLE(JIT_CAGE)
 #endif // ENABLE(WEBASSEMBLY)
 
 } } // namespace JSC::LLInt

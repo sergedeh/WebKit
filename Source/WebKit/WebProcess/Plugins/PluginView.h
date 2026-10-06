@@ -51,6 +51,7 @@ class PlatformMouseEvent;
 class RenderEmbeddedObject;
 class ShareableBitmap;
 class VoidCallback;
+enum class FetchOptionsDestination : uint8_t;
 enum class TextGranularity : uint8_t;
 }
 
@@ -59,22 +60,24 @@ namespace WebKit {
 class PDFPluginBase;
 class WebFrame;
 class WebPage;
+enum class PDFPluginDisplayMode : uint8_t;
 enum class SelectionEndpoint : bool;
+enum class SelectionExtentAnchor : bool;
 enum class SelectionWasFlipped : bool;
 struct DocumentEditingContextRequest;
 struct DocumentEditingContext;
 struct EditorState;
 struct FrameInfoData;
+struct PDFPluginTextExtractionContent;
 struct WebHitTestResultData;
 
 class PluginView final : public WebCore::PluginViewBase {
 public:
     static RefPtr<PluginView> create(WebCore::HTMLPlugInElement&, const URL&, const String& contentType, bool shouldUseManualLoader);
 
-    WebCore::LocalFrame* frame() const;
-    RefPtr<WebCore::LocalFrame> protectedFrame() const;
+    WebCore::LocalFrame* NODELETE frame() const;
 
-    bool isBeingDestroyed() const;
+    bool NODELETE isBeingDestroyed() const;
 
     void manualLoadDidReceiveResponse(const WebCore::ResourceResponse&);
     void manualLoadDidReceiveData(const WebCore::SharedBuffer&);
@@ -91,7 +94,9 @@ public:
     void layerHostingStrategyDidChange() final;
 
     WebCore::HTMLPlugInElement& pluginElement() const { return m_pluginElement; }
-    const URL& mainResourceURL() const { return m_mainResourceURL; }
+    const URL& mainResourceURL() const LIFETIME_BOUND { return m_mainResourceURL; }
+
+    WebCore::FetchOptionsDestination fetchDestination() const;
 
     void didBeginMagnificationGesture();
     void didEndMagnificationGesture();
@@ -99,24 +104,26 @@ public:
     void mainFramePageScaleFactorDidChange();
     double pageScaleFactor() const;
     void pluginScaleFactorDidChange();
-#if PLATFORM(IOS_FAMILY)
+#if ENABLE(TWO_PHASE_CLICKS)
     std::pair<URL, WebCore::FloatRect> linkURLAndBoundsAtPoint(WebCore::FloatPoint pointInRootView) const;
     std::tuple<URL, WebCore::FloatRect, RefPtr<WebCore::TextIndicator>> linkDataAtPoint(WebCore::FloatPoint pointInRootView);
     std::optional<WebCore::FloatRect> highlightRectForTapAtPoint(WebCore::FloatPoint pointInRootView) const;
-    void handleSyntheticClick(WebCore::PlatformMouseEvent&&);
-    void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
-    void clearSelection();
-    SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint);
-    SelectionEndpoint extendInitialSelection(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
     CursorContext cursorContext(WebCore::FloatPoint pointInRootView) const;
+    void handleSyntheticClick(WebCore::PlatformMouseEvent&&);
+    void clearSelection();
+    void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
+    SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint);
+    SelectionEndpoint extendInitialSelection(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity, SelectionExtentAnchor);
+#if PLATFORM(IOS_FAMILY)
     DocumentEditingContext documentEditingContext(DocumentEditingContextRequest&&) const;
+#endif
 #endif
 
     bool populateEditorStateIfNeeded(EditorState&) const;
 
     void obscuredContentInsetsDidChange();
 
-    void webPageDestroyed();
+    void NODELETE webPageDestroyed();
 
     bool handleEditingCommand(const String& commandName, const String& argument);
     bool isEditingCommandEnabled(const String& commandName);
@@ -133,6 +140,7 @@ public:
     void scrollToRevealTextMatch(const WebFoundTextRange::PDFData&);
 
     String fullDocumentString() const;
+    PDFPluginTextExtractionContent textExtractionContent() const;
     String selectionString() const;
     std::pair<String, String> stringsBeforeAndAfterSelection(int characterCount) const;
 
@@ -143,7 +151,7 @@ public:
 
     WebCore::FloatRect rectForSelectionInRootView(PDFSelection *) const;
     
-    bool isUsingUISideCompositing() const;
+    bool NODELETE isUsingUISideCompositing() const;
 
     void invalidateRect(const WebCore::IntRect&) final;
 
@@ -155,9 +163,13 @@ public:
 
     void didSameDocumentNavigationForFrame(WebFrame&);
 
-    PDFPluginIdentifier pdfPluginIdentifier() const;
+    PDFPluginIdentifier NODELETE pdfPluginIdentifier() const;
 
+    void setPDFDisplayMode(PDFPluginDisplayMode);
+
+#if ENABLE(PDF_HUD)
     void openWithPreview(CompletionHandler<void(const String&, std::optional<FrameInfoData>&&, std::span<const uint8_t>)>&&);
+#endif
 
     void focusPluginElement();
 
@@ -170,6 +182,8 @@ public:
     bool pluginDelegatesScrollingToMainFrame() const;
 
     bool isPresentingLockedContent() const;
+
+    void effectiveAppearanceDidChange();
 
 private:
     PluginView(WebCore::HTMLPlugInElement&, const URL&, const String& contentType, bool shouldUseManualLoader, WebPage&);
@@ -193,7 +207,7 @@ private:
 
     void updateDocumentForPluginSizingBehavior();
 
-    WebCore::RenderEmbeddedObject* renderer() const;
+    WebCore::RenderEmbeddedObject* NODELETE renderer() const;
 
     // WebCore::PluginViewBase
     WebCore::PluginLayerHostingStrategy layerHostingStrategy() const final;
@@ -230,13 +244,10 @@ private:
 
     void releaseMemory() final;
 
-    RefPtr<WebPage> protectedWebPage() const;
-
     const Ref<WebCore::HTMLPlugInElement> m_pluginElement;
     const Ref<PDFPluginBase> m_plugin;
     WeakPtr<WebPage> m_webPage;
     URL m_mainResourceURL;
-    String m_mainResourceContentType;
     bool m_shouldUseManualLoader { false };
 
     bool m_isInitialized { false };
@@ -263,6 +274,7 @@ private:
     Vector<WebCore::FloatRect> pdfAnnotationRectsForTesting() const override;
     void unlockPDFDocumentForTesting(const String& password) final;
     void setPDFTextAnnotationValueForTesting(unsigned pageIndex, unsigned annotationIndex, const String& value) final;
+    Vector<String> pdfContextMenuItemTitlesForTesting(const WebCore::IntPoint&) const final;
     void registerPDFTestCallback(RefPtr<WebCore::VoidCallback>&&) final;
 };
 

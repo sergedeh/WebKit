@@ -26,6 +26,7 @@
 #include "DocumentResourceLoader.h"
 #include "FrameConsoleClient.h"
 #include "FrameDestructionObserverInlines.h"
+#include "JSNodeCustomInlines.h"
 #include "LocalFrame.h"
 #include "NodeDocument.h"
 #include "Page.h"
@@ -44,8 +45,7 @@
 namespace WebCore {
 
 XSLStyleSheet::XSLStyleSheet(XSLStyleSheet* parentSheet, const String& originalURL, const URL& finalURL)
-    : m_ownerNode(nullptr)
-    , m_originalURL(originalURL)
+    : m_originalURL(originalURL)
     , m_finalURL(finalURL)
     , m_embedded(false)
     , m_processed(false) // Child sheets get marked as processed when the libxslt engine has finally seen them.
@@ -70,6 +70,20 @@ XSLStyleSheet::~XSLStyleSheet()
         ASSERT(import->parentStyleSheet() == this);
         import->setParentStyleSheet(nullptr);
     }
+}
+
+void XSLStyleSheet::clearOwnerNode()
+{
+    Locker locker { m_opaqueRootLockForGC };
+    m_ownerNode = nullptr;
+}
+
+WebCoreOpaqueRoot XSLStyleSheet::opaqueRootForGCThread()
+{
+    Locker locker { m_opaqueRootLockForGC };
+    if (m_ownerNode)
+        return root(m_ownerNode.get());
+    return WebCoreOpaqueRoot { this };
 }
 
 bool XSLStyleSheet::isLoading() const
@@ -150,20 +164,23 @@ bool XSLStyleSheet::parseString(const String& string)
     if (!ctxt)
         return false;
 
-    if (m_parentStyleSheet && m_parentStyleSheet->m_stylesheetDoc) {
+    if (m_parentStyleSheet && m_parentStyleSheet->m_stylesheetDoc && !m_parentStyleSheet->m_stylesheetDocTaken) {
         // The XSL transform may leave the newly-transformed document
         // with references to the symbol dictionaries of the style sheet
         // and any of its children. XML document disposal can corrupt memory
         // if a document uses more than one symbol dictionary, so we
         // ensure that all child stylesheets use the same dictionaries as their
         // parents.
+        // Only share the parent's dict if the parent still owns the document.
+        // Once m_stylesheetDocTaken is set, libxslt owns the doc and may free
+        // it at any time (e.g. on compilation failure), making the pointer unsafe.
         SUPPRESS_FORWARD_DECL_ARG xmlDictFree(ctxt->dict);
         ctxt->dict = m_parentStyleSheet->m_stylesheetDoc->dict;
         SUPPRESS_FORWARD_DECL_ARG xmlDictReference(ctxt->dict);
     }
 
     m_stylesheetDoc = xmlCtxtReadMemory(ctxt, buffer, size,
-        finalURL().string().utf8().data(),
+        finalURL().string().utf8().legacyCStringPointer(),
         BOMHighByte == 0xFF ? "UTF-16LE" : "UTF-16BE",
         XML_PARSE_NOENT | XML_PARSE_DTDATTR | XML_PARSE_NOWARNING | XML_PARSE_NOCDATA);
     xmlFreeParserCtxt(ctxt);
@@ -187,7 +204,7 @@ void XSLStyleSheet::loadChildSheets()
     if (m_embedded) {
         // We have to locate (by ID) the appropriate embedded stylesheet element, so that we can walk the
         // import/include list.
-        xmlAttrPtr idNode = xmlGetID(document(), (const xmlChar*)(finalURL().string().utf8().data()));
+        xmlAttrPtr idNode = xmlGetID(document(), (const xmlChar*)(finalURL().string().utf8().legacyCStringPointer()));
         if (!idNode)
             return;
         stylesheetRoot = idNode->parent;
@@ -285,9 +302,9 @@ xmlDocPtr XSLStyleSheet::locateStylesheetSubResource(xmlDocPtr parentDoc, const 
             // In order to ensure that libxml canonicalized both URLs, we get the original href
             // string from the import rule and canonicalize it using libxml before comparing it
             // with the URI argument.
-            CString importHref = import->href().utf8();
+            auto importHref = import->href().utf8();
             xmlChar* base = xmlNodeGetBase(parentDoc, (xmlNodePtr)parentDoc);
-            xmlChar* childURI = xmlBuildURI((const xmlChar*)importHref.data(), base);
+            xmlChar* childURI = xmlBuildURI((const xmlChar*)importHref.legacyCStringPointer(), base);
             bool equalURIs = xmlStrEqual(uri, childURI);
             xmlFree(base);
             xmlFree(childURI);

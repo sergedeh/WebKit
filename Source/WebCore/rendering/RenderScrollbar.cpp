@@ -27,15 +27,18 @@
 #include "RenderScrollbar.h"
 
 #include "ContainerNodeInlines.h"
+#include "DocumentView.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
 #include "LocalFrameView.h"
+#include "RenderBoxModelObjectInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderScrollbarPart.h"
 #include "RenderScrollbarTheme.h"
-#include "RenderStyle+SettersInlines.h"
 #include "RenderWidget.h"
 #include "ScrollbarInlines.h"
+#include "StyleComputedStyle+SettersInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StyleResolver.h"
 
 namespace WebCore {
@@ -52,16 +55,14 @@ RenderScrollbar::RenderScrollbar(ScrollableArea& scrollableArea, ScrollbarOrient
 {
     ASSERT(ownerElement || owningFrame);
 
-    // FIXME: We need to do this because RenderScrollbar::styleChanged is called as soon as the scrollbar is created.
-    
     // Update the scrollbar size.
     int width = 0;
     int height = 0;
     updateScrollbarPart(ScrollbarBGPart);
     if (CheckedPtr part = m_parts.get(ScrollbarBGPart)) {
         part->layout();
-        width = part->width();
-        height = part->height();
+        width = part->borderBoxWidth();
+        height = part->borderBoxHeight();
     } else if (this->orientation() == ScrollbarOrientation::Horizontal)
         width = this->width();
     else
@@ -78,7 +79,7 @@ RenderBox* RenderScrollbar::owningRenderer() const
         return frame->ownerRenderer();
 
     ASSERT(m_ownerElement);
-    if (CheckedPtr renderer = m_ownerElement->renderer())
+    if (auto* renderer = m_ownerElement->renderer())
         return &renderer->enclosingBox();
     return nullptr;
 }
@@ -139,7 +140,7 @@ void RenderScrollbar::setPressedPart(ScrollbarPart part)
     updateScrollbarPart(TrackBGPart);
 }
 
-std::unique_ptr<RenderStyle> RenderScrollbar::getScrollbarPseudoStyle(ScrollbarPart partType, PseudoElementType pseudoElementType) const
+std::unique_ptr<Style::ComputedStyle> RenderScrollbar::getScrollbarPseudoStyle(ScrollbarPart partType, PseudoElementType pseudoElementType) const
 {
     CheckedPtr renderer = owningRenderer();
     if (!renderer)
@@ -152,9 +153,9 @@ std::unique_ptr<RenderStyle> RenderScrollbar::getScrollbarPseudoStyle(ScrollbarP
     scrollbarState.orientation = orientation();
     scrollbarState.buttonsPlacement = theme().buttonsPlacement();
     scrollbarState.enabled = enabled();
-    scrollbarState.scrollCornerIsVisible = checkedScrollableArea()->isScrollCornerVisible();
+    scrollbarState.scrollCornerIsVisible = protect(scrollableArea())->isScrollCornerVisible();
     
-    std::unique_ptr<RenderStyle> result = renderer->getUncachedPseudoStyle({ pseudoElementType, scrollbarState }, renderer->checkedStyle().ptr());
+    std::unique_ptr<Style::ComputedStyle> result = renderer->resolvePseudoElementStyle({ pseudoElementType, scrollbarState }, protect(renderer->style()).ptr());
     // Scrollbars for root frames should always have background color 
     // unless explicitly specified as transparent. So we force it.
     // This is because WebKit assumes scrollbar to be always painted and missing background
@@ -186,7 +187,7 @@ void RenderScrollbar::updateScrollbarParts()
     int newThickness = 0;
     if (CheckedPtr part = m_parts.get(ScrollbarBGPart)) {
         part->layout();
-        newThickness = isHorizontal ? part->height() : part->width();
+        newThickness = isHorizontal ? part->borderBoxHeight() : part->borderBoxWidth();
     }
 
     if (newThickness != oldThickness) {
@@ -196,7 +197,7 @@ void RenderScrollbar::updateScrollbarParts()
     }
 }
 
-static PseudoElementType pseudoForScrollbarPart(ScrollbarPart part)
+static PseudoElementType NODELETE pseudoForScrollbarPart(ScrollbarPart part)
 {
     switch (part) {
         case BackButtonStartPart:
@@ -226,10 +227,10 @@ void RenderScrollbar::updateScrollbarPart(ScrollbarPart partType)
     if (partType == NoPart)
         return;
 
-    std::unique_ptr<RenderStyle> partStyle = getScrollbarPseudoStyle(partType, pseudoForScrollbarPart(partType));
-    bool needRenderer = partStyle && partStyle->display() != DisplayType::None;
+    std::unique_ptr<Style::ComputedStyle> partStyle = getScrollbarPseudoStyle(partType, pseudoForScrollbarPart(partType));
+    bool needRenderer = partStyle && partStyle->display() != Style::DisplayType::None;
 
-    if (needRenderer && partStyle->display() != DisplayType::Block) {
+    if (needRenderer && partStyle->display() != Style::DisplayType::BlockFlow) {
         // See if we are a button that should not be visible according to OS settings.
         ScrollbarButtonsPlacement buttonsPlacement = theme().buttonsPlacement();
         switch (partType) {
@@ -260,7 +261,7 @@ void RenderScrollbar::updateScrollbarPart(ScrollbarPart partType)
     if (auto& partRendererSlot = m_parts.add(partType, nullptr).iterator->value)
         partRendererSlot->setStyle(WTF::move(*partStyle));
     else {
-        partRendererSlot = createRenderer<RenderScrollbarPart>(owningRenderer()->protectedDocument(), WTF::move(*partStyle), this, partType);
+        partRendererSlot = createRenderer<RenderScrollbarPart>(protect(owningRenderer()->document()), WTF::move(*partStyle), this, partType);
         partRendererSlot->initializeStyle();
     }
 }
@@ -282,7 +283,7 @@ IntRect RenderScrollbar::buttonRect(ScrollbarPart partType) const
     partRenderer->layout();
     
     bool isHorizontal = orientation() == ScrollbarOrientation::Horizontal;
-    IntSize pixelSnappedIntSize = snappedIntRect(partRenderer->frameRect()).size();
+    IntSize pixelSnappedIntSize = snappedIntRect(partRenderer->borderBoxRectInContainer()).size();
     if (partType == BackButtonStartPart)
         return IntRect(location(), IntSize(isHorizontal ? pixelSnappedIntSize.width() : width(), isHorizontal ? height() : pixelSnappedIntSize.height()));
     if (partType == ForwardButtonEndPart)
@@ -354,7 +355,7 @@ int RenderScrollbar::minimumThumbLength() const
     if (!partRenderer)
         return 0;    
     partRenderer->layout();
-    return orientation() == ScrollbarOrientation::Horizontal ? partRenderer->width() : partRenderer->height();
+    return orientation() == ScrollbarOrientation::Horizontal ? partRenderer->borderBoxWidth() : partRenderer->borderBoxHeight();
 }
 
 float RenderScrollbar::opacity() const
@@ -363,13 +364,13 @@ float RenderScrollbar::opacity() const
     if (!partRenderer)
         return 1;
 
-    return partRenderer->style().opacity().value.value;
+    return Style::evaluate<float>(partRenderer->style().opacity());
 }
 
 bool RenderScrollbar::isHiddenByStyle() const
 {
-    std::unique_ptr<RenderStyle> partStyle = getScrollbarPseudoStyle(ScrollbarBGPart, pseudoForScrollbarPart(ScrollbarBGPart));
-    return partStyle && partStyle->display() == DisplayType::None;
+    std::unique_ptr<Style::ComputedStyle> partStyle = getScrollbarPseudoStyle(ScrollbarBGPart, pseudoForScrollbarPart(ScrollbarBGPart));
+    return partStyle && partStyle->display() == Style::DisplayType::None;
 }
 
-}
+} // namespace WebCore

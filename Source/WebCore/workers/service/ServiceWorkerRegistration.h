@@ -40,10 +40,8 @@
 #include "Supplementable.h"
 #include "Timer.h"
 #include <wtf/Forward.h>
-#include <wtf/ListHashSet.h>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
-#include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 
@@ -69,21 +67,21 @@ public:
 
     ServiceWorkerRegistrationIdentifier identifier() const { return m_registrationData.identifier; }
 
-    ServiceWorker* installing();
-    ServiceWorker* waiting();
-    ServiceWorker* active();
+    ServiceWorker* NODELETE installing();
+    ServiceWorker* NODELETE waiting();
+    ServiceWorker* NODELETE active();
 
     bool isActive() const final { return !!m_activeWorker; }
 
-    ServiceWorker* getNewestWorker() const;
+    ServiceWorker* NODELETE getNewestWorker() const;
 
-    const String& scope() const;
+    const String& NODELETE scope() const;
 
-    ServiceWorkerUpdateViaCache updateViaCache() const;
-    void setUpdateViaCache(ServiceWorkerUpdateViaCache);
+    ServiceWorkerUpdateViaCache NODELETE updateViaCache() const;
+    void NODELETE setUpdateViaCache(ServiceWorkerUpdateViaCache);
 
-    WallTime lastUpdateTime() const;
-    void setLastUpdateTime(WallTime);
+    WallTime NODELETE lastUpdateTime() const;
+    void NODELETE setLastUpdateTime(WallTime);
 
     bool needsUpdate() const { return lastUpdateTime() && (WallTime::now() - lastUpdateTime()) > 86400_s; }
 
@@ -95,7 +93,7 @@ public:
     void getPushSubscription(DOMPromiseDeferred<IDLNullable<IDLInterface<PushSubscription>>>&&);
     void getPushPermissionState(DOMPromiseDeferred<IDLEnumeration<PushPermissionState>>&&);
 
-    const ServiceWorkerRegistrationData& data() const { return m_registrationData; }
+    const ServiceWorkerRegistrationData& data() const LIFETIME_BOUND { return m_registrationData; }
 
     void updateStateFromServer(ServiceWorkerRegistrationState, RefPtr<ServiceWorker>&&);
     void queueTaskToFireUpdateFoundEvent();
@@ -122,7 +120,6 @@ private:
 
     enum EventTargetInterfaceType eventTargetInterface() const final;
     ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
@@ -137,12 +134,12 @@ private:
     RefPtr<ServiceWorker> m_waitingWorker;
     RefPtr<ServiceWorker> m_activeWorker;
 
-    std::unique_ptr<NavigationPreloadManager> m_navigationPreload;
+    const std::unique_ptr<NavigationPreloadManager> m_navigationPreload;
 
-    RefPtr<CookieStoreManager> m_cookieStoreManager;
+    const RefPtr<CookieStoreManager> m_cookieStoreManager;
 };
 
-WebCoreOpaqueRoot root(ServiceWorkerRegistration*);
+WebCoreOpaqueRoot NODELETE root(ServiceWorkerRegistration*);
 
 } // namespace WebCore
 

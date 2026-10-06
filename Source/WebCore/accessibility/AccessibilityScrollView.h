@@ -25,9 +25,10 @@
 
 #pragma once
 
-#include "AXRemoteFrame.h"
-#include "AccessibilityObject.h"
-#include "ScrollView.h"
+#include <WebCore/AXObjectCache.h>
+#include <WebCore/AXRemoteFrame.h>
+#include <WebCore/AccessibilityObject.h>
+#include <WebCore/ScrollView.h>
 
 namespace WebCore {
 
@@ -53,10 +54,37 @@ public:
     String ownerDebugDescription() const;
     String extraDebugInfo() const final;
 
-#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    AccessibilityObject* parentObject() const final;
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     AccessibilityObject* crossFrameParentObject() const final;
     AccessibilityObject* crossFrameChildObject() const final;
-#endif
+
+    // The AXLocalFrame that proxies this hosted (iframe) frame's content in the parent frame's
+    // accessibility tree. Only non-null on a FrameHost scroll view (i.e. when !isRoot()).
+    AXLocalFrame* localFrame() const { return m_localFrame.get(); }
+
+    // Returns the screen position and transform for this frame.
+    // Reads from the AXObjectCache's cached value, populated asynchronously via IPC.
+    // On first access when cache is empty, fires an async requestFrameScreenPosition.
+    AXFrameGeometry frameGeometry() const;
+    IntPoint frameScreenPosition() const final { return frameGeometry().screenPosition; }
+    AffineTransform frameScreenTransform() const final { return frameGeometry().screenTransform; }
+    IntPoint frameViewOriginScrollPosition() const;
+
+    bool isFrameGeometryInitialized() const final;
+
+    void setInheritedFrameState(InheritedFrameState);
+    const InheritedFrameState& inheritedFrameState() const LIFETIME_BOUND { return m_inheritedFrameState; }
+    bool isARIAHidden() const final;
+    void updateHostedFrameInheritedState();
+
+    // Returns true if the iframe element (or ancestors) cause the content to be hidden.
+    // We can't use isIgnored() because FrameHost scroll views are always ignored (see computeIsIgnored).
+    bool isHostingFrameHidden() const { return isAXHidden(); }
+    bool isHostingFrameInert() const;
+    bool isHostingFrameRenderHidden() const;
+    bool isIgnoredFromHostingFrame() const { return isHostingFrameHidden() || isHostingFrameInert() || isHostingFrameRenderHidden(); }
+#endif // ENABLE(ACCESSIBLITY_LOCAL_FRAME)
 
 private:
     explicit AccessibilityScrollView(AXID, ScrollView&, AXObjectCache&);
@@ -86,33 +114,41 @@ private:
     bool isFocused() const final;
     void addLocalFrameChild();
     void addRemoteFrameChild();
+    const AccessibilityScrollView* frameRootScrollView() const;
 
     Document* document() const final;
     LocalFrameView* documentFrameView() const final;
     LayoutRect elementRect() const final;
     LayoutRect boundingBoxRect() const final { return elementRect(); }
-    AccessibilityObject* parentObject() const final;
-    RefPtr<AccessibilityObject> protectedHorizontalScrollbar() const { return m_horizontalScrollbar; }
-    RefPtr<AccessibilityObject> protectedVerticalScrollbar() const { return m_verticalScrollbar; }
-    RefPtr<HTMLFrameOwnerElement> protectedFrameOwnerElement() const { return m_frameOwnerElement; }
+    AccessibilityObject* horizontalScrollbar() const { return m_horizontalScrollbar.get(); }
+    AccessibilityObject* verticalScrollbar() const { return m_verticalScrollbar.get(); }
+    HTMLFrameOwnerElement* frameOwnerElement() const { return m_frameOwnerElement; }
 
     AccessibilityObject* firstChild() const final { return webAreaObject(); }
     AccessibilityScrollbar* addChildScrollbar(Scrollbar*);
     void removeChildScrollbar(AccessibilityObject*);
 
     bool m_childrenDirty;
+    // Memoized result of isRoot(), which is invariant for this object's lifetime (see isRoot()).
+    mutable std::optional<bool> m_isRoot;
     SingleThreadWeakPtr<ScrollView> m_scrollView;
     WeakPtr<HTMLFrameOwnerElement, WeakPtrImplWithEventTargetData> m_frameOwnerElement;
     RefPtr<AccessibilityObject> m_horizontalScrollbar;
     RefPtr<AccessibilityObject> m_verticalScrollbar;
-#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
-    RefPtr<AXLocalFrame> m_localFrame;
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    const RefPtr<AXLocalFrame> m_localFrame;
+    InheritedFrameState m_inheritedFrameState;
 #endif
     RefPtr<AXRemoteFrame> m_remoteFrame;
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::AccessibilityScrollView) \
-    static bool isType(const WebCore::AccessibilityObject& object) { return object.isAccessibilityScrollViewInstance(); } \
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::AccessibilityScrollView)
+    static bool isType(const WebCore::AccessibilityObject& object) { return object.isAccessibilityScrollViewInstance(); }
+    static bool isType(const WebCore::AXCoreObject& object)
+    {
+        auto* accessibilityObject = dynamicDowncast<WebCore::AccessibilityObject>(object);
+        return accessibilityObject && accessibilityObject->isAccessibilityScrollViewInstance();
+    }
 SPECIALIZE_TYPE_TRAITS_END()

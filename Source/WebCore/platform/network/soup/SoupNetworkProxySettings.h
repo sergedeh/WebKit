@@ -26,7 +26,7 @@
 #pragma once
 
 #include <wtf/HashMap.h>
-#include <wtf/glib/GUniquePtr.h>
+#include <wtf/Vector.h>
 #include <wtf/text/CString.h>
 
 namespace WebCore {
@@ -48,29 +48,12 @@ struct SoupNetworkProxySettings {
     {
     }
 
-    SoupNetworkProxySettings(Mode proxyMode, const CString& defaultURL, const GUniquePtr<char*>& hosts, const HashMap<CString, CString>& map)
+    SoupNetworkProxySettings(Mode proxyMode, UTF8CString&& defaultURL, Vector<UTF8CString>&& hosts, HashMap<UTF8CString, UTF8CString>&& map)
         : mode(proxyMode)
-        , defaultProxyURL(defaultURL)
-        , ignoreHosts(g_strdupv(hosts.get()))
-        , proxyMap(map)
+        , defaultProxyURL(WTF::move(defaultURL))
+        , ignoreHosts(WTF::move(hosts))
+        , proxyMap(WTF::move(map))
     {
-    }
-
-    SoupNetworkProxySettings(const WebCore::SoupNetworkProxySettings& other)
-        : mode(other.mode)
-        , defaultProxyURL(other.defaultProxyURL)
-        , ignoreHosts(g_strdupv(other.ignoreHosts.get()))
-        , proxyMap(other.proxyMap)
-    {
-    }
-
-    SoupNetworkProxySettings& operator=(const WebCore::SoupNetworkProxySettings& other)
-    {
-        mode = other.mode;
-        defaultProxyURL = other.defaultProxyURL;
-        ignoreHosts.reset(g_strdupv(other.ignoreHosts.get()));
-        proxyMap = other.proxyMap;
-        return *this;
     }
 
     bool isEmpty() const
@@ -80,7 +63,7 @@ struct SoupNetworkProxySettings {
         case Mode::NoProxy:
             return false;
         case Mode::Custom:
-            return defaultProxyURL.isNull() && !ignoreHosts && proxyMap.isEmpty();
+            return defaultProxyURL.isNull() && ignoreHosts.isEmpty() && proxyMap.isEmpty();
         case Mode::Auto:
             return defaultProxyURL.isNull();
         }
@@ -88,9 +71,9 @@ struct SoupNetworkProxySettings {
     }
 
     Mode mode { Mode::Default };
-    CString defaultProxyURL;
-    GUniquePtr<char*> ignoreHosts;
-    HashMap<CString, CString> proxyMap;
+    UTF8CString defaultProxyURL;
+    Vector<UTF8CString> ignoreHosts;
+    HashMap<UTF8CString, UTF8CString> proxyMap;
 };
 
 } // namespace WebCore

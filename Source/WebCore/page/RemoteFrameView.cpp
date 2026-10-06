@@ -26,12 +26,25 @@
 #include "config.h"
 #include "RemoteFrameView.h"
 
+#include "AXObjectCache.h"
+#include "Chrome.h"
+#include "ChromeClient.h"
+#include "DocumentPage.h"
 #include "GraphicsContext.h"
+#include "Page.h"
 #include "RemoteFrame.h"
 #include "RemoteFrameClient.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+// Page::syncLocalFrameInfoToRemote running in a parent frame process only sends transforms for
+// child frame subtrees containing a remote frame. From our perspective, that means that the
+// transforms are only valid on child subtrees containing a local frame.
+//
+// As an example, the absoluteToChildFrameOwnerLocalTransform for a child frame whose subtree is
+// hosted entirely in other processes will likely return an invalid result in this process.
+#define ASSERT_CHILD_CONTAINS_LOCAL_FRAME(child) ASSERT((child).tree().containsLocalFrame())
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteFrameView);
 
@@ -49,21 +62,76 @@ void RemoteFrameView::setFrameRect(const IntRect& newRect)
 {
     IntRect oldRect = frameRect();
     setFrameRectWithoutSync(newRect);
-    if (newRect != oldRect)
+    if (newRect != oldRect) {
         m_frame->client().frameRectDidChange(newRect);
+
+        // Push this remote frame's origin within its immediate parent to its process. The UI process
+        // accumulates these across ancestors into a cumulative main-frame offset (see
+        // WebPageProxy::updateRemoteFrameOffsetInMainFrame), which the frame's process uses to emit
+        // selection rects in main-frame coordinates (and for accessibility).
+        m_frame->updateRemoteFrameOffsetInMainFrame(newRect.location());
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+        if (AXObjectCache::accessibilityEnabled()) {
+            if (RefPtr page = m_frame->page())
+                page->chrome().client().scheduleAccessibilityFrameGeometryUpdate();
+        }
+#endif
+    }
 }
 
 LayoutRect RemoteFrameView::layoutViewportRect() const
 {
-    return m_frame->frameTreeSyncData().frameLayoutViewportRect;
+    return m_frame->frameTreeSyncData().frameViewportInfo.layoutViewportRect;
+}
+
+IntSize RemoteFrameView::contentsSize() const
+{
+    return m_frame->frameTreeSyncData().frameGeometry.contentsSize;
 }
 
 std::optional<LayoutRect> RemoteFrameView::visibleRectOfChild(const Frame& child) const
 {
-    auto maybeInfo = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.getOptional(child.frameID());
-    return maybeInfo.and_then([] (auto& info) {
-        return info.visibleRectInParent;
-    });
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
+        return info->visibleRectInParent();
+
+    return std::nullopt;
+}
+
+OptionSet<FrameOwnerElementAppearance> RemoteFrameView::appearanceOfOwnerElementOfChildFrame(const Frame& child) const
+{
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
+        return info->ownerElementAppearance();
+
+    return { };
+}
+
+LayoutPoint RemoteFrameView::childFrameOwnerContentBoxLocation(const Frame& child) const
+{
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
+        return info->contentBoxLocation();
+
+    return { };
+}
+
+TransformationMatrix RemoteFrameView::childFrameOwnerToRootContentTransform(const Frame& child) const
+{
+    ASSERT_CHILD_CONTAINS_LOCAL_FRAME(child);
+
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
+        return info->childFrameOwnerToRootContentTransform();
+
+    return { };
+}
+
+TransformationMatrix RemoteFrameView::absoluteToChildFrameOwnerLocalTransform(const Frame& child) const
+{
+    ASSERT_CHILD_CONTAINS_LOCAL_FRAME(child);
+
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
+        return info->absoluteToChildFrameOwnerLocalTransform();
+
+    return { };
 }
 
 // FIXME: Implement all the stubs below.
@@ -112,6 +180,10 @@ void RemoteFrameView::updateScrollCorner()
 bool RemoteFrameView::scrollContentsFastPath(const IntSize&, const IntRect&, const IntRect&)
 {
     return false;
+}
+
+void RemoteFrameView::scrollContentsSlowPath(const IntRect&)
+{
 }
 
 bool RemoteFrameView::isVerticalDocument() const

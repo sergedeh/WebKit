@@ -12,8 +12,8 @@
 
 #include <cstddef>
 #include <memory>
+#include <span>
 
-#include "api/array_view.h"
 #include "rtc_base/checks.h"
 #include "third_party/pffft/src/pffft.h"
 
@@ -24,9 +24,16 @@ size_t GetBufferSize(size_t fft_size, Pffft::FftType fft_type) {
   return fft_size * (fft_type == Pffft::FftType::kReal ? 1 : 2);
 }
 
+#if !defined(WEBRTC_WEBKIT_BUILD)
 float* AllocatePffftBuffer(size_t size) {
   return static_cast<float*>(pffft_aligned_malloc(size * sizeof(float)));
 }
+#else
+// Defined as a function-like macro (rather than a static function) so the
+// compiler can perform Typed Memory Operations type inference at each call
+// site. See rdar://170138232.
+#define AllocatePffftBuffer(size) static_cast<float*>(pffft_aligned_malloc((size) * sizeof(float)))
+#endif
 
 }  // namespace
 
@@ -38,11 +45,11 @@ Pffft::FloatBuffer::~FloatBuffer() {
   pffft_aligned_free(data_);
 }
 
-ArrayView<const float> Pffft::FloatBuffer::GetConstView() const {
+std::span<const float> Pffft::FloatBuffer::GetConstView() const {
   return {data_, size_};
 }
 
-ArrayView<float> Pffft::FloatBuffer::GetView() {
+std::span<float> Pffft::FloatBuffer::GetView() {
   return {data_, size_};
 }
 

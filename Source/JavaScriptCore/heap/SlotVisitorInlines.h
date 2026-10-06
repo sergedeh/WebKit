@@ -26,6 +26,7 @@
 #pragma once
 
 #include <JavaScriptCore/AbstractSlotVisitorInlines.h>
+#include <JavaScriptCore/Collector.h>
 #include <JavaScriptCore/HeapCellInlines.h>
 #include <JavaScriptCore/MarkedBlock.h>
 #include <JavaScriptCore/PreciseAllocation.h>
@@ -34,6 +35,11 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+inline void SlotVisitor::didRace(JSCell* cell, const char* reason)
+{
+    didRace(VisitRaceKey(cell, reason));
+}
 
 ALWAYS_INLINE void SlotVisitor::appendUnbarriered(JSValue* slot, size_t count)
 {
@@ -156,7 +162,8 @@ ALWAYS_INLINE void SlotVisitor::appendValuesHidden(const WriteBarrierBase<Unknow
 
 ALWAYS_INLINE bool SlotVisitor::isMarked(const void* p) const
 {
-    return heap()->isMarked(p);
+    HeapCell* cell = std::bit_cast<HeapCell*>(p);
+    return cell->cellContainer().isMarked(markingVersion(), cell);
 }
 
 ALWAYS_INLINE bool SlotVisitor::isMarked(MarkedBlock& container, HeapCell* cell) const
@@ -173,7 +180,7 @@ inline void SlotVisitor::reportExtraMemoryVisited(size_t size)
 {
     if (m_isFirstVisit) {
         m_nonCellVisitCount += size;
-        // FIXME: Change this to use SaturatedArithmetic when available.
+        // FIXME: Change this to use SaturatingArithmetic when available.
         // https://bugs.webkit.org/show_bug.cgi?id=170411
         m_extraMemorySize += size;
     }
@@ -183,12 +190,12 @@ inline void SlotVisitor::reportExtraMemoryVisited(size_t size)
 inline void SlotVisitor::reportExternalMemoryVisited(size_t size)
 {
     if (m_isFirstVisit)
-        heap()->reportExternalMemoryVisited(size);
+        m_collector.heap().reportExternalMemoryVisited(size);
 }
 #endif
 
 template<typename Func>
-IterationStatus SlotVisitor::forEachMarkStack(const Func& func)
+IterationStatus SlotVisitor::forEachMarkStack(NOESCAPE const Func& func)
 {
     if (func(m_collectorStack) == IterationStatus::Done)
         return IterationStatus::Done;

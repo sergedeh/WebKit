@@ -20,7 +20,9 @@
 
 #pragma once
 
+#include "HTMLElement.h"
 #include "RenderBlockFlow.h"
+#include "Timer.h"
 
 namespace WebCore {
 
@@ -30,17 +32,17 @@ class RenderProgress final : public RenderBlockFlow {
     WTF_MAKE_TZONE_ALLOCATED(RenderProgress);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderProgress);
 public:
-    RenderProgress(HTMLElement&, RenderStyle&&);
+    RenderProgress(HTMLElement&, Style::ComputedStyle&&);
     virtual ~RenderProgress();
 
     double position() const { return m_position; }
     double animationProgress() const;
     MonotonicTime animationStartTime() const { return m_animationStartTime; }
 
-    bool isDeterminate() const;
+    bool NODELETE isDeterminate() const;
     void updateFromElement() override;
 
-    HTMLProgressElement* progressElement() const;
+    HTMLProgressElement* NODELETE progressElement() const;
 
 private:
     ASCIILiteral renderName() const override { return "RenderProgress"_s; }

@@ -26,8 +26,9 @@
 #include "RenderBlockFlow.h"
 #include "RenderChildIterator.h"
 #include "RenderInline.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderText.h"
+#include "TrailingObjects.h"
 #include "UnicodeBidi.h"
 #include <wtf/StdLibExtras.h>
 
@@ -140,10 +141,10 @@ static inline UCharDirection embedCharFromDirection(WritingMode writingMode, Uni
 template <class Observer>
 static inline void notifyObserverEnteredObject(Observer* observer, RenderObject* object)
 {
-    if (!observer || !object || !object->isRenderInline())
+    if (!observer || !object || !object->isInlineBox())
         return;
 
-    auto& style = downcast<RenderInline>(*object).style();
+    auto& style = object->style();
     auto unicodeBidi = style.unicodeBidi();
     if (unicodeBidi == UnicodeBidi::Normal) {
         // http://dev.w3.org/csswg/css3-writing-modes/#unicode-bidi
@@ -167,10 +168,10 @@ static inline void notifyObserverEnteredObject(Observer* observer, RenderObject*
 template <class Observer>
 static inline void notifyObserverWillExitObject(Observer* observer, RenderObject* object)
 {
-    if (!observer || !object || !object->isRenderInline())
+    if (!observer || !object || !object->isInlineBox())
         return;
 
-    auto unicodeBidi = downcast<RenderInline>(*object).style().unicodeBidi();
+    auto unicodeBidi = object->style().unicodeBidi();
     if (unicodeBidi == UnicodeBidi::Normal)
         return; // Nothing to do for unicode-bidi: normal
     if (isIsolated(unicodeBidi)) {
@@ -361,7 +362,7 @@ ALWAYS_INLINE UCharDirection LegacyInlineIterator::direction() const
         return surrogateTextDirection(codeUnit);
     }
 
-    if (CheckedPtr listMarkerRenderer = dynamicDowncast<RenderListMarker>(*m_renderer))
+    if (auto* listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(*m_renderer))
         return listMarkerRenderer->writingMode().isBidiLTR() ? U_LEFT_TO_RIGHT : U_RIGHT_TO_LEFT;
 
     return U_OTHER_NEUTRAL;
@@ -375,9 +376,7 @@ inline void InlineBidiResolver::incrementInternal()
 
 static inline bool isIsolatedInline(RenderObject& object)
 {
-    if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(object))
-        return isIsolated(inlineBox->style().unicodeBidi());
-    return false;
+    return object.isInlineBox() && isIsolated(object.style().unicodeBidi());
 }
 
 static inline RenderObject* highestContainingIsolateWithinRoot(RenderObject& initialObject, RenderObject* root)

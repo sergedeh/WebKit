@@ -48,32 +48,29 @@ public:
 
     void replaceDocumentWithResultOfExecutingJavascriptURL(const String&, Document* ownerDocument);
 
-    bool begin();
+    WEBCORE_EXPORT bool begin();
     bool begin(const URL&, bool dispatchWindowObjectAvailable = true, Document* ownerDocument = nullptr, std::optional<ScriptExecutionContextIdentifier> = std::nullopt, const NavigationAction* triggeringAction = nullptr);
     void addData(const SharedBuffer&);
-    void insertDataSynchronously(const String&); // For an internal use only to prevent the parser from yielding.
+    WEBCORE_EXPORT void insertDataSynchronously(const String&); // For an internal use only to prevent the parser from yielding.
     WEBCORE_EXPORT void end();
 
-    void setFrame(LocalFrame&);
+    void NODELETE setFrame(LocalFrame&);
 
     enum class IsEncodingUserChosen : bool { No, Yes };
     WEBCORE_EXPORT void setEncoding(const String& encoding, IsEncodingUserChosen);
 
-    const String& mimeType() const { return m_mimeType; }
+    const String& mimeType() const LIFETIME_BOUND { return m_mimeType; }
     void setMIMEType(const String& type) { m_mimeType = type; }
-
-    Ref<TextResourceDecoder> protectedDecoder();
 
     // Exposed for DocumentParser::appendBytes.
     TextResourceDecoder& decoder();
     void reportDataReceived();
 
-    void setDocumentWasLoadedAsPartOfNavigation();
+    void NODELETE setDocumentWasLoadedAsPartOfNavigation();
 
 private:
     Ref<Document> createDocument(const URL&, std::optional<ScriptExecutionContextIdentifier>);
     void clear();
-    RefPtr<DocumentParser> protectedParser() const;
 
     WeakPtr<LocalFrame> m_frame;
 

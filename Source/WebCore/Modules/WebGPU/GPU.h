@@ -52,12 +52,12 @@ public:
     {
         return adoptRef(*new GPU(WTF::move(backing)));
     }
-    ~GPU();
+    WEBCORE_EXPORT ~GPU();
 
     using RequestAdapterPromise = DOMPromiseDeferred<IDLNullable<IDLInterface<GPUAdapter>>>;
     void requestAdapter(const std::optional<GPURequestAdapterOptions>&, RequestAdapterPromise&&);
 
-    GPUTextureFormat getPreferredCanvasFormat() const;
+    GPUTextureFormat NODELETE getPreferredCanvasFormat() const;
     WGSLLanguageFeatures& wgslLanguageFeatures() const { return m_wgslLanguageFeatures; }
 
     RefPtr<GPUPresentationContext> createPresentationContext(const GPUPresentationContextDescriptor&);

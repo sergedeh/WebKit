@@ -30,6 +30,7 @@
 #include <WebCore/EditingBehavior.h>
 #include <WebCore/EditingStyle.h>
 #include <WebCore/EditorInsertAction.h>
+#include <WebCore/EditorInternalCommand.h>
 #include <WebCore/FindOptions.h>
 #include <WebCore/FrameSelection.h>
 #include <WebCore/LocalFrame.h>
@@ -66,13 +67,14 @@ class SharedBuffer;
 class CustomUndoStep;
 class DataTransfer;
 class DeleteButtonController;
+class DocumentFragment;
 class DocumentMarker;
 class EditCommand;
 class EditCommandComposition;
 class EditorClient;
-class EditorInternalCommand;
 class File;
 class HTMLElement;
+class HTMLImageElement;
 class HitTestResult;
 class KeyboardEvent;
 class KillRing;
@@ -91,6 +93,7 @@ class Text;
 class TextCheckerClient;
 class TextEvent;
 class TextPlaceholderElement;
+class CachedMatchFinder;
 class WritingSuggestionData;
 
 struct CompositionHighlight;
@@ -206,16 +209,14 @@ public:
         AsQuotation = 1 << 2,
     };
 
-    WEBCORE_EXPORT EditorClient* client() const;
-    WEBCORE_EXPORT CheckedPtr<EditorClient> checkedClient() const;
+    WEBCORE_EXPORT EditorClient* NODELETE client() const;
     WEBCORE_EXPORT TextCheckerClient* textChecker() const;
 
     CompositeEditCommand* lastEditCommand() { return m_lastEditCommand.get(); }
 
-    Document& document() const { return m_document; }
-    Ref<Document> protectedDocument() const { return m_document; }
+    Document& NODELETE document() const;
 
-    WEBCORE_EXPORT void ref() const;
+    WEBCORE_EXPORT void NODELETE ref() const;
     WEBCORE_EXPORT void deref() const;
 
     void handleKeyboardEvent(KeyboardEvent&);
@@ -236,7 +237,7 @@ public:
     WEBCORE_EXPORT bool canCopy() const;
     WEBCORE_EXPORT bool canDelete() const;
     WEBCORE_EXPORT bool canSmartCopyOrDelete();
-    bool shouldSmartDelete();
+    bool NODELETE shouldSmartDelete();
     bool canCopyFont() const;
 
     enum class FromMenuOrKeyBinding : bool { No, Yes };
@@ -446,15 +447,14 @@ public:
 
     // getting international text input composition state (for use by LegacyInlineTextBox)
     Text* compositionNode() const { return m_compositionNode.get(); }
-    RefPtr<Text> protectedCompositionNode() const { return m_compositionNode; }
     unsigned compositionStart() const { return m_compositionStart; }
     unsigned compositionEnd() const { return m_compositionEnd; }
     bool compositionUsesCustomUnderlines() const { return !m_customCompositionUnderlines.isEmpty(); }
-    const Vector<CompositionUnderline>& customCompositionUnderlines() const { return m_customCompositionUnderlines; }
+    const Vector<CompositionUnderline>& customCompositionUnderlines() const LIFETIME_BOUND { return m_customCompositionUnderlines; }
     bool compositionUsesCustomHighlights() const { return !m_customCompositionHighlights.isEmpty(); }
-    const Vector<CompositionHighlight>& customCompositionHighlights() const { return m_customCompositionHighlights; }
+    const Vector<CompositionHighlight>& customCompositionHighlights() const LIFETIME_BOUND { return m_customCompositionHighlights; }
     bool compositionUsesCustomAnnotations() const { return !m_customCompositionAnnotations.isEmpty(); }
-    const HashMap<String, Vector<CharacterRange>>& customCompositionAnnotations() const { return m_customCompositionAnnotations; }
+    const HashMap<String, Vector<CharacterRange>>& customCompositionAnnotations() const LIFETIME_BOUND { return m_customCompositionAnnotations; }
 
     // FIXME: This should be a page-level concept (i.e. on EditorClient) instead of on the Editor, which
     // is a frame-specific concept, because executing an editing command can run JavaScript that can do
@@ -470,10 +470,10 @@ public:
 
     VisibleSelection selectionForCommand(Event*);
 
-    PAL::KillRing& killRing() const { return m_killRing; }
+    PAL::KillRing& killRing() const LIFETIME_BOUND { return m_killRing; }
     SpellChecker& spellChecker() const { return m_spellChecker; }
 
-    EditingBehavior behavior() const;
+    EditingBehavior NODELETE behavior() const;
 
     WEBCORE_EXPORT std::optional<SimpleRange> selectedRange();
 
@@ -512,7 +512,7 @@ public:
 
     WEBCORE_EXPORT std::optional<SimpleRange> rangeOfString(const String&, const std::optional<SimpleRange>& searchRange, FindOptions);
 
-    const VisibleSelection& mark() const; // Mark, to be used as emacs uses it.
+    const VisibleSelection& mark() const LIFETIME_BOUND; // Mark, to be used as emacs uses it.
     void setMark(const VisibleSelection&);
 
     void computeAndSetTypingStyle(EditingStyle& , EditAction = EditAction::Unspecified);
@@ -526,6 +526,8 @@ public:
     WEBCORE_EXPORT void updateEditorUINowIfScheduled();
     bool shouldChangeSelection(const VisibleSelection& oldSelection, const VisibleSelection& newSelection, Affinity, bool stillSelecting) const;
     WEBCORE_EXPORT unsigned countMatchesForText(const String&, const std::optional<SimpleRange>&, FindOptions, unsigned limit, bool markMatches, Vector<SimpleRange>*);
+    WEBCORE_EXPORT unsigned markAllMatchesForText(const String&, FindOptions, unsigned limit);
+    WEBCORE_EXPORT void textMatchMarkersWereCleared();
     bool markedTextMatchesAreHighlighted() const;
     WEBCORE_EXPORT void setMarkedTextMatchesAreHighlighted(bool);
 
@@ -558,6 +560,11 @@ public:
     WEBCORE_EXPORT void uppercaseWord();
     WEBCORE_EXPORT void lowercaseWord();
     WEBCORE_EXPORT void capitalizeWord();
+    WEBCORE_EXPORT void convertToTraditionalChinese();
+    WEBCORE_EXPORT void convertToSimplifiedChinese();
+    WEBCORE_EXPORT bool canApplyCaseTransformations(const String&);
+    WEBCORE_EXPORT bool canConvertToSimplifiedChinese(const String&);
+    WEBCORE_EXPORT bool canConvertToTraditionalChinese(const String&);
 #endif
 
 #if USE(AUTOMATIC_TEXT_REPLACEMENT)
@@ -578,6 +585,8 @@ public:
     WEBCORE_EXPORT void toggleSmartLists();
 #endif
 
+    WEBCORE_EXPORT bool isAlternativeTextUIActive() const;
+
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT bool isSmartListsEnabled();
 #endif
@@ -585,7 +594,7 @@ public:
     RefPtr<DocumentFragment> webContentFromPasteboard(Pasteboard&, const SimpleRange& context, bool allowPlainText, bool& chosePlainText);
 
     WEBCORE_EXPORT RefPtr<Font> fontForSelection(bool& hasMultipleFonts);
-    WEBCORE_EXPORT const RenderStyle* styleForSelectionStart(RefPtr<Node>& nodeToRemove);
+    WEBCORE_EXPORT const Style::ComputedStyle* styleForSelectionStart(RefPtr<Node>& nodeToRemove);
     WEBCORE_EXPORT FontAttributes fontAttributesAtSelectionStart();
 
 #if PLATFORM(COCOA)
@@ -603,7 +612,7 @@ public:
     static RefPtr<SharedBuffer> dataInRTFDFormat(NSAttributedString *);
     static RefPtr<SharedBuffer> dataInRTFFormat(NSAttributedString *);
 
-    static bool writingSuggestionsSupportsSuffix();
+    static bool NODELETE writingSuggestionsSupportsSuffix();
 #endif
 
 #if PLATFORM(MAC)
@@ -620,7 +629,7 @@ public:
 
 #if ENABLE(TELEPHONE_NUMBER_DETECTION) && PLATFORM(MAC)
     void scanSelectionForTelephoneNumbers();
-    const Vector<SimpleRange>& detectedTelephoneNumberRanges() const { return m_detectedTelephoneNumberRanges; }
+    const Vector<SimpleRange>& detectedTelephoneNumberRanges() const LIFETIME_BOUND { return m_detectedTelephoneNumberRanges; }
 #endif
 
     WEBCORE_EXPORT String stringForCandidateRequest() const;
@@ -656,13 +665,15 @@ public:
 
     WEBCORE_EXPORT Node* nodeBeforeWritingSuggestions() const;
     Element* writingSuggestionsContainerElement() const;
-    WritingSuggestionData* writingSuggestionData() const { return m_writingSuggestionData.get(); }
+    WritingSuggestionData* writingSuggestionData() const LIFETIME_BOUND { return m_writingSuggestionData.get(); }
     bool isInsertingTextForWritingSuggestion() const { return m_isInsertingTextForWritingSuggestion; }
 
-    RenderInline* writingSuggestionRenderer() const;
-    void setWritingSuggestionRenderer(RenderInline&);
+    RenderBoxModelObject* NODELETE writingSuggestionRenderer() const;
+    void NODELETE setWritingSuggestionRenderer(RenderBoxModelObject&);
 
     WEBCORE_EXPORT void closeTyping();
+
+    void releaseMemory();
 
 #if PLATFORM(IOS_FAMILY)
     bool shouldDrawVisuallyContiguousBidiSelection() const;
@@ -726,6 +737,8 @@ private:
 
     void removeWritingSuggestionIfNeeded();
 
+    Vector<SimpleRange> findAllMatches(const String& searchText, const std::optional<SimpleRange>&, FindOptions searchOptions, std::optional<unsigned> limit);
+
     WeakPtr<EditorClient> m_client;
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
     RefPtr<CompositeEditCommand> m_lastEditCommand;
@@ -754,7 +767,7 @@ private:
 #endif
 
     std::unique_ptr<WritingSuggestionData> m_writingSuggestionData;
-    SingleThreadWeakPtr<RenderInline> m_writingSuggestionRenderer;
+    SingleThreadWeakPtr<RenderBoxModelObject> m_writingSuggestionRenderer;
     bool m_isInsertingTextForWritingSuggestion { false };
 
     VisibleSelection m_mark;
@@ -780,6 +793,8 @@ private:
     bool m_isGettingDictionaryPopupInfo { false };
     bool m_hasHandledAnyEditing { false };
     HashSet<Ref<HTMLImageElement>> m_imageElementsToLoadBeforeRevealingSelection;
+
+    std::unique_ptr<CachedMatchFinder> m_matchFinder;
 };
 
 inline void Editor::setStartNewKillRingSequence(bool flag)

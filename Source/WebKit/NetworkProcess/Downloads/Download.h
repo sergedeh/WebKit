@@ -49,7 +49,6 @@ OBJC_CLASS NSURLSessionDownloadTask;
 
 namespace WebCore {
 class AuthenticationChallenge;
-class BlobDataFileReference;
 class Credential;
 class ResourceError;
 class ResourceRequest;
@@ -97,8 +96,8 @@ public:
     void didFinish();
     void didFail(const WebCore::ResourceError&, std::span<const uint8_t> resumeData);
 
-    void applicationDidEnterBackground() { protectedMonitor()->applicationDidEnterBackground(); }
-    void applicationWillEnterForeground() { protectedMonitor()->applicationWillEnterForeground(); }
+    void applicationDidEnterBackground() { protect(m_monitor)->applicationDidEnterBackground(); }
+    void applicationWillEnterForeground() { protect(m_monitor)->applicationWillEnterForeground(); }
     DownloadManager* manager() const { return m_downloadManager.get(); }
     void clearManager() { m_downloadManager = nullptr; }
 
@@ -109,8 +108,6 @@ private:
 #if PLATFORM(COCOA)
     Download(DownloadManager&, DownloadID, NSURLSessionDownloadTask*, NetworkSession&, const String& suggestedFilename = { });
 #endif
-
-    Ref<DownloadMonitor> protectedMonitor() { return m_monitor; }
 
     // IPC::MessageSender
     IPC::Connection* messageSenderConnection() const override;
@@ -130,7 +127,6 @@ private:
     DownloadID m_downloadID;
     const Ref<DownloadManager::Client> m_client;
 
-    Vector<Ref<WebCore::BlobDataFileReference>> m_blobFileReferences;
     RefPtr<SandboxExtension> m_sandboxExtension;
 
     const RefPtr<NetworkDataTask> m_download;
@@ -151,7 +147,6 @@ private:
     IgnoreDidFailCallback m_ignoreDidFailCallback { IgnoreDidFailCallback::No };
     DownloadMonitor m_monitor { *this };
     unsigned m_testSpeedMultiplier { 1 };
-    CompletionHandler<void(std::span<const uint8_t>)> m_cancelCompletionHandler;
 };
 
 } // namespace WebKit

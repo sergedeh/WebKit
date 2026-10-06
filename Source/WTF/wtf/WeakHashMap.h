@@ -95,14 +95,12 @@ public:
         {
             ASSERT(m_position != m_endPosition);
             ++m_position;
-            ++m_advanceCount;
             m_weakHashMap.increaseOperationCountSinceLastCleanup();
         }
 
         const MapType& m_weakHashMap;
         IteratorType m_position;
         IteratorType m_endPosition;
-        unsigned m_advanceCount { 0 };
     };
 
     class WeakHashMapIterator : public WeakHashMapIteratorBase<WeakHashMap, typename MapType::iterator, PeekPtrType, PeekType> {
@@ -174,17 +172,17 @@ public:
     const_iterator end() const { return WeakHashMapConstIterator(*this, m_map.end()); }
 
     template<typename Functor>
-    AddResult ensure(const KeyType* key, NOESCAPE Functor&& functor)
+    AddResult ensure(const KeyType* key, NOESCAPE const Functor& functor)
     {
         amortizedCleanupIfNeeded();
-        auto result = m_map.ensure(key, std::forward<Functor>(functor));
+        auto result = m_map.ensure(key, functor);
         return AddResult { WeakHashMapIterator(*this, result.iterator), result.isNewEntry };
     }
 
     template<typename Functor>
-    AddResult ensure(const KeyType& key, NOESCAPE Functor&& functor)
+    AddResult ensure(const KeyType& key, NOESCAPE const Functor& functor)
     {
-        return ensure(&key, std::forward<Functor>(functor));
+        return ensure(&key, functor);
     }
 
     template<typename T>
@@ -311,7 +309,7 @@ public:
     }
 
     template<typename Functor>
-    bool removeIf(NOESCAPE Functor&& functor)
+    bool removeIf(NOESCAPE const Functor& functor)
     {
         bool result = m_map.removeIf([&](auto& entry) {
             auto* key = entry.key.get();
@@ -346,7 +344,7 @@ public:
     bool hasNullReferences() const
     {
         unsigned count = 0;
-        for (auto _ : m_map) {
+        for (auto& _ : m_map) {
             UNUSED_VARIABLE(_);
             ++count;
         }

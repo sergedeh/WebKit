@@ -26,18 +26,21 @@
 #include "config.h"
 #include "WasmModuleDebugInfo.h"
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 #include "Options.h"
 #include "WasmIPIntGenerator.h"
 #include "WasmModuleInformation.h"
 #include <wtf/DataLog.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/URL.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 // Forward declaration to ensure proper linkage
 namespace JSC {
 namespace Wasm {
-void parseForDebugInfo(std::span<const uint8_t>, const TypeDefinition&, ModuleInformation&, FunctionCodeIndex, FunctionDebugInfo&);
+void parseForDebugInfo(std::span<const uint8_t>, const RTT&, ModuleInformation&, FunctionCodeIndex, FunctionDebugInfo&);
 }
 }
 
@@ -64,28 +67,8 @@ void FunctionDebugInfo::addLocalType(Type type)
     locals.append(type);
 }
 
-FunctionDebugInfo& ModuleDebugInfo::ensureFunctionDebugInfo(FunctionCodeIndex functionIndex)
-{
-    RELEASE_ASSERT(functionIndex < moduleInfo->functions.size());
-
-    auto iterator = functionIndexToData.find(functionIndex);
-    if (iterator != functionIndexToData.end())
-        return iterator->value;
-
-    dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleDebugInfo] Lazy collection for function ", functionIndex);
-    const auto& function = moduleInfo->functions[functionIndex];
-    FunctionSpaceIndex spaceIndex = moduleInfo->toSpaceIndex(functionIndex);
-    TypeIndex typeIndex = moduleInfo->typeIndexFromFunctionIndexSpace(spaceIndex);
-    auto& info = functionIndexToData.add(functionIndex, FunctionDebugInfo()).iterator->value;
-    auto functionData = source.subspan(function.start, function.data.size());
-
-    Ref typeDefinition = TypeInformation::get(typeIndex);
-    parseForDebugInfo(functionData, typeDefinition, moduleInfo, functionIndex, info);
-    dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleDebugInfo] Debug info collection completed for function ", functionIndex, " with ", info.offsetToNextInstructions.size(), " instruction mappings and ", info.locals.size(), " locals");
-    return info;
-}
 
 } // namespace Wasm
 } // namespace JSC
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

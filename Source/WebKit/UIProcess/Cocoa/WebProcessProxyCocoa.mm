@@ -42,6 +42,8 @@
 #import "WebProcessMessages.h"
 #import "WebProcessPool.h"
 #import <WebCore/ActivityState.h>
+#import <mach/mach_traps.h>
+#import <pal/Logging.h>
 #import <pal/spi/ios/MobileGestaltSPI.h>
 #import <sys/sysctl.h>
 #import <wtf/NeverDestroyed.h>
@@ -77,6 +79,11 @@
 #import <wtf/spi/cocoa/OSLogSPI.h>
 #endif
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+#import "WebExtensionContext.h"
+#import "WebExtensionController.h"
+#endif
+
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
 #import "TCCSoftLink.h"
 #endif
@@ -85,8 +92,6 @@
 #define MESSAGE_CHECK_URL(url) MESSAGE_CHECK_BASE(checkURLReceivedFromWebProcess(url), connection())
 
 namespace WebKit {
-
-static const Seconds unexpectedActivityDuration = 10_s;
 
 void WebProcessProxy::registerNotifyObservers()
 {
@@ -106,7 +111,7 @@ const MemoryCompactLookupOnlyRobinHoodHashSet<String>& WebProcessProxy::platform
     return platformPathsWithAssumedReadAccess;
 }
 
-static Vector<String>& mediaTypeCache()
+static Vector<String>& NODELETE mediaTypeCache()
 {
     ASSERT(RunLoop::isMain());
     static NeverDestroyed<Vector<String>> typeCache;
@@ -121,22 +126,33 @@ void WebProcessProxy::cacheMediaMIMETypes(const Vector<String>& types)
     mediaTypeCache() = types;
     for (Ref process : processPool().processes()) {
         if (process.ptr() != this)
-            cacheMediaMIMETypesInternal(types);
+            process->send(Messages::WebProcess::SetMediaMIMETypes(types), 0);
     }
 }
 
-void WebProcessProxy::cacheMediaMIMETypesInternal(const Vector<String>& types)
-{
-    if (!mediaTypeCache().isEmpty())
-        return;
-
-    mediaTypeCache() = types;
-    send(Messages::WebProcess::SetMediaMIMETypes(types), 0);
-}
-
-Vector<String> WebProcessProxy::mediaMIMETypes() const
+const Vector<String>& WebProcessProxy::mediaMIMETypes()
 {
     return mediaTypeCache();
+}
+
+void WebProcessProxy::cacheMediaSourceTypeSupported(const String& type, bool isSupported)
+{
+    protect(processPool())->cacheMediaSourceTypeSupported(type, isSupported);
+}
+
+void WebProcessProxy::setTaskNamePort(MachSendRight&& taskNamePort)
+{
+    MESSAGE_CHECK(!m_taskNamePort);
+
+    pid_t pid = processID();
+    if (!pid)
+        return;
+
+    pid_t pidForTask = 0;
+    if (pid_for_task(taskNamePort.sendRight(), &pidForTask) == KERN_SUCCESS)
+        MESSAGE_CHECK(pid == pidForTask);
+
+    m_taskNamePort = WTF::move(taskNamePort);
 }
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -194,6 +210,10 @@ void WebProcessProxy::unblockAccessibilityServerIfNeeded()
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
 void WebProcessProxy::isAXAuthenticated(CoreIPCAuditToken&& auditToken, CompletionHandler<void(bool)>&& completionHandler)
 {
+    if (processPool().allowAXAuthenticationForTesting()) {
+        completionHandler(true);
+        return;
+    }
     auto authenticated = TCCAccessCheckAuditToken(get_TCC_kTCCServiceAccessibilitySingleton(), auditToken.auditToken(), nullptr);
     completionHandler(authenticated);
 }
@@ -218,10 +238,8 @@ void WebProcessProxy::sendAudioComponentRegistrations()
             return;
         
         RunLoop::mainSingleton().dispatch([weakThis = WTF::move(weakThis), registrations = WTF::move(registrations)] () mutable {
-            if (!weakThis)
-                return;
-
-            weakThis->send(Messages::WebProcess::ConsumeAudioComponentRegistrations(IPC::SharedBufferReference(WTF::move(registrations))), 0);
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->send(Messages::WebProcess::ConsumeAudioComponentRegistrations(IPC::SharedBufferReference(WTF::move(registrations))), 0);
         });
     });
 }
@@ -262,15 +280,17 @@ std::optional<audit_token_t> WebProcessProxy::auditToken() const
     if (!hasConnection())
         return std::nullopt;
     
-    return protectedConnection()->getAuditToken();
+    return protect(connection())->getAuditToken();
 }
 
+#if !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
 std::optional<Vector<SandboxExtension::Handle>> WebProcessProxy::fontdMachExtensionHandles()
 {
     if (std::exchange(m_sentFontdMachExtensionHandles, true))
         return std::nullopt;
     return SandboxExtension::createHandlesForMachLookup({ "com.apple.fonts"_s }, auditToken(), SandboxExtension::MachBootstrapOptions::EnableMachBootstrap);
 }
+#endif // !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
 
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebProcessProxyCocoaAdditions.mm>)
 #import <WebKitAdditions/WebProcessProxyCocoaAdditions.mm>
@@ -280,25 +300,6 @@ bool WebProcessProxy::shouldDisableJITCage() const
     return false;
 }
 #endif
-
-#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
-#if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
-void WebProcessProxy::createLogStream(IPC::StreamServerConnectionHandle&& serverConnection, LogStreamIdentifier identifier, CompletionHandler<void(IPC::Semaphore& streamWakeUpSemaphore, IPC::Semaphore& streamClientWaitSemaphore)>&& completionHandler)
-{
-    MESSAGE_CHECK(!m_logStream.get());
-    m_logStream = LogStream::create(*this, WTF::move(serverConnection), identifier, WTF::move(completionHandler));
-}
-#else
-void WebProcessProxy::createLogStream(LogStreamIdentifier identifier, CompletionHandler<void()>&& completionHandler)
-{
-    MESSAGE_CHECK(!m_logStream.get());
-    Ref logStream = LogStream::create(*this, protectedConnection(), identifier);
-    addMessageReceiver(Messages::LogStream::messageReceiverName(), logStream->identifier(), logStream);
-    m_logStream = WTF::move(logStream);
-    completionHandler();
-}
-#endif
-#endif // ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
 
 #if ENABLE(REMOTE_INSPECTOR)
 void WebProcessProxy::createServiceWorkerDebuggable(WebCore::ServiceWorkerIdentifier identifier, URL&& url, WebCore::ServiceWorkerIsInspectable isInspectable, CompletionHandler<void(bool shouldWaitForAutoInspection)>&& completionHandler)
@@ -312,6 +313,19 @@ void WebProcessProxy::createServiceWorkerDebuggable(WebCore::ServiceWorkerIdenti
     }
 
     Ref serviceWorkerDebuggableProxy = ServiceWorkerDebuggableProxy::create(url.string(), identifier, *this);
+
+#if ENABLE(WK_WEB_EXTENSIONS)
+    // Set the nameOverride from the extension context's inspection name so the correct name appears for the debuggable before it gets sent to clients.
+    for (auto& page : m_pageMap.values()) {
+        if (RefPtr webExtensionController = page->webExtensionController()) {
+            if (RefPtr extensionContext = webExtensionController->extensionContext(url)) {
+                serviceWorkerDebuggableProxy->setNameOverride(extensionContext->backgroundWebViewInspectionName());
+                break;
+            }
+        }
+    }
+#endif
+
     m_serviceWorkerDebuggableProxies.add(identifier, serviceWorkerDebuggableProxy);
     serviceWorkerDebuggableProxy->init();
     serviceWorkerDebuggableProxy->setInspectable(isInspectable == WebCore::ServiceWorkerIsInspectable::Yes);
@@ -355,74 +369,31 @@ void WebProcessProxy::platformDestroy()
     [[WKStylusDeviceObserver sharedInstance] stop];
 #endif
 #endif // PLATFORM(IOS_FAMILY)
-
-#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
-    if (m_logStream.get()) {
-#if !ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
-        removeMessageReceiver(Messages::LogStream::messageReceiverName(), m_logStream->identifier());
-#endif
-        m_logStream.reset();
-    }
-
-#endif
 }
 
 void WebProcessProxy::platformResumeProcess()
 {
     if (m_platformSuspendDidReleaseNearSuspendedAssertion) {
         m_platformSuspendDidReleaseNearSuspendedAssertion = false;
-        protectedThrottler()->setShouldTakeNearSuspendedAssertion(true);
+        protect(throttler())->setShouldTakeNearSuspendedAssertion(true);
     }
 }
 
 void WebProcessProxy::platformSuspendProcess()
 {
     m_platformSuspendDidReleaseNearSuspendedAssertion = throttler().isHoldingNearSuspendedAssertion();
-    protectedThrottler()->setShouldTakeNearSuspendedAssertion(false);
+    protect(throttler())->setShouldTakeNearSuspendedAssertion(false);
 }
 
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
 RefPtr<XPCEventHandler> WebProcessProxy::xpcEventHandler() const
 {
-    return adoptRef(new WebProcessProxy::WebProcessXPCEventHandler(*this));
+    return adoptRef(new LogXPCEventHandler(*this));
 }
 
-bool WebProcessProxy::WebProcessXPCEventHandler::handleXPCEvent(xpc_object_t event)
+void WebProcessProxy::didReceiveLogsDuringLaunchForTesting()
 {
-    auto messageName = xpcDictionaryGetString(event, XPCEndpoint::xpcMessageNameKey);
-    if (messageName == logMessageName) {
-        RefPtr webProcess = m_webProcess.get();
-        if (!webProcess)
-            return true;
-
-        MESSAGE_CHECK_WITH_RETURN_VALUE_BASE(m_logEndpointEnabled, webProcess->connection(), false);
-
-        auto subsystem = xpcDictionaryGetString(event, subsystemKey);
-        auto category = xpcDictionaryGetString(event, categoryKey);
-        auto messageString = xpcDictionaryGetString(event, messageStringKey);
-        auto logType = xpc_dictionary_get_uint64(event, logTypeKey);
-        auto pid = xpc_connection_get_pid(xpc_dictionary_get_remote_connection(event));
-
-        OSObjectPtr<os_log_t> osLog;
-        if (!subsystem.isEmpty() && !category.isEmpty())
-            osLog = adoptOSObject(os_log_create(subsystem.utf8().data(), category.utf8().data()));
-
-        auto osLogPointer = osLog ? osLog.get() : OS_LOG_DEFAULT;
-        os_log_with_type(osLogPointer, static_cast<os_log_type_t>(logType), "WebContent[%d] %{public}s", static_cast<int>(pid), messageString.utf8().data());
-        webProcess->m_didReceiveLogsDuringLaunchForTesting = true;
-    } else if (messageName == disableLogMessageName) {
-        RefPtr webProcess = m_webProcess.get();
-        if (!webProcess)
-            return true;
-        m_logEndpointEnabled = false;
-        RELEASE_LOG(Process, "Log endpoint is disabled");
-    }
-    return false;
-}
-
-WebProcessProxy::WebProcessXPCEventHandler::WebProcessXPCEventHandler(const WebProcessProxy& webProcess)
-    : m_webProcess(webProcess)
-{
+    m_didReceiveLogsDuringLaunchForTesting = true;
 }
 #endif // ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
 

@@ -145,8 +145,11 @@ void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock, Structure* las
 
     JSGlobalObject* globalObject = codeBlock->globalObject();
     bool isResizableOrGrowableShared = false;
-    if (!globalObject->isOriginalArrayStructure(lastSeenStructure) && !globalObject->isOriginalTypedArrayStructure(lastSeenStructure, isResizableOrGrowableShared))
+    if (!globalObject->isOriginalArrayStructure(lastSeenStructure) && !globalObject->isOriginalTypedArrayStructure(lastSeenStructure, isResizableOrGrowableShared)) {
         m_arrayProfileFlags.add(ArrayProfileFlag::UsesNonOriginalArrayStructures);
+        if (lastSeenStructure == globalObject->regExpMatchesArrayStructure() || lastSeenStructure == globalObject->regExpMatchesArrayWithIndicesStructure())
+            m_arrayProfileFlags.add(ArrayProfileFlag::MayBeRegExpMatchesArray);
+    }
 
     if (isTypedArrayTypeIncludingDataView(lastSeenStructure->typeInfo().type())) {
         if (isResizableOrGrowableSharedTypedArrayIncludingDataView(lastSeenStructure->classInfoForCells()))
@@ -158,26 +161,26 @@ void ArrayProfile::observeIndexedRead(JSCell* cell, unsigned index)
 {
     m_lastSeenStructureID = cell->structureID();
 
-    if (JSObject* object = jsDynamicCast<JSObject*>(cell)) {
+    if (JSObject* object = dynamicDowncast<JSObject>(cell)) {
         if (hasAnyArrayStorage(object->indexingType()) && index >= object->getVectorLength())
             setOutOfBounds();
         else if (index >= object->getArrayLength())
             setOutOfBounds();
     }
 
-    if (JSString* string = jsDynamicCast<JSString*>(cell)) {
+    if (JSString* string = dynamicDowncast<JSString>(cell)) {
         if (index >= string->length())
             setOutOfBounds();
     }
 }
 
-CString ArrayProfile::briefDescription(CodeBlock* codeBlock)
+UTF8CString ArrayProfile::briefDescription(CodeBlock* codeBlock)
 {
     computeUpdatedPrediction(codeBlock);
     return briefDescriptionWithoutUpdating();
 }
 
-CString ArrayProfile::briefDescriptionWithoutUpdating()
+UTF8CString ArrayProfile::briefDescriptionWithoutUpdating()
 {
     StringPrintStream out;
     CommaPrinter comma;
@@ -195,7 +198,7 @@ CString ArrayProfile::briefDescriptionWithoutUpdating()
     if (!m_arrayProfileFlags.contains(ArrayProfileFlag::MayBeResizableOrGrowableSharedTypedArray))
         out.print(comma, "Resizable"_s);
 
-    return out.toCString();
+    return out.toUTF8CString();
 }
 
 } // namespace JSC

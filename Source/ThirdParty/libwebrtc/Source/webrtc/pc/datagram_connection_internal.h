@@ -13,10 +13,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <string>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
-#include "api/array_view.h"
 #include "api/candidate.h"
 #include "api/datagram_connection.h"
 #include "api/environment/environment.h"
@@ -28,8 +29,10 @@
 #include "p2p/base/packet_transport_internal.h"
 #include "p2p/base/port_allocator.h"
 #include "p2p/base/transport_description.h"
+#include "p2p/dtls/dtls_transport_internal.h"
 #include "pc/dtls_srtp_transport.h"
 #include "pc/dtls_transport.h"
+#include "pc/packet_processor.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/copy_on_write_buffer.h"
 #include "rtc_base/network/sent_packet.h"
@@ -51,6 +54,7 @@ class RTC_EXPORT DatagramConnectionInternal : public DatagramConnection,
                              WireProtocol wire_protocol,
                              std::unique_ptr<IceTransportInternal>
                                  custom_ice_transport_internal = nullptr);
+  ~DatagramConnectionInternal() override;
 
   void SetRemoteIceParameters(const IceParameters& ice_parameters) override;
   void AddRemoteCandidate(const Candidate& candidate) override;
@@ -59,8 +63,7 @@ class RTC_EXPORT DatagramConnectionInternal : public DatagramConnection,
                                const uint8_t* digest,
                                size_t digest_len,
                                SSLRole ssl_role) override;
-  void SendPacket(ArrayView<const uint8_t> data,
-                  PacketSendParameters params) override;
+  void SendPackets(std::span<PacketSendParameters> packets) override;
 
   void Terminate(
       absl::AnyInvocable<void()> terminate_complete_callback) override;
@@ -79,6 +82,12 @@ class RTC_EXPORT DatagramConnectionInternal : public DatagramConnection,
 
   void OnSentPacket(const SentPacketInfo& packet);
 
+  absl::string_view IceUsernameFragment() override {
+    return ice_username_fragment_;
+  }
+
+  absl::string_view IcePassword() override { return ice_password_; }
+
 #if RTC_DCHECK_IS_ON
   DtlsSrtpTransport* GetDtlsSrtpTransportForTesting() {
     return dtls_srtp_transport_.get();
@@ -87,10 +96,13 @@ class RTC_EXPORT DatagramConnectionInternal : public DatagramConnection,
 
  private:
   void DispatchSendOutcome(PacketId id, Observer::SendOutcome::Status status);
+  void SendSinglePacket(const PacketSendParameters& packet,
+                        bool last_packet_in_batch);
 
   enum class State { kActive, kTerminated };
   State current_state_ = State::kActive;
 
+  const Environment env_;
   const WireProtocol wire_protocol_;
 
   // Must be before Transport types, to ensure it outlives them.
@@ -99,13 +111,17 @@ class RTC_EXPORT DatagramConnectionInternal : public DatagramConnection,
   // Note the destruction order of these transport objects must be preserved.
   const std::unique_ptr<PortAllocator> port_allocator_;
   const std::unique_ptr<IceTransportInternal> transport_channel_;
+  const std::unique_ptr<DtlsTransportInternal> internal_transport_;
   const scoped_refptr<DtlsTransport> dtls_transport_;
   const std::unique_ptr<DtlsSrtpTransport> dtls_srtp_transport_;
 
-  bool last_writable_state_ = false;
   const SequenceChecker sequence_checker_;
-  uint16_t next_seq_num_ RTC_GUARDED_BY(sequence_checker_) = 0;
-  uint32_t next_ts_ RTC_GUARDED_BY(sequence_checker_) = 10000;
+  bool last_writable_state_ RTC_GUARDED_BY(sequence_checker_) = false;
+
+  const std::string ice_username_fragment_;
+  const std::string ice_password_;
+
+  std::unique_ptr<PacketProcessor> packet_processor_;
 };
 
 }  // namespace webrtc

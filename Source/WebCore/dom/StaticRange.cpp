@@ -29,6 +29,7 @@
 #include "ContainerNodeInlines.h"
 #include "JSNode.h"
 #include "WebCoreOpaqueRootInlines.h"
+#include <JavaScriptCore/AbstractSlotVisitorInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -50,11 +51,11 @@ Ref<StaticRange> StaticRange::create(const SimpleRange& range)
     return create(SimpleRange { range });
 }
 
-static bool isDocumentTypeOrAttr(Node& node)
+static bool NODELETE isDocumentTypeOrAttr(Node& node)
 {
     switch (node.nodeType()) {
-    case Node::ATTRIBUTE_NODE:
-    case Node::DOCUMENT_TYPE_NODE:
+    case NodeType::Attribute:
+    case NodeType::DocumentType:
         return true;
     default:
         return false;
@@ -63,14 +64,12 @@ static bool isDocumentTypeOrAttr(Node& node)
 
 ExceptionOr<Ref<StaticRange>> StaticRange::create(Init&& init)
 {
-    ASSERT(init.startContainer);
-    ASSERT(init.endContainer);
-    if (isDocumentTypeOrAttr(*init.startContainer) || isDocumentTypeOrAttr(*init.endContainer))
+    if (isDocumentTypeOrAttr(init.startContainer) || isDocumentTypeOrAttr(init.endContainer))
         return Exception { ExceptionCode::InvalidNodeTypeError };
-    return create({ { init.startContainer.releaseNonNull(), init.startOffset }, { init.endContainer.releaseNonNull(), init.endOffset } });
+    return create({ { WTF::move(init.startContainer), init.startOffset }, { WTF::move(init.endContainer), init.endOffset } });
 }
 
-void StaticRange::visitNodesConcurrently(JSC::AbstractSlotVisitor& visitor) const
+void StaticRange::visitNodesInGCThread(JSC::AbstractSlotVisitor& visitor) const
 {
     addWebCoreOpaqueRoot(visitor, start.container.get());
     addWebCoreOpaqueRoot(visitor, end.container.get());
@@ -86,8 +85,8 @@ bool StaticRange::computeValidity() const
     if (endOffset() > endContainer->length())
         return false;
     if (startContainer.ptr() == endContainer.ptr())
-        return endOffset() > startOffset();
-    if (!connectedInSameTreeScope(startContainer->protectedRootNode().ptr(), endContainer->protectedRootNode().ptr()))
+        return endOffset() >= startOffset();
+    if (!connectedInSameTreeScope(&startContainer->rootNode(), &endContainer->rootNode()))
         return false;
     return !is_gt(treeOrder<ComposedTree>(startContainer, endContainer));
 }

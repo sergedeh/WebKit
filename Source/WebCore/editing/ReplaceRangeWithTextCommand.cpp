@@ -50,7 +50,7 @@ ReplaceRangeWithTextCommand::ReplaceRangeWithTextCommand(const SimpleRange& rang
 
 bool ReplaceRangeWithTextCommand::willApplyCommand()
 {
-    m_textFragment = createFragmentFromText(m_rangeToBeReplaced, m_text);
+    lazyInitialize(m_textFragment, createFragmentFromText(m_rangeToBeReplaced, m_text));
     return CompositeEditCommand::willApplyCommand();
 }
 
@@ -79,14 +79,14 @@ String ReplaceRangeWithTextCommand::inputEventData() const
 RefPtr<DataTransfer> ReplaceRangeWithTextCommand::inputEventDataTransfer() const
 {
     if (!isEditingTextAreaOrTextInput())
-        return DataTransfer::createForInputEvent(m_text, serializeFragment(*protectedTextFragment(), SerializedNodes::SubtreeIncludingNode));
+        return DataTransfer::createForInputEvent(m_text, serializeFragment(*m_textFragment, SerializedNodes::SubtreeIncludingNode));
 
     return CompositeEditCommand::inputEventDataTransfer();
 }
 
 Vector<Ref<StaticRange>> ReplaceRangeWithTextCommand::targetRanges() const
 {
-    return { 1, StaticRange::create(m_rangeToBeReplaced) };
+    return { FillWith { }, 1, StaticRange::create(m_rangeToBeReplaced) };
 }
 
 } // namespace WebCore

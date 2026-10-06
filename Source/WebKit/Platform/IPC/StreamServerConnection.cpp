@@ -26,7 +26,10 @@
 #include "config.h"
 #include "StreamServerConnection.h"
 
+#include "ArgumentCoders.h"
 #include "Connection.h"
+#include "IPCSemaphore.h"
+#include "MessageLog.h"
 #include "StreamConnectionWorkQueue.h"
 #include <mutex>
 #include <wtf/NeverDestroyed.h>
@@ -46,12 +49,13 @@ RefPtr<StreamServerConnection> StreamServerConnection::tryCreate(Handle&& handle
         connection->setIgnoreInvalidMessageForTesting();
 #endif
 
-    return adoptRef(*new StreamServerConnection(WTF::move(connection), WTF::move(*buffer)));
+    return adoptRef(*new StreamServerConnection(WTF::move(connection), WTF::move(*buffer), WTF::move(handle.clientWaitSignal)));
 }
 
-StreamServerConnection::StreamServerConnection(Ref<Connection> connection, StreamServerConnectionBuffer&& stream)
+StreamServerConnection::StreamServerConnection(Ref<Connection> connection, StreamServerConnectionBuffer&& stream, Signal&& clientWaitSignal)
     : m_connection(WTF::move(connection))
     , m_buffer(WTF::move(stream))
+    , m_clientWaitSignal(WTF::move(clientWaitSignal))
 {
 }
 
@@ -69,6 +73,12 @@ void StreamServerConnection::open(Client& client, StreamConnectionWorkQueue& wor
     m_connection->addMessageReceiveQueue(*this, { });
     m_connection->open(*this, workQueue);
     workQueue.addStreamConnection(*this);
+    // Establish the work queue's wake up semaphore. The client's backpressure Event came in with the
+    // handle, so this is all the client still needs from the server. Until it arrives the client just
+    // does not signal a wakeup, so this does not need to be waited for.
+    auto encoder = makeUniqueRef<Encoder>(MessageName::InitializeStreamClientConnection, 0);
+    encoder.get() << workQueue.wakeUpSemaphore();
+    m_connection->sendMessage(WTF::move(encoder), { });
 }
 
 void StreamServerConnection::invalidate()
@@ -78,7 +88,7 @@ void StreamServerConnection::invalidate()
         connection->invalidate();
         return;
     }
-    protectedWorkQueue()->removeStreamConnection(*this);
+    protect(m_workQueue)->removeStreamConnection(*this);
     connection->invalidate();
     connection->removeMessageReceiveQueue({ });
     m_workQueue = nullptr;
@@ -110,7 +120,7 @@ void StreamServerConnection::enqueueMessage(Connection&, UniqueRef<Decoder>&& me
         m_outOfStreamMessages.append(WTF::move(message));
     }
     ASSERT(m_workQueue);
-    protectedWorkQueue()->wakeUp();
+    protect(m_workQueue)->wakeUp();
 }
 
 void StreamServerConnection::didReceiveMessage(Connection&, Decoder&)
@@ -138,13 +148,17 @@ void StreamServerConnection::didReceiveInvalidMessage(Connection&, MessageName, 
 StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMessages(size_t messageLimit)
 {
     RefPtr<StreamMessageReceiver> currentReceiver;
+    bool didDispatchMessage = false;
     // FIXME: Implement WTF::isValid(ReceiverName).
     uint8_t currentReceiverName = static_cast<uint8_t>(ReceiverName::Invalid);
 
     for (size_t i = 0; i < messageLimit; ++i) {
         auto span = m_buffer.tryAcquire();
-        if (!span)
+        if (!span) {
+            if (didDispatchMessage)
+                CheckedPtr { m_client }->didRunOutOfMessages();
             return DispatchResult::HasNoMessages;
+        }
         IPC::Decoder decoder { *span, m_currentDestinationID };
         if (!decoder.isValid()) {
             dispatchDidReceiveInvalidMessage(decoder);
@@ -158,6 +172,7 @@ StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMes
         if (decoder.messageName() == MessageName::ProcessOutOfStreamMessage) {
             if (!processOutOfStreamMessage(decoder))
                 return DispatchResult::HasNoMessages;
+            didDispatchMessage = true;
             continue;
         }
         if (currentReceiverName != static_cast<uint8_t>(decoder.messageReceiverName())) {
@@ -185,6 +200,12 @@ StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMes
         }
         if (!processStreamMessage(decoder, *currentReceiver))
             return DispatchResult::HasNoMessages;
+        didDispatchMessage = true;
+    }
+    if (!m_buffer.tryAcquire()) {
+        if (didDispatchMessage)
+            CheckedPtr { m_client }->didRunOutOfMessages();
+        return DispatchResult::HasNoMessages;
     }
     return DispatchResult::HasMoreMessages;
 }
@@ -202,7 +223,7 @@ bool StreamServerConnection::processSetStreamDestinationID(Decoder& decoder, Ref
     }
     auto result = m_buffer.release(decoder.currentBufferOffset());
     if (result == WakeUpClient::Yes)
-        m_clientWaitSemaphore.signal();
+        m_clientWaitSignal.signal();
     return true;
 }
 
@@ -218,11 +239,11 @@ bool StreamServerConnection::processStreamMessage(Decoder& decoder, StreamMessag
     if (decoder.isSyncMessage()) {
         result = m_buffer.releaseAll();
         if (m_syncReplyToDispatch)
-            protectedConnection()->sendSyncReply(makeUniqueRefFromNonNullUniquePtr(WTF::move(m_syncReplyToDispatch)));
+            protect(connection())->sendSyncReply(makeUniqueRefFromNonNullUniquePtr(WTF::move(m_syncReplyToDispatch)));
     } else
         result = m_buffer.release(decoder.currentBufferOffset());
     if (result == WakeUpClient::Yes)
-        m_clientWaitSemaphore.signal();
+        m_clientWaitSignal.signal();
     return true;
 }
 
@@ -260,7 +281,7 @@ bool StreamServerConnection::processOutOfStreamMessage(Decoder& decoder)
     // FIXME: Note, corresponding skip is not possible at the moment for stream messages.
     auto result = m_buffer.release(decoder.currentBufferOffset());
     if (result == WakeUpClient::Yes)
-        m_clientWaitSemaphore.signal();
+        m_clientWaitSignal.signal();
     return true;
 }
 
@@ -269,6 +290,7 @@ bool StreamServerConnection::dispatchStreamMessage(Decoder& message, StreamMessa
 #if ASSERT_ENABLED
     m_isDispatchingMessage = true;
 #endif
+    IPC::messageLog().add(message.messageName());
     receiver.didReceiveStreamMessage(*this, message);
 #if ASSERT_ENABLED
     m_isDispatchingMessage = false;
@@ -308,10 +330,9 @@ void StreamServerConnection::markCurrentlyDispatchedMessageAsInvalid(ASCIILitera
     m_didReceiveInvalidMessage = true;
 }
 
-RefPtr<StreamConnectionWorkQueue> StreamServerConnection::protectedWorkQueue() const
+void StreamServerConnection::markCurrentlyDispatchedMessageAsInvalid(const String&)
 {
-    return m_workQueue;
+    markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral { });
 }
-
 
 }

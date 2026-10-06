@@ -34,10 +34,13 @@
 #import "WKWebViewMac.h"
 #import "WebColorPicker.h"
 #import "WebPageProxy.h"
+#import "WebPopupMenuProxyMac.h"
 #import "WebProcessProxy.h"
 #import "WebViewImpl.h"
 #import "_WKFrameHandleInternal.h"
 #import <WebCore/ColorCocoa.h>
+#import <WebCore/DictionaryPopupInfo.h>
+#import <wtf/cocoa/VectorCocoa.h>
 
 @implementation WKWebView (WKTestingMac)
 
@@ -98,14 +101,20 @@
     return _page->editorState().postLayoutData->selectionBoundingRect;
 }
 
-- (void)viewDidChangeEffectiveAppearance
+- (NSRect)_caretRectForTesting
 {
-    // This can be called during [super initWithCoder:] and [super initWithFrame:].
-    // That is before _impl is ready to be used, so check. <rdar://problem/39611236>
-    if (!_impl)
-        return;
+    if (!_page->editorState().visualData)
+        return NSZeroRect;
+    return _page->editorState().visualData->caretRectAtStart;
+}
 
-    _impl->effectiveAppearanceDidChange();
+- (NSArray<NSValue *> *)_selectionRectsForTesting
+{
+    if (!_page->editorState().visualData)
+        return @[ ];
+    return createNSArray(_page->editorState().visualData->selectionGeometries, [](auto& geometry) {
+        return [NSValue valueWithRect:geometry.rect()];
+    }).autorelease();
 }
 
 - (NSSet<NSView *> *)_pdfHUDs
@@ -119,13 +128,15 @@
         return contextMenu.autorelease();
     if (RetainPtr domPasteMenu = _impl->domPasteMenu())
         return domPasteMenu.autorelease();
+    if (RefPtr popupMenu = dynamicDowncast<WebKit::WebPopupMenuProxyMac>(_page->activePopupMenu()); popupMenu && popupMenu->isVisible())
+        return [protect(popupMenu->popup()) menu];
     return nil;
 }
 
 - (void)_retrieveAccessibilityTreeData:(void (^)(NSData *, NSError *))completionHandler
 {
     _page->getAccessibilityTreeData([completionHandler = makeBlockPtr(completionHandler)] (API::Data* data) {
-        completionHandler(protectedWrapper(data).get(), nil);
+        completionHandler(protect(wrapper(data)).get(), nil);
     });
 }
 
@@ -141,7 +152,23 @@
 
 - (void)_setSelectedColorForColorPicker:(NSColor *)color
 {
-    _page->checkedColorPickerClient()->didChooseColor(WebCore::colorFromCocoaColor(color));
+    protect(_page->colorPickerClient())->didChooseColor(WebCore::colorFromCocoaColor(color));
+}
+
+- (void)_setDidPerformDictionaryLookupHandlerForTesting:(void (^)(NSString *, CGRect))handler
+{
+    if (!handler)
+        return _page->setDidPerformDictionaryLookupCallbackForTesting({ });
+
+    _page->setDidPerformDictionaryLookupCallbackForTesting([handler = makeBlockPtr(handler)](const WebCore::DictionaryPopupInfo& info) {
+#if ENABLE(LEGACY_PDFKIT_PLUGIN)
+        RetainPtr text = [info.platformData.attributedString.nsAttributedString() string];
+#else
+        RetainPtr text = info.text.createNSString();
+#endif
+        RefPtr textIndicator = info.textIndicator;
+        handler(text.get(), textIndicator ? CGRect(textIndicator->textBoundingRectInRootViewCoordinates()) : CGRectNull);
+    });
 }
 
 - (void)_createFlagsChangedEventMonitorForTesting
@@ -152,6 +179,29 @@
 - (BOOL)_hasFlagsChangedEventMonitorForTesting
 {
     return _impl->hasFlagsChangedEventMonitor();
+}
+
+- (CGFloat)_fullScreenTitlebarOverlayHeightForTesting
+{
+#if ENABLE(SCROLL_POCKET_IN_FULLSCREEN)
+    return _impl->fullScreenTitlebarOverlayHeight();
+#else
+    return 0;
+#endif
+}
+
+- (BOOL)isPointInScrollbar:(NSPoint)locationInView
+{
+    return _impl->isPointInScrollbar(locationInView);
+}
+
+- (BOOL)_refreshControlHostIsTrackingForTesting
+{
+#if HAVE(NSREFRESHCONTROLLER)
+    return _impl->refreshControllerIsTracking();
+#else
+    return NO;
+#endif
 }
 
 @end

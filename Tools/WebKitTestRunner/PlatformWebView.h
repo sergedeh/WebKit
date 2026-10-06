@@ -38,6 +38,7 @@ OBJC_CLASS UIWindow;
 OBJC_CLASS TestRunnerWKWebView;
 OBJC_CLASS WKWebViewConfiguration;
 OBJC_CLASS WebKitTestRunnerWindow;
+OBJC_CLASS WTRCursorOverlayView;
 typedef struct CGImage *CGImageRef;
 
 using PlatformWKView = TestRunnerWKWebView*;
@@ -120,17 +121,28 @@ public:
     void changeWindowScaleIfNeeded(float newScale);
     void setNavigationGesturesEnabled(bool);
 
+#if PLATFORM(MAC)
+    void setCursorOverlayPosition(double x, double y);
+    void updateCursorOverlayImage();
+#endif
+
 #if PLATFORM(GTK)
     void dismissAllPopupMenus();
 #endif
 
 private:
     void forceWindowFramesChanged();
+#if PLATFORM(MAC)
+    void waitForWindowRendering();
+#endif
 
     PlatformWKView m_view;
     PlatformWindow m_window;
     bool m_windowIsKey;
     const TestOptions m_options;
+#if PLATFORM(MAC)
+    RetainPtr<WTRCursorOverlayView> m_cursorOverlay;
+#endif
 #if PLATFORM(IOS_FAMILY)
     RetainPtr<UIWindow> m_otherWindow;
 #endif

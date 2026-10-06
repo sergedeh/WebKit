@@ -34,18 +34,22 @@ import re
 import uuid
 
 from webkitpy.common.memoized import memoized
+from webkitpy.layout_tests.models.test_configuration import TestConfiguration
 from webkitpy.port.base import Port
 from webkitpy.port.leakdetector_valgrind import LeakDetectorValgrind
-from webkitpy.port.linux_get_crash_log import GDBCrashLogGenerator
 
 _log = logging.getLogger(__name__)
 
 
 class GLibPort(Port):
 
+    ARCHITECTURES = ['x86_64', 'arm64']
+
     def __init__(self, *args, **kwargs):
         super(GLibPort, self).__init__(*args, **kwargs)
         self._display_server = self.get_option("display_server")
+        self._gl_rendering_backend = self.get_option("gl_rendering_backend")
+        self._skia_rendering_backend = self.get_option("skia_rendering_backend")
 
         if self.get_option("leaks"):
             self._leakdetector = LeakDetectorValgrind(self._executive, self._filesystem, self.results_directory())
@@ -68,6 +72,19 @@ class GLibPort(Port):
         if self.get_option('configuration') == 'Debug':
             multiplier *= 2
         return multiplier * default_timeout
+
+    def architecture(self):
+        result = self.get_option('architecture') or self.host.platform.architecture()
+        if result == 'aarch64':
+            return 'arm64'
+        return result
+
+    def _generate_all_test_configurations(self):
+        configurations = []
+        for build_type in self.ALL_BUILD_TYPES:
+            for architecture in self.ARCHITECTURES:
+                configurations.append(TestConfiguration(version=self.version_name(), architecture=architecture, build_type=build_type))
+        return configurations
 
     @classmethod
     def determine_full_port_name(cls, host, options, port_name):
@@ -106,7 +123,6 @@ class GLibPort(Port):
 
         # Copy all GStreamer related env vars
         self._copy_values_from_environ_with_prefix(environment, 'GST_')
-        self._copy_value_from_environ_if_set(environment, 'WEBKIT_GST_DISABLE_WEBRTC_NETWORK_SANDBOX')
 
         gst_feature_rank_override = os.environ.get('GST_PLUGIN_FEATURE_RANK')
         # Disable hardware-accelerated device providers, encoders and decoders. Depending on the underlying platform
@@ -129,20 +145,13 @@ class GLibPort(Port):
             environment['GST_DEBUG_NO_COLOR'] = '1'
 
         environment['WEBKIT_GST_ALLOW_PLAYBACK_OF_INVISIBLE_VIDEOS'] = '1'
-        environment['WEBKIT_GST_WEBRTC_FORCE_EARLY_VIDEO_DECODING'] = '1'
-
-        # Match our WebRTC stats cache expiration time with LibWebRTC, since some tests actually expect this.
-        environment['WEBKIT_GST_WEBRTC_STATS_CACHE_EXPIRATION_TIME_MS'] = '50'
 
         # Fake a sound card with 2 output channels. Apparently we cannot assume test bots have an
         # actual sound card.
         environment['WEBKIT_GST_MAX_NUMBER_OF_AUDIO_OUTPUT_CHANNELS'] = '2'
 
-        # Disable SIMD optimization in GStreamer's ORC. Some bots (WPE release) crash in ORC's optimizations.
-        environment['ORC_CODE'] = 'backup'
-
-        # Workaround for bots not using latest SDK version.
-        environment['RICE_LOG'] = 'none'
+        # For GDB debuginfod support.
+        self._copy_values_from_environ_with_prefix(environment, 'DEBUGINFOD_')
 
         if self.get_option("leaks"):
             # Turn off GLib memory optimisations https://wiki.gnome.org/Valgrind.
@@ -171,7 +180,7 @@ class GLibPort(Port):
                 "--suppressions=%s" % (xmlfile, suppressionsfile)
 
         # WTF_DateMath.calculateLocalTimeOffset test only pass in Pacific Time Zone
-        environment['TZ'] = 'PST8PDT'
+        environment['TZ'] = 'America/Los_Angeles'
 
         return environment
 
@@ -200,6 +209,9 @@ class GLibPort(Port):
         return env, pass_fds
 
     def _get_crash_log(self, name, pid, stdout, stderr, newer_than, target_host=None):
+        # linux_get_crash_log requires POSIX-only modules (fcntl, resource)
+        # importing it at module load breaks port-factory enumeration on Windows.
+        from webkitpy.port.linux_get_crash_log import GDBCrashLogGenerator
         return GDBCrashLogGenerator(self._executive, name, pid, newer_than,
                                     self._filesystem, self._path_to_driver, self.port_name, self.get_option('configuration')).generate_crash_log(stdout, stderr)
 
@@ -223,7 +235,7 @@ class GLibPort(Port):
 
     def environment_for_api_tests(self):
         environment = super(GLibPort, self).environment_for_api_tests()
-        environment['TEST_WEBKIT_API_WEBKIT2_RESOURCES_PATH'] = self.path_from_webkit_base('Tools', 'TestWebKitAPI', 'Tests', 'WebKit')
+        environment['TEST_WEBKIT_API_WEBKIT2_RESOURCES_PATH'] = self.path_from_webkit_base('Tools', 'TestWebKitAPI', 'Resources')
         environment['TEST_WEBKIT_API_WEBKIT2_INJECTED_BUNDLE_PATH'] = self._build_path('lib')
         return environment
 

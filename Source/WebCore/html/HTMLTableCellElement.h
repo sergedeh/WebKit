@@ -45,22 +45,20 @@ public:
 
     static Ref<HTMLTableCellElement> create(const QualifiedName&, Document&);
 
-    WEBCORE_EXPORT int cellIndex() const;
+    WEBCORE_EXPORT int NODELETE cellIndex() const;
     WEBCORE_EXPORT unsigned colSpan() const;
-    unsigned rowSpan() const;
-    WEBCORE_EXPORT unsigned rowSpanForBindings() const;
+    WEBCORE_EXPORT unsigned rowSpan() const;
 
     void setCellIndex(int);
     WEBCORE_EXPORT void setColSpan(unsigned);
-    WEBCORE_EXPORT void setRowSpanForBindings(unsigned);
+    WEBCORE_EXPORT void setRowSpan(unsigned);
 
-    String abbr() const;
-    String axis() const;
-    String headers() const;
+    String NODELETE abbr() const;
+    String NODELETE axis() const;
+    String NODELETE headers() const;
     WEBCORE_EXPORT const AtomString& scope() const;
 
     WEBCORE_EXPORT HTMLTableCellElement* cellAbove() const;
-    WEBCORE_EXPORT RefPtr<HTMLTableCellElement> protectedCellAbove() const;
 
 private:
     HTMLTableCellElement(const QualifiedName&, Document&);
@@ -70,9 +68,9 @@ private:
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) override;
     const MutableStyleProperties* additionalPresentationalHintStyle() const override;
 
-    bool isURLAttribute(const Attribute&) const override;
+    bool NODELETE isURLAttribute(const Attribute&) const override;
 
-    void addSubresourceAttributeURLs(ListHashSet<URL>&) const override;
+    void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const override;
 };
 
 } // namespace WebCore

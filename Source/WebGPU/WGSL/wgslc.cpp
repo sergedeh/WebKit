@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <wtf/DataLog.h>
 #include <wtf/FileSystem.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/WTFProcess.h>
 
 [[noreturn]] static void printUsageStatement(bool help = false)
@@ -133,7 +134,9 @@ void CommandLine::parseArguments(int argc, char** argv)
 
 static int runWGSL(const CommandLine& options)
 {
-    WGSL::Configuration configuration;
+    WGSL::Configuration configuration {
+        .supportedFeatures { "shader-f16"_s, "clip-distances"_s, "subgroups"_s }
+    };
 
     String fileName = String::fromLatin1(options.file());
     auto readResult = FileSystem::readEntireFile(fileName);
@@ -178,25 +181,8 @@ static int runWGSL(const CommandLine& options)
         return EXIT_FAILURE;
     }
 
-    HashMap<String, WGSL::ConstantValue> constantValues;
-    for (const auto& [entrypointName, _] : pipelineLayouts) {
-        const auto& entryPointInformation = result.entryPoints.get(entrypointName);
-        for (const auto& [originalName, constant] : entryPointInformation.specializationConstants) {
-            if (!constant.defaultValue) {
-                dataLogLn("Cannot use override without default value in wgslc: '", originalName, "'");
-                return EXIT_FAILURE;
-            }
-
-            auto defaultValue = WGSL::evaluate(*constant.defaultValue, constantValues);
-            if (!defaultValue) {
-                dataLogLn("Failed to evaluate override's default value: '", originalName, "'");
-                return EXIT_FAILURE;
-            }
-
-            constantValues.add(constant.mangledName, *defaultValue);
-        }
-    }
-    auto generationResult = WGSL::generate(shaderModule, result, constantValues, WGSL::DeviceState {
+    HashMap<String, WGSL::ConstantValue> userDefinedValues;
+    auto generationResult = WGSL::generate(shaderModule, result, userDefinedValues, WGSL::DeviceState {
         .appleGPUFamily = options.appleGPUFamily(),
         .shaderValidationEnabled = options.shaderValidationEnabled(),
     });
@@ -214,7 +200,7 @@ static int runWGSL(const CommandLine& options)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunsafe-buffer-usage"
     if (options.dumpGeneratedCode())
-        printf("%s", msl.utf8().data());
+        SAFE_PRINTF("%s", msl.utf8());
 #pragma clang diagnostic pop
 
     return EXIT_SUCCESS;

@@ -93,7 +93,7 @@ void SpeechSynthesisUtterance::setVoice(SpeechSynthesisVoice* voice)
         m_platformUtterance->setVoice(&voice->platformVoice());
 }
 
-void SpeechSynthesisUtterance::eventOccurred(const AtomString& type, unsigned long charIndex, unsigned long charLength, const String& name)
+void SpeechSynthesisUtterance::eventOccurred(const AtomString& type, uint32_t charIndex, uint32_t charLength, const String& name)
 {
     if (m_completionHandler) {
         if (type == eventNames().endEvent)
@@ -102,7 +102,18 @@ void SpeechSynthesisUtterance::eventOccurred(const AtomString& type, unsigned lo
         return;
     }
 
-    dispatchEvent(SpeechSynthesisEvent::create(type, { this, charIndex, charLength, static_cast<float>((MonotonicTime::now() - startTime()).seconds()), name }));
+    if (!isAllowedToRunScript())
+        return;
+
+    auto init = SpeechSynthesisEvent::Init {
+        { false, false, false },
+        *this,
+        charIndex,
+        charLength,
+        static_cast<float>((MonotonicTime::now() - startTime()).seconds()),
+        name,
+    };
+    dispatchEvent(SpeechSynthesisEvent::create(type, WTF::move(init)));
 }
 
 void SpeechSynthesisUtterance::errorEventOccurred(const AtomString& type, SpeechSynthesisErrorCode errorCode)
@@ -112,7 +123,20 @@ void SpeechSynthesisUtterance::errorEventOccurred(const AtomString& type, Speech
         return;
     }
 
-    dispatchEvent(SpeechSynthesisErrorEvent::create(type, { { this, 0, 0, static_cast<float>((MonotonicTime::now() - startTime()).seconds()), { } }, errorCode }));
+    if (!isAllowedToRunScript())
+        return;
+
+    auto init = SpeechSynthesisErrorEvent::Init { {
+            { false, false, false },
+            *this,
+            0,
+            0,
+            static_cast<float>((MonotonicTime::now() - startTime()).seconds()),
+            nullString(),
+        },
+        errorCode
+    };
+    dispatchEvent(SpeechSynthesisErrorEvent::create(type, WTF::move(init)));
 }
 
 void SpeechSynthesisUtterance::incrementActivityCountForEventDispatch()

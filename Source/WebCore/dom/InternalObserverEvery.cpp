@@ -30,7 +30,10 @@
 #include "AbortSignal.h"
 #include "ContextDestructionObserverInlines.h"
 #include "InternalObserver.h"
+#include "JSDOMConvertAny.h"
+#include "JSDOMConvertBoolean.h"
 #include "JSDOMPromiseDeferred.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "Observable.h"
 #include "PredicateCallback.h"
 #include "ScriptExecutionContext.h"
@@ -53,7 +56,7 @@ public:
 private:
     void next(JSC::JSValue value) final
     {
-        auto* globalObject = protectedScriptExecutionContext()->globalObject();
+        auto* globalObject = protect(scriptExecutionContext())->globalObject();
         ASSERT(globalObject);
 
         Ref vm = globalObject->vm();
@@ -99,9 +102,9 @@ private:
         m_promise->resolve<IDLBoolean>(true);
     }
 
-    void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
+    void visitAdditionalChildrenInGCThread(JSC::AbstractSlotVisitor& visitor) const final
     {
-        m_callback->visitJSFunction(visitor);
+        m_callback->visitJSFunctionInGCThread(visitor);
     }
 
     InternalObserverEvery(ScriptExecutionContext& context, Ref<PredicateCallback>&& callback, Ref<AbortSignal>&& signal, Ref<DeferredPromise>&& promise)

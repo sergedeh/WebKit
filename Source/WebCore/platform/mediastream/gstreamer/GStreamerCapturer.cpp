@@ -89,21 +89,23 @@ void GStreamerCapturer::tearDown(bool disconnectSignals)
         return;
 
     m_valve = nullptr;
-    m_src = nullptr;
+    {
+        Locker locker { m_lock };
+        m_src = nullptr;
+        m_pipewireProbe = nullptr;
+    }
     m_capsfilter = nullptr;
     m_sink = nullptr;
     m_pipeline = nullptr;
     m_caps = nullptr;
 }
 
-GStreamerCapturerObserver::~GStreamerCapturerObserver()
-{
-}
+GStreamerCapturerObserver::~GStreamerCapturerObserver() = default;
 
 void GStreamerCapturer::setDevice(std::optional<GStreamerCaptureDevice>&& device)
 {
     if (device)
-        GST_DEBUG_OBJECT(m_pipeline.get(), "Setting new capture device: %s", device->label().utf8().data());
+        GST_DEBUG_OBJECT(m_pipeline.get(), "Setting new capture device: %s", device->label().utf8());
     else
         GST_DEBUG_OBJECT(m_pipeline.get(), "Clearing capture device");
     tearDown(true);
@@ -143,12 +145,7 @@ void GStreamerCapturer::forEachObserver(NOESCAPE const Function<void(GStreamerCa
     m_observers.forEach(apply);
 }
 
-struct CapturerProbeData {
-    ThreadSafeWeakPtr<GStreamerCapturer> capturer;
-};
-WEBKIT_DEFINE_ASYNC_DATA_STRUCT(CapturerProbeData);
-
-GstElement* GStreamerCapturer::createSource()
+GstElement* GStreamerCapturer::createSource() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     if (m_pipewireDevice) {
         m_src = makeElement("pipewiresrc");
@@ -165,19 +162,16 @@ GstElement* GStreamerCapturer::createSource()
         g_object_set(m_src.get(), "do-timestamp", TRUE, nullptr);
     }
 
-    GST_DEBUG_OBJECT(m_pipeline.get(), "Source element created: %" GST_PTR_FORMAT, m_src.get());
+    GST_DEBUG_OBJECT(m_pipeline.get(), "Source element created: %" GST_PTR_FORMAT " (factory: %" GST_PTR_FORMAT ")", m_src.get(), gst_element_get_factory(m_src.get()));
 
     if (gstElementFactoryEquals(m_src.get(), "pipewiresrc"_s)) {
-        auto data = createCapturerProbeData();
-        data->capturer = this;
-        auto srcPad = adoptGRef(gst_element_get_static_pad(m_src.get(), "src"));
-        gst_pad_add_probe(srcPad.get(), GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, [](GstPad*, GstPadProbeInfo* info, void* userData) -> GstPadProbeReturn {
-            auto* event = gst_pad_probe_info_get_event(info);
+        GRefPtr srcPad = adoptGRef(gst_element_get_static_pad(m_src.get(), "src"));
+        m_pipewireProbe = PadProbeHandle<GStreamerCapturer>::create(*this, WTF::move(srcPad), GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, [](const auto& self, const auto&, auto info) -> GstPadProbeReturn {
+            auto event = gst_pad_probe_info_get_event(info);
             if (GST_EVENT_TYPE(event) != GST_EVENT_CAPS)
                 return GST_PAD_PROBE_OK;
 
-            auto probeData = reinterpret_cast<CapturerProbeData*>(userData);
-            callOnMainThread([event = GRefPtr(event), weakThis = probeData->capturer] {
+            callOnMainThread([event = GRefPtr(event), weakThis = ThreadSafeWeakPtr { *self }] {
                 RefPtr protectedThis = weakThis.get();
                 if (!protectedThis)
                     return;
@@ -189,14 +183,14 @@ GstElement* GStreamerCapturer::createSource()
                 });
             });
             return GST_PAD_PROBE_OK;
-        }, data, reinterpret_cast<GDestroyNotify>(destroyCapturerProbeData));
+        });
     }
 
     if (gstElementMatchesFactoryAndHasProperty(m_src.get(), "pipewiresrc"_s, "use-bufferpool"_s))
         g_object_set(m_src.get(), "use-bufferpool", FALSE, nullptr);
 
     if (m_deviceType == CaptureDevice::DeviceType::Camera) {
-        auto srcPad = adoptGRef(gst_element_get_static_pad(m_src.get(), "src"));
+        GRefPtr srcPad = adoptGRef(gst_element_get_static_pad(m_src.get(), "src"));
         gst_pad_add_probe(srcPad.get(), static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_PUSH | GST_PAD_PROBE_TYPE_BUFFER), [](GstPad*, GstPadProbeInfo* info, gpointer) -> GstPadProbeReturn {
             VideoFrameTimeMetadata metadata;
             metadata.captureTime = MonotonicTime::now().secondsSinceEpoch();
@@ -204,7 +198,8 @@ GstElement* GStreamerCapturer::createSource()
             auto [rotation, isMirrored] = webkitGstBufferGetVideoRotation(buffer);
 
             auto modifiedBuffer = webkitGstBufferSetVideoFrameMetadata(GRefPtr(buffer), metadata, rotation, isMirrored);
-            gst_pad_probe_info_set_buffer(info, modifiedBuffer.leakRef());
+            if (modifiedBuffer)
+                gst_pad_probe_info_set_buffer(info, modifiedBuffer.leakRef());
             return GST_PAD_PROBE_OK;
         }, nullptr, nullptr);
     }
@@ -229,7 +224,7 @@ void GStreamerCapturer::setupPipeline()
     }
 
     m_pipeline = makeElement("pipeline"_s);
-    auto clock = adoptGRef(gst_system_clock_obtain());
+    GRefPtr clock = adoptGRef(gst_system_clock_obtain());
     gst_pipeline_use_clock(GST_PIPELINE(m_pipeline.get()), clock.get());
     gst_element_set_base_time(m_pipeline.get(), 0);
     gst_element_set_start_time(m_pipeline.get(), GST_CLOCK_TIME_NONE);

@@ -18,7 +18,7 @@
  */
 
 #include "config.h"
-#include "HexNumber.h"
+#include <wtf/HexNumber.h>
 
 #include <wtf/ASCIICType.h>
 #include <wtf/CheckedArithmetic.h>
@@ -31,7 +31,7 @@ namespace WTF {
 
 namespace Internal {
 
-static const std::array<Latin1Character, 16>& hexDigitsForMode(HexConversionMode mode)
+static const std::array<Latin1Character, 16>& NODELETE hexDigitsForMode(HexConversionMode mode)
 {
     static constexpr std::array<Latin1Character, 16> lowercaseHexDigits { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
     static constexpr std::array<Latin1Character, 16> uppercaseHexDigits { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
@@ -61,7 +61,7 @@ void printInternal(PrintStream& out, HexNumberBuffer buffer)
     out.print(StringView(buffer.span()));
 }
 
-static void toHexInternal(std::span<const uint8_t> values, std::span<Latin1Character> hexadecimalOutput)
+static void NODELETE toHexInternal(std::span<const uint8_t> values, std::span<Latin1Character> hexadecimalOutput)
 {
     for (auto [i, digestValue] : indexedRange(values)) {
         hexadecimalOutput[i * 2] = upperNibbleToASCIIHexDigit(digestValue);
@@ -69,10 +69,10 @@ static void toHexInternal(std::span<const uint8_t> values, std::span<Latin1Chara
     }
 }
 
-CString toHexCString(std::span<const uint8_t> values)
+ASCIICString toHexCString(std::span<const uint8_t> values)
 {
     std::span<char> buffer;
-    auto result = CString::newUninitialized(CheckedSize(values.size()) * 2U, buffer);
+    auto result = ASCIICString::newUninitialized(CheckedSize(values.size()) * 2U, buffer);
     toHexInternal(values, byteCast<Latin1Character>(buffer));
     return result;
 }

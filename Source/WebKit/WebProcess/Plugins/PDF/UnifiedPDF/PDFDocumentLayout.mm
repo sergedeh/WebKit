@@ -72,7 +72,7 @@ auto PDFDocumentLayout::lastPageIndex() const -> PageIndex
 
 bool PDFDocumentLayout::isFirstPageOfRow(PageIndex pageIndex) const
 {
-    return isTwoUpDisplayMode() ? isLeftPageIndex(pageIndex) : true;
+    return !isTwoUpDisplayMode() || isLeftPageIndex(pageIndex);
 }
 
 RetainPtr<PDFPage> PDFDocumentLayout::pageAtIndex(PageIndex index) const
@@ -94,8 +94,8 @@ PDFDocumentLayout::PageIndex PDFDocumentLayout::nearestPageIndexForDocumentPoint
     ASSERT(pageCount);
 
     switch (displayMode()) {
-    case PDFDocumentLayout::DisplayMode::SinglePageDiscrete:
-    case PDFDocumentLayout::DisplayMode::TwoUpDiscrete: {
+    case PDFPluginDisplayMode::SinglePageDiscrete:
+    case PDFPluginDisplayMode::TwoUpDiscrete: {
         using PairedPagesLayoutBounds = std::pair<FloatRect, std::optional<FloatRect>>;
 
         auto layoutBoundsForRow = [this](PDFLayoutRow row) -> PairedPagesLayoutBounds {
@@ -162,7 +162,7 @@ PDFDocumentLayout::PageIndex PDFDocumentLayout::nearestPageIndexForDocumentPoint
         return visibleRow->pages[0];
     }
 
-    case PDFDocumentLayout::DisplayMode::TwoUpContinuous: {
+    case PDFPluginDisplayMode::TwoUpContinuous: {
         using PairedPagesLayoutBounds = std::pair<FloatRect, std::optional<FloatRect>>;
 
         auto layoutBoundsForPairedPages = [this](PageIndex pageIndex) -> PairedPagesLayoutBounds {
@@ -238,7 +238,7 @@ PDFDocumentLayout::PageIndex PDFDocumentLayout::nearestPageIndexForDocumentPoint
         return lastPageIndex;
     }
 
-    case PDFDocumentLayout::DisplayMode::SinglePageContinuous: {
+    case PDFPluginDisplayMode::SinglePageContinuous: {
         for (PDFDocumentLayout::PageIndex index = 0; index < pageCount; ++index) {
             auto pageBounds = layoutBoundsForPageAtIndex(index);
 
@@ -263,8 +263,8 @@ auto PDFDocumentLayout::pageIndexAndPagePointForDocumentYOffset(float documentYO
     };
 
     switch (displayMode()) {
-    case DisplayMode::TwoUpDiscrete:
-    case DisplayMode::TwoUpContinuous:
+    case PDFPluginDisplayMode::TwoUpDiscrete:
+    case PDFPluginDisplayMode::TwoUpContinuous:
         for (PageIndex index = 0; index < pageCount; ++index) {
             if (index == pageCount - 1)
                 return resultWithPageHorizontalCenterPoint(index, documentYOffset);
@@ -297,8 +297,8 @@ auto PDFDocumentLayout::pageIndexAndPagePointForDocumentYOffset(float documentYO
             return resultWithPageHorizontalCenterPoint(*targetPageIndex, documentYOffset);
         }
         break;
-    case DisplayMode::SinglePageDiscrete:
-    case DisplayMode::SinglePageContinuous: {
+    case PDFPluginDisplayMode::SinglePageDiscrete:
+    case PDFPluginDisplayMode::SinglePageContinuous: {
         for (PageIndex index = 0; index < pageCount; ++index) {
             auto pageBounds = layoutBoundsForPageAtIndex(index);
             if (documentYOffset <= pageBounds.maxY() || index == pageCount - 1)
@@ -385,13 +385,13 @@ void PDFDocumentLayout::layoutPages(FloatSize availableSize, FloatSize maxRowSiz
 {
     // We always lay out in a continuous mode. We handle non-continuous mode via scroll snap.
     switch (m_displayMode) {
-    case DisplayMode::SinglePageDiscrete:
-    case DisplayMode::TwoUpDiscrete:
+    case PDFPluginDisplayMode::SinglePageDiscrete:
+    case PDFPluginDisplayMode::TwoUpDiscrete:
         layoutDiscreteRows(availableSize, maxRowSize, CenterRowVertically::Yes);
         break;
 
-    case DisplayMode::SinglePageContinuous:
-    case DisplayMode::TwoUpContinuous:
+    case PDFPluginDisplayMode::SinglePageContinuous:
+    case PDFPluginDisplayMode::TwoUpContinuous:
         layoutContinuousRows(availableSize, maxRowSize, CenterRowVertically::No);
         break;
     }
@@ -437,7 +437,14 @@ FloatRect PDFDocumentLayout::layoutRow(const PDFLayoutRow& row, FloatSize maxRow
     case 1: {
         auto pageIndex = row.pages[0];
         auto pageBounds = m_pageGeometry[pageIndex].layoutBounds;
-        auto pageLeft = documentMargin.width() + std::max<float>(std::floor((maxRowSize.width() - pageBounds.width()) / 2), 0);
+
+        float pageLeft;
+        if (m_shouldLeftAlignTrailingTwoUpPage && isTwoUpDisplayMode()) {
+            float horizontalSpace = maxRowSize.width() - pageBounds.width() - pageBounds.width() - pageMargin.width();
+            pageLeft = std::floor(documentMargin.width() + std::max<float>(horizontalSpace / 2, 0));
+        } else
+            pageLeft = documentMargin.width() + std::max<float>(std::floor((maxRowSize.width() - pageBounds.width()) / 2), 0);
+
         auto pageTop = rowTop;
 
         if (centerVertically == CenterRowVertically::Yes)

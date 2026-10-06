@@ -27,7 +27,6 @@
 
 #include <JavaScriptCore/CacheUpdate.h>
 #include <JavaScriptCore/LeafExecutable.h>
-#include <JavaScriptCore/ParserModes.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefCounted.h>
@@ -56,13 +55,13 @@ public:
         return adoptRef(*new CachedBytecode(CachePayload::makeMallocPayload(WTF::move(data)), WTF::move(leafExecutables)));
     }
 
-    LeafExecutableMap& leafExecutables() { return m_leafExecutables; }
+    LeafExecutableMap& leafExecutables() LIFETIME_BOUND { return m_leafExecutables; }
 
     JS_EXPORT_PRIVATE void addGlobalUpdate(Ref<CachedBytecode>);
     JS_EXPORT_PRIVATE void addFunctionUpdate(const UnlinkedFunctionExecutable*, CodeSpecializationKind, Ref<CachedBytecode>);
 
     using ForEachUpdateCallback = Function<void(off_t, std::span<const uint8_t>)>;
-    JS_EXPORT_PRIVATE void commitUpdates(const ForEachUpdateCallback&) const;
+    JS_EXPORT_PRIVATE void commitUpdates(NOESCAPE const ForEachUpdateCallback&) const;
 
     std::span<const uint8_t> span() const LIFETIME_BOUND { return m_payload.span(); }
     size_t size() const { return m_payload.size(); }

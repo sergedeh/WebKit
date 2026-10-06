@@ -30,12 +30,12 @@
 #include "DFGCommon.h"
 #include "FPRInfo.h"
 #include "GPRInfo.h"
+#include "Reg.h"
 
 namespace JSC { namespace DFG {
 
 enum SilentSpillAction {
     DoNothingForSpill,
-    Store32Tag,
     Store32Payload,
     StorePtr,
     Store64,
@@ -47,28 +47,17 @@ enum SilentFillAction {
     SetInt32Constant,
     SetInt52Constant,
     SetStrictInt52Constant,
-    SetBooleanConstant,
     SetCellConstant,
     SetTrustedJSConstant,
     SetJSConstant,
-    SetJSConstantTag,
-    SetJSConstantPayload,
-    SetInt32Tag,
-    SetCellTag,
-    SetBooleanTag,
     SetDoubleConstant,
-    Load32Tag,
     Load32Payload,
     Load32PayloadBoxInt,
-    Load32PayloadConvertToInt52,
-    Load32PayloadSignExtend,
     LoadPtr,
     Load64,
     Load64ShiftInt52Right,
     Load64ShiftInt52Left,
-    LoadDouble,
-    LoadDoubleBoxDouble,
-    LoadJSUnboxDouble
+    LoadDouble
 };
 
 class SilentRegisterSavePlan {

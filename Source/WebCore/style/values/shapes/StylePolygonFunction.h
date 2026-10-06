@@ -31,6 +31,9 @@
 #include <WebCore/StyleWindRuleComputation.h>
 
 namespace WebCore {
+
+struct AcceleratedEffectPolygonFunction;
+
 namespace Style {
 
 struct Polygon {
@@ -56,13 +59,23 @@ template<size_t I> const auto& get(const Polygon& value)
 
 DEFINE_TYPE_MAPPING(CSS::Polygon, Polygon)
 
-template<> struct PathComputation<Polygon> { WebCore::Path operator()(const Polygon&, const FloatRect&); };
-template<> struct WindRuleComputation<Polygon> { WebCore::WindRule operator()(const Polygon&); };
+template<> struct PathComputation<Polygon> { WebCore::Path operator()(const Polygon&, const FloatRect&, ZoomFactor); };
+template<> struct WindRuleComputation<Polygon> { WebCore::WindRule NODELETE operator()(const Polygon&); };
+
+// MARK: - Blending
 
 template<> struct Blending<Polygon> {
-    auto canBlend(const Polygon&, const Polygon&) -> bool;
+    bool NODELETE canBlend(const Polygon&, const Polygon&);
     auto blend(const Polygon&, const Polygon&, const BlendingContext&) -> Polygon;
 };
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+template<> struct Evaluation<PolygonFunction, AcceleratedEffectPolygonFunction> { AcceleratedEffectPolygonFunction operator()(const PolygonFunction&, const FloatSize&, ZoomFactor); };
+
+#endif
 
 } // namespace Style
 } // namespace WebCore

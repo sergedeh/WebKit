@@ -53,19 +53,24 @@ WorkerDebugger::WorkerDebugger(WorkerOrWorkletGlobalScope& context)
 {
 }
 
+URL WorkerDebugger::sourceURLBase(JSC::JSGlobalObject*) const
+{
+    return protect(m_globalScope)->url();
+}
+
 void WorkerDebugger::attachDebugger()
 {
     JSC::Debugger::attachDebugger();
 
-    m_globalScope->script()->attachDebugger(this);
+    protect(m_globalScope->script())->attachDebugger(this);
 }
 
 void WorkerDebugger::detachDebugger(bool isBeingDestroyed)
 {
     JSC::Debugger::detachDebugger(isBeingDestroyed);
 
-    if (m_globalScope->script())
-        m_globalScope->script()->detachDebugger(this);
+    if (CheckedPtr script = m_globalScope->script())
+        script->detachDebugger(this);
     if (!isBeingDestroyed)
         recompileAllJSFunctions();
 }
@@ -83,12 +88,12 @@ void WorkerDebugger::runEventLoopWhilePaused()
     TimerBase::fireTimersInNestedEventLoop();
 
     // FIXME: Add support for pausing workers running on the main thread.
-    if (!is<WorkerDedicatedRunLoop>(m_globalScope->workerOrWorkletThread()->runLoop()))
+    if (!is<WorkerDedicatedRunLoop>(protect(m_globalScope)->workerOrWorkletThread()->runLoop()))
         return;
 
     MessageQueueWaitResult result;
     do {
-        result = downcast<WorkerDedicatedRunLoop>(m_globalScope->workerOrWorkletThread()->runLoop()).runInDebuggerMode(m_globalScope);
+        result = downcast<WorkerDedicatedRunLoop>(protect(m_globalScope)->workerOrWorkletThread()->runLoop()).runInDebuggerMode(protect(m_globalScope).get());
     } while (result != MessageQueueTerminated && !m_doneProcessingDebuggerEvents);
 }
 

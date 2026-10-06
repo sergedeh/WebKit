@@ -25,9 +25,11 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <WebCore/PushMessageCrypto.h>
 #include <wtf/text/Base64.h>
+
+#if PLATFORM(COCOA)
 
 namespace TestWebKitAPI {
 
@@ -164,3 +166,5 @@ TEST(PushMessageCrypto, AESGCMPayloadWithEmptyPlaintext)
 }
 
 }
+
+#endif // PLATFORM(COCOA)

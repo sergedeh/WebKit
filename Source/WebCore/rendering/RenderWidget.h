@@ -49,7 +49,7 @@ public:
 
 private:
     using WidgetToParentMap = HashMap<Ref<Widget>, SingleThreadWeakPtr<LocalFrameView>>;
-    static WidgetToParentMap& widgetNewParentMap();
+    static WidgetToParentMap& NODELETE widgetNewParentMap();
 
     WEBCORE_EXPORT void moveWidgets();
     WEBCORE_EXPORT static unsigned s_widgetHierarchyUpdateSuspendCount;
@@ -63,13 +63,11 @@ public:
     virtual ~RenderWidget();
 
     inline HTMLFrameOwnerElement& frameOwnerElement() const; // Defined in RenderWidgetInlines.h
-    inline Ref<HTMLFrameOwnerElement> protectedFrameOwnerElement() const; // Defined in RenderWidgetInlines.h
 
     Widget* widget() const { return m_widget.get(); }
-    RefPtr<Widget> protectedWidget() const { return m_widget; }
     WEBCORE_EXPORT void setWidget(RefPtr<Widget>&&);
 
-    static RenderWidget* find(const Widget&);
+    static RenderWidget* NODELETE find(const Widget&);
 
     enum class ChildWidgetState { Valid, Destroyed };
     [[nodiscard]] ChildWidgetState updateWidgetPosition();
@@ -77,13 +75,13 @@ public:
 
     virtual bool requiresAcceleratedCompositing() const;
 
-    RemoteFrame* remoteFrame() const;
+    RemoteFrame* NODELETE remoteFrame() const;
 
 protected:
-    RenderWidget(Type, HTMLFrameOwnerElement&, RenderStyle&&);
+    RenderWidget(Type, HTMLFrameOwnerElement&, Style::ComputedStyle&&);
 
     void willBeDestroyed() override;
-    void styleDidChange(Style::Difference, const RenderStyle* oldStyle) final;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
     void layout() override;
     void paint(PaintInfo&, const LayoutPoint&) override;
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
@@ -92,8 +90,9 @@ protected:
 private:
     void element() const = delete;
 
-    bool shouldInvalidatePreferredWidths() const final;
-    RenderBox* embeddedContentBox() const final;
+    bool shouldInvalidateContentWidths() const final;
+    RenderReplaced* embeddedSVGRoot() const final;
+    FloatSize preferredAspectRatioAsSize() const final;
 
     void setSelectionState(HighlightState) final;
     void setOverlapTestResult(bool) final;

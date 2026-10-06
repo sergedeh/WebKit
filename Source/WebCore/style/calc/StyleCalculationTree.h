@@ -72,10 +72,9 @@ struct Hypot;
 struct Abs;
 struct Sign;
 struct Progress;
+struct ProgressNoClamp;
 struct Random;
-
-// Non-standard
-struct Blend;
+struct CalcMix;
 
 template<typename Op>
 concept Leaf = requires(Op) {
@@ -115,6 +114,14 @@ struct Dimension {
     bool operator==(const Dimension&) const = default;
 };
 
+// The `size` keyword of calc-size(). Carries no value because it stands for the used value of the
+// calc-size basis, which is not known until layout resolves it.
+struct Size {
+    static constexpr bool isLeaf = true;
+
+    bool operator==(const Size&) const = default;
+};
+
 template<typename Op> struct IndirectNode {
     UniqueRef<Op> op;
 
@@ -133,6 +140,7 @@ using Node = Variant<
     Number,
     Percentage,
     Dimension,
+    Size,
     IndirectNode<Sum>,
     IndirectNode<Product>,
     IndirectNode<Negate>,
@@ -161,8 +169,9 @@ using Node = Variant<
     IndirectNode<Abs>,
     IndirectNode<Sign>,
     IndirectNode<Progress>,
+    IndirectNode<ProgressNoClamp>,
     IndirectNode<Random>,
-    IndirectNode<Blend>
+    IndirectNode<CalcMix>
 >;
 
 struct Child {
@@ -172,9 +181,13 @@ struct Child {
         requires std::constructible_from<Node, T>
     Child(T&&);
 
+    Child(Child&&);
+    Child& operator=(Child&&);
+    ~Child();
+
     FORWARD_VARIANT_FUNCTIONS(Child, value)
 
-    bool operator==(const Child&) const = default;
+    bool operator==(const Child&) const;
 };
 
 struct ChildOrNone {
@@ -201,6 +214,7 @@ struct Children {
     Children(Vector<Child>&&);
     Children& operator=(Children&&);
     Children& operator=(Vector<Child>&&);
+    ~Children();
 
     iterator begin() LIFETIME_BOUND;
     iterator end() LIFETIME_BOUND;
@@ -228,6 +242,11 @@ struct Tree {
 };
 
 size_t computeDepth(const Tree&);
+
+// Distinct from computeDepth(): substitution multiplies a tree rather than deepening it, so the two
+// bound different things.
+size_t computeNodeCount(const Tree&);
+size_t computeNodeCount(const Child&);
 
 // Math Operators.
 
@@ -427,7 +446,7 @@ struct Atan2 {
 
 // Exponential Functions - https://drafts.csswg.org/css-values-4/#exponent-funcs
 struct Pow {
-    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Atan2);
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Pow);
     static constexpr auto op = CSSCalc::Operator::Pow;
 
     Child a;
@@ -504,6 +523,17 @@ struct Progress {
     bool operator==(const Progress&) const = default;
 };
 
+struct ProgressNoClamp {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(ProgressNoClamp);
+    static constexpr auto op = CSSCalc::Operator::ProgressNoClamp;
+
+    Child progress;
+    Child from;
+    Child to;
+
+    bool operator==(const ProgressNoClamp&) const = default;
+};
+
 // Random Function - https://drafts.csswg.org/css-values-5/#random
 struct Random {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Random);
@@ -523,19 +553,22 @@ struct Random {
     bool operator==(const Random&) const = default;
 };
 
-// Non-standard
-struct Blend {
-    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Blend);
-    static constexpr auto op = CSSCalc::Operator::Blend;
+// CalcMix Function - https://drafts.csswg.org/css-values-5/#calc-mix
+struct CalcMix {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(CalcMix);
+    static constexpr auto op = CSSCalc::Operator::CalcMix;
 
-    double progress;
-    Child from;
-    Child to;
+    struct Item {
+        Child value;
+        double weight;
 
-    bool operator==(const Blend&) const = default;
+        bool operator==(const Item&) const = default;
+    };
+
+    Vector<Item> children;
+
+    bool operator==(const CalcMix&) const = default;
 };
-
-static_assert(sizeof(Child) <= 16, "Child should stay small");
 
 // MARK: Construction
 
@@ -544,19 +577,9 @@ template<typename Op> struct ChildConstruction {
     static Child make(Op&& op) { return Child { IndirectNode<Op> { makeUniqueRef<Op>(WTF::move(op)) } }; }
 };
 
-// Specialized implementation of ChildConstruction for Number, needed to avoid `makeUniqueRef`.
-template<> struct ChildConstruction<Number> {
-    static Child make(Number&& op) { return Child { WTF::move(op) }; }
-};
-
-// Specialized implementation of ChildConstruction for Percentage, needed to avoid `makeUniqueRef`.
-template<> struct ChildConstruction<Percentage> {
-    static Child make(Percentage&& op) { return Child { WTF::move(op) }; }
-};
-
-// Specialized implementation of ChildConstruction for Dimension, needed to avoid `makeUniqueRef`.
-template<> struct ChildConstruction<Dimension> {
-    static Child make(Dimension&& op) { return Child { WTF::move(op) }; }
+// Specialized implementation of ChildConstruction for leaf nodes, needed to avoid `makeUniqueRef`.
+template<Leaf T> struct ChildConstruction<T> {
+    static Child make(T&& op) { return Child { WTF::move(op) }; }
 };
 
 template<typename Op> Child makeChild(Op&& op)
@@ -566,46 +589,13 @@ template<typename Op> Child makeChild(Op&& op)
 
 // Convenience constructors
 
-inline Child number(double value)
-{
-    return makeChild(Number { .value = value });
-}
-
-inline Child percentage(double value)
-{
-    return makeChild(Percentage { .value = value });
-}
-
-inline Child dimension(double value)
-{
-    return makeChild(Dimension { .value = value });
-}
-
-inline Child add(Child&& a, Child&& b)
-{
-    Vector<Child> sumChildren;
-    sumChildren.append(WTF::move(a));
-    sumChildren.append(WTF::move(b));
-    return makeChild(Sum { .children = WTF::move(sumChildren) });
-}
-
-inline Child multiply(Child&& a, Child&& b)
-{
-    Vector<Child> productChildren;
-    productChildren.append(WTF::move(a));
-    productChildren.append(WTF::move(b));
-    return makeChild(Product { .children = WTF::move(productChildren) });
-}
-
-inline Child subtract(Child&& a, Child&& b)
-{
-    return add(WTF::move(a), makeChild(Negate { .a = WTF::move(b) }));
-}
-
-inline Child blend(Child&& from, Child&& to, double progress)
-{
-    return makeChild(Blend { .progress = progress, .from = WTF::move(from), .to = WTF::move(to) });
-}
+Child number(double value);
+Child percentage(double value);
+Child dimension(double value);
+Child add(Child&& a, Child&& b);
+Child multiply(Child&& a, Child&& b);
+Child subtract(Child&& a, Child&& b);
+Child blend(Child&& from, Child&& to, double progress);
 
 // MARK: Dumping
 
@@ -809,6 +799,16 @@ template<size_t I> const auto& get(const Progress& root)
         return root.to;
 }
 
+template<size_t I> const auto& get(const ProgressNoClamp& root)
+{
+    if constexpr (!I)
+        return root.progress;
+    else if constexpr (I == 1)
+        return root.from;
+    else if constexpr (I == 2)
+        return root.to;
+}
+
 template<size_t I> const auto& get(const Random& root)
 {
     if constexpr (!I)
@@ -821,14 +821,10 @@ template<size_t I> const auto& get(const Random& root)
         return root.step;
 }
 
-template<size_t I> const auto& get(const Blend& root)
+template<size_t I> const auto& get(const CalcMix& root)
 {
-    if constexpr (!I)
-        return root.progress;
-    else if constexpr (I == 1)
-        return root.from;
-    else if constexpr (I == 2)
-        return root.to;
+    static_assert(!I);
+    return root.children;
 }
 
 // MARK: Child Definition
@@ -838,102 +834,6 @@ template<typename T>
 Child::Child(T&& value)
     : value(std::forward<T>(value))
 {
-}
-
-// MARK: ChildOrNone Definition
-
-inline ChildOrNone::ChildOrNone(Child&& child)
-    : value(WTF::move(child))
-{
-}
-
-inline ChildOrNone::ChildOrNone(CSS::Keyword::None none)
-    : value(none)
-{
-}
-
-// MARK: Children Definition
-
-inline Children::Children(Children&& other)
-    : value(WTF::move(other.value))
-{
-}
-
-inline Children::Children(Vector<Child>&& other)
-    : value(WTF::move(other))
-{
-}
-
-inline Children& Children::operator=(Children&& other)
-{
-    value = WTF::move(other.value);
-    return *this;
-}
-
-inline Children& Children::operator=(Vector<Child>&& other)
-{
-    value = WTF::move(other);
-    return *this;
-}
-
-inline Children::iterator Children::begin() LIFETIME_BOUND
-{
-    return value.begin();
-}
-
-inline Children::iterator Children::end() LIFETIME_BOUND
-{
-    return value.end();
-}
-
-inline Children::reverse_iterator Children::rbegin() LIFETIME_BOUND
-{
-    return value.rbegin();
-}
-
-inline Children::reverse_iterator Children::rend() LIFETIME_BOUND
-{
-    return value.rend();
-}
-
-inline Children::const_iterator Children::begin() const LIFETIME_BOUND
-{
-    return value.begin();
-}
-
-inline Children::const_iterator Children::end() const LIFETIME_BOUND
-{
-    return value.end();
-}
-
-inline Children::const_reverse_iterator Children::rbegin() const LIFETIME_BOUND
-{
-    return value.rbegin();
-}
-
-inline Children::const_reverse_iterator Children::rend() const LIFETIME_BOUND
-{
-    return value.rend();
-}
-
-inline bool Children::isEmpty() const
-{
-    return value.isEmpty();
-}
-
-inline size_t Children::size() const
-{
-    return value.size();
-}
-
-inline Child& Children::operator[](size_t i) LIFETIME_BOUND
-{
-    return value[i];
-}
-
-inline const Child& Children::operator[](size_t i) const LIFETIME_BOUND
-{
-    return value[i];
 }
 
 } // namespace Calculation
@@ -978,8 +878,9 @@ OP_TUPLE_LIKE_CONFORMANCE(Exp, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Abs, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Sign, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Progress, 3);
+OP_TUPLE_LIKE_CONFORMANCE(ProgressNoClamp, 3);
 OP_TUPLE_LIKE_CONFORMANCE(Random, 4);
-OP_TUPLE_LIKE_CONFORMANCE(Blend, 3);
+OP_TUPLE_LIKE_CONFORMANCE(CalcMix, 1);
 
 #undef OP_TUPLE_LIKE_CONFORMANCE
 

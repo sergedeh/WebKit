@@ -121,13 +121,10 @@ public:
 
     // Public APIs
     WebPageProxy* inspectedPage() const { return m_inspectedPage; }
-    RefPtr<WebPageProxy> protectedInspectedPage() const { return m_inspectedPage; }
     WebPageProxy* inspectorPage() const { return m_inspectorPage; }
-    RefPtr<WebPageProxy> protectedInspectorPage() const { return m_inspectorPage; }
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
     WebInspectorUIExtensionControllerProxy* extensionController() const { return m_extensionController.get(); }
-    RefPtr<WebInspectorUIExtensionControllerProxy> protectedExtensionController() const;
 #endif
 
     bool isConnected() const { return !!m_inspectorPage; }
@@ -165,7 +162,7 @@ public:
     void attachmentWillMoveFromWindow(NSWindow *oldWindow);
     void attachmentDidMoveToWindow(NSWindow *newWindow);
 
-    const WebCore::FloatRect& sheetRect() const { return m_sheetRect; }
+    const WebCore::FloatRect& sheetRect() const LIFETIME_BOUND { return m_sheetRect; }
 #endif
 
 #if PLATFORM(WIN)
@@ -194,7 +191,7 @@ public:
     void setAttachedWindowHeight(unsigned);
     void setAttachedWindowWidth(unsigned);
 
-    void setSheetRect(const WebCore::FloatRect&);
+    void NODELETE setSheetRect(const WebCore::FloatRect&);
 
     void startWindowDrag();
 
@@ -208,6 +205,8 @@ public:
     void markAsUnderTest() { m_underTest = true; }
 
     void setDiagnosticLoggingAvailable(bool);
+
+    void systemAppearanceDidChange();
 
     // Provided by platform WebInspectorUIProxy implementations.
     static String inspectorPageURL();
@@ -250,7 +249,7 @@ private:
     void platformBringInspectedPageToFront();
     void platformHide();
     bool platformIsFront();
-    void platformAttachAvailabilityChanged(bool);
+    void NODELETE platformAttachAvailabilityChanged(bool);
     void platformSetForcedAppearance(WebCore::InspectorFrontendClient::Appearance);
     void platformOpenURLExternally(const String&);
     void platformInspectedURLChanged(const String&);
@@ -259,7 +258,7 @@ private:
     void platformDetach();
     void platformSetAttachedWindowHeight(unsigned);
     void platformSetAttachedWindowWidth(unsigned);
-    void platformSetSheetRect(const WebCore::FloatRect&);
+    void NODELETE platformSetSheetRect(const WebCore::FloatRect&);
     void platformStartWindowDrag();
     void platformRevealFileExternally(const String&);
     void platformSave(Vector<WebCore::InspectorFrontendClient::SaveData>&&, bool forceSaveAs);
@@ -292,11 +291,12 @@ private:
     void setInspectorPageDeveloperExtrasEnabled(bool);
     void setPageAndTextZoomFactors(double pageZoomFactor, double textZoomFactor);
     void elementSelectionChanged(bool);
-    void timelineRecordingChanged(bool);
+    void NODELETE timelineRecordingChanged(bool);
+    void showPaintRectsChanged(bool);
 
     void setDeveloperPreferenceOverride(WebCore::InspectorBackendClient::DeveloperPreference, std::optional<bool>);
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    void setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit);
+    void setEmulatedConditions(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency);
 #endif
 
     void save(Vector<WebCore::InspectorFrontendClient::SaveData>&&, bool forceSaveAs);
@@ -310,8 +310,7 @@ private:
 
     unsigned inspectionLevel() const;
 
-    WebPreferences& inspectorPagePreferences() const;
-    Ref<WebPreferences> protectedInspectorPagePreferences() const;
+    WebPreferences& NODELETE inspectorPagePreferences() const;
 
 #if PLATFORM(MAC)
     void applyForcedAppearance();

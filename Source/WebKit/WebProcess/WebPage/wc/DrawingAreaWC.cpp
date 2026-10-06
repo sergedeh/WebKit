@@ -46,6 +46,7 @@
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/Page.h>
 #include <WebCore/Settings.h>
+#include <wtf/Borrow.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebKit {
@@ -73,7 +74,7 @@ GraphicsLayerFactory* DrawingAreaWC::graphicsLayerFactory()
 
 void DrawingAreaWC::updateRootLayers()
 {
-    for (auto& rootLayer : m_rootLayers) {
+    for (auto& rootLayer : borrow(m_rootLayers).get()) {
         Vector<Ref<GraphicsLayer>> children;
         if (rootLayer.contentLayer) {
             children.append(*rootLayer.contentLayer);
@@ -256,14 +257,15 @@ void DrawingAreaWC::updateRendering()
 void DrawingAreaWC::sendUpdateAC()
 {
     bool didProcessMainFrame = false;
-    for (auto it = m_rootLayers.begin(); it != m_rootLayers.end(); it++) {
-        auto& rootLayer = *it;
+    Borrow rootLayers = m_rootLayers;
+    for (size_t i = 0; i < rootLayers->size(); i++) {
+        auto& rootLayer = rootLayers.get()[i];
         auto frame = WebProcess::singleton().webFrame(rootLayer.frameID);
         ASSERT(frame);
         m_updateInfo.remoteContextHostedIdentifier = frame->layerHostingContextIdentifier();
         m_updateInfo.rootLayer = rootLayer.layer->primaryLayerID();
 
-        bool isLastFrame = (it + 1) == m_rootLayers.end();
+        bool isLastFrame = (i + 1) == rootLayers->size();
         bool isMainFrame = frame->isMainFrame();
         didProcessMainFrame = didProcessMainFrame || isMainFrame;
         bool willCallDisplayDidRefresh = isMainFrame || (!didProcessMainFrame && isLastFrame);
@@ -410,8 +412,8 @@ void DrawingAreaWC::commitLayerUpdateInfo(WCLayerUpdateInfo&& info)
 RefPtr<ImageBuffer> DrawingAreaWC::createImageBuffer(FloatSize size, float deviceScaleFactor)
 {
     if (WebProcess::singleton().shouldUseRemoteRenderingFor(RenderingPurpose::DOM))
-        return Ref { m_webPage.get() }->ensureRemoteRenderingBackendProxy().createImageBuffer(size, RenderingMode::Unaccelerated, RenderingPurpose::DOM, deviceScaleFactor, DestinationColorSpace::SRGB(), { PixelFormat::BGRA8 });
-    return ImageBuffer::create<ImageBufferShareableBitmapBackend>(size, deviceScaleFactor, DestinationColorSpace::SRGB(), { PixelFormat::BGRA8 }, RenderingPurpose::DOM, { });
+        return Ref { m_webPage.get() }->ensureRemoteRenderingBackendProxy().createImageBuffer(size, RenderingMode::Unaccelerated, RenderingPurpose::DOM, deviceScaleFactor, ColorSpace::SRGB(), { PixelFormat::BGRA8 });
+    return ImageBuffer::create<ImageBufferShareableBitmapBackend>(size, deviceScaleFactor, ColorSpace::SRGB(), { PixelFormat::BGRA8 }, RenderingPurpose::DOM, { });
 }
 
 void DrawingAreaWC::displayDidRefresh(MonotonicTime)

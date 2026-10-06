@@ -35,7 +35,7 @@
 
 namespace WebCore {
 
-static NSString *localizedPercentage(double percent)
+static RetainPtr<NSString> localizedPercentage(double percent)
 {
     RetainPtr numberFormatter = adoptNS([[NSNumberFormatter alloc] init]);
     [numberFormatter setLocale:[NSLocale currentLocale]];
@@ -47,7 +47,7 @@ static NSString *localizedPercentage(double percent)
 
 String AXProcessingPage(double percent)
 {
-    return WEB_UI_FORMAT_STRING("Processing page %@", "Title for the webarea while the accessibility tree is being built.", localizedPercentage(percent));
+    return WEB_UI_FORMAT_STRING("Processing page %@", "Title for the webarea while the accessibility tree is being built.", localizedPercentage(percent).get());
 }
 
 String copyImageUnknownFileLabel()
@@ -171,6 +171,16 @@ String contextMenuItemTagCapitalize()
     return WEB_UI_STRING("Capitalize", "Capitalize context menu item");
 }
 
+String contextMenuItemTagConvertToTraditionalChinese()
+{
+    return WEB_UI_STRING("Convert to Traditional Chinese", "Convert to Traditional Chinese context menu item");
+}
+
+String contextMenuItemTagConvertToSimplifiedChinese()
+{
+    return WEB_UI_STRING("Convert to Simplified Chinese", "Convert to Simplified Chinese context menu item");
+}
+
 String contextMenuItemTagChangeBack(const String& replacedString)
 {
     notImplemented();
@@ -178,12 +188,12 @@ String contextMenuItemTagChangeBack(const String& replacedString)
 }
 
 #if PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE)
-String contextMenuItemTagEnterVideoEnhancedFullscreen()
+String contextMenuItemTagEnterPictureInPicture()
 {
     return WEB_UI_STRING("Enter Picture in Picture", "menu item");
 }
 
-String contextMenuItemTagExitVideoEnhancedFullscreen()
+String contextMenuItemTagExitPictureInPicture()
 {
     return WEB_UI_STRING("Exit Picture in Picture", "menu item");
 }
@@ -222,18 +232,6 @@ String pdfDocumentTypeDescription()
 }
 
 #if PLATFORM(IOS_FAMILY)
-String htmlSelectMultipleItems(size_t count)
-{
-    switch (count) {
-    case 0:
-        return WEB_UI_STRING("0 Items", "Present the element <select multiple> when no <option> items are selected (iOS only)");
-    case 1:
-        return WEB_UI_STRING("1 Item", "Present the element <select multiple> when a single <option> is selected (iOS only)");
-    default:
-        return WEB_UI_FORMAT_CFSTRING("%zu Items", "Present the number of selected <option> items in a <select multiple> element (iOS only)", count);
-    }
-}
-
 String fileButtonChooseMediaFileLabel()
 {
     return WEB_UI_STRING("Choose Media (Single)", "Title for file button used in HTML forms for media files");
@@ -307,7 +305,7 @@ String contextMenuItemTagLookUpImage()
 
 #endif
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 String contextMenuItemTagCopySubject()
 {
@@ -319,6 +317,6 @@ String contextMenuItemTitleRemoveBackground()
     return WEB_UI_STRING("Remove Background", "Remove Background menu item");
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 } // namespace WebCore

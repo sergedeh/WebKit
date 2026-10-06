@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,7 +46,7 @@ namespace WebCore {
 
 NSPoint globalPoint(const NSPoint& windowPoint, NSWindow *window)
 {
-    return flipScreenPoint([window convertPointToScreen:windowPoint], protectedScreen(window).get());
+    return flipScreenPoint([window convertPointToScreen:windowPoint], protect(screen(window)).get());
 }
 
 NSPoint globalPointForEvent(NSEvent *event)
@@ -153,8 +153,6 @@ MouseButton mouseButtonForEvent(NSEvent *event)
         return buttonFromButtonNumber(event);
     case NSEventTypeMouseEntered:
     case NSEventTypeMouseExited:
-    case NSEventTypeMouseMoved:
-        return MouseButton::None;
     case NSEventTypePressure:
         return currentMouseButton();
     default:
@@ -208,7 +206,7 @@ int clickCountForEvent(NSEvent *event)
     }
 }
 
-static PlatformWheelEventPhase phaseFromNSEventPhase(NSEventPhase eventPhase)
+static PlatformWheelEventPhase NODELETE phaseFromNSEventPhase(NSEventPhase eventPhase)
 {
     switch (eventPhase) {
     case NSEventPhaseNone:
@@ -759,7 +757,6 @@ public:
         m_force = pressure + stage;
 
         // Mac specific
-        m_modifierFlags = [event modifierFlags];
         m_eventNumber = [event eventNumber];
         m_menuTypeForEvent = typeForEvent(event);
     }

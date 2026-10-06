@@ -62,7 +62,7 @@ public:
     explicit RenderMarquee(RenderLayer*);
     ~RenderMarquee();
 
-    bool isHorizontal() const;
+    bool NODELETE isHorizontal() const;
 
     void start();
     void suspend();
@@ -75,7 +75,7 @@ private:
     int speed() const { return m_speed; }
     int marqueeSpeed() const;
 
-    MarqueeDirection direction() const;
+    MarqueeDirection NODELETE direction() const;
 
     int computePosition(MarqueeDirection, bool stopAtClientEdge);
 
@@ -83,7 +83,7 @@ private:
 
     void timerFired();
 
-    CheckedRef<RenderLayer> protectedLayer() { return m_layer.get(); }
+    RenderLayer& layer() { return m_layer.get(); }
 
     InlineWeakRef<RenderLayer> m_layer;
     Timer m_timer;

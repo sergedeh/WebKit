@@ -37,6 +37,7 @@
 #import "WKBaseScrollView.h"
 #import "WKScrollView.h"
 #import "WebPageProxy.h"
+#import "WebPreferences.h"
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIPanGestureRecognizer.h>
 #import <UIKit/UIScrollView.h>
@@ -48,6 +49,7 @@
 #import <WebCore/ScrollingTreeScrollingNode.h>
 #import <wtf/BlockObjCExceptions.h>
 #import <wtf/SetForScope.h>
+#import <wtf/SystemTracing.h>
 #import <wtf/TZoneMallocInlines.h>
 
 @interface WKScrollingNodeScrollViewDelegate () <WKBaseScrollViewDelegate>
@@ -81,6 +83,16 @@
     if (RetainPtr baseScrollView = dynamic_objc_cast<WKBaseScrollView>(scrollView))
         [baseScrollView updateInteractiveScrollVelocity];
 
+    if (_scrollPerfIntervalState != ScrollPerfIntervalState::Inactive) {
+        if ([scrollView _wk_isScrolledBeyondExtents]) {
+            if (_scrollPerfIntervalState == ScrollPerfIntervalState::FingerDown)
+                WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES;");
+            else
+                WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES;");
+            _scrollPerfIntervalState = ScrollPerfIntervalState::Inactive;
+        }
+    }
+
     scrollingTreeNodeDelegate->scrollViewDidScroll(scrollView.contentOffset, _inUserInteraction);
 }
 
@@ -89,6 +101,17 @@
     CheckedPtr scrollingTreeNodeDelegate = _scrollingTreeNodeDelegate.get();
     if (!scrollingTreeNodeDelegate) [[unlikely]]
         return;
+
+    if (scrollingTreeNodeDelegate->isScrollingPerformanceTestingEnabled()) {
+        if (_scrollPerfIntervalState == ScrollPerfIntervalState::Momentum) {
+            WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES;");
+            _scrollPerfIntervalState = ScrollPerfIntervalState::Inactive;
+        }
+        if (_scrollPerfIntervalState == ScrollPerfIntervalState::Inactive) {
+            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES;");
+            _scrollPerfIntervalState = ScrollPerfIntervalState::FingerDown;
+        }
+    }
 
     _inUserInteraction = YES;
 
@@ -117,8 +140,8 @@
     }
 
     Ref scrollingNode = scrollingTreeNodeDelegate->scrollingNode();
-    std::optional<unsigned> originalHorizontalSnapPosition = scrollingNode->currentHorizontalSnapPointIndex();
-    std::optional<unsigned> originalVerticalSnapPosition = scrollingNode->currentVerticalSnapPointIndex();
+    auto originalHorizontalSnapPosition = scrollingNode->currentHorizontalSnapPointIndex();
+    auto originalVerticalSnapPosition = scrollingNode->currentVerticalSnapPointIndex();
 
     WebCore::FloatSize viewportSize(static_cast<float>(CGRectGetWidth([scrollView bounds])), static_cast<float>(CGRectGetHeight([scrollView bounds])));
     const auto& snapOffsetsInfo = scrollingNode->snapOffsetsInfo();
@@ -148,6 +171,17 @@
     if (!scrollingTreeNodeDelegate) [[unlikely]]
         return;
 
+    if (scrollingTreeNodeDelegate->isScrollingPerformanceTestingEnabled()) {
+        if (_scrollPerfIntervalState == ScrollPerfIntervalState::FingerDown) {
+            WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES;");
+            _scrollPerfIntervalState = ScrollPerfIntervalState::Inactive;
+        }
+        if (willDecelerate && _scrollPerfIntervalState == ScrollPerfIntervalState::Inactive) {
+            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES;");
+            _scrollPerfIntervalState = ScrollPerfIntervalState::Momentum;
+        }
+    }
+
     if (_inUserInteraction && !willDecelerate) {
         _inUserInteraction = NO;
         scrollingTreeNodeDelegate->scrollViewDidScroll(scrollView.contentOffset, _inUserInteraction);
@@ -160,6 +194,13 @@
     CheckedPtr scrollingTreeNodeDelegate = _scrollingTreeNodeDelegate.get();
     if (!scrollingTreeNodeDelegate) [[unlikely]]
         return;
+
+    if (scrollingTreeNodeDelegate->isScrollingPerformanceTestingEnabled()) {
+        if (_scrollPerfIntervalState == ScrollPerfIntervalState::Momentum) {
+            WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES;");
+            _scrollPerfIntervalState = ScrollPerfIntervalState::Inactive;
+        }
+    }
 
     if (_inUserInteraction) {
         _inUserInteraction = NO;
@@ -283,11 +324,11 @@ ScrollingTreeScrollingNodeDelegateIOS::ScrollingTreeScrollingNodeDelegateIOS(Scr
 ScrollingTreeScrollingNodeDelegateIOS::~ScrollingTreeScrollingNodeDelegateIOS()
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    if (UIScrollView *scrollView = (UIScrollView *)[scrollLayer() delegate]) {
+    if (RetainPtr scrollView = dynamic_objc_cast<UIScrollView>([protect(scrollLayer()) delegate])) {
         ASSERT([scrollView isKindOfClass:[UIScrollView class]]);
         // The scrollView may have been adopted by another node, so only clear the delegate if it's ours.
-        if (scrollView.delegate == m_scrollViewDelegate.get())
-            scrollView.delegate = nil;
+        if (scrollView.get().delegate == m_scrollViewDelegate.get())
+            scrollView.get().delegate = nil;
     }
     END_BLOCK_OBJC_EXCEPTIONS
 }
@@ -295,9 +336,9 @@ ScrollingTreeScrollingNodeDelegateIOS::~ScrollingTreeScrollingNodeDelegateIOS()
 void ScrollingTreeScrollingNodeDelegateIOS::resetScrollViewDelegate()
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    if (UIScrollView *scrollView = (UIScrollView *)[scrollLayer() delegate]) {
+    if (RetainPtr scrollView = dynamic_objc_cast<UIScrollView>([protect(scrollLayer()) delegate])) {
         ASSERT([scrollView isKindOfClass:[UIScrollView class]]);
-        scrollView.delegate = nil;
+        scrollView.get().delegate = nil;
     }
     END_BLOCK_OBJC_EXCEPTIONS
 }
@@ -310,8 +351,8 @@ void ScrollingTreeScrollingNodeDelegateIOS::commitStateBeforeChildren(const Scro
 
 void ScrollingTreeScrollingNodeDelegateIOS::updateScrollViewForOverscrollBehavior(UIScrollView *scrollView, const WebCore::OverscrollBehavior horizontalOverscrollBehavior, WebCore::OverscrollBehavior verticalOverscrollBehavior, AllowOverscrollToPreventScrollPropagation allowPropogation)
 {
-    if ([scrollView isKindOfClass:[WKScrollView class]])
-        [(WKScrollView*)scrollView _setBouncesInternal:horizontalOverscrollBehavior != WebCore::OverscrollBehavior::None vertical: verticalOverscrollBehavior != WebCore::OverscrollBehavior::None];
+    if (RetainPtr wkScrollView = dynamic_objc_cast<WKScrollView>(scrollView))
+        [wkScrollView _setBouncesInternal:horizontalOverscrollBehavior != WebCore::OverscrollBehavior::None vertical: verticalOverscrollBehavior != WebCore::OverscrollBehavior::None];
     else {
         scrollView.bouncesHorizontally = horizontalOverscrollBehavior != OverscrollBehavior::None;
         scrollView.bouncesVertically = verticalOverscrollBehavior != OverscrollBehavior::None;
@@ -333,29 +374,43 @@ void ScrollingTreeScrollingNodeDelegateIOS::commitStateAfterChildren(const Scrol
         || scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollOrigin)
         || scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollableAreaParams)) {
         BEGIN_BLOCK_OBJC_EXCEPTIONS
-        auto scrollView = this->scrollView();
+        RetainPtr scrollView = this->scrollView();
         if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollContainerLayer)) {
             if (!m_scrollViewDelegate)
-                m_scrollViewDelegate = adoptNS([[WKScrollingNodeScrollViewDelegate alloc] initWithScrollingTreeNodeDelegate:*this]);
+                lazyInitialize(m_scrollViewDelegate, adoptNS([[WKScrollingNodeScrollViewDelegate alloc] initWithScrollingTreeNodeDelegate:*this]));
 
-            scrollView.scrollsToTop = NO;
-            scrollView.delegate = m_scrollViewDelegate.get();
-            scrollView.baseScrollViewDelegate = m_scrollViewDelegate.get();
+            scrollView.get().scrollsToTop = NO;
+            scrollView.get().delegate = m_scrollViewDelegate.get();
+            scrollView.get().baseScrollViewDelegate = m_scrollViewDelegate.get();
 
+            bool useAdaptiveDecelerationTracking = false;
 #if HAVE(UISCROLLVIEW_DECELERATION_TRACKING_BEHAVIOR)
-            if ([scrollView respondsToSelector:@selector(_setDecelerationTrackingBehavior:)])
-                [scrollView _setDecelerationTrackingBehavior:_UIScrollViewDecelerationTrackingBehaviorAdaptive];
+            if (CheckedPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy())
+                useAdaptiveDecelerationTracking = protect(protect(scrollingCoordinatorProxy->webPageProxy())->preferences())->scrollViewAdaptiveDecelerationTrackingEnabled();
+
+            if (useAdaptiveDecelerationTracking) [[unlikely]] {
+                if ([scrollView respondsToSelector:@selector(_setDecelerationTrackingBehavior:)])
+                    [scrollView _setDecelerationTrackingBehavior:_UIScrollViewDecelerationTrackingBehaviorAdaptive];
+            } else
 #endif
+            {
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+                if ([scrollView respondsToSelector:@selector(_setAvoidsJumpOnInterruptedBounce:)]) {
+                    scrollView.get().tracksImmediatelyWhileDecelerating = NO;
+                    scrollView.get()._avoidsJumpOnInterruptedBounce = YES;
+                }
+ALLOW_DEPRECATED_DECLARATIONS_END
+            }
         }
 
         bool recomputeInsets = scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::TotalContentsSize);
         if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ReachableContentsSize)) {
-            scrollView.contentSize = scrollingStateNode.reachableContentsSize();
+            scrollView.get().contentSize = scrollingStateNode.reachableContentsSize();
             recomputeInsets = true;
         }
         if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollableAreaParams)) {
             auto params = scrollingStateNode.scrollableAreaParameters();
-            updateScrollViewForOverscrollBehavior(scrollView, params.horizontalOverscrollBehavior, params.verticalOverscrollBehavior, AllowOverscrollToPreventScrollPropagation::Yes);
+            updateScrollViewForOverscrollBehavior(scrollView.get(), params.horizontalOverscrollBehavior, params.verticalOverscrollBehavior, AllowOverscrollToPreventScrollPropagation::Yes);
         }
         if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollOrigin))
             recomputeInsets = true;
@@ -369,7 +424,7 @@ void ScrollingTreeScrollingNodeDelegateIOS::commitStateAfterChildren(const Scrol
             if (scrollOrigin().y())
                 insets.top = reachableContentsSize().height() - totalContentsSize().height();
 
-            scrollView.contentInset = insets;
+            scrollView.get().contentInset = insets;
         }
         END_BLOCK_OBJC_EXCEPTIONS
     }
@@ -378,13 +433,13 @@ void ScrollingTreeScrollingNodeDelegateIOS::commitStateAfterChildren(const Scrol
     Ref scrollingNode = this->scrollingNode();
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::SnapOffsetsInfo)) {
         BEGIN_BLOCK_OBJC_EXCEPTIONS
-        scrollView().decelerationRate = scrollingNode->snapOffsetsInfo().horizontalSnapOffsets.size() || scrollingNode->snapOffsetsInfo().verticalSnapOffsets.size() ? UIScrollViewDecelerationRateFast : UIScrollViewDecelerationRateNormal;
+        protect(scrollView()).get().decelerationRate = scrollingNode->snapOffsetsInfo().horizontalSnapOffsets.size() || scrollingNode->snapOffsetsInfo().verticalSnapOffsets.size() ? UIScrollViewDecelerationRateFast : UIScrollViewDecelerationRateNormal;
         END_BLOCK_OBJC_EXCEPTIONS
     }
 
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollableAreaParams)) {
         BEGIN_BLOCK_OBJC_EXCEPTIONS
-        UIScrollView *scrollView = this->scrollView();
+        RetainPtr scrollView = this->scrollView();
 
         [scrollView setShowsHorizontalScrollIndicator:!(scrollingNode->horizontalNativeScrollbarVisibility() == NativeScrollbarVisibility::HiddenByStyle)];
         [scrollView setShowsVerticalScrollIndicator:!(scrollingNode->verticalNativeScrollbarVisibility() == NativeScrollbarVisibility::HiddenByStyle)];
@@ -393,16 +448,11 @@ void ScrollingTreeScrollingNodeDelegateIOS::commitStateAfterChildren(const Scrol
         END_BLOCK_OBJC_EXCEPTIONS
     }
 
-    if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::RequestedScrollPosition)) {
-        scrollingNode->handleScrollPositionRequest(scrollingStateNode.requestedScrollData());
-        scrollingTree()->setNeedsApplyLayerPositionsAfterCommit();
-    }
-
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollbarWidth)) {
         auto scrollbarWidth = scrollingStateNode.scrollbarWidth();
 
         BEGIN_BLOCK_OBJC_EXCEPTIONS
-        UIScrollView *scrollView = this->scrollView();
+        RetainPtr scrollView = this->scrollView();
 
         [scrollView setShowsHorizontalScrollIndicator:(scrollbarWidth != ScrollbarWidth::None && scrollingNode->horizontalNativeScrollbarVisibility() != NativeScrollbarVisibility::HiddenByStyle)];
         [scrollView setShowsVerticalScrollIndicator:(scrollbarWidth != ScrollbarWidth::None && scrollingNode->horizontalNativeScrollbarVisibility() != NativeScrollbarVisibility::HiddenByStyle)];
@@ -436,24 +486,38 @@ bool ScrollingTreeScrollingNodeDelegateIOS::startAnimatedScrollToPosition(FloatP
     auto scrollOffset = ScrollableArea::scrollOffsetFromPosition(scrollPosition, toFloatSize(scrollOrigin()));
 
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    [scrollView() setContentOffset:scrollOffset animated:YES];
+    [protect(scrollView()) setContentOffset:scrollOffset animated:YES];
     END_BLOCK_OBJC_EXCEPTIONS
     return true;
 }
 
-void ScrollingTreeScrollingNodeDelegateIOS::stopAnimatedScroll()
+void ScrollingTreeScrollingNodeDelegateIOS::stopAnimatedScroll(EnumSet<AnimatedScrollType> scrollTypesToStop)
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    [scrollView() _wk_stopScrollingAndZooming];
+
+    RetainPtr scrollView = this->scrollView();
+    bool stopScrolling = [&] {
+        if (scrollTypesToStop.contains(AnimatedScrollType::User) && [scrollView isDecelerating])
+            return true;
+
+        if (scrollTypesToStop.contains(AnimatedScrollType::Programmatic) && [scrollView isScrollAnimating])
+            return true;
+
+        return false;
+    }();
+
+    if (stopScrolling)
+        [scrollView _wk_stopScrollingAndZooming];
+
     END_BLOCK_OBJC_EXCEPTIONS
 }
 
 #if HAVE(UISCROLLVIEW_ASYNCHRONOUS_SCROLL_EVENT_HANDLING)
 void ScrollingTreeScrollingNodeDelegateIOS::handleAsynchronousCancelableScrollEvent(WKBaseScrollView *scrollView, WKBEScrollViewScrollUpdate *update, void (^completion)(BOOL handled))
 {
-    auto* scrollingCoordinatorProxy = downcast<WebKit::RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
+    CheckedPtr scrollingCoordinatorProxy = downcast<WebKit::RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
     if (scrollingCoordinatorProxy) {
-        if (RefPtr pageClient = scrollingCoordinatorProxy->webPageProxy().pageClient())
+        if (RefPtr pageClient = protect(scrollingCoordinatorProxy->webPageProxy())->pageClient())
             pageClient->handleAsynchronousCancelableScrollEvent(scrollView, update, completion);
     }
 }
@@ -463,11 +527,11 @@ void ScrollingTreeScrollingNodeDelegateIOS::repositionScrollingLayers()
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    if (scrollView()._wk_isScrollAnimating)
+    if (protect(scrollView()).get()._wk_isScrollAnimating)
 ALLOW_DEPRECATED_DECLARATIONS_END
         return;
 
-    [scrollView() setContentOffset:scrollingNode()->currentScrollOffset()];
+    [protect(scrollView()) setContentOffset:scrollingNode()->currentScrollOffset()];
     END_BLOCK_OBJC_EXCEPTIONS
 }
 
@@ -486,6 +550,11 @@ void ScrollingTreeScrollingNodeDelegateIOS::scrollDidEnd()
 void ScrollingTreeScrollingNodeDelegateIOS::scrollViewWillStartPanGesture() const
 {
     scrollingTree()->scrollingTreeNodeWillStartPanGesture(scrollingNode()->scrollingNodeID());
+}
+
+bool ScrollingTreeScrollingNodeDelegateIOS::isScrollingPerformanceTestingEnabled() const
+{
+    return scrollingTree()->scrollingPerformanceTestingEnabled();
 }
 
 void ScrollingTreeScrollingNodeDelegateIOS::scrollViewDidScroll(const FloatPoint& scrollOffset, bool inUserInteraction)
@@ -507,10 +576,9 @@ void ScrollingTreeScrollingNodeDelegateIOS::currentSnapPointIndicesDidChange(std
 
 WKBaseScrollView *ScrollingTreeScrollingNodeDelegateIOS::scrollView() const
 {
-    if (auto* delegate = scrollLayer().delegate) {
-        auto scrollView = dynamic_objc_cast<WKBaseScrollView>(delegate);
-        ASSERT(scrollView);
-        return scrollView;
+    if (auto* delegate = protect(scrollLayer()).get().delegate) {
+        ASSERT(is_objc<WKBaseScrollView>(delegate));
+        return dynamic_objc_cast<WKBaseScrollView>(delegate);
     }
     return nullptr;
 }
@@ -519,7 +587,7 @@ UIScrollView *ScrollingTreeScrollingNodeDelegateIOS::findActingScrollParent(UISc
 {
     ASSERT(scrollView == this->scrollView());
 
-    auto* scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
+    CheckedPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
     if (!scrollingCoordinatorProxy)
         return nil;
 
@@ -536,7 +604,7 @@ bool ScrollingTreeScrollingNodeDelegateIOS::shouldAllowPanGestureRecognizerToRec
     if (!scrollingCoordinatorProxy)
         return true;
 
-    if (RefPtr pageClient = scrollingCoordinatorProxy->protectedWebPageProxy()->pageClient())
+    if (RefPtr pageClient = protect(scrollingCoordinatorProxy->webPageProxy())->pageClient())
         return !pageClient->isSimulatingCompatibilityPointerTouches();
 
     return true;
@@ -544,11 +612,11 @@ bool ScrollingTreeScrollingNodeDelegateIOS::shouldAllowPanGestureRecognizerToRec
 
 void ScrollingTreeScrollingNodeDelegateIOS::computeActiveTouchActionsForGestureRecognizer(UIGestureRecognizer* gestureRecognizer)
 {
-    auto* scrollingCoordinatorProxy = dynamicDowncast<RemoteScrollingCoordinatorProxyIOS>(downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy());
+    CheckedPtr scrollingCoordinatorProxy = dynamicDowncast<RemoteScrollingCoordinatorProxyIOS>(downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy());
     if (!scrollingCoordinatorProxy)
         return;
 
-    RefPtr pageClient = scrollingCoordinatorProxy->webPageProxy().pageClient();
+    RefPtr pageClient = protect(scrollingCoordinatorProxy->webPageProxy())->pageClient();
     if (!pageClient)
         return;
 
@@ -558,11 +626,11 @@ void ScrollingTreeScrollingNodeDelegateIOS::computeActiveTouchActionsForGestureR
 
 void ScrollingTreeScrollingNodeDelegateIOS::cancelPointersForGestureRecognizer(UIGestureRecognizer* gestureRecognizer)
 {
-    auto* scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
+    CheckedPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
     if (!scrollingCoordinatorProxy)
         return;
 
-    if (RefPtr pageClient = scrollingCoordinatorProxy->webPageProxy().pageClient())
+    if (RefPtr pageClient = protect(scrollingCoordinatorProxy->webPageProxy())->pageClient())
         pageClient->cancelPointersForGestureRecognizer(gestureRecognizer);
 }
 

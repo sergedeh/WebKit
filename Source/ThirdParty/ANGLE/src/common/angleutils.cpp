@@ -4,12 +4,10 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_libc_calls
-#endif
-
 #include "common/angleutils.h"
+#include "common/SimpleMutex.h"
 #include "common/debug.h"
+#include "common/unsafe_buffers.h"
 
 #include <stdio.h>
 
@@ -22,69 +20,68 @@ namespace angle
 // force the renderer to re-apply the state.
 const uintptr_t DirtyPointer = std::numeric_limits<uintptr_t>::max();
 
-// AMD_performance_monitor helpers.
-
-PerfMonitorCounter::PerfMonitorCounter() = default;
-
-PerfMonitorCounter::~PerfMonitorCounter() = default;
-
-PerfMonitorCounterGroup::PerfMonitorCounterGroup() = default;
-
-PerfMonitorCounterGroup::~PerfMonitorCounterGroup() = default;
-
-uint32_t GetPerfMonitorCounterIndex(const PerfMonitorCounters &counters, const std::string &name)
+std::string_view GetVulkanApiPerfCounterGroupName(VulkanApiPerfCounterGroup group)
 {
-    for (uint32_t counterIndex = 0; counterIndex < static_cast<uint32_t>(counters.size());
-         ++counterIndex)
+#define ANGLE_VK_API_PERF_COUNTER_CASE_GROUP_RETURN_NAME(GROUP) \
+    case VulkanApiPerfCounterGroup::GROUP:                      \
+        return ANGLE_STRINGIFY(GROUP);
+
+    switch (group)
     {
-        if (counters[counterIndex].name == name)
-        {
-            return counterIndex;
-        }
+        ANGLE_VK_API_PERF_COUNTER_GROUPS_X(ANGLE_VK_API_PERF_COUNTER_CASE_GROUP_RETURN_NAME)
+        default:
+            UNREACHABLE();
+            return "INVALID_VulkanApiPerfCounterGroup";
     }
 
-    return std::numeric_limits<uint32_t>::max();
+#undef ANGLE_VK_API_PERF_COUNTER_CASE_GROUP_RETURN_NAME
 }
 
-uint32_t GetPerfMonitorCounterGroupIndex(const PerfMonitorCounterGroups &groups,
-                                         const std::string &name)
+std::string_view GetVulkanApiPerfCounterTypeName(VulkanApiPerfCounterType type)
 {
-    for (uint32_t groupIndex = 0; groupIndex < static_cast<uint32_t>(groups.size()); ++groupIndex)
+#define ANGLE_VK_API_PERF_COUNTER_CASE_TYPE_RETURN_NAME(TYPE) \
+    case VulkanApiPerfCounterType::TYPE:                      \
+        return ANGLE_STRINGIFY(TYPE);
+
+    switch (type)
     {
-        if (groups[groupIndex].name == name)
-        {
-            return groupIndex;
-        }
+        ANGLE_VK_API_PERF_COUNTER_TYPES_X(ANGLE_VK_API_PERF_COUNTER_CASE_TYPE_RETURN_NAME)
+        default:
+            UNREACHABLE();
+            return "INVALID_VulkanApiPerfCounterType";
     }
 
-    return std::numeric_limits<uint32_t>::max();
+#undef ANGLE_VK_API_PERF_COUNTER_CASE_TYPE_RETURN_NAME
 }
 
-const PerfMonitorCounter &GetPerfMonitorCounter(const PerfMonitorCounters &counters,
-                                                const std::string &name)
+std::string_view GetVulkanApiPerfCounterName(VulkanApiPerfCounterGroup group,
+                                             VulkanApiPerfCounterType type)
 {
-    return GetPerfMonitorCounter(const_cast<PerfMonitorCounters &>(counters), name);
-}
+#define ANGLE_VK_API_PERF_COUNTER_CASE_TYPE_RETURN_COUNTER_NAME(TYPE, GROUP) \
+    case VulkanApiPerfCounterType::TYPE:                                     \
+        return ANGLE_STRINGIFY(vk##GROUP##Api##TYPE);
 
-PerfMonitorCounter &GetPerfMonitorCounter(PerfMonitorCounters &counters, const std::string &name)
-{
-    uint32_t counterIndex = GetPerfMonitorCounterIndex(counters, name);
-    ASSERT(counterIndex < static_cast<uint32_t>(counters.size()));
-    return counters[counterIndex];
-}
+#define ANGLE_VK_API_PERF_COUNTER_CASE_GROUP_SWITCH_TYPE(GROUP)                 \
+    case VulkanApiPerfCounterGroup::GROUP:                                      \
+        switch (type)                                                           \
+        {                                                                       \
+            ANGLE_VK_API_PERF_COUNTER_TYPES_WITH_PARAM_X(                       \
+                ANGLE_VK_API_PERF_COUNTER_CASE_TYPE_RETURN_COUNTER_NAME, GROUP) \
+            default:                                                            \
+                UNREACHABLE();                                                  \
+                return "INVALID_VulkanApiPerfCounterType";                      \
+        }
 
-const PerfMonitorCounterGroup &GetPerfMonitorCounterGroup(const PerfMonitorCounterGroups &groups,
-                                                          const std::string &name)
-{
-    return GetPerfMonitorCounterGroup(const_cast<PerfMonitorCounterGroups &>(groups), name);
-}
+    switch (group)
+    {
+        ANGLE_VK_API_PERF_COUNTER_GROUPS_X(ANGLE_VK_API_PERF_COUNTER_CASE_GROUP_SWITCH_TYPE)
+        default:
+            UNREACHABLE();
+            return "INVALID_VulkanApiPerfCounterGroup";
+    }
 
-PerfMonitorCounterGroup &GetPerfMonitorCounterGroup(PerfMonitorCounterGroups &groups,
-                                                    const std::string &name)
-{
-    uint32_t groupIndex = GetPerfMonitorCounterGroupIndex(groups, name);
-    ASSERT(groupIndex < static_cast<uint32_t>(groups.size()));
-    return groups[groupIndex];
+#undef ANGLE_VK_API_PERF_COUNTER_CASE_TYPE_RETURN_COUNTER_NAME
+#undef ANGLE_VK_API_PERF_COUNTER_CASE_GROUP_SWITCH_TYPE
 }
 }  // namespace angle
 
@@ -121,26 +118,13 @@ size_t FormatStringIntoVector(const char *fmt, va_list vararg, std::vector<char>
     va_list varargCopy;
     va_copy(varargCopy, vararg);
 
-    int len = vsnprintf(nullptr, 0, fmt, vararg);
+    int len = ANGLE_UNSAFE_TODO(vsnprintf(nullptr, 0, fmt, vararg));
     ASSERT(len >= 0);
 
     outBuffer.resize(len + 1, 0);
 
-    len = vsnprintf(outBuffer.data(), outBuffer.size(), fmt, varargCopy);
+    len = ANGLE_UNSAFE_TODO(vsnprintf(outBuffer.data(), outBuffer.size(), fmt, varargCopy));
     va_end(varargCopy);
     ASSERT(len >= 0);
     return static_cast<size_t>(len);
-}
-
-const char *MakeStaticString(const std::string &str)
-{
-    // On the heap so that no destructor runs on application exit.
-    static std::set<std::string> *strings = new std::set<std::string>;
-    std::set<std::string>::iterator it    = strings->find(str);
-    if (it != strings->end())
-    {
-        return it->c_str();
-    }
-
-    return strings->insert(str).first->c_str();
 }

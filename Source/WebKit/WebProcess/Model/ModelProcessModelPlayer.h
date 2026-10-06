@@ -28,7 +28,6 @@
 
 #if ENABLE(MODEL_PROCESS)
 
-#import "ModelIdentifier.h"
 #import "WebPage.h"
 #import "WebPageProxyMessages.h"
 #import "WebProcess.h"
@@ -36,8 +35,10 @@
 #import <WebCore/ModelPlayerAnimationState.h>
 #import <WebCore/ModelPlayerClient.h>
 #import <WebCore/ModelPlayerIdentifier.h>
+#import <WebCore/NodeIdentifier.h>
 #import <WebCore/StageModeOperations.h>
 #import <wtf/Compiler.h>
+#import <wtf/HashMap.h>
 
 namespace WebKit {
 
@@ -66,62 +67,82 @@ private:
 
     WebPage* page() { return m_page.get(); }
     WebCore::ModelPlayerClient* client() { return m_client.get(); }
-    RefPtr<WebCore::ModelPlayerClient> protectedClient() { return m_client.get(); }
 
     template<typename T> void send(T&& message);
     template<typename T, typename C> void sendWithAsyncReply(T&& message, C&& completionHandler);
 
     bool modelProcessEnabled() const;
 
+    struct NodeAnimationState {
+        WebCore::ModelPlayerAnimationState playbackState;
+        std::optional<Seconds> pendingCurrentTime;
+        std::optional<MonotonicTime> clockTimestampOfLastCurrentTimeSet;
+    };
+    NodeAnimationState& ensureAnimationState(WebCore::NodeIdentifier);
+    NodeAnimationState* animationStateIfExists(WebCore::NodeIdentifier);
+    const NodeAnimationState* animationStateIfExists(WebCore::NodeIdentifier) const;
+
     // Messages
     void didCreateLayer(WebCore::LayerHostingContextIdentifier);
-    void didFinishLoading(const WebCore::FloatPoint3D&, const WebCore::FloatPoint3D&);
-    void didFailLoading();
-    void didUpdateEntityTransform(const WebCore::TransformationMatrix&);
-    void didUpdateAnimationPlaybackState(bool isPaused, double playbackRate, Seconds duration, Seconds currentTime, MonotonicTime clockTimestamp);
+    void didFinishLoading(WebCore::NodeIdentifier, const WebCore::FloatPoint3D&, const WebCore::FloatPoint3D&);
+    void didConvertModelData(Ref<WebCore::SharedBuffer>&&, const String& convertedMIMEType);
+    void didFailLoading(WebCore::NodeIdentifier);
+    void didUpdateEntityTransform(WebCore::NodeIdentifier, const WebCore::TransformationMatrix&);
+#if ENABLE(SPATIAL_PORTAL)
+    void didUpdatePortalTransform(const WebCore::TransformationMatrix&);
+#endif
+    void didUpdateAnimationPlaybackState(WebCore::NodeIdentifier, bool isPaused, double playbackRate, Seconds duration, Seconds currentTime, MonotonicTime clockTimestamp);
     void didFinishEnvironmentMapLoading(bool succeeded);
 
     // WebCore::ModelPlayer overrides.
     WebCore::ModelPlayerIdentifier identifier() const final { return m_id; }
-    std::optional<WebCore::ModelPlayerAnimationState> currentAnimationState() const final;
-    std::optional<std::unique_ptr<WebCore::ModelPlayerTransformState>> currentTransformState() const final;
-    void load(WebCore::Model&, WebCore::LayoutSize) final;
-    void reload(WebCore::Model&, WebCore::LayoutSize, WebCore::ModelPlayerAnimationState&, std::unique_ptr<WebCore::ModelPlayerTransformState>&&) final;
+    std::optional<WebCore::ModelPlayerAnimationState> currentAnimationState(WebCore::NodeIdentifier) const final;
+    std::optional<std::unique_ptr<WebCore::ModelPlayerTransformState>> currentTransformState(WebCore::NodeIdentifier) const final;
+    void load(WebCore::NodeIdentifier, WebCore::Model&, WebCore::LayoutSize, bool) final;
+    void unload(WebCore::NodeIdentifier) final;
+    void reload(WebCore::NodeIdentifier, WebCore::Model&, WebCore::LayoutSize, WebCore::ModelPlayerAnimationState&, std::unique_ptr<WebCore::ModelPlayerTransformState>&&) final;
     void visibilityStateDidChange() final;
     void sizeDidChange(WebCore::LayoutSize) final;
     void configureGraphicsLayer(WebCore::GraphicsLayer&, WebCore::ModelPlayerGraphicsLayerConfiguration&&) final;
     void handleMouseDown(const WebCore::LayoutPoint&, MonotonicTime) final;
     void handleMouseMove(const WebCore::LayoutPoint&, MonotonicTime) final;
     void handleMouseUp(const WebCore::LayoutPoint&, MonotonicTime) final;
-    std::optional<WebCore::FloatPoint3D> boundingBoxCenter() const final;
-    std::optional<WebCore::FloatPoint3D> boundingBoxExtents() const final;
-    std::optional<WebCore::TransformationMatrix> entityTransform() const final;
-    void setEntityTransform(WebCore::TransformationMatrix) final;
+    std::optional<WebCore::FloatPoint3D> boundingBoxCenter(WebCore::NodeIdentifier) const final;
+    std::optional<WebCore::FloatPoint3D> boundingBoxExtents(WebCore::NodeIdentifier) const final;
+    std::optional<WebCore::TransformationMatrix> entityTransform(WebCore::NodeIdentifier) const final;
+    void setEntityTransform(WebCore::NodeIdentifier, WebCore::TransformationMatrix) final;
     bool supportsTransform(WebCore::TransformationMatrix) final;
     void enterFullscreen() final;
     void getCamera(CompletionHandler<void(std::optional<WebCore::HTMLModelElementCamera>&&)>&&) final;
     void setCamera(WebCore::HTMLModelElementCamera, CompletionHandler<void(bool success)>&&) final;
-    void isPlayingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&) final;
-    void setAnimationIsPlaying(bool, CompletionHandler<void(bool success)>&&) final;
-    void isLoopingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&) final;
-    void setIsLoopingAnimation(bool, CompletionHandler<void(bool success)>&&) final;
-    void animationDuration(CompletionHandler<void(std::optional<Seconds>&&)>&&) final;
-    void animationCurrentTime(CompletionHandler<void(std::optional<Seconds>&&)>&&) final;
-    void setAnimationCurrentTime(Seconds, CompletionHandler<void(bool success)>&&) final;
-    void hasAudio(CompletionHandler<void(std::optional<bool>&&)>&&) final;
-    void isMuted(CompletionHandler<void(std::optional<bool>&&)>&&) final;
-    void setIsMuted(bool, CompletionHandler<void(bool success)>&&) final;
+    void isPlayingAnimation(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&&) final;
+    void setAnimationIsPlaying(WebCore::NodeIdentifier, bool, CompletionHandler<void(bool success)>&&) final;
+    void isLoopingAnimation(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&&) final;
+    void setIsLoopingAnimation(WebCore::NodeIdentifier, bool, CompletionHandler<void(bool success)>&&) final;
+    void animationDuration(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&&) final;
+    void animationCurrentTime(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&&) final;
+    void setAnimationCurrentTime(WebCore::NodeIdentifier, Seconds, CompletionHandler<void(bool success)>&&) final;
     WebCore::ModelPlayerAccessibilityChildren accessibilityChildren() final;
-    void setAutoplay(bool) final;
-    void setLoop(bool) final;
-    void setPlaybackRate(double, CompletionHandler<void(double effectivePlaybackRate)>&&) final;
-    double duration() const final;
-    bool paused() const final;
-    void setPaused(bool, CompletionHandler<void(bool succeeded)>&&) final;
-    Seconds currentTime() const final;
-    void setCurrentTime(Seconds, CompletionHandler<void()>&&) final;
-    void setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data) final;
+    void setAutoplay(WebCore::NodeIdentifier, bool) final;
+    void setLoop(WebCore::NodeIdentifier, bool) final;
+    void setPlaybackRate(WebCore::NodeIdentifier, double, CompletionHandler<void(double effectivePlaybackRate)>&&) final;
+    double duration(WebCore::NodeIdentifier) const final;
+    bool paused(WebCore::NodeIdentifier) const final;
+    void setPaused(WebCore::NodeIdentifier, bool, CompletionHandler<void(bool succeeded)>&&) final;
+    Seconds currentTime(WebCore::NodeIdentifier) const final;
+    void setCurrentTime(WebCore::NodeIdentifier, Seconds, CompletionHandler<void()>&&) final;
+    void setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data, const URL& sourceURL) final;
+    String environmentMapForTesting() const final;
+#if ENABLE(SPATIAL_PORTAL)
+    void disableEnvironmentMap() final;
+    void enableSystemEnvironmentMap() final;
+#endif
     void setHasPortal(bool) final;
+#if ENABLE(SPATIAL_PORTAL)
+    void setPortalTransform(const WebCore::UsedPortalTransform&) final;
+    void setPortalAction(WebCore::PortalActionKind) final;
+    void setAnchor(WebCore::NodeIdentifier, std::optional<WebCore::NodeIdentifier> anchorNode, const String& placement) final;
+#endif
     void setStageMode(WebCore::StageModeOperation) final;
     void beginStageModeTransform(const WebCore::TransformationMatrix&) final;
     void updateStageModeTransform(const WebCore::TransformationMatrix&) final;
@@ -134,6 +155,14 @@ private:
     void exitImmersivePresentation(CompletionHandler<void()>&&) final;
 #endif
 
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    void enterVolumetricPresentation(CompletionHandler<void(std::optional<WebCore::LayerHostingContextIdentifier>)>&&) final;
+    void exitVolumetricPresentation() final;
+    void updateVolumetricPresentationSize(const WebCore::FloatSize&) final;
+#endif
+
+    void sceneGraphAsTextForTesting(std::optional<WebCore::NodeIdentifier> rootNode, Vector<std::pair<WebCore::NodeIdentifier, String>>&& modelLabels, const WebCore::ModelSceneGraphAsTextOptions&, CompletionHandler<void(String&&)>&&) final;
+
     WebCore::ModelPlayerIdentifier m_id;
     WeakPtr<WebPage> m_page;
     WeakPtr<WebCore::ModelPlayerClient> m_client;
@@ -144,11 +173,14 @@ private:
     std::optional<WebCore::FloatPoint3D> m_boundingBoxCenter;
     std::optional<WebCore::FloatPoint3D> m_boundingBoxExtents;
     bool m_hasPortal { true };
+    WebCore::EnvironmentMapKind m_environmentMapKind { WebCore::EnvironmentMapKind::Default };
+    URL m_environmentMapURL;
+#if ENABLE(SPATIAL_PORTAL)
+    WebCore::UsedPortalTransform m_portalTransform;
+    WebCore::PortalActionKind m_portalAction { WebCore::PortalActionKind::None };
+#endif
     WebCore::StageModeOperation m_stageModeOperation { WebCore::StageModeOperation::None };
-    double m_requestedPlaybackRate { 1.0 };
-    std::optional<Seconds> m_pendingCurrentTime;
-    std::optional<MonotonicTime> m_clockTimestampOfLastCurrentTimeSet;
-    WebCore::ModelPlayerAnimationState m_animationState;
+    HashMap<WebCore::NodeIdentifier, NodeAnimationState> m_animationStates;
     SharedPreferencesForWebProcess m_sharedPreferencesForWebProcess;
 };
 

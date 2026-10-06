@@ -36,6 +36,7 @@
 #include <functional>
 #include <wtf/ASCIICType.h>
 #include <wtf/CommaPrinter.h>
+#include <wtf/MathExtras.h>
 #include <wtf/ZippedRange.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/ParsingUtilities.h>
@@ -68,7 +69,7 @@ constexpr auto trueToken = "true"_s;
 constexpr auto falseToken = "false"_s;
 
 template<typename CodeUnit>
-bool parseConstToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, ASCIILiteral token)
+bool NODELETE parseConstToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, ASCIILiteral token)
 {
     if (data.size() < token.length())
         return false;
@@ -83,7 +84,7 @@ bool parseConstToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& 
 }
 
 template<typename CodeUnit>
-bool readInt(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, bool canHaveLeadingZeros)
+bool NODELETE readInt(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, bool canHaveLeadingZeros)
 {
     if (data.empty())
         return false;
@@ -104,7 +105,7 @@ bool readInt(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd
 }
 
 template<typename CodeUnit>
-bool parseNumberToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd)
+bool NODELETE parseNumberToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd)
 {
     // We just grab the number here. We validate the size in DecodeNumber.
     // According to RFC 4627, a valid number is: [minus] int [frac] [exp]
@@ -148,7 +149,7 @@ bool parseNumberToken(std::span<const CodeUnit> data, std::span<const CodeUnit>&
 }
 
 template<typename CodeUnit>
-bool readHexDigits(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, unsigned digits)
+bool NODELETE readHexDigits(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, unsigned digits)
 {
     if (data.size() < digits)
         return false;
@@ -164,7 +165,7 @@ bool readHexDigits(std::span<const CodeUnit> data, std::span<const CodeUnit>& to
 }
 
 template<typename CodeUnit>
-bool parseStringToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd)
+bool NODELETE parseStringToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd)
 {
     while (!data.empty()) {
         CodeUnit c = consume(data);
@@ -203,7 +204,7 @@ bool parseStringToken(std::span<const CodeUnit> data, std::span<const CodeUnit>&
 }
 
 template<typename CodeUnit>
-Token parseToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenStart, std::span<const CodeUnit>& tokenEnd)
+Token NODELETE parseToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenStart, std::span<const CodeUnit>& tokenEnd)
 {
     skipWhile<isASCIIWhitespaceWithoutFF>(data);
 
@@ -339,7 +340,7 @@ bool decodeString(std::span<const CodeUnit> data, String& output)
     return true;
 }
 
-template<typename CodeUnit>
+template<Value::ParsingMode parsingMode = Value::ParsingMode::Strict, typename CodeUnit>
 RefPtr<JSON::Value> buildValue(std::span<const CodeUnit> data, std::span<const CodeUnit>& valueTokenEnd, int depth)
 {
     if (depth > stackLimit)
@@ -384,7 +385,7 @@ RefPtr<JSON::Value> buildValue(std::span<const CodeUnit> data, std::span<const C
         data = tokenEnd;
         token = parseToken(data, tokenStart, tokenEnd);
         while (token != Token::ArrayEnd) {
-            RefPtr<JSON::Value> arrayNode = buildValue(data, tokenEnd, depth + 1);
+            RefPtr<JSON::Value> arrayNode = buildValue<parsingMode>(data, tokenEnd, depth + 1);
             if (!arrayNode)
                 return nullptr;
             array->pushValue(arrayNode.releaseNonNull());
@@ -395,8 +396,12 @@ RefPtr<JSON::Value> buildValue(std::span<const CodeUnit> data, std::span<const C
             if (token == Token::ListSeparator) {
                 data = tokenEnd;
                 token = parseToken(data, tokenStart, tokenEnd);
-                if (token == Token::ArrayEnd)
-                    return nullptr;
+                if (token == Token::ArrayEnd) {
+                    if constexpr (parsingMode != Value::ParsingMode::AllowTrailingCommas)
+                        return nullptr;
+                    else
+                        break;
+                }
             } else if (token != Token::ArrayEnd) {
                 // Unexpected value after list value. Bail out.
                 return nullptr;
@@ -425,7 +430,7 @@ RefPtr<JSON::Value> buildValue(std::span<const CodeUnit> data, std::span<const C
                 return nullptr;
             data = tokenEnd;
 
-            RefPtr<JSON::Value> value = buildValue(data, tokenEnd, depth + 1);
+            RefPtr<JSON::Value> value = buildValue<parsingMode>(data, tokenEnd, depth + 1);
             if (!value)
                 return nullptr;
             object->setValue(key, value.releaseNonNull());
@@ -437,8 +442,12 @@ RefPtr<JSON::Value> buildValue(std::span<const CodeUnit> data, std::span<const C
             if (token == Token::ListSeparator) {
                 data = tokenEnd;
                 token = parseToken(data, tokenStart, tokenEnd);
-                if (token == Token::ObjectEnd)
-                    return nullptr;
+                if (token == Token::ObjectEnd) {
+                    if constexpr (parsingMode != Value::ParsingMode::AllowTrailingCommas)
+                        return nullptr;
+                    else
+                        break;
+                }
             } else if (token != Token::ObjectEnd) {
                 // Unexpected value after last object value. Bail out.
                 return nullptr;
@@ -459,19 +468,19 @@ RefPtr<JSON::Value> buildValue(std::span<const CodeUnit> data, std::span<const C
 
 } // anonymous namespace
 
-template<typename Visitor> constexpr decltype(auto) Value::visitDerived(Visitor&& visitor)
+template<typename Visitor> constexpr decltype(auto) Value::visitDerived(NOESCAPE const Visitor& visitor)
 {
     if (std::holds_alternative<ObjectTypeTag>(m_value))
-        return std::invoke(std::forward<Visitor>(visitor), static_cast<Object&>(*this));
+        return std::invoke(visitor, static_cast<Object&>(*this));
     if (std::holds_alternative<ArrayTypeTag>(m_value))
-        return std::invoke(std::forward<Visitor>(visitor), static_cast<Array&>(*this));
-    return std::invoke(std::forward<Visitor>(visitor), static_cast<Value&>(*this));
+        return std::invoke(visitor, static_cast<Array&>(*this));
+    return std::invoke(visitor, static_cast<Value&>(*this));
 }
 
-template<typename Visitor> constexpr decltype(auto) Value::visitDerived(Visitor&& visitor) const
+template<typename Visitor> constexpr decltype(auto) Value::visitDerived(NOESCAPE const Visitor& visitor) const
 {
     return const_cast<Value&>(*this).visitDerived([&](auto& derived) {
-        return std::invoke(std::forward<Visitor>(visitor), std::as_const(derived));
+        return std::invoke(visitor, std::as_const(derived));
     });
 }
 
@@ -510,6 +519,11 @@ Ref<Value> Value::create(const String& value)
 
 RefPtr<Value> Value::parseJSON(StringView json)
 {
+    return parseJSON(json, ParsingMode::Strict);
+}
+
+RefPtr<Value> Value::parseJSON(StringView json, ParsingMode parsingMode)
+{
     auto containsNonSpace = [] (auto span) {
         if (!span.data())
             return false;
@@ -524,13 +538,19 @@ RefPtr<Value> Value::parseJSON(StringView json)
     if (json.is8Bit()) {
         auto data = json.span8();
         std::span<const Latin1Character> tokenEnd;
-        result = buildValue(data, tokenEnd, 0);
+        if (parsingMode == ParsingMode::AllowTrailingCommas)
+            result = buildValue<ParsingMode::AllowTrailingCommas>(data, tokenEnd, 0);
+        else
+            result = buildValue(data, tokenEnd, 0);
         if (containsNonSpace(tokenEnd))
             return nullptr;
     } else {
         auto data = json.span16();
         std::span<const char16_t> tokenEnd;
-        result = buildValue(data, tokenEnd, 0);
+        if (parsingMode == ParsingMode::AllowTrailingCommas)
+            result = buildValue<ParsingMode::AllowTrailingCommas>(data, tokenEnd, 0);
+        else
+            result = buildValue(data, tokenEnd, 0);
         if (containsNonSpace(tokenEnd))
             return nullptr;
     }
@@ -574,7 +594,7 @@ std::optional<int> Value::asInteger() const
     if (auto* number = std::get_if<int>(&m_value))
         return *number;
     if (auto* number = std::get_if<double>(&m_value))
-        return static_cast<int>(*number);
+        return truncateDoubleToInt32(*number);
     return std::nullopt;
 }
 
@@ -790,6 +810,42 @@ Ref<Value> ArrayBase::get(size_t index) const
 {
     RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(index < m_map.size());
     return m_map[index];
+}
+
+void ArrayBase::setBoolean(size_t index, bool value)
+{
+    setValue(index, Value::create(value));
+}
+
+void ArrayBase::setInteger(size_t index, int value)
+{
+    setValue(index, Value::create(value));
+}
+
+void ArrayBase::setDouble(size_t index, double value)
+{
+    setValue(index, Value::create(value));
+}
+
+void ArrayBase::setString(size_t index, const String& value)
+{
+    setValue(index, Value::create(value));
+}
+
+void ArrayBase::setValue(size_t index, Ref<Value>&& value)
+{
+    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(index < m_map.size());
+    m_map[index] = WTF::move(value);
+}
+
+void ArrayBase::setObject(size_t index, Ref<ObjectBase>&& value)
+{
+    setValue(index, WTF::move(value));
+}
+
+void ArrayBase::setArray(size_t index, Ref<ArrayBase>&& value)
+{
+    setValue(index, WTF::move(value));
 }
 
 Ref<Object> Object::create()

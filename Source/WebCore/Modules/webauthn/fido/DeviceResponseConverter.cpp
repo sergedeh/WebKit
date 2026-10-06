@@ -45,7 +45,7 @@ namespace fido {
 using namespace WebCore;
 using CBOR = cbor::CBORValue;
 
-static ProtocolVersion convertStringToProtocolVersion(const String& version)
+static ProtocolVersion NODELETE convertStringToProtocolVersion(const String& version)
 {
     if (version == kCtap21Version)
         return ProtocolVersion::kCtap21;
@@ -150,7 +150,7 @@ static std::optional<AuthenticationExtensionsClientOutputs> parseAuthenticatorDa
 
             auto decryptedResponse = pin::HmacSecretResponse::parse(
                 hmacSecretRequest->protocol(),
-                Ref { hmacSecretRequest->sharedKey() }.get(),
+                protect(hmacSecretRequest->sharedKey()).get(),
                 encryptedOutput
             );
 
@@ -166,7 +166,7 @@ static std::optional<AuthenticationExtensionsClientOutputs> parseAuthenticatorDa
                 if (first) {
                     if (!outputs.prf)
                         outputs.prf = AuthenticationExtensionsClientOutputs::PRFOutputs { };
-                    outputs.prf->results = AuthenticationExtensionsClientOutputs::PRFValues { first, second };
+                    outputs.prf->results = AuthenticationExtensionsClientOutputs::PRFValues { first.releaseNonNull(), WTF::move(second) };
                 }
             }
         }

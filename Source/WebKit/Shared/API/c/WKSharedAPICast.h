@@ -125,7 +125,7 @@ WK_ADD_API_MAPPING(WKWebArchiveResourceRef, API::WebArchiveResource)
 #endif
 
 template<typename T, typename APIType = typename ImplTypeInfo<T>::APIType>
-auto toAPI(T* t) -> APIType
+auto toAPI(T* t) -> APIType CLANG_POINTER_CONVERSION
 {
     return reinterpret_cast<APIType>(API::Object::wrap(t));
 }
@@ -137,7 +137,7 @@ auto toAPILeakingRef(RefPtr<T>&& t) -> APIType
 }
 
 template<typename T, typename APIType = typename ImplTypeInfo<T>::APIType>
-auto toAPI(T& t) -> APIType
+auto toAPI(T& t) -> APIType CLANG_POINTER_CONVERSION
 {
     SUPPRESS_UNCOUNTED_ARG return reinterpret_cast<APIType>(API::Object::wrap(&t));
 }
@@ -155,12 +155,6 @@ auto toImpl(T t) -> ImplType*
         return API::Object::unwrap(static_cast<void*>(const_cast<typename std::remove_const<typename std::remove_pointer<T>::type>::type*>(t)));
     else
         return downcast<ImplType>(API::Object::unwrap(static_cast<void*>(const_cast<typename std::remove_const<typename std::remove_pointer<T>::type>::type*>(t))));
-}
-
-template<typename T, typename ImplType = typename APITypeInfo<T>::ImplType>
-auto toProtectedImpl(T t) -> RefPtr<ImplType>
-{
-    return toImpl<T>(t);
 }
 
 template<typename ImplType, typename APIType = typename ImplTypeInfo<ImplType>::APIType>
@@ -184,7 +178,7 @@ private:
 
 /* Special cases. */
 
-inline ProxyingRefPtr<API::String> toAPI(StringImpl* string)
+inline ProxyingRefPtr<API::String> toAPI(const String& string)
 {
     return ProxyingRefPtr<API::String>(API::String::create(string));
 }
@@ -194,11 +188,11 @@ inline WKStringRef toCopiedAPI(const String& string)
     return toAPILeakingRef(API::String::create(string));
 }
 
-inline ProxyingRefPtr<API::URL> toURLRef(StringImpl* string)
+inline ProxyingRefPtr<API::URL> toURLRef(const String& string)
 {
     if (!string)
         return ProxyingRefPtr<API::URL>(nullptr);
-    return ProxyingRefPtr<API::URL>(API::URL::create(String(string)));
+    return ProxyingRefPtr<API::URL>(API::URL::create(string));
 }
 
 inline WKURLRef toCopiedURLAPI(const String& string)
@@ -217,14 +211,14 @@ inline String toWTFString(WKStringRef stringRef)
 {
     if (!stringRef)
         return String();
-    return toProtectedImpl(stringRef)->string();
+    return protect(toImpl(stringRef))->string();
 }
 
 inline String toWTFString(WKURLRef urlRef)
 {
     if (!urlRef)
         return String();
-    return toProtectedImpl(urlRef)->string();
+    return toImpl(urlRef)->string();
 }
 
 inline ProxyingRefPtr<API::Error> toAPI(const WebCore::ResourceError& error)
@@ -570,8 +564,8 @@ inline WKContextMenuItemTag toAPI(WebCore::ContextMenuAction action)
         return kWKContextMenuItemTagToggleVideoFullscreen;
     case WebCore::ContextMenuItemTagEnterVideoFullscreen:
         return kWKContextMenuItemTagEnterVideoFullscreen;
-    case WebCore::ContextMenuItemTagToggleVideoEnhancedFullscreen:
-        return kWKContextMenuItemTagToggleVideoEnhancedFullscreen;
+    case WebCore::ContextMenuItemTagTogglePictureInPicture:
+        return kWKContextMenuItemTagTogglePictureInPicture;
     case WebCore::ContextMenuItemTagMediaPlayPause:
         return kWKContextMenuItemTagMediaPlayPause;
     case WebCore::ContextMenuItemTagToggleVideoViewer:
@@ -611,6 +605,10 @@ inline WKContextMenuItemTag toAPI(WebCore::ContextMenuAction action)
         return kWKContextMenuItemTagCapitalize;
     case WebCore::ContextMenuItemTagChangeBack:
         return kWKContextMenuItemTagChangeBack;
+    case WebCore::ContextMenuItemTagConvertToTraditionalChinese:
+        return kWKContextMenuItemTagConvertToTraditionalChinese;
+    case WebCore::ContextMenuItemTagConvertToSimplifiedChinese:
+        return kWKContextMenuItemTagConvertToSimplifiedChinese;
 #endif
     case WebCore::ContextMenuItemTagShareMenu:
         return kWKContextMenuItemTagShareMenu;
@@ -796,8 +794,8 @@ inline WebCore::ContextMenuAction toImpl(WKContextMenuItemTag tag)
         return WebCore::ContextMenuItemTagToggleVideoFullscreen;
     case kWKContextMenuItemTagEnterVideoFullscreen:
         return WebCore::ContextMenuItemTagEnterVideoFullscreen;
-    case kWKContextMenuItemTagToggleVideoEnhancedFullscreen:
-        return WebCore::ContextMenuItemTagToggleVideoEnhancedFullscreen;
+    case kWKContextMenuItemTagTogglePictureInPicture:
+        return WebCore::ContextMenuItemTagTogglePictureInPicture;
     case kWKContextMenuItemTagMediaPlayPause:
         return WebCore::ContextMenuItemTagMediaPlayPause;
     case kWKContextMenuItemTagToggleVideoViewer:
@@ -839,6 +837,10 @@ inline WebCore::ContextMenuAction toImpl(WKContextMenuItemTag tag)
         return WebCore::ContextMenuItemTagChangeBack;
     case kWKContextMenuItemTagShareMenu:
         return WebCore::ContextMenuItemTagShareMenu;
+    case kWKContextMenuItemTagConvertToTraditionalChinese:
+        return WebCore::ContextMenuItemTagConvertToTraditionalChinese;
+    case kWKContextMenuItemTagConvertToSimplifiedChinese:
+        return WebCore::ContextMenuItemTagConvertToSimplifiedChinese;
 #endif
     case kWKContextMenuItemTagRevealImage:
         return WebCore::ContextMenuItemTagLookUpImage;

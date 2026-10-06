@@ -175,7 +175,7 @@ bool ModelConnectionToWebProcess::allowsExitUnderMemoryPressure() const
 Logger& ModelConnectionToWebProcess::logger()
 {
     if (!m_logger) {
-        m_logger = Logger::create(this);
+        lazyInitialize(m_logger, Logger::create(this));
         m_logger->setEnabled(this, isAlwaysOnLoggingAllowed());
     }
 
@@ -184,8 +184,8 @@ Logger& ModelConnectionToWebProcess::logger()
 
 void ModelConnectionToWebProcess::didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName messageName, const Vector<uint32_t>&)
 {
-    RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, makeString("Received an invalid message '"_s, description(messageName), "' from WebContent process "_s, m_webProcessIdentifier.toUInt64(), "."_s).utf8().data());
-    m_modelProcess->parentProcessConnection()->send(Messages::ModelProcessProxy::TerminateWebProcess(m_webProcessIdentifier), 0);
+    RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, "Received an invalid message %s from WebContent process %" PRIu64 ", requesting for it to be terminated.", description(messageName), m_webProcessIdentifier.toUInt64());
+    m_modelProcess->parentProcessConnection()->send(Messages::ModelProcessProxy::TerminateWebProcess(m_webProcessIdentifier, messageName), 0);
 }
 
 void ModelConnectionToWebProcess::lowMemoryHandler(Critical critical, Synchronous synchronous)
@@ -232,6 +232,11 @@ bool ModelConnectionToWebProcess::isAlwaysOnLoggingAllowed() const
 std::optional<int> ModelConnectionToWebProcess::debugEntityMemoryLimit() const
 {
     return m_modelProcess->debugEntityMemoryLimit();
+}
+
+std::optional<int> ModelConnectionToWebProcess::debugImmersiveEntityMemoryLimit() const
+{
+    return m_modelProcess->debugImmersiveEntityMemoryLimit();
 }
 
 } // namespace WebKit

@@ -32,6 +32,8 @@
 #include <WebCore/UserInterfaceLayoutDirection.h>
 #include <wtf/RecursiveLockAdapter.h>
 #include <wtf/RetainPtr.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 OBJC_CLASS CALayer;
 OBJC_CLASS NSColor;
@@ -47,12 +49,11 @@ class ScrollerPairMac;
 
 struct ScrollbarColor;
 
-class ScrollerMac final : public CanMakeThreadSafeCheckedPtr<ScrollerMac> {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ScrollerMac);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ScrollerMac);
+class ScrollerMac final : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ScrollerMac, WTF::DestructionThread::Main> {
+    WTF_MAKE_TZONE_ALLOCATED(ScrollerMac);
     friend class ScrollerPairMac;
 public:
-    ScrollerMac(ScrollerPairMac&, ScrollbarOrientation);
+    static Ref<ScrollerMac> create(ScrollerPairMac&, ScrollbarOrientation);
 
     ~ScrollerMac();
 
@@ -81,6 +82,7 @@ public:
     void setLastKnownMousePositionInScrollbar(IntPoint position) { m_lastKnownMousePositionInScrollbar = position; }
     IntPoint lastKnownMousePositionInScrollbar() const;
     void visibilityChanged(bool);
+    bool isVisible() const { return m_isVisible; }
     void updateMinimumKnobLength(int);
     void detach();
     void setEnabled(bool flag) { m_isEnabled = flag; }
@@ -95,9 +97,11 @@ public:
     double knobAlpha();
     double trackAlpha();
     bool hasScrollerImp();
-    RecursiveLock& scrollerImpLock() const { return m_scrollerImpLock; }
+    RecursiveLock& scrollerImpLock() const LIFETIME_BOUND { return m_scrollerImpLock; }
 
 private:
+    ScrollerMac(ScrollerPairMac&, ScrollbarOrientation);
+
     int m_minimumKnobLength { 0 };
 
     bool m_isEnabled { false };

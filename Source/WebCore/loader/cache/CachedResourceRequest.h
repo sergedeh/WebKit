@@ -53,16 +53,16 @@ public:
     CachedResourceRequest(ResourceRequest&&, const ResourceLoaderOptions&, std::optional<ResourceLoadPriority> = std::nullopt, String&& charset = String());
 
     ResourceRequest&& releaseResourceRequest() { return WTF::move(m_resourceRequest); }
-    const ResourceRequest& resourceRequest() const { return m_resourceRequest; }
-    ResourceRequest& resourceRequest() { return m_resourceRequest; }
+    const ResourceRequest& resourceRequest() const LIFETIME_BOUND { return m_resourceRequest; }
+    ResourceRequest& resourceRequest() LIFETIME_BOUND { return m_resourceRequest; }
 
-    const String& charset() const { return m_charset; }
+    const String& charset() const LIFETIME_BOUND { return m_charset; }
     void setCharset(const String& charset) { m_charset = charset; }
 
-    const ResourceLoaderOptions& options() const { return m_options; }
+    const ResourceLoaderOptions& options() const LIFETIME_BOUND { return m_options; }
     void setOptions(const ResourceLoaderOptions& options) { m_options = options; }
 
-    const std::optional<ResourceLoadPriority>& priority() const { return m_priority; }
+    const std::optional<ResourceLoadPriority>& priority() const LIFETIME_BOUND { return m_priority; }
     void setPriority(std::optional<ResourceLoadPriority>&& priority) { m_priority = WTF::move(priority); }
 
     RequestPriority fetchPriority() const { return m_options.fetchPriority; }
@@ -78,35 +78,34 @@ public:
     bool ignoreForRequestCount() const { return m_ignoreForRequestCount; }
     void setIgnoreForRequestCount(bool ignoreForRequestCount) { m_ignoreForRequestCount = ignoreForRequestCount; }
 
-    void setDestinationIfNotSet(FetchOptions::Destination);
+    void NODELETE setDestinationIfNotSet(FetchOptions::Destination);
 
     void updateForAccessControl(Document&);
 
-    void updateReferrerPolicy(ReferrerPolicy);
+    void NODELETE updateReferrerPolicy(ReferrerPolicy);
     void updateReferrerAndOriginHeaders(FrameLoader&);
     void updateUserAgentHeader(FrameLoader&);
     void upgradeInsecureRequestIfNeeded(Document&, ContentSecurityPolicy::AlwaysUpgradeRequest = ContentSecurityPolicy::AlwaysUpgradeRequest::No);
     void setAcceptHeaderIfNone(CachedResource::Type);
     void updateAccordingCacheMode();
     void updateAcceptEncodingHeader();
-    void updateCacheModeIfNeeded(CachePolicy);
+    void NODELETE updateCacheModeIfNeeded(CachePolicy);
 
-    void disableCachingIfNeeded();
+    void NODELETE disableCachingIfNeeded();
 
     void removeFragmentIdentifierIfNeeded();
 #if ENABLE(CONTENT_EXTENSIONS)
     void applyResults(ContentRuleListResults&&, Page*);
 #endif
-    void setDomainForCachePartition(Document&);
-    void setDomainForCachePartition(const String&);
     bool isLinkPreload() const { return m_isLinkPreload; }
     void setIsLinkPreload() { m_isLinkPreload = true; }
+    bool isLinkModulePreload() const { return m_isLinkModulePreload; }
+    void setIsLinkModulePreload() { m_isLinkModulePreload = true; }
 
     void setOrigin(Ref<SecurityOrigin>&& origin) { m_origin = WTF::move(origin); }
     RefPtr<SecurityOrigin> releaseOrigin() { return WTF::move(m_origin); }
     const SecurityOrigin* origin() const { return m_origin.get(); }
     SecurityOrigin* origin() { return m_origin.get(); }
-    RefPtr<SecurityOrigin> protectedOrigin() const { return m_origin; }
 
     bool hasFragmentIdentifier() const { return !m_fragmentIdentifier.isEmpty(); }
     String&& releaseFragmentIdentifier() { return WTF::move(m_fragmentIdentifier); }
@@ -115,9 +114,9 @@ public:
     static String splitFragmentIdentifierFromRequestURL(ResourceRequest&);
     static String acceptHeaderValueFromType(CachedResource::Type, bool usingSecureProtocol);
 
-    void setClientIdentifierIfNeeded(ScriptExecutionContextIdentifier);
-    void setSelectedServiceWorkerRegistrationIdentifierIfNeeded(ServiceWorkerRegistrationIdentifier);
-    void setNavigationServiceWorkerRegistrationData(const std::optional<ServiceWorkerRegistrationData>&);
+    void NODELETE setClientIdentifierIfNeeded(ScriptExecutionContextIdentifier);
+    void NODELETE setSelectedServiceWorkerRegistrationIdentifierIfNeeded(ServiceWorkerRegistrationIdentifier);
+    void NODELETE setNavigationServiceWorkerRegistrationData(const std::optional<ServiceWorkerRegistrationData>&);
 
 private:
     ResourceRequest m_resourceRequest;
@@ -129,6 +128,7 @@ private:
     RefPtr<SecurityOrigin> m_origin;
     String m_fragmentIdentifier;
     bool m_isLinkPreload { false };
+    bool m_isLinkModulePreload { false };
     bool m_ignoreForRequestCount { false };
 };
 

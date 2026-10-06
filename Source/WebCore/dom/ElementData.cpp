@@ -66,7 +66,7 @@ struct SameSizeAsElementData : public RefCounted<SameSizeAsElementData> {
 
 static_assert(sizeof(ElementData) == sizeof(SameSizeAsElementData), "element attribute data should stay small");
 
-static size_t sizeForShareableElementDataWithAttributeCount(unsigned count)
+static size_t NODELETE sizeForShareableElementDataWithAttributeCount(unsigned count)
 {
     return sizeof(ShareableElementData) + sizeof(Attribute) * count;
 }
@@ -102,7 +102,7 @@ ShareableElementData::ShareableElementData(const UniqueElementData& other)
 
     if (other.m_inlineStyle) {
         ASSERT(!other.m_inlineStyle->hasCSSOMWrapper());
-        m_inlineStyle = other.m_inlineStyle->immutableCopyIfNeeded();
+        m_inlineStyle = protect(other.m_inlineStyle)->immutableCopyIfNeeded();
     }
 
     for (auto [sourceAttribute, destinationAttribute] : zippedRange(other.m_attributeVector.span(), attributes()))
@@ -127,9 +127,7 @@ ElementData::ElementData(const ElementData& other, bool isUnique)
     // NOTE: The inline style is copied by the subclass copy constructor since we don't know what to do with it here.
 }
 
-UniqueElementData::UniqueElementData()
-{
-}
+UniqueElementData::UniqueElementData() = default;
 
 UniqueElementData::UniqueElementData(const UniqueElementData& other)
     : ElementData(other, true)
@@ -137,7 +135,7 @@ UniqueElementData::UniqueElementData(const UniqueElementData& other)
     , m_attributeVector(other.m_attributeVector)
 {
     if (other.m_inlineStyle)
-        m_inlineStyle = other.m_inlineStyle->mutableCopy();
+        m_inlineStyle = protect(other.m_inlineStyle)->mutableCopy();
 }
 
 UniqueElementData::UniqueElementData(const ShareableElementData& other)
@@ -179,7 +177,7 @@ bool ElementData::isEquivalent(const ElementData* other) const
     return true;
 }
 
-Attribute* UniqueElementData::findAttributeByName(const QualifiedName& name)
+Attribute* NODELETE UniqueElementData::findAttributeByName(const QualifiedName& name)
 {
     for (auto& attribute : m_attributeVector) {
         if (attribute.name().matches(name))

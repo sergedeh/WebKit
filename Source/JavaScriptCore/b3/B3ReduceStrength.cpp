@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2025-2026 the V8 project authors. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,24 +31,35 @@
 
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
-#include "B3BlockInsertionSet.h"
 #include "B3BulkMemoryValue.h"
 #include "B3ComputeDivisionMagic.h"
+#include "B3Dominators.h"
 #include "B3EliminateDeadCode.h"
 #include "B3InsertionSetInlines.h"
 #include "B3MemoryValueInlines.h"
+#include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3PhiChildren.h"
 #include "B3ProcedureInlines.h"
-#include "B3PureCSE.h"
-#include "B3UpsilonValue.h"
+#include "B3SwitchValue.h"
 #include "B3ValueKeyInlines.h"
 #include "B3ValueInlines.h"
+#include "B3WasmArrayElementValue.h"
+#include "B3WasmArrayGetValue.h"
+#include "B3WasmArrayLengthValue.h"
+#include "B3WasmArrayNewValue.h"
+#include "B3WasmArraySetValue.h"
 #include "B3WasmRefTypeCheckValue.h"
+#include "B3WasmStructFieldValue.h"
 #include "B3WasmStructGetValue.h"
 #include "B3WasmStructSetValue.h"
+#include "JSCJSValueInlines.h"
+#include "Options.h"
 #include "SIMDShuffle.h"
+#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/Hasher.h>
+#include <wtf/LayeredHashMap.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 
@@ -56,6 +68,56 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace B3 {
 
 namespace {
+
+ALWAYS_INLINE bool areDistinctWasmGCReferences(Value* a, Value* b)
+{
+    auto isFreshWasmGCReference = [](Value* value) {
+        return value->opcode() == WasmStructNew || value->opcode() == WasmArrayNew;
+    };
+
+    auto isWasmGCNull = [](Value* value) {
+        return value->isInt64(JSValue::encode(jsNull()));
+    };
+
+    if (isFreshWasmGCReference(a) && isFreshWasmGCReference(b))
+        return a != b;
+    if (isFreshWasmGCReference(a) && isWasmGCNull(b))
+        return true;
+    if (isFreshWasmGCReference(b) && isWasmGCNull(a))
+        return true;
+    return false;
+}
+
+// Identifies the contents of one wasm-GC struct field or array element. `heap` is the abstract
+// heap the access goes through: one per struct field of the type that declares it, so a subtype
+// and its supertype agree, and one per array element type. `base` and `index` are the SSA values
+// of the reference and array index (index is null for structs); accesses match only through the
+// same Values. Since different Values may be the same object, a write bumps its slot's epoch
+// rather than retiring entries by base; `slotEpoch` and `allEpoch` record the epochs of the
+// access's slot and its kind's catch-all slot.
+struct WasmGCAccessKey {
+    Value* base { nullptr };
+    Value* index { nullptr };
+    uint64_t heap { 0 };
+    uint32_t slotEpoch { 0 };
+    uint32_t allEpoch { 0 };
+
+    friend bool operator==(const WasmGCAccessKey&, const WasmGCAccessKey&) = default;
+
+    unsigned hash() const { return WTF::computeHash(base, index, heap, slotEpoch, allEpoch); }
+};
+
+struct WasmGCAccessKeyTraits : HashTraits<WasmGCAccessKey> {
+    static constexpr bool hasIsEmptyValueFunction = true;
+    static bool isEmptyValue(const WasmGCAccessKey& key) { return !key.base; }
+};
+
+// What a redundant access at the same key can be replaced with. A value forwarded out of a store
+// to a packed field still has to be narrowed the way the load would have narrowed it.
+struct WasmGCAvailableValue {
+    Value* value { nullptr };
+    uint32_t packedMask { 0 };
+};
 
 // The goal of this phase is to:
 //
@@ -68,17 +130,6 @@ namespace {
 // - Canonicalize operations. There are some cases where it's not at all obvious which kind of
 //   operation is less expensive, but it's useful for subsequent phases - particularly LowerToAir -
 //   to have only one way of representing things.
-//
-// This phase runs to fixpoint. Therefore, the canonicalizations must be designed to be monotonic.
-// For example, if we had a canonicalization that said that Add(x, -c) should be Sub(x, c) and
-// another canonicalization that said that Sub(x, d) should be Add(x, -d), then this phase would end
-// up running forever. We don't want that.
-//
-// Therefore, we need to prioritize certain canonical forms over others. Naively, we want strength
-// reduction to reduce the number of values, and so a form involving fewer total values is more
-// canonical. But we might break this, for example when reducing strength of Mul(x, 9). This could be
-// better written as Add(Shl(x, 3), x), which also happens to be representable using a single
-// instruction on x86.
 //
 // Here are some of the rules we have:
 //
@@ -93,6 +144,90 @@ namespace {
 
 namespace B3ReduceStrengthInternal {
 static constexpr bool verbose = false;
+}
+
+static inline std::optional<SIMDLane> wideningLaneFor(SIMDLane lane)
+{
+    switch (lane) {
+    case SIMDLane::i8x16: return SIMDLane::i16x8;
+    case SIMDLane::i16x8: return SIMDLane::i32x4;
+    case SIMDLane::i32x4: return SIMDLane::i64x2;
+    default: return std::nullopt;
+    }
+}
+
+struct CanonicalShuffleInfo {
+    B3::Opcode opcode;
+    SIMDLane lane;
+    uint8_t groupSize; // For VectorReverse: 2, 4, or 8. 0 otherwise.
+};
+
+static inline std::optional<CanonicalShuffleInfo> canonicalShuffleInfo(CanonicalShuffle canonical)
+{
+    auto result = ([&] -> std::optional<CanonicalShuffleInfo> {
+        switch (canonical) {
+        case CanonicalShuffle::S64x2UnzipEven: return CanonicalShuffleInfo { VectorUnzipEven, SIMDLane::i64x2, 0 };
+        case CanonicalShuffle::S64x2UnzipOdd: return CanonicalShuffleInfo { VectorUnzipOdd, SIMDLane::i64x2, 0 };
+        case CanonicalShuffle::S32x4UnzipEven: return CanonicalShuffleInfo { VectorUnzipEven, SIMDLane::i32x4, 0 };
+        case CanonicalShuffle::S32x4UnzipOdd: return CanonicalShuffleInfo { VectorUnzipOdd, SIMDLane::i32x4, 0 };
+        case CanonicalShuffle::S32x4ZipLower: return CanonicalShuffleInfo { VectorZipLower, SIMDLane::i32x4, 0 };
+        case CanonicalShuffle::S32x4ZipHigher: return CanonicalShuffleInfo { VectorZipHigher, SIMDLane::i32x4, 0 };
+        case CanonicalShuffle::S32x4TransposeEven: return CanonicalShuffleInfo { VectorTransposeEven, SIMDLane::i32x4, 0 };
+        case CanonicalShuffle::S32x4TransposeOdd: return CanonicalShuffleInfo { VectorTransposeOdd, SIMDLane::i32x4, 0 };
+        case CanonicalShuffle::S32x2Reverse: return CanonicalShuffleInfo { VectorReverse, SIMDLane::i32x4, 8 };
+        case CanonicalShuffle::S16x8UnzipEven: return CanonicalShuffleInfo { VectorUnzipEven, SIMDLane::i16x8, 0 };
+        case CanonicalShuffle::S16x8UnzipOdd: return CanonicalShuffleInfo { VectorUnzipOdd, SIMDLane::i16x8, 0 };
+        case CanonicalShuffle::S16x8ZipLower: return CanonicalShuffleInfo { VectorZipLower, SIMDLane::i16x8, 0 };
+        case CanonicalShuffle::S16x8ZipHigher: return CanonicalShuffleInfo { VectorZipHigher, SIMDLane::i16x8, 0 };
+        case CanonicalShuffle::S16x8TransposeEven: return CanonicalShuffleInfo { VectorTransposeEven, SIMDLane::i16x8, 0 };
+        case CanonicalShuffle::S16x8TransposeOdd: return CanonicalShuffleInfo { VectorTransposeOdd, SIMDLane::i16x8, 0 };
+        case CanonicalShuffle::S16x2Reverse: return CanonicalShuffleInfo { VectorReverse, SIMDLane::i16x8, 4 };
+        case CanonicalShuffle::S16x4Reverse: return CanonicalShuffleInfo { VectorReverse, SIMDLane::i16x8, 8 };
+        case CanonicalShuffle::S8x16UnzipEven: return CanonicalShuffleInfo { VectorUnzipEven, SIMDLane::i8x16, 0 };
+        case CanonicalShuffle::S8x16UnzipOdd: return CanonicalShuffleInfo { VectorUnzipOdd, SIMDLane::i8x16, 0 };
+        case CanonicalShuffle::S8x16ZipLower: return CanonicalShuffleInfo { VectorZipLower, SIMDLane::i8x16, 0 };
+        case CanonicalShuffle::S8x16ZipHigher: return CanonicalShuffleInfo { VectorZipHigher, SIMDLane::i8x16, 0 };
+        case CanonicalShuffle::S8x16TransposeEven: return CanonicalShuffleInfo { VectorTransposeEven, SIMDLane::i8x16, 0 };
+        case CanonicalShuffle::S8x16TransposeOdd: return CanonicalShuffleInfo { VectorTransposeOdd, SIMDLane::i8x16, 0 };
+        case CanonicalShuffle::S8x2Reverse: return CanonicalShuffleInfo { VectorReverse, SIMDLane::i8x16, 2 };
+        case CanonicalShuffle::S8x4Reverse: return CanonicalShuffleInfo { VectorReverse, SIMDLane::i8x16, 4 };
+        case CanonicalShuffle::S8x8Reverse: return CanonicalShuffleInfo { VectorReverse, SIMDLane::i8x16, 8 };
+        default: return std::nullopt;
+        }
+    }());
+    if (!result)
+        return std::nullopt;
+
+    if constexpr (isARM64())
+        return result;
+
+    if constexpr (isX86_64()) {
+        // On x86-64, only certain opcode+lane combinations have efficient single-instruction mappings.
+        switch (result->opcode) {
+        case VectorZipLower:
+        case VectorZipHigher:
+            // All lanes supported via vpunpckl/h*
+            return result;
+        case VectorUnzipEven:
+        case VectorUnzipOdd:
+            if (result->lane == SIMDLane::i64x2 || result->lane == SIMDLane::i32x4)
+                return result;
+            return std::nullopt;
+        case VectorTransposeEven:
+        case VectorTransposeOdd:
+            return std::nullopt; // No efficient x86-64 instruction
+        case VectorReverse: {
+            // On x86-64, only S32x2 reverse (REV64.4S → VPSHUFD 0xB1) is supported.
+            if (result->lane == SIMDLane::i32x4 && result->groupSize == 8)
+                return result;
+            return std::nullopt;
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    return std::nullopt;
 }
 
 // FIXME: This IntRange stuff should be refactored into a general constant propagator. It's weird
@@ -119,12 +254,12 @@ public:
     }
 
     template<typename T>
-    static IntRange top()
+    static IntRange NODELETE top()
     {
         return IntRange(std::numeric_limits<T>::min(), std::numeric_limits<T>::max());
     }
 
-    static IntRange top(Type type)
+    static IntRange NODELETE top(Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -138,7 +273,7 @@ public:
     }
 
     template<typename T>
-    static IntRange rangeForMask(T mask)
+    static IntRange NODELETE rangeForMask(T mask)
     {
         if (mask == static_cast<T>(-1))
             return top<T>();
@@ -149,7 +284,7 @@ public:
         return IntRange(0, mask);
     }
 
-    static IntRange rangeForMask(int64_t mask, Type type)
+    static IntRange NODELETE rangeForMask(int64_t mask, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -163,7 +298,7 @@ public:
     }
 
     template<typename T>
-    static IntRange rangeForZShr(int32_t shiftAmount)
+    static IntRange NODELETE rangeForZShr(int32_t shiftAmount)
     {
         std::make_unsigned_t<T> mask = 0;
         mask--;
@@ -171,7 +306,7 @@ public:
         return rangeForMask<T>(static_cast<T>(mask));
     }
 
-    static IntRange rangeForZShr(int32_t shiftAmount, Type type)
+    static IntRange NODELETE rangeForZShr(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -184,8 +319,8 @@ public:
         }
     }
 
-    int64_t min() const { return m_min; }
-    int64_t max() const { return m_max; }
+    int64_t NODELETE min() const { return m_min; }
+    int64_t NODELETE max() const { return m_max; }
 
     void dump(PrintStream& out) const
     {
@@ -193,7 +328,7 @@ public:
     }
 
     template<typename T>
-    bool couldOverflowAdd(const IntRange& other)
+    bool NODELETE couldOverflowAdd(const IntRange& other)
     {
         return sumOverflows<T>(m_min, other.m_min)
             || sumOverflows<T>(m_min, other.m_max)
@@ -201,7 +336,7 @@ public:
             || sumOverflows<T>(m_max, other.m_max);
     }
 
-    bool couldOverflowAdd(const IntRange& other, Type type)
+    bool NODELETE couldOverflowAdd(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -214,7 +349,7 @@ public:
     }
 
     template<typename T>
-    bool couldOverflowSub(const IntRange& other)
+    bool NODELETE couldOverflowSub(const IntRange& other)
     {
         return differenceOverflows<T>(m_min, other.m_min)
             || differenceOverflows<T>(m_min, other.m_max)
@@ -222,7 +357,7 @@ public:
             || differenceOverflows<T>(m_max, other.m_max);
     }
 
-    bool couldOverflowSub(const IntRange& other, Type type)
+    bool NODELETE couldOverflowSub(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -235,7 +370,7 @@ public:
     }
 
     template<typename T>
-    bool couldOverflowMul(const IntRange& other)
+    bool NODELETE couldOverflowMul(const IntRange& other)
     {
         return productOverflows<T>(m_min, other.m_min)
             || productOverflows<T>(m_min, other.m_max)
@@ -243,7 +378,7 @@ public:
             || productOverflows<T>(m_max, other.m_max);
     }
 
-    bool couldOverflowMul(const IntRange& other, Type type)
+    bool NODELETE couldOverflowMul(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -256,7 +391,7 @@ public:
     }
 
     template<typename T>
-    IntRange shl(int32_t shiftAmount)
+    IntRange NODELETE shl(int32_t shiftAmount)
     {
         T newMin = static_cast<T>(m_min) << static_cast<T>(shiftAmount);
         T newMax = static_cast<T>(m_max) << static_cast<T>(shiftAmount);
@@ -270,7 +405,7 @@ public:
         return IntRange(newMin, newMax);
     }
 
-    IntRange shl(int32_t shiftAmount, Type type)
+    IntRange NODELETE shl(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -284,7 +419,7 @@ public:
     }
 
     template<typename T>
-    IntRange sShr(int32_t shiftAmount)
+    IntRange NODELETE sShr(int32_t shiftAmount)
     {
         T newMin = static_cast<T>(m_min) >> static_cast<T>(shiftAmount);
         T newMax = static_cast<T>(m_max) >> static_cast<T>(shiftAmount);
@@ -292,7 +427,7 @@ public:
         return IntRange(newMin, newMax);
     }
 
-    IntRange sShr(int32_t shiftAmount, Type type)
+    IntRange NODELETE sShr(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -306,7 +441,7 @@ public:
     }
 
     template<typename T>
-    IntRange zShr(int32_t shiftAmount)
+    IntRange NODELETE zShr(int32_t shiftAmount)
     {
         // This is an awkward corner case for all of the other logic.
         if (!shiftAmount)
@@ -325,7 +460,7 @@ public:
         return IntRange(newMin, newMax);
     }
 
-    IntRange zShr(int32_t shiftAmount, Type type)
+    IntRange NODELETE zShr(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -339,14 +474,14 @@ public:
     }
 
     template<typename T>
-    IntRange add(const IntRange& other)
+    IntRange NODELETE add(const IntRange& other)
     {
         if (couldOverflowAdd<T>(other))
             return top<T>();
         return IntRange(m_min + other.m_min, m_max + other.m_max);
     }
 
-    IntRange add(const IntRange& other, Type type)
+    IntRange NODELETE add(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -360,14 +495,14 @@ public:
     }
 
     template<typename T>
-    IntRange sub(const IntRange& other)
+    IntRange NODELETE sub(const IntRange& other)
     {
         if (couldOverflowSub<T>(other))
             return top<T>();
         return IntRange(m_min - other.m_max, m_max - other.m_min);
     }
 
-    IntRange sub(const IntRange& other, Type type)
+    IntRange NODELETE sub(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -408,7 +543,7 @@ public:
     }
 
     template<typename T>
-    IntRange sExt()
+    IntRange NODELETE sExt()
     {
         ASSERT(m_min >= INT32_MIN);
         ASSERT(m_max <= INT32_MAX);
@@ -462,7 +597,7 @@ public:
         return top<T>();
     }
 
-    IntRange zExt32()
+    IntRange NODELETE zExt32()
     {
         ASSERT(m_min >= INT32_MIN);
         ASSERT(m_max <= INT32_MAX);
@@ -484,95 +619,215 @@ private:
 
 class ReduceStrength {
 public:
-    ReduceStrength(Procedure& proc)
+    ReduceStrength(Procedure& proc, ReduceStrengthPass pass)
         : m_proc(proc)
+        , m_pass(pass)
         , m_insertionSet(proc)
-        , m_blockInsertionSet(proc)
         , m_root(proc.at(0))
     {
     }
 
     bool run()
     {
-        bool result = false;
-        bool first = true;
-        unsigned index = 0;
-        do {
-            m_changed = false;
-            m_changedCFG = false;
-            ++index;
+        bool result = runOnePass();
 
-            if (first)
-                first = false;
-            else if (B3ReduceStrengthInternal::verbose) {
-                dataLog("B3 after iteration #", index - 1, " of reduceStrength:\n");
-                dataLog(m_proc);
-            }
-            
-            simplifyCFG();
+        if (m_proc.optLevel() >= 2) {
+            if (result) {
+                m_changed = false;
+                m_changedCFG = false;
+                simplifyCFG();
+                handleChangedCFGIfNecessary();
+                m_changedCFG = false;
+                simplifySSA();
 
-            if (m_changedCFG) {
-                m_proc.resetReachability();
-                m_proc.invalidateCFG();
-                m_changed = true;
-            }
-
-            // We definitely want to do DCE before we do CSE so that we don't hoist things. For
-            // example:
-            //
-            // @dead = Mul(@a, @b)
-            // ... lots of control flow and stuff
-            // @thing = Mul(@a, @b)
-            //
-            // If we do CSE before DCE, we will remove @thing and keep @dead. Effectively, we will
-            // "hoist" @thing. On the other hand, if we run DCE before CSE, we will kill @dead and
-            // keep @thing. That's better, since we usually want things to stay wherever the client
-            // put them. We're not actually smart enough to move things around at random.
-            m_changed |= eliminateDeadCodeImpl(m_proc);
-            m_valueForConstant.clear();
-            
-            simplifySSA();
-            
-            if (m_proc.optLevel() >= 2) {
-                m_proc.resetValueOwners();
-                m_dominators = &m_proc.dominators(); // Recompute if necessary.
-                m_pureCSE.clear();
-            }
-
-            for (BasicBlock* block : m_proc.blocksInPreOrder()) {
-                m_block = block;
-                
-                for (m_index = 0; m_index < block->size(); ++m_index) {
-                    if (B3ReduceStrengthInternal::verbose) {
-                        dataLog(
-                            "Looking at ", *block, " #", m_index, ": ",
-                            deepDump(m_proc, block->at(m_index)), "\n");
-                    }
-                    m_value = m_block->at(m_index);
-                    m_value->performSubstitution();
-                    reduceValueStrength();
-                    if (m_proc.optLevel() >= 2)
-                        replaceIfRedundant();
+                // A second value walk is only worthwhile when the CFG/SSA cleanup above exposed
+                // new opportunities: merged blocks enabling Check CSE, or a folded Phi turning
+                // Branch(Phi) into Branch(Identity).
+                if (m_changed) {
+                    m_valueForConstant.clear();
+                    reduceAllBlocksStrength();
+                    m_changedCFG = false;
+                    simplifyCFG();
+                    handleChangedCFGIfNecessary();
+                    m_changedCFG = false;
                 }
-                m_insertionSet.execute(m_block);
-            }
 
-            m_changedCFG |= m_blockInsertionSet.execute();
-            handleChangedCFGIfNecessary();
-            
-            result |= m_changed;
-        } while (m_changed && m_proc.optLevel() >= 2);
-        
-        if (m_proc.optLevel() < 2) {
+                eliminateDeadCodeImpl(m_proc);
+            }
+        } else {
             m_changedCFG = false;
             simplifyCFG();
             handleChangedCFGIfNecessary();
+            result |= m_changed;
         }
-        
+
         return result;
     }
-    
+
+    bool runOnePass()
+    {
+        m_changed = false;
+        m_changedCFG = false;
+
+        simplifyCFG();
+
+        handleChangedCFGIfNecessary();
+        // handleChangedCFGIfNecessary() can't reset m_changedCFG.
+        m_changedCFG = false;
+
+        // We definitely want to do DCE before we do CSE so that we don't hoist things. For
+        // example:
+        //
+        // @dead = Mul(@a, @b)
+        // ... lots of control flow and stuff
+        // @thing = Mul(@a, @b)
+        //
+        // If we do CSE before DCE, we will remove @thing and keep @dead. Effectively, we will
+        // "hoist" @thing. On the other hand, if we run DCE before CSE, we will kill @dead and
+        // keep @thing. That's better, since we usually want things to stay wherever the client
+        // put them. We're not actually smart enough to move things around at random.
+        m_changed |= eliminateDeadCodeImpl(m_proc);
+        m_valueForConstant.clear();
+
+        simplifySSA();
+
+        reduceAllBlocksStrength();
+
+        return m_changed;
+    }
+
+    // Recompute the per-walk caches (dominators, value numbering) then run reduceBlockStrength
+    // over every block.
+    void reduceAllBlocksStrength()
+    {
+        // lowerMacros expands every wasm-GC opcode, so the Final run cannot see one.
+        m_trackWasmGCAccesses = m_pass == ReduceStrengthPass::Initial && m_proc.usesWasmGCAccesses();
+        if (m_trackWasmGCAccesses) {
+            computeWasmGCSpans();
+            m_naturalLoops = &m_proc.naturalLoops();
+            scanWasmGCAccesses();
+            m_wasmGCMap.clear();
+            m_wasmGCEpochs.shrink(0);
+            m_wasmGCEpochs.grow(wasmGCSlotCount());
+            m_wasmGCEpochsAtTail.resize(static_cast<size_t>(m_proc.size()) * wasmGCSlotCount());
+            m_wasmGCVisited.clearAll();
+            m_wasmGCVisited.ensureSize(m_proc.size());
+        }
+
+        m_dominators = &m_proc.dominators(); // Recompute if necessary.
+        m_layeredCSE.clear();
+        reduceAllBlocksStrengthInDominatorPreOrder();
+
+        handleChangedCFGIfNecessary();
+    }
+
+    // Walks the dominator tree in preorder, visiting each block's dominator children in CFG reverse post-order.
+    // That ordering buys two properties at once, and the value numbering below relies on both:
+    //
+    //  - A block is visited after every block that dominates it, so pairing a layer of
+    //    m_layeredCSE with each step down the tree leaves the map holding exactly the values that
+    //    dominate the current position. No dominance test is needed at lookup time.
+    //  - A block is visited after every predecessor that is not reached by a back edge. The
+    //    immediate dominator of a block also dominates each of its predecessors, so a predecessor
+    //    always sits in the subtree of a sibling that comes earlier in reverse-post-order.
+    //
+    // Plain reverse-post-order gives the second property but not the first, and a dominator walk
+    // in any other child order gives the first but not the second.
+    void reduceAllBlocksStrengthInDominatorPreOrder()
+    {
+        // Three children is the common case: a diamond head dominates both arms and the join.
+        Vector<Vector<BasicBlock*, 3>> children(m_proc.size());
+        BasicBlock* root = nullptr;
+        for (BasicBlock* block : m_proc.blocksInPostOrder() | std::views::reverse) {
+            BasicBlock* parent = m_dominators->idom(block);
+            ASSERT(parent != block);
+            if (parent)
+                children[parent->index()].append(block);
+            else {
+                ASSERT(!root);
+                root = block;
+            }
+        }
+        RELEASE_ASSERT(root);
+
+        Vector<BasicBlock*, 16> stack;
+        stack.append(root);
+        while (!stack.isEmpty()) {
+            BasicBlock* block = stack.takeLast();
+
+            // A null entry closes the layer that the block pushing it opened.
+            if (!block) {
+                m_layeredCSE.dropLastLayer();
+                if (m_trackWasmGCAccesses)
+                    m_wasmGCMap.dropLastLayer();
+                continue;
+            }
+            stack.append(nullptr);
+
+            m_layeredCSE.startLayer();
+
+            if (m_trackWasmGCAccesses) {
+                m_wasmGCMap.startLayer();
+                beginWasmGCBlock(block);
+            }
+
+            reduceBlockStrength(block);
+
+            if (m_trackWasmGCAccesses)
+                endWasmGCBlock(block);
+
+            auto& kids = children[block->index()];
+            for (unsigned i = kids.size(); i--;)
+                stack.append(kids[i]);
+        }
+    }
+
 private:
+    void reduceBlockStrength(BasicBlock* block)
+    {
+        m_block = block;
+        for (m_index = 0; m_index < block->size(); ++m_index) {
+            if (B3ReduceStrengthInternal::verbose) {
+                dataLog(
+                    "Looking at ", *block, " #", m_index, ": ",
+                    deepDump(m_proc, block->at(m_index)), "\n");
+            }
+            m_value = m_block->at(m_index);
+            m_value->performSubstitution();
+
+            HeapRange writesBeforeReduction;
+            if (m_trackWasmGCAccesses)
+                writesBeforeReduction = m_value->effects().writes;
+
+            // Many rules mutate the current value's children in place (e.g. Add(Add(x, c1), c2)
+            // becomes Add(x, c1 + c2)), and the result may match another rule. Without fixpoint
+            // iteration we re-run reductions on the same value until it stops changing or gets
+            // replaced (Identity) / erased (Nop).
+            constexpr unsigned maxReductionAttempts = 8;
+            bool reduced = false;
+            for (unsigned attempt = 0; attempt < maxReductionAttempts; ++attempt) {
+                bool savedChanged = std::exchange(m_changed, false);
+                reduceValueStrength();
+                bool changedThisAttempt = m_changed;
+                m_changed |= savedChanged;
+                if (!changedThisAttempt)
+                    break;
+                reduced = true;
+                Opcode opcode = m_value->opcode();
+                if (opcode == Identity || opcode == Nop)
+                    break;
+            }
+            if (m_proc.optLevel() >= 2)
+                replaceIfRedundant();
+
+            // Runs after the reduction rules above, so that a cast the rules strip off the base
+            // or a trap bit they drop is already reflected in the access this records.
+            if (m_trackWasmGCAccesses)
+                processWasmGCAccess(writesBeforeReduction, reduced);
+        }
+        m_insertionSet.execute(m_block);
+    }
+
     void reduceValueStrength()
     {
         switch (m_value->opcode()) {
@@ -707,7 +962,7 @@ private:
                 uint64_t mask1 = m_value->child(0)->child(0)->child(1)->asInt();
                 uint64_t mask2 = m_value->child(0)->child(1)->asInt();
                 uint64_t mask3 = m_value->child(1)->asInt();
-                uint64_t width = WTF::bitCount(mask1);
+                uint64_t width = std::popcount(mask1);
                 uint64_t datasize = m_value->child(0)->child(0)->type() == Int64 ? 64 : 32;
                 bool isValidMask1 = mask1 && !(mask1 & (mask1 + 1)) && width < datasize;
                 bool isValidMask2 = mask2 == mask3 && ((mask2 << 1) - 1) == mask1;
@@ -736,6 +991,13 @@ private:
                     else
                         minusOne = m_insertionSet.insert<Const64Value>(m_index, m_value->origin(), -1);
                     replaceWithNew<Value>(BitXor, m_value->origin(), m_value->child(0)->child(0), minusOne);
+                    break;
+                }
+
+                // Turn this: Sub(value, 0)
+                // Into this: value
+                if (m_value->child(1)->isInt(0)) {
+                    replaceWithIdentity(m_value->child(0));
                     break;
                 }
 
@@ -930,6 +1192,65 @@ private:
                     break;
                 }
             }
+
+            if (m_value->isFP()) {
+                if (m_value->child(1)->hasFloat()) {
+                    uint32_t value = std::bit_cast<uint32_t>(m_value->child(1)->asFloat());
+                    // Turn this: Mul(value, 2.0)
+                    // Into this: Add(value, value)
+                    if (value == std::bit_cast<uint32_t>(2.0f)) {
+                        replaceWithNew<Value>(Add, m_value->origin(), m_value->child(0), m_value->child(0));
+                        break;
+                    }
+
+                    // Turn this: Mul(value, -1.0)
+                    // Into this: Sub(-0.0, value)
+                    if (value == std::bit_cast<uint32_t>(-1.0f)) {
+                        Value* constant = m_insertionSet.insert<ConstFloatValue>(m_index, m_value->origin(), -0.0f);
+                        replaceWithNew<Value>(Sub, m_value->origin(), constant, m_value->child(0));
+                        break;
+                    }
+
+                    // Turn this: Mul(value, -2.0)
+                    // Into this: Sub(-0.0, Add(value, value))
+                    // Both Mul and Sub(Add(...)) are arithmetic operations, so sNaN → qNaN behavior is preserved.
+                    // We use Sub(-0.0, x) instead of Neg(x) because Neg is non-arithmetic and would not quiet sNaN.
+                    if (value == std::bit_cast<uint32_t>(-2.0f)) {
+                        Value* add = m_insertionSet.insert<Value>(m_index, Add, m_value->origin(), m_value->child(0), m_value->child(0));
+                        Value* negZero = m_insertionSet.insert<ConstFloatValue>(m_index, m_value->origin(), -0.0f);
+                        replaceWithNew<Value>(Sub, m_value->origin(), negZero, add);
+                        break;
+                    }
+                }
+                if (m_value->child(1)->hasDouble()) {
+                    uint64_t value = std::bit_cast<uint64_t>(m_value->child(1)->asDouble());
+                    // Turn this: Mul(value, 2.0)
+                    // Into this: Add(value, value)
+                    if (value == std::bit_cast<uint64_t>(2.0)) {
+                        replaceWithNew<Value>(Add, m_value->origin(), m_value->child(0), m_value->child(0));
+                        break;
+                    }
+
+                    // Turn this: Mul(value, -1.0)
+                    // Into this: Sub(-0.0, value)
+                    if (value == std::bit_cast<uint64_t>(-1.0)) {
+                        Value* constant = m_insertionSet.insert<ConstDoubleValue>(m_index, m_value->origin(), -0.0);
+                        replaceWithNew<Value>(Sub, m_value->origin(), constant, m_value->child(0));
+                        break;
+                    }
+
+                    // Turn this: Mul(value, -2.0)
+                    // Into this: Sub(-0.0, Add(value, value))
+                    // Both Mul and Sub(Add(...)) are arithmetic operations, so sNaN → qNaN behavior is preserved.
+                    // We use Sub(-0.0, x) instead of Neg(x) because Neg is non-arithmetic and would not quiet sNaN.
+                    if (value == std::bit_cast<uint64_t>(-2.0)) {
+                        Value* add = m_insertionSet.insert<Value>(m_index, Add, m_value->origin(), m_value->child(0), m_value->child(0));
+                        Value* negZero = m_insertionSet.insert<ConstDoubleValue>(m_index, m_value->origin(), -0.0);
+                        replaceWithNew<Value>(Sub, m_value->origin(), negZero, add);
+                        break;
+                    }
+                }
+            }
             break;
 
         case MulHigh:
@@ -962,6 +1283,51 @@ private:
             // likes.
             if (replaceWithNewValue(m_value->child(0)->divConstant(m_proc, m_value->child(1))))
                 break;
+
+            if (m_value->isFP()) {
+                if (m_value->child(1)->hasFloat()) {
+                    float divisor = m_value->child(1)->asFloat();
+                    // Turn this: Div(value, -1.0)
+                    // Into this: Sub(-0.0, value)
+                    // Both Div and Sub are arithmetic operations, so sNaN → qNaN behavior is preserved.
+                    // We use Sub(-0.0, x) instead of Neg(x) because Neg is non-arithmetic and would not quiet sNaN.
+                    if (std::bit_cast<uint32_t>(divisor) == std::bit_cast<uint32_t>(-1.0f)) {
+                        Value* negZero = m_insertionSet.insert<ConstFloatValue>(m_index, m_value->origin(), -0.0f);
+                        replaceWithNew<Value>(Sub, m_value->origin(), negZero, m_value->child(0));
+                        break;
+                    }
+                    // Turn this: Div(value, power_of_2)
+                    // Into this: Mul(value, 1.0 / power_of_2)
+                    // Both Div and Mul are arithmetic operations, so sNaN → qNaN behavior is preserved.
+                    // All reciprocals of normal powers of two are exactly representable in IEEE 754.
+                    if (std::isnormal(divisor) && (std::bit_cast<uint32_t>(divisor) & 0x007FFFFF) == 0) {
+                        Value* reciprocal = m_insertionSet.insert<ConstFloatValue>(m_index, m_value->origin(), 1.0f / divisor);
+                        replaceWithNew<Value>(Mul, m_value->origin(), m_value->child(0), reciprocal);
+                        break;
+                    }
+                }
+                if (m_value->child(1)->hasDouble()) {
+                    double divisor = m_value->child(1)->asDouble();
+                    // Turn this: Div(value, -1.0)
+                    // Into this: Sub(-0.0, value)
+                    // Both Div and Sub are arithmetic operations, so sNaN → qNaN behavior is preserved.
+                    // We use Sub(-0.0, x) instead of Neg(x) because Neg is non-arithmetic and would not quiet sNaN.
+                    if (std::bit_cast<uint64_t>(divisor) == std::bit_cast<uint64_t>(-1.0)) {
+                        Value* negZero = m_insertionSet.insert<ConstDoubleValue>(m_index, m_value->origin(), -0.0);
+                        replaceWithNew<Value>(Sub, m_value->origin(), negZero, m_value->child(0));
+                        break;
+                    }
+                    // Turn this: Div(value, power_of_2)
+                    // Into this: Mul(value, 1.0 / power_of_2)
+                    // Both Div and Mul are arithmetic operations, so sNaN → qNaN behavior is preserved.
+                    // All reciprocals of normal powers of two are exactly representable in IEEE 754.
+                    if (std::isnormal(divisor) && (std::bit_cast<uint64_t>(divisor) & 0x000FFFFFFFFFFFFFULL) == 0) {
+                        Value* reciprocal = m_insertionSet.insert<ConstDoubleValue>(m_index, m_value->origin(), 1.0 / divisor);
+                        replaceWithNew<Value>(Mul, m_value->origin(), m_value->child(0), reciprocal);
+                        break;
+                    }
+                }
+            }
 
             if (m_value->child(1)->hasInt()) {
                 switch (m_value->child(1)->asInt()) {
@@ -1102,6 +1468,27 @@ private:
                             m_insertionSet.insert<Const32Value>(
                                 m_index, m_value->origin(), magic.shift));
                         break;
+                    }
+
+                    // Optimization for 33-bit magic constants on 64-bit targets
+                    // (Mitsunari & Hoshino 2026). When magic.add is true, the full
+                    // multiplier c = magicMultiplier | (1 << 32) is 33 bits. We fold c
+                    // and the post-shift into a single UMulHigh64:
+                    //   x / d = Trunc(UMulHigh64(ZExt32(x), c << (31 - shift)))
+                    // This replaces 5 operations (mul + sub + 2 shifts + add) with 1 multiply.
+                    // https://arxiv.org/abs/2604.07902
+                    if (magic.add) {
+                        if constexpr (isARM64() || isX86()) {
+                            ASSERT(!magic.preShift);
+                            uint64_t fullMagic = static_cast<uint64_t>(magic.magicMultiplier) | (1ULL << 32);
+                            uint64_t shiftedMagic = fullMagic << (31 - magic.shift);
+                            Value* ext = m_insertionSet.insert<Value>(m_index, ZExt32, m_value->origin(), dividend);
+                            Value* mulHigh = m_insertionSet.insert<Value>(
+                                m_index, UMulHigh, m_value->origin(), ext,
+                                m_insertionSet.insert<Const64Value>(m_index, m_value->origin(), static_cast<int64_t>(shiftedMagic)));
+                            replaceWithNew<Value>(Trunc, m_value->origin(), mulHigh);
+                            break;
+                        }
                     }
 
                     // Apply pre-shift if needed (for even divisor optimization)
@@ -1287,7 +1674,7 @@ private:
                 uint64_t mask = m_value->child(1)->asInt();
                 bool isValidMask = mask && !(mask & (mask + 1));
                 uint64_t datasize = m_value->child(0)->child(0)->type() == Int64 ? 64 : 32;
-                uint64_t width = WTF::bitCount(mask);
+                uint64_t width = std::popcount(mask);
                 if (shiftAmount < datasize && isValidMask && shiftAmount + width >= datasize) {
                     replaceWithIdentity(m_value->child(0));
                     break;
@@ -1310,7 +1697,7 @@ private:
                 uint64_t maskShift = m_value->child(1)->asInt();
                 uint64_t maskShiftAmount = WTF::ctz(maskShift);
                 uint64_t mask = maskShift >> maskShiftAmount;
-                uint64_t width = WTF::bitCount(mask);
+                uint64_t width = std::popcount(mask);
                 uint64_t datasize = m_value->child(0)->child(0)->type() == Int64 ? 64 : 32;
                 bool isValidShiftAmount = shiftAmount == maskShiftAmount && shiftAmount < datasize;
                 bool isValidMask = mask && !(mask & (mask + 1)) && width < datasize;
@@ -1515,6 +1902,9 @@ private:
             if (handleBitAndDistributivity())
                 break;
 
+            if (handleRotateFromShiftXorOr())
+                break;
+
             break;
 
         case BitXor:
@@ -1563,6 +1953,9 @@ private:
             }
                 
             if (handleBitAndDistributivity())
+                break;
+
+            if (handleRotateFromShiftXorOr())
                 break;
 
             break;
@@ -1664,6 +2057,25 @@ private:
                     break;
             }
 
+            // Turn this: SShr(Mul(value, constant << amount), amount)
+            // Into this: Mul(value, constant)
+            // This is exact when the Mul cannot overflow.
+            if (m_value->child(1)->hasInt32()
+                && m_value->child(0)->opcode() == Mul
+                && m_value->child(0)->child(1)->hasInt()) {
+                int32_t amount = m_value->child(1)->asInt32();
+                Value* multiply = m_value->child(0);
+                int64_t multiplier = multiply->child(1)->asInt();
+                if (amount > 0
+                    && static_cast<size_t>(amount) < sizeofType(m_value->type()) * 8
+                    && !(multiplier & ((static_cast<int64_t>(1) << amount) - 1))
+                    && !rangeFor(multiply->child(0)).couldOverflowMul(rangeFor(multiply->child(1)), m_value->type())) {
+                    replaceWithNew<Value>(Mul, m_value->origin(), multiply->child(0),
+                        m_insertionSet.insertIntConstant(m_index, m_value, multiplier >> amount));
+                    break;
+                }
+            }
+
             handleShiftAmount();
             break;
 
@@ -1718,7 +2130,7 @@ private:
                 uint64_t maskShift = m_value->child(0)->child(1)->asInt();
                 uint64_t maskShiftAmount = WTF::ctz(maskShift);
                 uint64_t mask = maskShift >> maskShiftAmount;
-                uint64_t width = WTF::bitCount(mask);
+                uint64_t width = std::popcount(mask);
                 uint64_t datasize = m_value->child(0)->child(0)->type() == Int64 ? 64 : 32;
                 bool isValidShiftAmount = maskShiftAmount == shiftAmount && shiftAmount < datasize;
                 bool isValidMask = mask && !(mask & (mask + 1)) && width < datasize;
@@ -2183,7 +2595,8 @@ private:
                     case Add: {
                         // Turn this: Trunc(SShr(Add(@a, constant), $12))
                         // Into this: Add(Trunc(SShr(@a, $12), converted-constant)
-                        if (sshrArg0->child(1)->hasInt64()) {
+                        if (sshrArg0->child(1)->hasInt64()
+                            && !(sshrArg0->child(1)->asInt64() & ((1LL << JSValue::int52ShiftAmount) - 1))) {
                             auto* shiftAmount = m_value->child(0)->child(1);
                             int64_t constant = sshrArg0->child(1)->asInt64();
                             auto* shifted = m_insertionSet.insert<Value>(m_index, SShr, m_value->child(0)->origin(), sshrArg0->child(0), shiftAmount);
@@ -2392,7 +2805,6 @@ private:
             break;
         }
 
-#if !CPU(NEEDS_ALIGNED_ACCESS) && CPU(ADDRESS64)
         case MemoryCopy: {
             if (m_value->child(2)->hasInt()) {
                 auto* memoryCopy = m_value->as<BulkMemoryValue>();
@@ -2531,7 +2943,6 @@ private:
             }
             break;
         }
-#endif
 
         case CCall: {
             // Turn this: Call(fmod, constant1, constant2)
@@ -2571,6 +2982,13 @@ private:
                 break;
             }
 
+            // Two distinct freshly-allocated wasm-GC references, or a fresh reference and
+            // null, are never the same object.
+            if (areDistinctWasmGCReferences(m_value->child(0), m_value->child(1))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::False));
+                break;
+            }
+
             // Turn this: Equal(const1, const2)
             // Into this: const1 == const2
             replaceWithNewValue(
@@ -2604,6 +3022,13 @@ private:
                 auto* constant = m_proc.addBoolConstant(m_value->origin(), TriState::False);
                 ASSERT(constant);
                 replaceWithNewValue(constant);
+                break;
+            }
+
+            // Two distinct freshly-allocated wasm-GC references, or a fresh reference and
+            // null, are never the same object.
+            if (areDistinctWasmGCReferences(m_value->child(0), m_value->child(1))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::True));
                 break;
             }
 
@@ -2661,9 +3086,15 @@ private:
             }
 
             if (comparison.opcode != m_value->opcode()) {
-                replaceWithNew<Value>(comparison.opcode, m_value->origin(), comparison.operands[0], comparison.operands[1]);
+                // Canonicalization flipped the comparison (e.g. AboveEqual(0, x) -> BelowEqual(x, 0)).
+                // Apply any immediate equality fold so we don't depend on a second pass.
+                if (!tryFoldComparisonToEquality(comparison.opcode, comparison.operands[0], comparison.operands[1]))
+                    replaceWithNew<Value>(comparison.opcode, m_value->origin(), comparison.operands[0], comparison.operands[1]);
                 break;
             }
+
+            if (tryFoldComparisonToEquality(m_value->opcode(), m_value->child(0), m_value->child(1)))
+                break;
 
             if (m_value->child(0)->isInteger() && m_value->child(0) == m_value->child(1)) {
                 switch (m_value->opcode()) {
@@ -2902,11 +3333,15 @@ private:
 
                 patchpoint->setGenerator(checkValue->generator());
 
-                // Replace the rest of the block with an Oops.
-                for (unsigned i = m_index + 1; i < m_block->size() - 1; ++i)
+                // Replace the rest of the block with an Oops. The terminal becomes a Bottom rather
+                // than the Oops itself because it may produce a value (e.g. a Patchpoint with a
+                // slow path successor) that successors, not yet pruned, still use.
+                for (unsigned i = m_index + 1; i < m_block->size(); ++i)
                     m_block->at(i)->replaceWithBottom(m_insertionSet, m_index);
-                m_block->last()->replaceWithOops(m_block);
-                m_block->last()->setOrigin(checkValue->origin());
+                m_insertionSet.insert<Value>(m_block->size(), Oops, checkValue->origin());
+                for (BasicBlock* successor : m_block->successorBlocks())
+                    successor->removePredecessor(m_block);
+                m_block->clearSuccessors();
 
                 // Replace ourselves last.
                 checkValue->replaceWithNop();
@@ -2918,56 +3353,6 @@ private:
                 && checkValue->child(0)->child(1)->isInt(0)) {
                 checkValue->child(0) = checkValue->child(0)->child(0);
                 m_changed = true;
-            }
-            
-            if (m_proc.optLevel() < 2)
-                break;
-
-            // If we are checking some bounded-size SSA expression that leads to a Select that
-            // has a constant as one of its results, then turn the Select into a Branch and split
-            // the code between the Check and the Branch. For example, this:
-            //
-            //     @a = Select(@p, @x, 42)
-            //     @b = Add(@a, 35)
-            //     Check(@b)
-            //
-            // becomes this:
-            //
-            //     Branch(@p, #truecase, #falsecase)
-            //
-            //   BB#truecase:
-            //     @b_truecase = Add(@x, 35)
-            //     Check(@b_truecase)
-            //     Upsilon(@x, ^a)
-            //     Upsilon(@b_truecase, ^b)
-            //     Jump(#continuation)
-            //
-            //   BB#falsecase:
-            //     @b_falsecase = Add(42, 35)
-            //     Check(@b_falsecase)
-            //     Upsilon(42, ^a)
-            //     Upsilon(@b_falsecase, ^b)
-            //     Jump(#continuation)
-            //
-            //   BB#continuation:
-            //     @a = Phi()
-            //     @b = Phi()
-            //
-            // The goal of this optimization is to kill a lot of code in one of those basic
-            // blocks. This is pretty much guaranteed since one of those blocks will replace all
-            // uses of the Select with a constant, and that constant will be transitively used
-            // from the check.
-            static constexpr unsigned selectSpecializationBound = 3;
-            Value* select = findRecentNodeMatching(
-                m_value->child(0), selectSpecializationBound,
-                [&] (Value* value) -> bool {
-                    return value->opcode() == Select
-                        && (value->child(1)->isConstant() || value->child(2)->isConstant());
-                });
-            
-            if (select) {
-                specializeSelect(select);
-                break;
             }
             break;
         }
@@ -3032,9 +3417,7 @@ private:
                 // If a check for the same property dominates us, we can kill the branch. This sort
                 // of makes sense here because it's cheap, but hacks like this show that we're going
                 // to need SCCP.
-                Value* check = m_pureCSE.findMatch(
-                    ValueKey(Check, Void, m_value->child(0)), m_block, *m_dominators);
-                if (check) {
+                if (m_layeredCSE.find(ValueKey(Check, Void, m_value->child(0)))) {
                     // The Check would have side-exited if child(0) was non-zero. So, it must be
                     // zero here.
                     m_block->taken().block()->removePredecessor(m_block);
@@ -3042,6 +3425,29 @@ private:
                     m_changedCFG = true;
                 }
             }
+            break;
+        }
+
+        case Switch: {
+            // Turn this: Switch(constant, ...)
+            // Into this: Jump(the matching case, or the fall-through)
+            if (!m_value->child(0)->hasInt())
+                break;
+            SwitchValue* switchValue = m_value->as<SwitchValue>();
+            int64_t key = m_value->child(0)->asInt();
+            FrequentedBlock target = m_block->fallThrough();
+            for (unsigned i = 0; i < switchValue->numCaseValues(); ++i) {
+                if (switchValue->caseValue(i) == key) {
+                    target = m_block->successor(i);
+                    break;
+                }
+            }
+            for (BasicBlock* successor : m_block->successorBlocks()) {
+                if (successor != target.block())
+                    successor->removePredecessor(m_block);
+            }
+            m_value->replaceWithJump(m_block, target);
+            m_changedCFG = true;
             break;
         }
 
@@ -3277,11 +3683,68 @@ private:
             break;
         }
 
+        case VectorShl: {
+            SIMDValue* value = m_value->as<SIMDValue>();
+            if (value->child(1)->hasInt32() && value->child(1)->asInt32() == 1) {
+                replaceWithNew<SIMDValue>(m_value->origin(), VectorAdd, B3::V128, value->simdLane(), SIMDSignMode::None, m_value->child(0), m_value->child(0));
+                break;
+            }
+            break;
+        }
+
+        case VectorShr: {
+            // Turn this: VectorShr(VectorZipLower(x, x), shiftAmount) where shr is Signed
+            // Into this: VectorExtendLow(x, lane, Signed)
+            //
+            // Turn this: VectorShr(VectorZipHigher(x, x), shiftAmount) where shr is Signed
+            // Into this: VectorExtendHigh(x, lane, Signed)
+            //
+            // VectorZip{Lower,Higher}(x, x) interleaves elements: [x[i],x[i],...]
+            // Interpreted as the wider lane and shifted right by the source element's bit width,
+            // this sign-extends the narrower element to the wider one.
+            //
+            // Supported combinations:
+            //   shr i16x8 by 8  + zip i8x16  -> i8->i16 sign extension
+            //   shr i32x4 by 16 + zip i16x8  -> i16->i32 sign extension
+            //   shr i64x2 by 32 + zip i32x4  -> i32->i64 sign extension
+            SIMDValue* shr = m_value->as<SIMDValue>();
+            if (shr->signMode() == SIMDSignMode::Signed) {
+                SIMDLane lane = shr->simdLane();
+                bool matches = (lane == SIMDLane::i16x8 && m_value->child(1)->isInt32(8))
+                    || (lane == SIMDLane::i32x4 && m_value->child(1)->isInt32(16))
+                    || (lane == SIMDLane::i64x2 && m_value->child(1)->isInt32(32));
+                if (matches) {
+                    Value* child0 = m_value->child(0);
+                    if ((child0->opcode() == VectorZipLower || child0->opcode() == VectorZipHigher) && child0->child(0) == child0->child(1)) {
+                        Opcode extendOp = child0->opcode() == VectorZipLower ? VectorExtendLow : VectorExtendHigh;
+                        replaceWithNew<SIMDValue>(m_value->origin(), extendOp, B3::V128, lane, SIMDSignMode::Signed, child0->child(0));
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+
+        case VectorDotProduct: {
+            handleCommutativity();
+
+            // Turn this: VectorDotProduct(v, splatOne16)
+            // Into this: VectorExtaddPairwise(v)
+            constexpr v128_t splatOne16 = v128_t::fromU16x8(1, 1, 1, 1, 1, 1, 1, 1);
+            if (m_value->child(1)->hasV128() && bitEquals(m_value->child(1)->asV128(), splatOne16)) {
+                // VectorExtaddPairwise uses the input lane type (i16x8), not the output (i32x4).
+                replaceWithNew<SIMDValue>(m_value->origin(), VectorExtaddPairwise, B3::V128, SIMDLane::i16x8, SIMDSignMode::Signed, m_value->child(0));
+                break;
+            }
+            break;
+        }
+
         case VectorSwizzle: {
-            if (m_value->numChildren() == 2 && m_value->child(1)->isConstant()) {
-                v128_t pattern = m_value->child(1)->as<Const128Value>()->value();
+            if (m_value->numChildren() == 2 && m_value->child(1)->hasV128()) {
+                Value* inner = m_value->child(0);
+                v128_t pattern = m_value->child(1)->asV128();
                 if (SIMDShuffle::isIdentity(pattern)) {
-                    replaceWithIdentity(m_value->child(0));
+                    replaceWithIdentity(inner);
                     break;
                 }
 
@@ -3290,53 +3753,314 @@ private:
                     break;
                 }
 
+                if (inner->opcode() == VectorSwizzle && inner->numChildren() == 2) {
+                    if (inner->child(1)->hasV128()) {
+                        v128_t outerPat = m_value->child(1)->asV128();
+                        v128_t innerPat = inner->child(1)->asV128();
+                        v128_t composed = SIMDShuffle::composeUnaryShuffle(outerPat, innerPat);
+                        Value* newPattern = m_proc.addConstant(m_value->origin(), B3::V128, composed);
+                        m_insertionSet.insertValue(m_index, newPattern);
+                        replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, inner->child(0), newPattern);
+                        break;
+                    }
+                }
+
+                // DupElement: i64x2 and i32x4 on all platforms
+                if (auto lane = SIMDShuffle::isI64x2DupElement(pattern)) {
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i64x2, SIMDSignMode::None, lane.value(), inner);
+                    break;
+                }
+
+                if (auto lane = SIMDShuffle::isI32x4DupElement(pattern)) {
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i32x4, SIMDSignMode::None, lane.value(), inner);
+                    break;
+                }
+
+                // DupElement: i16x8 and i8x16 — ARM64 only
                 if constexpr (isARM64()) {
-                    if (auto lane = SIMDShuffle::isI64x2DupElement(pattern)) {
-                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i64x2, SIMDSignMode::None, lane.value(), m_value->child(0));
-                        break;
-                    }
-
-                    if (auto lane = SIMDShuffle::isI32x4DupElement(pattern)) {
-                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i32x4, SIMDSignMode::None, lane.value(), m_value->child(0));
-                        break;
-                    }
-
                     if (auto lane = SIMDShuffle::isI16x8DupElement(pattern)) {
-                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i16x8, SIMDSignMode::None, lane.value(), m_value->child(0));
+                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i16x8, SIMDSignMode::None, lane.value(), inner);
                         break;
                     }
 
                     if (auto lane = SIMDShuffle::isI8x16DupElement(pattern)) {
-                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, lane.value(), m_value->child(0));
+                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, lane.value(), inner);
                         break;
+                    }
+                }
+
+                if (m_pass == ReduceStrengthPass::Final) {
+                    // Check if this unary pattern matches a canonical instruction
+                    // (UZP, ZIP, TRN) when treated as both inputs being the same register.
+                    // Reduce to the dedicated B3 opcode if supported on the current platform.
+                    {
+                        auto canonical = SIMDShuffle::tryMatchUnaryAsBinaryCanonical(pattern);
+                        if (auto info = canonicalShuffleInfo(canonical)) {
+                            auto newOp = info->opcode;
+                            ASSERT(newOp != VectorReverse);
+                            replaceWithNew<SIMDValue>(m_value->origin(), newOp, B3::V128, info->lane, SIMDSignMode::None, inner, inner);
+                            break;
+                        }
+                    }
+
+                    // General unary EXT (byte rotation): {k, k+1, ..., 15, 0, 1, ..., k-1}
+                    // Subsumes S64x2Reverse (which is EXT #8).
+                    if (auto offset = SIMDShuffle::isUnaryEXT(pattern)) {
+                        replaceWithNew<SIMDValue>(m_value->origin(), VectorExtractPair, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, static_cast<uint8_t>(*offset), inner, inner);
+                        break;
+                    }
+
+                    // Also try unary-specific patterns (REV).
+                    {
+                        auto canonical = SIMDShuffle::tryMatchCanonicalUnary(pattern);
+                        if (auto info = canonicalShuffleInfo(canonical)) {
+                            if (info->opcode == VectorReverse) {
+                                replaceWithNew<SIMDValue>(m_value->origin(), info->opcode, B3::V128, info->lane, SIMDSignMode::None, info->groupSize, inner);
+                                break;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+
+            // Compose shuffle-of-shuffle patterns into a single shuffle.
+            //
+            // We look for a 3-child (binary) VectorSwizzle whose child(0) or child(1) is a
+            // 2-child (unary) VectorSwizzle with a single use. The outer and inner shuffle
+            // patterns are composed into a single pattern, eliminating one shuffle operation.
+            //
+            // Before:
+            //   inner = VectorSwizzle(innerSrc, innerPattern)          ; unary shuffle
+            //   outer = VectorSwizzle(inner, other, outerPattern)      ; binary shuffle using inner's result
+            //   -- or --
+            //   outer = VectorSwizzle(other, inner, outerPattern)      ; binary shuffle with inner on other side
+            //
+            // After composition:
+            //   composed = VectorSwizzle(innerSrc, other, composedPattern)   ; single binary shuffle
+            //   -- or, if all composed indices come from one side --
+            //   composed = VectorSwizzle(src, composedPattern)               ; single unary shuffle
+            //
+            // The composedPattern is computed by chasing each output byte through the outer pattern,
+            // and if it references the inner's output, further chasing through the inner pattern to
+            // find the original source byte.
+            //
+            // Example (from argon2/BLAKE2b):
+            //   inner = VectorSwizzle(b, dupLowPattern)                ; dup low 64-bit element of b
+            //   outer = VectorSwizzle(a, inner, {8..15, 24..31})       ; UZP2.2D: {a[hi64], inner[hi64]}
+            //   Composed: {a[hi64], b[lo64]} — inner[hi64] = dupLow(b)[hi64] = b[lo64]
+            //   Result: VectorSwizzle(a, b, {8..15, 16..23})           ; EXT #8
+            if (m_value->numChildren() == 3 && m_value->child(2)->hasV128()) {
+                v128_t pattern = m_value->child(2)->asV128();
+                if (m_pass == ReduceStrengthPass::Final) {
+                    // Try to match binary canonical patterns (UZP, ZIP, TRN).
+                    {
+                        auto canonical = SIMDShuffle::tryMatchCanonicalBinary(pattern);
+                        if (auto info = canonicalShuffleInfo(canonical)) {
+                            auto newOp = info->opcode;
+                            ASSERT(newOp != VectorReverse);
+                            replaceWithNew<SIMDValue>(m_value->origin(), newOp, B3::V128, info->lane, SIMDSignMode::None, m_value->child(0), m_value->child(1));
+                            break;
+                        }
+                    }
+
+                    // Try EXT pattern: contiguous byte extraction from concatenation.
+                    if (auto extInfo = SIMDShuffle::isEXTWithSwap(pattern)) {
+                        if (extInfo->needsSwap)
+                            replaceWithNew<SIMDValue>(m_value->origin(), VectorExtractPair, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, static_cast<uint8_t>(extInfo->offset), m_value->child(1), m_value->child(0));
+                        else
+                            replaceWithNew<SIMDValue>(m_value->origin(), VectorExtractPair, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, static_cast<uint8_t>(extInfo->offset), m_value->child(0), m_value->child(1));
+                        break;
+                    }
+                }
+
+                // If both inputs are the same value, normalize all indices to 0-15 range
+                // and convert to a 2-child (unary) VectorSwizzle.
+                // e.g. {0,1,2,3,4,5,6,7, 16,17,18,19,20,21,22,23} with child(0)==child(1)
+                // becomes {0,1,2,3,4,5,6,7, 0,1,2,3,4,5,6,7} which can then be detected as DUP.
+                if (m_value->child(0) == m_value->child(1)) {
+                    v128_t newPattern = pattern;
+                    for (unsigned i = 0; i < 16; ++i) {
+                        if (newPattern.u8x16[i] >= 16 && newPattern.u8x16[i] < 32)
+                            newPattern.u8x16[i] -= 16;
+                    }
+                    Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, newPattern);
+                    m_insertionSet.insertValue(m_index, newPatternValue);
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, m_value->child(0), newPatternValue);
+                    break;
+                }
+
+                if (auto result = SIMDShuffle::isOnlyOneSideMask(pattern)) {
+                    auto [child, newPattern] = result.value();
+                    switch (child) {
+                    case 0: {
+                        Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, newPattern);
+                        m_insertionSet.insertValue(m_index, newPatternValue);
+                        replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, m_value->child(0), newPatternValue);
+                        break;
+                    }
+                    case 1: {
+                        Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, newPattern);
+                        m_insertionSet.insertValue(m_index, newPatternValue);
+                        replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, m_value->child(1), newPatternValue);
+                        break;
+                    }
+                    case 2: {
+                        // All OOB.
+                        replaceWithNewValue(m_proc.addConstant(m_value->origin(), B3::V128, vectorAllZeros()));
+                        break;
+                    }
                     }
                     break;
                 }
-            }
 
-            if constexpr (isARM64()) {
-                if (m_value->numChildren() == 3 && m_value->child(2)->isConstant()) {
-                    v128_t pattern = m_value->child(2)->as<Const128Value>()->value();
-                    if (auto child = SIMDShuffle::isOnlyOneSideMask(pattern)) {
-                        switch (child.value()) {
+                auto tryFoldVectorSwizzle = [&](unsigned innerIndex, unsigned otherIndex) -> bool {
+                    Value* inner = m_value->child(innerIndex);
+
+                    // The inner must be a unary VectorSwizzle with a constant pattern.
+                    if (inner->opcode() != VectorSwizzle)
+                        return false;
+
+                    if (inner->numChildren() != 2)
+                        return false;
+
+                    if (!inner->child(1)->hasV128())
+                        return false;
+
+                    v128_t innerPattern = inner->child(1)->asV128();
+                    // Compose: for each output byte, chase through outer → inner patterns
+                    // to find the original source byte index.
+                    v128_t newPattern = SIMDShuffle::composeShuffle(pattern, innerPattern, innerIndex == 0);
+
+                    // After composition, the new shuffle reads from innerSrc (the inner's
+                    // original input) and other (the outer's other child).
+                    Value* innerSrc = inner->child(0);
+                    Value* other = m_value->child(otherIndex);
+
+                    // Maintain the convention: child(0) = newChild0, child(1) = newChild1.
+                    // If inner was child(0), innerSrc becomes newChild0 and other stays newChild1.
+                    // If inner was child(1), other stays newChild0 and innerSrc becomes newChild1.
+                    Value* newChild0;
+                    Value* newChild1;
+                    if (innerIndex == 0) {
+                        newChild0 = innerSrc;
+                        newChild1 = other;
+                    } else {
+                        newChild0 = other;
+                        newChild1 = innerSrc;
+                    }
+
+                    // If all composed indices reference only one side (0..15 or 16..31),
+                    // emit a 2-child unary shuffle instead of a 3-child binary shuffle.
+                    // This enables further optimizations like DUP detection in ReduceStrength.
+                    if (auto result = SIMDShuffle::isOnlyOneSideMask(newPattern)) {
+                        auto [child, unaryPattern] = result.value();
+                        switch (child) {
                         case 0: {
-                            replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, m_value->child(0), m_value->child(2));
+                            Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, unaryPattern);
+                            m_insertionSet.insertValue(m_index, newPatternValue);
+                            replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, newChild0, newPatternValue);
                             break;
                         }
                         case 1: {
-                            v128_t newPattern = pattern;
-                            for (unsigned i = 0; i < 16; ++i)
-                                newPattern.u8x16[i] = pattern.u8x16[i] - 16;
-                            Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, newPattern);
+                            Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, unaryPattern);
                             m_insertionSet.insertValue(m_index, newPatternValue);
-                            replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, m_value->child(1), newPatternValue);
+                            replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, newChild1, newPatternValue);
+                            break;
+                        }
+                        case 2: {
+                            // All OOB.
+                            replaceWithNewValue(m_proc.addConstant(m_value->origin(), B3::V128, vectorAllZeros()));
                             break;
                         }
                         }
-                        break;
+                        return true;
                     }
+
+                    Value* newPat = m_proc.addConstant(m_value->origin(), B3::V128, newPattern);
+                    m_insertionSet.insertValue(m_index, newPat);
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, newChild0, newChild1, newPat);
+                    return true;
+                };
+
+                if (tryFoldVectorSwizzle(0, 1))
+                    break;
+
+                if (tryFoldVectorSwizzle(1, 0))
+                    break;
+            }
+            break;
+        }
+
+        case VectorUnzipEven: {
+            // Turn this: VectorUnzipEven(i64x2, i64x2)
+            // Into this: VectorDupElement(i64x2, 0)
+            if (tryReduceSameInputShuffleToDup(0))
+                break;
+            break;
+        }
+
+        case VectorUnzipOdd: {
+            // Turn this: VectorUnzipOdd(i64x2, i64x2)
+            // Into this: VectorDupElement(i64x2, 1)
+            if (tryReduceSameInputShuffleToDup(1))
+                break;
+            break;
+        }
+
+        case VectorZipLower: {
+            // Turn this: VectorZipLower(x, zeroConstant) with a widenable integer lane
+            // Into this: VectorExtendLow(x, widerLane, Unsigned)
+            //
+            // zip1(x, 0) interleaves each narrow element of x's low half with a zero
+            // element, which is exactly an unsigned widening of the low half (uxtl / pmovzx).
+            //   zip i8x16  -> i8 ->i16 zero extension
+            //   zip i16x8  -> i16->i32 zero extension
+            //   zip i32x4  -> i32->i64 zero extension
+            if (SIMDValue* zip = m_value->as<SIMDValue>(); zip->child(1)->isV128(vectorAllZeros())) {
+                if (auto widerLane = wideningLaneFor(zip->simdLane())) {
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorExtendLow, B3::V128, *widerLane, SIMDSignMode::Unsigned, zip->child(0));
+                    break;
                 }
             }
+            // Turn this: VectorZipLower(i64x2, i64x2)
+            // Into this: VectorDupElement(i64x2, 0)
+            if (tryReduceSameInputShuffleToDup(0))
+                break;
+            break;
+        }
+
+        case VectorZipHigher: {
+            // Turn this: VectorZipHigher(x, zeroConstant) with a widenable integer lane
+            // Into this: VectorExtendHigh(x, widerLane, Unsigned)
+            if (SIMDValue* zip = m_value->as<SIMDValue>(); zip->child(1)->isV128(vectorAllZeros())) {
+                if (auto widerLane = wideningLaneFor(zip->simdLane())) {
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorExtendHigh, B3::V128, *widerLane, SIMDSignMode::Unsigned, zip->child(0));
+                    break;
+                }
+            }
+            // Turn this: VectorZipHigher(i64x2, i64x2)
+            // Into this: VectorDupElement(i64x2, 1)
+            if (tryReduceSameInputShuffleToDup(1))
+                break;
+            break;
+        }
+
+        case VectorTransposeEven: {
+            ASSERT(isARM64());
+            // Turn this: VectorTransposeEven(i64x2, i64x2)
+            // Into this: VectorDupElement(i64x2, 0)
+            if (tryReduceSameInputShuffleToDup(0))
+                break;
+            break;
+        }
+
+        case VectorTransposeOdd: {
+            ASSERT(isARM64());
+            // Turn this: VectorTransposeOdd(i64x2, i64x2)
+            // Into this: VectorDupElement(i64x2, 1)
+            if (tryReduceSameInputShuffleToDup(1))
+                break;
             break;
         }
 
@@ -3434,52 +4158,41 @@ private:
             break;
         }
 
-        case WasmStructGet: {
-            auto replaceWithNonTrapping = [&] {
-                WasmStructGetValue* structGet = m_value->as<WasmStructGetValue>();
-                SUPPRESS_UNCOUNTED_ARG Value* newValue = m_insertionSet.insert<WasmStructGetValue>(m_index, WasmStructGet, m_value->origin(), m_value->type(), structGet->child(0), structGet->rtt(), structGet->structType(), structGet->fieldIndex(), structGet->fieldHeapKey(), structGet->mutability());
-                newValue->as<WasmStructFieldValue>()->setRange(structGet->range());
-                m_value->replaceWithIdentity(newValue);
-                m_changed = true;
-            };
-
+        case WasmStructGet:
+        case WasmStructSet: {
+            // Clearing the trap bit in place rather than inserting a replacement keeps this the
+            // same Value, which the wasm-GC redundancy tracking needs in order to see it at all:
+            // an inserted replacement stays in m_insertionSet, outside the block, until the walk
+            // has finished.
             if (m_value->traps()) {
-                switch (m_value->child(0)->opcode()) {
-                case WasmStructNew:
-                    replaceWithNonTrapping();
-                    break;
-                case WasmRefCast: {
-                    if (!m_value->child(0)->as<WasmRefTypeCheckValue>()->allowNull()) {
-                        replaceWithNonTrapping();
-                        break;
-                    }
-                    break;
-                }
-                default:
-                    break;
+                Value* base = m_value->child(0);
+                bool baseIsNonNull = base->opcode() == WasmStructNew
+                    || (base->opcode() == WasmRefCast && !base->as<WasmRefTypeCheckValue>()->allowNull());
+                if (baseIsNonNull) {
+                    Kind kind = m_value->kind();
+                    kind.setTraps(false);
+                    m_value->setKindUnsafely(kind);
+                    m_changed = true;
                 }
             }
             break;
         }
 
-        case WasmStructSet: {
-            auto replaceWithNonTrapping = [&] {
-                WasmStructSetValue* structSet = m_value->as<WasmStructSetValue>();
-                SUPPRESS_UNCOUNTED_ARG Value* newValue = m_insertionSet.insert<WasmStructSetValue>(m_index, WasmStructSet, m_value->origin(), structSet->child(0), structSet->child(1), structSet->rtt(), structSet->structType(), structSet->fieldIndex(), structSet->fieldHeapKey());
-                newValue->as<WasmStructFieldValue>()->setRange(structSet->range());
-                m_value->replaceWithIdentity(newValue);
-                m_changed = true;
-            };
+        case WasmArrayLength: {
+            // WasmArrayNew always returns a non-null array of the requested size,
+            // so array.len(array.new(instance, structureID, size)) == size.
+            if (m_value->child(0)->opcode() == WasmArrayNew) {
+                replaceWithIdentity(m_value->child(0)->as<WasmArrayNewValue>()->size());
+                break;
+            }
 
             if (m_value->traps()) {
                 switch (m_value->child(0)->opcode()) {
-                case WasmStructNew:
-                    replaceWithNonTrapping();
-                    break;
                 case WasmRefCast: {
                     if (!m_value->child(0)->as<WasmRefTypeCheckValue>()->allowNull()) {
-                        replaceWithNonTrapping();
-                        break;
+                        Value* newValue = m_insertionSet.insert<WasmArrayLengthValue>(m_index, WasmArrayLength, Int32, m_value->origin(), m_value->child(0));
+                        newValue->as<WasmArrayLengthValue>()->setRange(m_value->as<WasmArrayLengthValue>()->range());
+                        replaceWithIdentity(newValue);
                     }
                     break;
                 }
@@ -3492,12 +4205,31 @@ private:
 
         case WasmRefCast: {
             auto* cast = m_value->as<WasmRefTypeCheckValue>();
+            auto* child = cast->child(0);
+            if (child->opcode() == WasmStructNew) {
+                auto* structNew = child->as<WasmStructNewValue>();
+                auto rtt = structNew->rtt();
+                int32_t toHeapType = cast->targetHeapType();
+                RefPtr targetRTT = cast->targetRTT();
+                if (Wasm::isTypeIndexHeapType(toHeapType)) {
+                    if (rtt->isSubRTT(*targetRTT)) {
+                        // shouldNegate can only be set on WasmRefTest.
+                        ASSERT(!cast->shouldNegate());
+                        replaceWithIdentity(structNew);
+                        break;
+                    }
+                }
+            }
+
             auto replaceWithNullTrapping = [&] {
                 auto flags = cast->flags();
                 flags.remove(WasmRefTypeCheckFlag::AllowNull);
-                SUPPRESS_UNCOUNTED_ARG Value* newValue = m_insertionSet.insert<WasmRefTypeCheckValue>(m_index, trapping(WasmRefCast), Int64, cast->origin(), cast->targetHeapType(), flags, cast->targetRTT(), cast->child(0));
-                m_value->replaceWithIdentity(newValue);
-                m_changed = true;
+                SUPPRESS_UNCOUNTED_ARG Value* newValue;
+                if (cast->hasTargetStructureID())
+                    newValue = m_insertionSet.insert<WasmRefTypeCheckValue>(m_index, trapping(WasmRefCast), Int64, cast->origin(), cast->targetHeapType(), flags, cast->targetRTT(), cast->child(0), cast->child(1));
+                else
+                    newValue = m_insertionSet.insert<WasmRefTypeCheckValue>(m_index, trapping(WasmRefCast), Int64, cast->origin(), cast->targetHeapType(), flags, cast->targetRTT(), cast->child(0));
+                replaceWithIdentity(newValue);
             };
 
             if (cast->allowNull()) {
@@ -3543,153 +4275,26 @@ private:
             break;
         }
 
+        case WasmRefTest: {
+            auto* cast = m_value->as<WasmRefTypeCheckValue>();
+            auto* child = cast->child(0);
+            if (child->opcode() == WasmStructNew) {
+                auto* structNew = child->as<WasmStructNewValue>();
+                auto rtt = structNew->rtt();
+                int32_t toHeapType = cast->targetHeapType();
+                RefPtr targetRTT = cast->targetRTT();
+                if (Wasm::isTypeIndexHeapType(toHeapType)) {
+                    const bool isSubtype = rtt->isSubRTT(*targetRTT);
+                    replaceWithNewValue(m_proc.addIntConstant(m_value, cast->shouldNegate() ? !isSubtype : isSubtype));
+                    break;
+                }
+            }
+            break;
+        }
+
         default:
             break;
         }
-    }
-
-    // Find a node that:
-    //     - functor(node) returns true.
-    //     - it's reachable from the given node via children.
-    //     - it's in the last "bound" slots in the current basic block.
-    // This algorithm is optimized under the assumption that the bound is small.
-    template<typename Functor>
-    Value* findRecentNodeMatching(Value* start, unsigned bound, const Functor& functor)
-    {
-        unsigned startIndex = bound < m_index ? m_index - bound : 0;
-        Value* result = nullptr;
-        start->walk(
-            [&] (Value* value) -> Value::WalkStatus {
-                bool found = false;
-                for (unsigned i = startIndex; i <= m_index; ++i) {
-                    if (m_block->at(i) == value)
-                        found = true;
-                }
-                if (!found)
-                    return Value::IgnoreChildren;
-
-                if (functor(value)) {
-                    result = value;
-                    return Value::Stop;
-                }
-
-                return Value::Continue;
-            });
-        return result;
-    }
-
-    // This specializes a sequence of code up to a Select. This doesn't work when we're at a
-    // terminal. It would be cool to fix that eventually. The main problem is that instead of
-    // splitting the block, we should just insert the then/else blocks. We'll have to create
-    // double the Phis and double the Upsilons. It'll probably be the sort of optimization that
-    // we want to do only after we've done loop optimizations, since this will *definitely*
-    // obscure things. In fact, even this simpler form of select specialization will possibly
-    // obscure other optimizations. It would be great to have two modes of strength reduction,
-    // one that does obscuring optimizations and runs late, and another that does not do
-    // obscuring optimizations and runs early.
-    // FIXME: Make select specialization handle branches.
-    // FIXME: Have a form of strength reduction that does no obscuring optimizations and runs
-    // early.
-    void specializeSelect(Value* source)
-    {
-        if (B3ReduceStrengthInternal::verbose)
-            dataLog("Specializing select: ", deepDump(m_proc, source), "\n");
-
-        // This mutates startIndex to account for the fact that m_block got the front of it
-        // chopped off.
-        BasicBlock* predecessor = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
-        if (m_block == m_root) {
-            m_root = predecessor;
-            m_valueForConstant.clear();
-        }
-
-        // Splitting will commit the insertion set, which changes the exact position of the
-        // source. That's why we do the search after splitting.
-        unsigned startIndex = UINT_MAX;
-        for (unsigned i = predecessor->size(); i--;) {
-            if (predecessor->at(i) == source) {
-                startIndex = i;
-                break;
-            }
-        }
-        
-        RELEASE_ASSERT(startIndex != UINT_MAX);
-
-        // By BasicBlock convention, caseIndex == 0 => then, caseIndex == 1 => else.
-        static constexpr unsigned numCases = 2;
-        BasicBlock* cases[numCases];
-        for (unsigned i = 0; i < numCases; ++i)
-            cases[i] = m_blockInsertionSet.insertBefore(m_block);
-
-        UncheckedKeyHashMap<Value*, Value*> mappings[2];
-
-        // Save things we want to know about the source.
-        Value* predicate = source->child(0);
-
-        for (unsigned i = 0; i < numCases; ++i)
-            mappings[i].add(source, source->child(1 + i));
-
-        auto cloneValue = [&] (Value* value) {
-            ASSERT(value != source);
-
-            for (unsigned i = 0; i < numCases; ++i) {
-                Value* clone = m_proc.clone(value);
-                for (Value*& child : clone->children()) {
-                    if (Value* newChild = mappings[i].get(child))
-                        child = newChild;
-                }
-                if (value->type() != Void)
-                    mappings[i].add(value, clone);
-
-                cases[i]->append(clone);
-                if (value->type() != Void)
-                    cases[i]->appendNew<UpsilonValue>(m_proc, value->origin(), clone, value);
-            }
-
-            value->replaceWithPhi();
-        };
-
-        // The jump that the splitter inserted is of no use to us.
-        predecessor->removeLast(m_proc);
-
-        // Hance the source, it's special.
-        for (unsigned i = 0; i < numCases; ++i) {
-            cases[i]->appendNew<UpsilonValue>(
-                m_proc, source->origin(), source->child(1 + i), source);
-        }
-        source->replaceWithPhi();
-        m_insertionSet.insertValue(m_index, source);
-
-        // Now handle all values between the source and the check.
-        for (unsigned i = startIndex + 1; i < predecessor->size(); ++i) {
-            Value* value = predecessor->at(i);
-            value->owner = nullptr;
-
-            cloneValue(value);
-
-            if (value->type() != Void)
-                m_insertionSet.insertValue(m_index, value);
-            else
-                m_proc.deleteValue(value);
-        }
-
-        // Finally, deal with the check.
-        cloneValue(m_value);
-
-        // Remove the values from the predecessor.
-        predecessor->values().shrink(startIndex);
-        
-        predecessor->appendNew<Value>(m_proc, Branch, source->origin(), predicate);
-        predecessor->setSuccessors(FrequentedBlock(cases[0]), FrequentedBlock(cases[1]));
-
-        for (unsigned i = 0; i < numCases; ++i) {
-            cases[i]->appendNew<Value>(m_proc, Jump, m_value->origin());
-            cases[i]->setSuccessors(FrequentedBlock(m_block));
-        }
-
-        m_changed = true;
-
-        predecessor->updatePredecessorsAfter();
     }
 
     static bool shouldSwapBinaryOperands(Value* value)
@@ -3730,6 +4335,42 @@ private:
             std::swap(m_value->child(0), m_value->child(1));
             m_changed = true;
         }
+    }
+
+    // Turn this: BitOr(Shl(value, N), ZShr(value, M))
+    //            BitXor(Shl(value, N), ZShr(value, M))
+    // Into this: RotR(value, M)
+    // where N, M are constants in (0, width) and N + M == width (32 or 64).
+    // We emit RotR rather than RotL because ARM64 has no rotate-left directly.
+    bool handleRotateFromShiftXorOr()
+    {
+        ASSERT(m_value->opcode() == BitOr || m_value->opcode() == BitXor);
+        unsigned width = m_value->type() == Int32 ? 32 : m_value->type() == Int64 ? 64 : 0;
+        if (!width)
+            return false;
+
+        auto tryMatch = [&](Value* shl, Value* shr) -> bool {
+            if (shl->opcode() != Shl || shr->opcode() != ZShr)
+                return false;
+            if (shl->child(0) != shr->child(0))
+                return false;
+            if (!shl->child(1)->hasInt32() || !shr->child(1)->hasInt32())
+                return false;
+            unsigned n = static_cast<unsigned>(shl->child(1)->asInt32()) & (width - 1);
+            unsigned m = static_cast<unsigned>(shr->child(1)->asInt32()) & (width - 1);
+            if (!n || n + m != width)
+                return false;
+
+            Value* amount = m_insertionSet.insert<Const32Value>(m_index, m_value->origin(), static_cast<int32_t>(m));
+            replaceWithNew<Value>(RotR, m_value->origin(), shl->child(0), amount);
+            return true;
+        };
+
+        if (tryMatch(m_value->child(0), m_value->child(1)))
+            return true;
+        if (tryMatch(m_value->child(1), m_value->child(0)))
+            return true;
+        return false;
     }
 
     // For Op==Add or Sub, turn any of these:
@@ -3944,10 +4585,69 @@ private:
         DUMP_INT_RANGE_AND_RETURN(IntRange::top(value->type()));
     }
 
+    bool tryReduceSameInputShuffleToDup(uint8_t dupLane)
+    {
+        SIMDValue* value = m_value->as<SIMDValue>();
+
+        if (value->simdInfo().lane != SIMDLane::i64x2)
+            return false;
+
+        if (value->child(0) != value->child(1))
+            return false;
+
+        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i64x2, SIMDSignMode::None, dupLane, m_value->child(0));
+        return true;
+    }
+
     template<typename ValueType, typename... Arguments>
     void replaceWithNew(Arguments... arguments)
     {
         replaceWithNewValue(m_proc.add<ValueType>(arguments...));
+    }
+
+    // Fold an unsigned comparison against a small constant into an (in)equality against zero.
+    // Returns true if it replaced m_value.
+    bool tryFoldComparisonToEquality(Opcode opcode, Value* left, Value* right)
+    {
+        switch (opcode) {
+        case BelowEqual:
+            // Turn this: value <= 0
+            // Into this: value == 0
+            if (right->isInt(0)) {
+                replaceWithNew<Value>(Equal, m_value->origin(), left, right);
+                return true;
+            }
+            break;
+        case Below:
+            // Turn this: value < 1
+            // Into this: value == 0
+            if (right->isInt(1)) {
+                auto* zero = m_insertionSet.insertValue(m_index, m_proc.addIntConstant(right, 0));
+                replaceWithNew<Value>(Equal, m_value->origin(), left, zero);
+                return true;
+            }
+            break;
+        case AboveEqual:
+            // Turn this: value >= 1
+            // Into this: value != 0
+            if (right->isInt(1)) {
+                auto* zero = m_insertionSet.insertValue(m_index, m_proc.addIntConstant(right, 0));
+                replaceWithNew<Value>(NotEqual, m_value->origin(), left, zero);
+                return true;
+            }
+            break;
+        case Above:
+            // Turn this: value > 0
+            // Into this: value != 0
+            if (right->isInt(0)) {
+                replaceWithNew<Value>(NotEqual, m_value->origin(), left, right);
+                return true;
+            }
+            break;
+        default:
+            break;
+        }
+        return false;
     }
 
     bool replaceWithNewValue(Value* newValue)
@@ -3989,7 +4689,414 @@ private:
 
     void replaceIfRedundant()
     {
-        m_changed |= m_pureCSE.process(m_value, *m_dominators);
+        if (m_value->opcode() == Identity || m_value->isConstant())
+            return;
+
+        ValueKey key = m_value->key();
+        if (!key)
+            return;
+
+        if (std::optional<Value*> match = m_layeredCSE.findOrAdd(key, m_value)) {
+            m_value->replaceWithIdentity(*match);
+            m_changed = true;
+        }
+    }
+
+    // Each slot has an epoch in m_wasmGCEpochs, and a write bumps the epochs of the slots it may touch.
+    // Slot 0 is the struct catch-all, 1..8 one per array element type, 9 the array catch-all, and
+    // the rest one per mutable struct field some WasmStructSet writes. A key carries the epochs of
+    // its own slot and its kind's catch-all, so bumping a catch-all retires everything of that kind.
+    static constexpr unsigned numberOfWasmGCArrayElementTypes = 8;
+    static constexpr unsigned numberOfWasmGCSharedSlots = numberOfWasmGCArrayElementTypes + /* WasmGCStructAll + WasmGCArrayAll */ 2;
+    static constexpr unsigned wasmGCStructAllSlot() { return 0; }
+    static constexpr unsigned wasmGCArraySlot(unsigned elementType) { return 1 + elementType; }
+    static constexpr unsigned wasmGCArrayAllSlot() { return 1 + numberOfWasmGCArrayElementTypes; }
+    unsigned wasmGCSlotCount() const { return numberOfWasmGCSharedSlots + m_wasmGCStructWidth; }
+
+    unsigned wasmGCStructFieldIndex(HeapRange range) const
+    {
+        // An undecorated access carries HeapRange::top(), which would index anywhere at all.
+        RELEASE_ASSERT(range.distance() == 1);
+        RELEASE_ASSERT(m_wasmGCStructSpan.contains(range.begin()));
+        return range.begin() - m_wasmGCStructSpan.begin();
+    }
+
+    unsigned wasmGCStructSlot(HeapRange range) const
+    {
+        return m_wasmGCStructFieldSlots[wasmGCStructFieldIndex(range)];
+    }
+
+    // Mirrors the heap that WasmOMGIRGenerator's arrayElementHeap() picks for this element type.
+    static unsigned wasmGCArrayTypeIndex(Wasm::StorageType type)
+    {
+        if (type.is<Wasm::PackedType>()) {
+            switch (type.as<Wasm::PackedType>()) {
+            case Wasm::PackedType::I8:
+                return 0;
+            case Wasm::PackedType::I16:
+                return 1;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        switch (type.unpacked().kind()) {
+        case Wasm::TypeKind::I32:
+            return 2;
+        case Wasm::TypeKind::I64:
+            return 3;
+        case Wasm::TypeKind::F32:
+            return 4;
+        case Wasm::TypeKind::F64:
+            return 5;
+        case Wasm::TypeKind::V128:
+            return 6;
+        default:
+            return 7;
+        }
+    }
+
+    // Where one access reads or writes. `heap` names the location exactly and is what the
+    // availability key is built from. `slot` is the epoch that retires it, which distinct
+    // locations share once the epochs are coarsened, and `allSlot` is the catch-all epoch for
+    // its kind, bumped by writes this phase cannot attribute to a single slot.
+    struct WasmGCLocation {
+        Value* base { nullptr };
+        Value* index { nullptr };
+        uint64_t heap { 0 };
+        unsigned slot { 0 };
+        unsigned allSlot { 0 };
+        Mutability mutability { Mutability::Mutable };
+    };
+
+    WasmGCLocation wasmGCStructLocation(WasmStructFieldValue* value) const
+    {
+        HeapRange range = value->range();
+        return { value->child(0), nullptr, range.begin(), wasmGCStructSlot(range), wasmGCStructAllSlot(), value->mutability() };
+    }
+
+    WasmGCLocation wasmGCArrayLocation(WasmArrayElementValue* value) const
+    {
+        unsigned elementType = wasmGCArrayTypeIndex(value->rtt()->elementType().type);
+        HeapRange elementHeap = m_wasmGCArrayHeaps[elementType];
+        HeapRange range = value->range();
+        RELEASE_ASSERT(range.begin() >= elementHeap.begin() && range.end() <= elementHeap.end());
+        return { value->child(0), value->child(1), elementHeap.begin(), wasmGCArraySlot(elementType), wasmGCArrayAllSlot(), value->mutability() };
+    }
+
+    WasmGCAccessKey wasmGCKeyFor(const WasmGCLocation& location) const
+    {
+        // An immutable field is written only when its object is initialized, so its key carries no
+        // epochs and stays available across anything.
+        if (location.mutability == Mutability::Immutable)
+            return { location.base, location.index, location.heap, 0, 0 };
+        return { location.base, location.index, location.heap, m_wasmGCEpochs[location.slot], m_wasmGCEpochs[location.allSlot] };
+    }
+
+    void forwardWasmGCLoad(const WasmGCLocation& location)
+    {
+        WasmGCAccessKey key = wasmGCKeyFor(location);
+        if (std::optional<WasmGCAvailableValue> available = m_wasmGCMap.findOrAdd(key, WasmGCAvailableValue { m_value, 0 })) {
+            Value* forwarded = available->value;
+            if (available->packedMask) {
+                // A value forwarded out of a store into a packed (i8/i16) field still needs the narrowing the
+                // load would have done; signed reads apply their own sign extension outside the load, so
+                // masking is always the right fixup.
+                Value* mask = m_insertionSet.insert<Const32Value>(m_index, m_value->origin(), available->packedMask);
+                forwarded = m_insertionSet.insert<Value>(m_index, BitAnd, m_value->origin(), forwarded, mask);
+            }
+            replaceWithIdentity(forwarded);
+        }
+    }
+
+    void recordWasmGCStore(const WasmGCLocation& location, Value* stored, uint32_t packedMask)
+    {
+        WasmGCAccessKey key = wasmGCKeyFor(location);
+
+        std::optional<WasmGCAvailableValue> available = m_wasmGCMap.find(key);
+
+        if (location.mutability == Mutability::Immutable) {
+            // Wasm validation only permits a store to an immutable field while a fresh object is being
+            // initialized, so each location is written exactly once. Immutable keys carry no epochs, so
+            // a second store would leave the old value findable.
+            RELEASE_ASSERT(!available);
+        } else {
+            if (available && available->value == stored) {
+                m_value->replaceWithNop();
+                m_changed = true;
+                return;
+            }
+
+            // The bumped epoch gives this store a key that's not present, so the add below inserts.
+            ++m_wasmGCEpochs[location.slot];
+            key = wasmGCKeyFor(location);
+        }
+
+        bool added = m_wasmGCMap.add(key, WasmGCAvailableValue { stored, packedMask });
+        ASSERT_UNUSED(added, added);
+    }
+
+    void processWasmGCAccess(HeapRange writesBeforeReduction, bool reduced)
+    {
+        auto packedMaskFor = [](Wasm::StorageType type) -> uint32_t {
+            if (!type.is<Wasm::PackedType>())
+                return 0;
+            switch (type.as<Wasm::PackedType>()) {
+            case Wasm::PackedType::I8:
+                return 0xff;
+            case Wasm::PackedType::I16:
+                return 0xffff;
+            }
+            return 0;
+        };
+
+        switch (m_value->opcode()) {
+        case WasmStructGet: {
+            forwardWasmGCLoad(wasmGCStructLocation(m_value->as<WasmStructFieldValue>()));
+            return;
+        }
+
+        case WasmStructSet: {
+            auto* set = m_value->as<WasmStructSetValue>();
+            ASSERT(!m_wasmGCStructWidth || set->mutability() == Mutability::Immutable || wasmGCStructSlot(set->range()) != wasmGCStructAllSlot());
+            auto field = set->rtt()->field(set->fieldIndex());
+            recordWasmGCStore(wasmGCStructLocation(set), set->child(1), packedMaskFor(field.type));
+            return;
+        }
+
+        case WasmArrayGet: {
+            forwardWasmGCLoad(wasmGCArrayLocation(m_value->as<WasmArrayElementValue>()));
+            return;
+        }
+
+        case WasmArraySet: {
+            auto* set = m_value->as<WasmArraySetValue>();
+            recordWasmGCStore(wasmGCArrayLocation(set), set->child(2), packedMaskFor(set->rtt()->elementType().type));
+            return;
+        }
+
+        default: {
+            // A write this phase cannot pin to one slot retires everything of that kind. Testing the two
+            // spans is the whole cost, so a write that misses wasm-GC memory entirely, which is nearly all
+            // of them, is rejected in two comparisons.
+            auto bumpWasmGCEpochs = [&](HeapRange writes) {
+                if (!writes)
+                    return;
+                if (writes.overlaps(m_wasmGCStructSpan))
+                    ++m_wasmGCEpochs[wasmGCStructAllSlot()];
+                if (writes.overlaps(m_wasmGCArraySpan))
+                    ++m_wasmGCEpochs[wasmGCArrayAllSlot()];
+            };
+
+            // A rule that rewrites this value may insert values ahead of it that carry the original's
+            // writes, and the walk never visits those, so charge both the original and the rewrite.
+            bumpWasmGCEpochs(writesBeforeReduction);
+            if (!reduced)
+                return;
+            HeapRange writesAfterReduction = m_value->effects().writes;
+            if (writesBeforeReduction != writesAfterReduction)
+                bumpWasmGCEpochs(writesAfterReduction);
+            return;
+        }
+        }
+    }
+
+    void bumpAllWasmGCEpochs()
+    {
+        ++m_wasmGCEpochs[wasmGCStructAllSlot()];
+        ++m_wasmGCEpochs[wasmGCArrayAllSlot()];
+    }
+
+    void beginWasmGCBlock(BasicBlock* block)
+    {
+        unsigned slotCount = wasmGCSlotCount();
+
+        // Seed from the immediate dominator, which the walk has already finished. Entries recorded
+        // in a dominating block stay in the map for the whole of its subtree, so an epoch that
+        // started below one of them would make a stale entry findable again; every path reaching
+        // here runs the dominator first, so its tail is a floor on what has been written.
+        BasicBlock* idom = m_dominators->idom(block);
+        ASSERT(idom != block);
+        if (idom) {
+            ASSERT(m_wasmGCVisited.quickGet(idom->index()));
+            auto tailSpan = m_wasmGCEpochsAtTail.span().subspan(idom->index() * slotCount, slotCount);
+            memcpySpan(m_wasmGCEpochs.mutableSpan(), tailSpan);
+        } else
+            m_wasmGCEpochs.fill(0);
+
+        // A block other than the root with no predecessors left lost them to a branch this walk
+        // folded, so nothing summarizes the paths that once flowed into it.
+        if (block != m_root && block->predecessors().isEmpty()) {
+            bumpAllWasmGCEpochs();
+            return;
+        }
+
+        // An unvisited predecessor that the block's own natural loop contains is an ordinary back
+        // edge, whose body can be summarized. Anything else is an irreducible retreating edge,
+        // reaching this block over a path the walk has not accounted for.
+        const NaturalLoop* loop = m_naturalLoops->headerOf(block);
+        bool hasBackEdgeIntoLoop = false;
+        bool hasUnaccountedPredecessor = false;
+        for (BasicBlock* predecessor : block->predecessors()) {
+            if (!m_wasmGCVisited.quickGet(predecessor->index())) {
+                if (loop && m_naturalLoops->belongsTo(predecessor, *loop))
+                    hasBackEdgeIntoLoop = true;
+                else
+                    hasUnaccountedPredecessor = true;
+                continue;
+            }
+            auto tailSpan = m_wasmGCEpochsAtTail.span().subspan(predecessor->index() * slotCount, slotCount);
+            RELEASE_ASSERT(tailSpan.size() == m_wasmGCEpochs.size());
+            for (unsigned i = 0; i < tailSpan.size(); ++i)
+                m_wasmGCEpochs[i] = std::max(m_wasmGCEpochs[i], tailSpan[i]);
+        }
+
+        if (hasUnaccountedPredecessor) {
+            bumpAllWasmGCEpochs();
+            return;
+        }
+
+        if (!hasBackEdgeIntoLoop)
+            return;
+
+        // The walk has not seen the loop body yet. A value computed before the loop cannot be
+        // reused inside it once the body stores to the same slot, so invalidate exactly the slots
+        // the body writes. Bumping everything instead is sound but throws away every
+        // loop-invariant field read, which is most of them in code like this.
+        for (unsigned slot : writesInLoop(*loop))
+            ++m_wasmGCEpochs[slot];
+    }
+
+    // Give a slot to each mutable struct field the procedure stores to. And summarize what each block inside a loop writes, so
+    // that Value::effects() runs over a block once rather than once per loop enclosing it. Stores that initialize an
+    // immutable field or element are left out: immutable keys carry no epochs, so there is nothing for them to bump.
+    void scanWasmGCAccesses()
+    {
+        constexpr uint32_t unwritten = UINT32_MAX;
+        m_wasmGCStructFieldSlots.shrink(0);
+        m_wasmGCStructFieldSlots.grow(m_wasmGCStructSpan.distance());
+        m_wasmGCStructFieldSlots.fill(unwritten);
+
+        m_wasmGCBlockWrites.shrink(0);
+        if (m_naturalLoops->numLoops())
+            m_wasmGCBlockWrites.grow(m_proc.size());
+
+        unsigned width = 0;
+        for (unsigned index = 0; index < m_proc.size(); ++index) {
+            BasicBlock* block = m_proc.at(index);
+            if (!block)
+                continue;
+            BitVector* writes = m_naturalLoops->innerMostLoopOf(block) ? &m_wasmGCBlockWrites[index] : nullptr;
+
+            for (Value* value : *block) {
+                switch (value->opcode()) {
+                case WasmStructSet: {
+                    auto* set = value->as<WasmStructFieldValue>();
+                    if (set->mutability() == Mutability::Immutable)
+                        break;
+                    uint32_t& slot = m_wasmGCStructFieldSlots[wasmGCStructFieldIndex(set->range())];
+                    if (slot == unwritten)
+                        slot = numberOfWasmGCSharedSlots + width++;
+                    if (writes)
+                        writes->set(slot);
+                    break;
+                }
+
+                case WasmArraySet: {
+                    auto* set = value->as<WasmArrayElementValue>();
+                    if (writes && set->mutability() == Mutability::Mutable)
+                        writes->set(wasmGCArrayLocation(set).slot);
+                    break;
+                }
+
+                default: {
+                    if (!writes)
+                        break;
+                    HeapRange written = value->effects().writes;
+                    if (!written)
+                        break;
+                    if (written.overlaps(m_wasmGCStructSpan))
+                        writes->set(wasmGCStructAllSlot());
+                    if (written.overlaps(m_wasmGCArraySpan))
+                        writes->set(wasmGCArrayAllSlot());
+                    break;
+                }
+                }
+            }
+        }
+
+        // Thousands of written fields across thousands of blocks would make the per-block epoch
+        // snapshots the largest thing in the compile. Past that every field uses the struct catch-all
+        // slot, so a store to any field bumps the one epoch every struct key carries.
+        if (static_cast<uint64_t>(m_proc.size()) * (numberOfWasmGCSharedSlots + width) > Options::maxB3WasmGCEpochSnapshotEntries()) {
+            width = 0;
+
+            auto collapseWasmGCFieldWrites = [](BitVector& writes) {
+                BitVector shared;
+                bool wroteField = false;
+                for (unsigned slot : writes) {
+                    if (slot < numberOfWasmGCSharedSlots)
+                        shared.set(slot);
+                    else
+                        wroteField = true;
+                }
+                if (!wroteField)
+                    return;
+                shared.set(wasmGCStructAllSlot());
+                writes = WTF::move(shared);
+            };
+
+            for (BitVector& writes : m_wasmGCBlockWrites)
+                collapseWasmGCFieldWrites(writes);
+        }
+
+        m_wasmGCStructWidth = width;
+        for (uint32_t& slot : m_wasmGCStructFieldSlots) {
+            if (!width || slot == unwritten)
+                slot = wasmGCStructAllSlot();
+        }
+    }
+
+    BitVector writesInLoop(const NaturalLoop& loop)
+    {
+        BitVector writes;
+        for (unsigned i = 0; i < loop.size(); ++i) {
+            // scanWasmGCAccesses() summarizes exactly the blocks that report an innermost loop. A
+            // body block that reported none would contribute nothing here, quietly understating
+            // what the loop writes.
+            ASSERT(m_naturalLoops->innerMostLoopOf(loop.at(i)));
+            writes.merge(m_wasmGCBlockWrites[loop.at(i)->index()]);
+        }
+        return writes;
+    }
+
+    void endWasmGCBlock(BasicBlock* block)
+    {
+        unsigned slotCount = wasmGCSlotCount();
+        auto tailSpan = m_wasmGCEpochsAtTail.mutableSpan().subspan(block->index() * slotCount, slotCount);
+        memcpySpan(tailSpan, m_wasmGCEpochs.span());
+        m_wasmGCVisited.quickSet(block->index());
+    }
+
+    void computeWasmGCSpans()
+    {
+        AbstractHeapRepository& heaps = m_proc.heaps();
+
+        m_wasmGCStructSpan = heaps.JSWebAssemblyStruct_fields.atAnyNumber().range();
+
+        std::array<NumberedAbstractHeap*, numberOfWasmGCArrayElementTypes> arrayHeaps { {
+            &heaps.JSWebAssemblyArray_i8, &heaps.JSWebAssemblyArray_i16,
+            &heaps.JSWebAssemblyArray_i32, &heaps.JSWebAssemblyArray_i64,
+            &heaps.JSWebAssemblyArray_f32, &heaps.JSWebAssemblyArray_f64,
+            &heaps.JSWebAssemblyArray_v128, &heaps.JSWebAssemblyArray_ref,
+        } };
+        uint64_t begin = UINT64_MAX;
+        uint64_t end = 0;
+        for (unsigned elementType = 0; elementType < arrayHeaps.size(); ++elementType) {
+            HeapRange range = arrayHeaps[elementType]->atAnyNumber().range();
+            m_wasmGCArrayHeaps[elementType] = range;
+            begin = std::min(begin, range.begin());
+            end = std::max(end, range.end());
+        }
+        m_wasmGCArraySpan = HeapRange(begin, end);
     }
 
     void simplifyCFG()
@@ -3998,7 +5105,7 @@ private:
             dataLog("Before simplifyCFG:\n");
             dataLog(m_proc);
         }
-        
+
         // We have three easy simplification rules:
         //
         // 1) If a successor is a block that just jumps to another block, then jump directly to
@@ -4030,23 +5137,49 @@ private:
 
             // First check if any of the successors of this block can be forwarded over.
             for (BasicBlock*& successor : block->successorBlocks()) {
-                if (successor != block
-                    && successor->size() == 1
-                    && successor->last()->opcode() == Jump) {
-                    BasicBlock* newSuccessor = successor->successorBlock(0);
-                    if (newSuccessor != successor) {
-                        if (B3ReduceStrengthInternal::verbose) {
-                            dataLog(
-                                "Replacing ", pointerDump(block), "->", pointerDump(successor),
-                                " with ", pointerDump(block), "->", pointerDump(newSuccessor),
-                                "\n");
-                        }
-                        // Note that we do not do replacePredecessor() because the block we're
-                        // skipping will still have newSuccessor as its successor.
-                        newSuccessor->addPredecessor(block);
-                        successor = newSuccessor;
-                        m_changedCFG = true;
+                auto isForwardable = [&](BasicBlock* candidate) {
+                    return candidate != block
+                        && candidate->size() == 1
+                        && candidate->last()->opcode() == Jump
+                        && candidate->successorBlock(0) != candidate;
+                };
+
+                // Trace the chain of jump-only blocks with a Floyd tortoise/hare walk. The hare
+                // (fast) moves two hops at a time, so it reaches the end of the chain first. When it
+                // lands on a non-forwardable block, that block is the chain end and there is no cycle.
+                // Orphan basic blocks can instead form a cycle with no end, in which case the hare
+                // laps the tortoise (slow) and we bail. Cycles are extremely rare.
+                bool sawCycle = false;
+                BasicBlock* slow = successor;
+                BasicBlock* fast = successor;
+                while (true) {
+                    if (!isForwardable(fast))
+                        break;
+                    fast = fast->successorBlock(0);
+                    if (!isForwardable(fast))
+                        break;
+                    fast = fast->successorBlock(0);
+
+                    slow = slow->successorBlock(0);
+                    if (slow == fast) {
+                        sawCycle = true;
+                        break;
                     }
+                }
+
+                // When there is no cycle, fast is the end of the chain.
+                if (!sawCycle && fast != successor) {
+                    BasicBlock* newSuccessor = fast;
+                    dataLogLnIf(B3ReduceStrengthInternal::verbose, "Replacing ", pointerDump(block), "->", pointerDump(successor), " with ", pointerDump(block), "->", pointerDump(newSuccessor));
+                    for (BasicBlock* current = successor; current != newSuccessor;) {
+                        BasicBlock* next = current->successorBlock(0);
+                        current->successorBlock(0) = newSuccessor;
+                        newSuccessor->addPredecessor(current);
+                        current = next;
+                    }
+                    newSuccessor->addPredecessor(block);
+                    successor = newSuccessor;
+                    m_changedCFG = true;
                 }
             }
 
@@ -4066,10 +5199,7 @@ private:
                         }
                     }
                     if (allSame) {
-                        if (B3ReduceStrengthInternal::verbose) {
-                            dataLog(
-                                "Changing ", pointerDump(block), "'s terminal to a Jump.\n");
-                        }
+                        dataLogLnIf(B3ReduceStrengthInternal::verbose, "Changing ", pointerDump(block), "'s terminal to a Jump.");
                         block->last()->replaceWithJump(block, FrequentedBlock(firstSuccessor));
                         m_changedCFG = true;
                     }
@@ -4081,35 +5211,31 @@ private:
                 BasicBlock* successor = block->successorBlock(0);
                 if (successor != block && successor->numPredecessors() == 1) {
                     RELEASE_ASSERT(successor->predecessor(0) == block);
-                    
+
                     // We can merge the two blocks, because the predecessor only jumps to the successor
                     // and the successor is only reachable from the predecessor.
-                    
+
                     // Remove the terminal.
                     Value* value = block->values().takeLast();
                     Origin jumpOrigin = value->origin();
                     RELEASE_ASSERT(value->effects().terminal);
                     m_proc.deleteValue(value);
-                    
+
                     // Append the full contents of the successor to the predecessor.
                     block->values().appendVector(successor->values());
                     block->successors() = successor->successors();
-                    
+
                     // Make sure that the successor has nothing left in it. Make sure that the block
                     // has a terminal so that nobody chokes when they look at it.
                     successor->values().shrink(0);
                     successor->appendNew<Value>(m_proc, Oops, jumpOrigin);
                     successor->clearSuccessors();
-                    
+
                     // Ensure that predecessors of block's new successors know what's up.
                     for (BasicBlock* newSuccessor : block->successorBlocks())
                         newSuccessor->replacePredecessor(successor, block);
 
-                    if (B3ReduceStrengthInternal::verbose) {
-                        dataLog(
-                            "Merged ", pointerDump(block), "->", pointerDump(successor), "\n");
-                    }
-                    
+                    dataLogLnIf(B3ReduceStrengthInternal::verbose, "Merged ", pointerDump(block), "->", pointerDump(successor));
                     m_changedCFG = true;
                 }
             }
@@ -4120,13 +5246,15 @@ private:
             dataLog(m_proc);
         }
     }
-    
+
     void handleChangedCFGIfNecessary()
     {
         if (m_changedCFG) {
             m_proc.resetReachability();
             m_proc.invalidateCFG();
-            m_dominators = nullptr; // Dominators are not valid anymore, and we don't need them yet.
+            // Dominators and natural loops are not valid anymore, and we don't need them yet.
+            m_dominators = nullptr;
+            m_naturalLoops = nullptr;
             m_changed = true;
         }
     }
@@ -4204,25 +5332,38 @@ private:
     }
 
     Procedure& m_proc;
+    ReduceStrengthPass m_pass;
     InsertionSet m_insertionSet;
-    BlockInsertionSet m_blockInsertionSet;
     UncheckedKeyHashMap<ValueKey, Value*> m_valueForConstant;
     BasicBlock* m_root { nullptr };
     BasicBlock* m_block { nullptr };
     unsigned m_index { 0 };
     Value* m_value { nullptr };
     Dominators* m_dominators { nullptr };
-    PureCSE m_pureCSE;
+    LayeredHashMap<ValueKey, Value*> m_layeredCSE;
+
+    bool m_trackWasmGCAccesses { false };
+    LayeredHashMap<WasmGCAccessKey, WasmGCAvailableValue, DefaultHash<WasmGCAccessKey>, WasmGCAccessKeyTraits> m_wasmGCMap;
+    HeapRange m_wasmGCStructSpan;
+    HeapRange m_wasmGCArraySpan;
+    std::array<HeapRange, numberOfWasmGCArrayElementTypes> m_wasmGCArrayHeaps;
+    Vector<uint32_t> m_wasmGCStructFieldSlots;
+    unsigned m_wasmGCStructWidth { 0 };
+    Vector<uint32_t> m_wasmGCEpochs;
+    Vector<uint32_t> m_wasmGCEpochsAtTail;
+    BitVector m_wasmGCVisited; // Blocks whose tail epochs are valid.
+    NaturalLoops* m_naturalLoops { nullptr };
+    Vector<BitVector> m_wasmGCBlockWrites; // Slots each block inside a loop writes.
     bool m_changed { false };
     bool m_changedCFG { false };
 };
 
 } // anonymous namespace
 
-bool reduceStrength(Procedure& proc)
+bool reduceStrength(Procedure& proc, ReduceStrengthPass pass)
 {
     PhaseScope phaseScope(proc, "reduceStrength"_s);
-    ReduceStrength reduceStrength(proc);
+    ReduceStrength reduceStrength(proc, pass);
     return reduceStrength.run();
 }
 

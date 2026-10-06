@@ -74,9 +74,9 @@ public:
     void addSession(RemoteLegacyCDMSessionIdentifier, RemoteLegacyCDMSession&);
     void removeSession(RemoteLegacyCDMSessionIdentifier);
 
-    RemoteLegacyCDM* findCDM(WebCore::CDMPrivateInterface*) const;
+    RemoteLegacyCDM* NODELETE findCDM(WebCore::CDMPrivateInterface*) const;
 
-    void ref() const;
+    void NODELETE ref() const;
     void deref() const;
 
 private:

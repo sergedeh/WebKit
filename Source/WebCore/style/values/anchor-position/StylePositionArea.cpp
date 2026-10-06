@@ -27,8 +27,8 @@
 
 #include "BoxSides.h"
 #include "CSSPropertyParserConsumer+Anchor.h"
-#include "RenderStyle.h"
 #include "StyleBuilderChecking.h"
+#include "StyleComputedStyle.h"
 #include "StylePositionTryFallbackTactic.h"
 #include "StyleSelfAlignmentData.h"
 #include "WritingMode.h"
@@ -36,7 +36,7 @@
 namespace WebCore {
 namespace Style {
 
-[[maybe_unused]] static bool axisIsBlockOrX(PositionAreaAxis axis)
+[[maybe_unused]] static bool NODELETE axisIsBlockOrX(PositionAreaAxis axis)
 {
     switch (axis) {
     case PositionAreaAxis::Horizontal:
@@ -49,7 +49,7 @@ namespace Style {
     }
 }
 
-[[maybe_unused]] static bool axisIsInlineOrY(PositionAreaAxis axis)
+[[maybe_unused]] static bool NODELETE axisIsInlineOrY(PositionAreaAxis axis)
 {
     switch (axis) {
     case PositionAreaAxis::Vertical:
@@ -111,7 +111,7 @@ PositionAreaTrack PositionAreaValue::coordMatchedTrackForAxis(BoxAxis physicalAx
     return shouldFlip ? flipPositionAreaTrack(track) : track;
 }
 
-static ItemPosition flip(ItemPosition alignment)
+static ItemPosition NODELETE flip(ItemPosition alignment)
 {
     return ItemPosition::Start == alignment ? ItemPosition::End : ItemPosition::Start;
 };
@@ -164,7 +164,7 @@ ItemPosition PositionAreaValue::defaultAlignmentForAxis(BoxAxis physicalAxis, Wr
 
 // MARK: - Conversion
 
-static std::optional<PositionAreaAxis> positionAreaKeywordToAxis(CSSValueID keyword)
+static std::optional<PositionAreaAxis> NODELETE positionAreaKeywordToAxis(CSSValueID keyword)
 {
     switch (keyword) {
     case CSSValueLeft:
@@ -237,7 +237,7 @@ static std::optional<PositionAreaAxis> positionAreaKeywordToAxis(CSSValueID keyw
     }
 }
 
-static PositionAreaTrack positionAreaKeywordToTrack(CSSValueID keyword)
+static PositionAreaTrack NODELETE positionAreaKeywordToTrack(CSSValueID keyword)
 {
     switch (keyword) {
     case CSSValueLeft:
@@ -307,7 +307,7 @@ static PositionAreaTrack positionAreaKeywordToTrack(CSSValueID keyword)
     }
 }
 
-static PositionAreaSelf positionAreaKeywordToSelf(CSSValueID keyword)
+static PositionAreaSelf NODELETE positionAreaKeywordToSelf(CSSValueID keyword)
 {
     switch (keyword) {
     case CSSValueLeft:
@@ -371,7 +371,7 @@ static PositionAreaSelf positionAreaKeywordToSelf(CSSValueID keyword)
 }
 
 // Expand a one keyword position-area to the equivalent keyword pair value.
-static std::pair<CSSValueID, CSSValueID> positionAreaExpandKeyword(CSSValueID dim)
+static std::pair<CSSValueID, CSSValueID> NODELETE positionAreaExpandKeyword(CSSValueID dim)
 {
     auto maybeAxis = positionAreaKeywordToAxis(dim);
     if (maybeAxis) {
@@ -390,7 +390,7 @@ static std::pair<CSSValueID, CSSValueID> positionAreaExpandKeyword(CSSValueID di
 }
 
 // Flip a PositionAreaValue across a logical axis (block or inline), given the current writing mode.
-static PositionAreaValue flipPositionAreaByLogicalAxis(LogicalBoxAxis flipAxis, PositionAreaValue area, WritingMode writingMode)
+static PositionAreaValue NODELETE flipPositionAreaByLogicalAxis(LogicalBoxAxis flipAxis, PositionAreaValue area, WritingMode writingMode)
 {
     auto blockOrXSpan = area.blockOrXAxis();
     auto inlineOrYSpan = area.inlineOrYAxis();
@@ -413,7 +413,7 @@ static PositionAreaValue flipPositionAreaByLogicalAxis(LogicalBoxAxis flipAxis, 
 }
 
 // Flip a PositionAreaValue across a physical axis (x or y), given the current writing mode.
-static PositionAreaValue flipPositionAreaByPhysicalAxis(BoxAxis flipAxis, PositionAreaValue area, WritingMode writingMode)
+static PositionAreaValue NODELETE flipPositionAreaByPhysicalAxis(BoxAxis flipAxis, PositionAreaValue area, WritingMode writingMode)
 {
     auto blockOrXSpan = area.blockOrXAxis();
     auto inlineOrYSpan = area.inlineOrYAxis();
@@ -442,7 +442,7 @@ static PositionAreaValue flipPositionAreaByPhysicalAxis(BoxAxis flipAxis, Positi
 // and self properties intact. Because this turns a block/X span into an inline/Y
 // span and vice versa, this function also swaps the order of the spans, so
 // that the block/X span goes before the inline/Y span.
-static PositionAreaValue mirrorPositionAreaAcrossDiagonal(PositionAreaValue area)
+static PositionAreaValue NODELETE mirrorPositionAreaAcrossDiagonal(PositionAreaValue area)
 {
     auto blockOrXSpan = area.blockOrXAxis();
     auto inlineOrYSpan = area.inlineOrYAxis();
@@ -457,16 +457,17 @@ auto CSSValueConversion<PositionArea>::operator()(BuilderState& state, const CSS
 {
     std::pair<CSSValueID, CSSValueID> dimPair;
 
-    if (value.isValueID()) {
-        if (value.valueID() == CSSValueNone)
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        auto valueID = keywordValue->valueID();
+        if (valueID == CSSValueNone)
             return CSS::Keyword::None { };
 
-        dimPair = positionAreaExpandKeyword(value.valueID());
-    } else if (RefPtr pair = dynamicDowncast<CSSValuePair>(value)) {
-        const auto& first = pair->first();
-        const auto& second = pair->second();
+        dimPair = positionAreaExpandKeyword(valueID);
+    } else if (auto* pair = dynamicDowncast<CSSValuePair>(value)) {
+        RefPtr first = dynamicDowncast<CSSKeywordValue>(pair->first());
+        RefPtr second = dynamicDowncast<CSSKeywordValue>(pair->second());
 
-        if (!first.isValueID() || !second.isValueID()) {
+        if (!first || !second) {
             state.setCurrentPropertyInvalidAtComputedValueTime();
             return CSS::Keyword::None { };
         }
@@ -474,7 +475,7 @@ auto CSSValueConversion<PositionArea>::operator()(BuilderState& state, const CSS
         // The parsing logic guarantees the keyword pair is in the correct order
         // (horizontal/x/block axis before vertical/Y/inline axis)
 
-        dimPair = { first.valueID(), second.valueID() };
+        dimPair = { first->valueID(), second->valueID() };
     } else {
         // value MUST be a single ValueID or a pair of ValueIDs, as returned by the parsing logic.
         state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -527,7 +528,7 @@ auto CSSValueConversion<PositionArea>::operator()(BuilderState& state, const CSS
     return area;
 }
 
-static CSSValueID keywordForPositionAreaSpan(PositionAreaSpan span)
+static CSSValueID NODELETE keywordForPositionAreaSpan(PositionAreaSpan span)
 {
     auto axis = span.axis();
     auto track = span.track();
@@ -655,7 +656,7 @@ static CSSValueID keywordForPositionAreaSpan(PositionAreaSpan span)
     return CSSValueLeft;
 }
 
-Ref<CSSValue> CSSValueCreation<PositionAreaValue>::operator()(CSSValuePool&, const RenderStyle&, const PositionAreaValue& value)
+Ref<CSSValue> CSSValueCreation<PositionAreaValue>::operator()(CSSValuePool&, const Style::ComputedStyle&, const PositionAreaValue& value)
 {
     auto blockOrXAxisKeyword = keywordForPositionAreaSpan(value.blockOrXAxis());
     auto inlineOrYAxisKeyword = keywordForPositionAreaSpan(value.inlineOrYAxis());
@@ -665,7 +666,7 @@ Ref<CSSValue> CSSValueCreation<PositionAreaValue>::operator()(CSSValuePool&, con
 
 // MARK: - Serialization
 
-void Serialize<PositionAreaValue>::operator()(StringBuilder& builder, const CSS::SerializationContext& context, const RenderStyle&, const PositionAreaValue& value)
+void Serialize<PositionAreaValue>::operator()(StringBuilder& builder, const CSS::SerializationContext& context, const Style::ComputedStyle&, const PositionAreaValue& value)
 {
     auto blockOrXAxisKeyword = keywordForPositionAreaSpan(value.blockOrXAxis());
     auto inlineOrYAxisKeyword = keywordForPositionAreaSpan(value.inlineOrYAxis());

@@ -4,10 +4,7 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -56,8 +53,8 @@ class ViewportTest : public ANGLETest<>
         // Firstly ensure that no errors have been hit.
         EXPECT_GL_NO_ERROR();
 
-        GLint viewportSize[4];
-        glGetIntegerv(GL_VIEWPORT, viewportSize);
+        std::array<GLint, 4> viewportSize;
+        glGetIntegerv(GL_VIEWPORT, viewportSize.data());
 
         // Clear to green. Might be a scissored clear, if scissorSize != window size
         glClearColor(0, 1, 0, 1);
@@ -344,8 +341,8 @@ TEST_P(ViewportTest, Overflow)
     glVertexAttribPointer(positionLocation, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
     glEnableVertexAttribArray(positionLocation);
 
-    constexpr int kMaxSize            = std::numeric_limits<int>::max();
-    const int kTestViewportSizes[][4] = {
+    constexpr int kMaxSize = std::numeric_limits<int>::max();
+    constexpr std::array<std::array<int, 4>, 4> kTestViewportSizes = {{
         {
             kMaxSize,
             kMaxSize,
@@ -370,9 +367,9 @@ TEST_P(ViewportTest, Overflow)
             kMaxSize,
             kMaxSize,
         },
-    };
+    }};
 
-    for (const int *viewportSize : kTestViewportSizes)
+    for (const auto &viewportSize : kTestViewportSizes)
     {
         // Set the viewport.
         glViewport(viewportSize[0], viewportSize[1], viewportSize[2], viewportSize[3]);
@@ -437,17 +434,8 @@ TEST_P(ViewportTest, ClampOnStore)
 }
 
 // Use this to select which configurations (e.g. which renderer, which GLES major version) these
-// tests should be run against. D3D11 Feature Level 9 and D3D9 emulate large and negative viewports
-// in the vertex shader. We should test both of these as well as D3D11 Feature Level 10_0+.
-ANGLE_INSTANTIATE_TEST(ViewportTest,
-                       ES2_D3D9(),
-                       ES2_D3D11(),
-                       ES2_D3D11_PRESENT_PATH_FAST(),
-                       ES2_OPENGLES(),
-                       ES3_OPENGLES(),
-                       ES2_METAL(),
-                       ES2_OPENGL(),
-                       ES2_VULKAN());
+// tests should be run against.
+ANGLE_INSTANTIATE_TEST_ES2_AND(ViewportTest, ES2_D3D11_PRESENT_PATH_FAST());
 
 // This test suite is not instantiated on some OSes.
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ViewportTest);

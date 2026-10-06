@@ -112,9 +112,14 @@ void UIScriptControllerCocoa::completeTaskAsynchronouslyAfterActivityStateUpdate
     });
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerCocoa::scrollingTreeAsText() const
+RefPtr<OpaqueJSString> UIScriptControllerCocoa::scrollingTreeAsText() const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _scrollingTreeAsText]));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)[webView() _scrollingTreeAsText]));
+}
+
+RefPtr<OpaqueJSString> UIScriptControllerCocoa::scrollingTreeIncludingNodeIDsAsText() const
+{
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)[webView() _scrollingTreeIncludingNodeIDsAsText]));
 }
 
 void UIScriptControllerCocoa::removeViewFromWindow(JSValueRef callback)
@@ -176,19 +181,19 @@ void UIScriptControllerCocoa::setDefaultCalendarType(JSStringRef calendarIdentif
     TestController::singleton().setDefaultCalendarType((__bridge NSString *)cfCalendarIdentifier.get(), (__bridge NSString *)cfLocaleIdentifier.get());
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerCocoa::lastUndoLabel() const
+RefPtr<OpaqueJSString> UIScriptControllerCocoa::lastUndoLabel() const
 {
-    return adopt(JSStringCreateWithCFString((__bridge CFStringRef)platformUndoManager().undoActionName));
+    return adoptRef(JSStringCreateWithCFString((__bridge CFStringRef)platformUndoManager().undoActionName));
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerCocoa::caLayerTreeAsText() const
+RefPtr<OpaqueJSString> UIScriptControllerCocoa::caLayerTreeAsText() const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _caLayerTreeAsText]));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)[webView() _caLayerTreeAsText]));
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerCocoa::caLayerTreeAsTextForLayerWithID(uint64_t layerID) const
+RefPtr<OpaqueJSString> UIScriptControllerCocoa::caLayerTreeAsTextForLayerWithID(uint64_t layerID) const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _caLayerTreeAsTextForLayerWithID:layerID]));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)[webView() _caLayerTreeAsTextForLayerWithID:layerID]));
 }
 
 JSObjectRef UIScriptControllerCocoa::propertiesOfLayerWithID(uint64_t layerID) const
@@ -197,9 +202,14 @@ JSObjectRef UIScriptControllerCocoa::propertiesOfLayerWithID(uint64_t layerID) c
     return JSValueToObject(m_context->jsContext(), [jsValue JSValueRef], nullptr);
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerCocoa::firstRedoLabel() const
+RefPtr<OpaqueJSString> UIScriptControllerCocoa::delegatedZoomOverrideAsText() const
 {
-    return adopt(JSStringCreateWithCFString((__bridge CFStringRef)platformUndoManager().redoActionName));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef)[webView() _delegatedZoomOverrideAsTextForTesting]));
+}
+
+RefPtr<OpaqueJSString> UIScriptControllerCocoa::firstRedoLabel() const
+{
+    return adoptRef(JSStringCreateWithCFString((__bridge CFStringRef)platformUndoManager().redoActionName));
 }
 
 NSUndoManager *UIScriptControllerCocoa::platformUndoManager() const
@@ -322,6 +332,20 @@ unsigned long UIScriptControllerCocoa::countOfUpdatesWithLayerChanges() const
     return webView()._countOfUpdatesWithLayerChanges;
 }
 
+void UIScriptControllerCocoa::simulateAvailableSpeechVoicesDidChangeOnBackgroundThread(JSValueRef callback)
+{
+    unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
+
+    dispatch_async(globalDispatchQueueSingleton(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), makeBlockPtr([this, protectedThis = Ref { *this }, callbackID] {
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"AVSpeechSynthesisAvailableVoicesDidChangeNotification" object:nil];
+        dispatch_async(mainDispatchQueueSingleton(), makeBlockPtr([this, protectedThis, callbackID] {
+            if (!m_context)
+                return;
+            m_context->asyncTaskComplete(callbackID);
+        }).get());
+    }).get());
+}
+
 #if ENABLE(IMAGE_ANALYSIS)
 
 uint64_t UIScriptControllerCocoa::currentImageAnalysisRequestID() const
@@ -363,6 +387,32 @@ static _WKTextExtractionDataDetectorTypes dataDetectorTypes(JSValueRef typesArra
     return result;
 }
 
+static std::optional<_WKTextExtractionEventListenerCategory> eventListenerCategories(JSValueRef categoriesArray, JSContextRef jsContext)
+{
+    if (!JSValueIsArray(jsContext, categoriesArray))
+        return std::nullopt;
+
+    _WKTextExtractionEventListenerCategory result = _WKTextExtractionEventListenerCategoryNone;
+
+    RetainPtr context = [JSContext contextWithJSGlobalContextRef:JSContextGetGlobalContext(jsContext)];
+    for (NSString *category in [[JSValue valueWithJSValueRef:categoriesArray inContext:context.get()] toArray]) {
+        if ([category caseInsensitiveCompare:@"click"] == NSOrderedSame)
+            result |= _WKTextExtractionEventListenerCategoryClick;
+        else if ([category caseInsensitiveCompare:@"hover"] == NSOrderedSame)
+            result |= _WKTextExtractionEventListenerCategoryHover;
+        else if ([category caseInsensitiveCompare:@"touch"] == NSOrderedSame)
+            result |= _WKTextExtractionEventListenerCategoryTouch;
+        else if ([category caseInsensitiveCompare:@"wheel"] == NSOrderedSame)
+            result |= _WKTextExtractionEventListenerCategoryWheel;
+        else if ([category caseInsensitiveCompare:@"keyboard"] == NSOrderedSame)
+            result |= _WKTextExtractionEventListenerCategoryKeyboard;
+        else if ([category caseInsensitiveCompare:@"all"] == NSOrderedSame)
+            result |= _WKTextExtractionEventListenerCategoryAll;
+    }
+
+    return result;
+}
+
 RetainPtr<_WKTextExtractionConfiguration> createTextExtractionConfiguration(WKWebView *webView, TextExtractionTestOptions* options, JSContextRef jsContext)
 {
     auto extractionRect = CGRectNull;
@@ -372,6 +422,7 @@ RetainPtr<_WKTextExtractionConfiguration> createTextExtractionConfiguration(WKWe
     RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
     [configuration setIncludeRects:options && options->includeRects];
     [configuration setIncludeURLs:options && options->includeURLs];
+    [configuration setIncludeSelectOptions:options && options->includeSelectOptions];
     [configuration setShortenURLs:options && options->shortenURLs];
     [configuration setNodeIdentifierInclusion:^{
         if (!options)
@@ -389,9 +440,18 @@ RetainPtr<_WKTextExtractionConfiguration> createTextExtractionConfiguration(WKWe
 
         return _WKTextExtractionNodeIdentifierInclusionNone;
     }()];
-    [configuration setIncludeEventListeners:options && options->includeEventListeners];
+
+    [configuration setEventListenerCategories:[&] -> _WKTextExtractionEventListenerCategory {
+        if (!options)
+            return _WKTextExtractionEventListenerCategoryNone;
+
+        auto categories = eventListenerCategories(options->eventListenerCategories, jsContext);
+        return categories.value_or(_WKTextExtractionEventListenerCategoryNone);
+    }()];
+
     [configuration setIncludeAccessibilityAttributes:options && options->includeAccessibilityAttributes];
     [configuration setIncludeTextInAutoFilledControls:options && options->includeTextInAutoFilledControls];
+    [configuration setIncludeOffscreenPasswordFields:options && options->includeOffscreenPasswordFields];
 
     auto outputFormat = [&] -> std::optional<_WKTextExtractionOutputFormat> {
         if (!options)
@@ -415,8 +475,17 @@ RetainPtr<_WKTextExtractionConfiguration> createTextExtractionConfiguration(WKWe
     if (outputFormat)
         [configuration setOutputFormat:*outputFormat];
 
-    if (auto wordLimit = options ? options->wordLimit : 0)
-        [configuration setMaxWordsPerParagraph:static_cast<NSUInteger>(wordLimit)];
+    if (options) {
+        if (auto wordLimit = options->wordLimit)
+            [configuration setMaxWordsPerParagraph:static_cast<NSUInteger>(wordLimit)];
+
+        auto policy = toWTFString(options->wordLimitPolicy);
+        if (equalLettersIgnoringASCIICase(policy, "always"_s))
+            [configuration setMaxWordsPerParagraphPolicy:_WKTextExtractionWordLimitPolicyAlways];
+        else if (equalLettersIgnoringASCIICase(policy, "discretionary"_s))
+            [configuration setMaxWordsPerParagraphPolicy:_WKTextExtractionWordLimitPolicyDiscretionary];
+    }
+
     [configuration setTargetRect:extractionRect];
     [configuration setMergeParagraphs:options && options->mergeParagraphs];
     [configuration setSkipNearlyTransparentContent:options && options->skipNearlyTransparentContent];
@@ -433,7 +502,7 @@ void UIScriptControllerCocoa::requestTextExtraction(JSValueRef callback, TextExt
         if (!m_context)
             return;
 
-        auto description = adopt(JSStringCreateWithCFString((__bridge CFStringRef)recursiveDescription(rootItem, includeRects)));
+        RefPtr description = adoptRef(JSStringCreateWithCFString((__bridge CFStringRef)recursiveDescription(rootItem, includeRects)));
         m_context->asyncTaskComplete(callbackID, { JSValueMakeString(m_context->jsContext(), description.get()) });
     }];
 }
@@ -446,7 +515,7 @@ void UIScriptControllerCocoa::requestDebugText(JSValueRef callback, TextExtracti
         if (!m_context)
             return;
 
-        auto description = adopt(JSStringCreateWithCFString((__bridge CFStringRef)text));
+        RefPtr description = adoptRef(JSStringCreateWithCFString((__bridge CFStringRef)text));
         m_context->asyncTaskComplete(callbackID, { JSValueMakeString(m_context->jsContext(), description.get()) });
     }];
 }
@@ -474,8 +543,8 @@ void UIScriptControllerCocoa::performTextExtractionInteraction(JSStringRef jsAct
         action = _WKTextExtractionActionKeyPress;
     if (equalLettersIgnoringASCIICase(actionName, "highlighttext"))
         action = _WKTextExtractionActionHighlightText;
-    if (equalLettersIgnoringASCIICase(actionName, "scrollby"))
-        action = _WKTextExtractionActionScrollBy;
+    if (equalLettersIgnoringASCIICase(actionName, "scroll"))
+        action = _WKTextExtractionActionScroll;
 
     if (!action) {
         ASSERT_NOT_REACHED();
@@ -505,9 +574,18 @@ void UIScriptControllerCocoa::performTextExtractionInteraction(JSStringRef jsAct
         if (!m_context)
             return;
 
-        RetainPtr description = [result.error.userInfo objectForKey:NSDebugDescriptionErrorKey] ?: @"";
-        JSRetainPtr jsDescription = adopt(JSStringCreateWithCFString((__bridge CFStringRef)description.get()));
-        m_context->asyncTaskComplete(callbackID, { JSValueMakeString(m_context->jsContext(), jsDescription.get()) });
+        NSDictionary *resultDict = @{
+            @"error": [result.error.userInfo objectForKey:NSDebugDescriptionErrorKey] ?: @"",
+            @"summary": result.summary ?: @"",
+        };
+
+        RetainPtr data = [NSJSONSerialization dataWithJSONObject:resultDict options:0 error:nil];
+        RetainPtr resultString = data ? adoptNS([[NSString alloc] initWithData:data.get() encoding:NSUTF8StringEncoding]) : nullptr;
+        if (!resultString)
+            resultString = @"{\"error\":\"\",\"summary\":\"\"}";
+
+        RefPtr jsString = adoptRef(JSStringCreateWithCFString((__bridge CFStringRef)resultString.get()));
+        m_context->asyncTaskComplete(callbackID, { JSValueMakeString(m_context->jsContext(), jsString.get()) });
     }];
 }
 
@@ -519,7 +597,7 @@ void UIScriptControllerCocoa::requestRenderedTextForFrontmostTarget(int x, int y
         if (!m_context)
             return;
 
-        JSRetainPtr result = adopt(JSStringCreateWithCFString((__bridge CFStringRef)(elements.firstObject.renderedText ?: @"")));
+        RefPtr result = adoptRef(JSStringCreateWithCFString((__bridge CFStringRef)(elements.firstObject.renderedText ?: @"")));
         m_context->asyncTaskComplete(callbackID, { JSValueMakeString(m_context->jsContext(), result.get()) });
     }];
 }
@@ -541,7 +619,7 @@ void UIScriptControllerCocoa::adjustVisibilityForFrontmostTarget(int x, int y, J
                 return;
             }
 
-            JSRetainPtr firstSelector = adopt(JSStringCreateWithCFString((__bridge CFStringRef)[frontTarget selectors].firstObject));
+            RefPtr firstSelector = adoptRef(JSStringCreateWithCFString((__bridge CFStringRef)[frontTarget selectors].firstObject));
             m_context->asyncTaskComplete(callbackID, { JSValueMakeString(m_context->jsContext(), firstSelector.get()) });
         }];
     }];
@@ -624,15 +702,20 @@ void UIScriptControllerCocoa::setObscuredInsets(double top, double right, double
 }
 
 #if ENABLE(THREADED_ANIMATIONS)
-JSRetainPtr<JSStringRef> UIScriptControllerCocoa::animationStackForLayerWithID(uint64_t layerID) const
+RefPtr<OpaqueJSString> UIScriptControllerCocoa::animationStackForLayerWithID(uint64_t layerID) const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef) [webView() _animationStackForLayerWithID:layerID]));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef) [webView() _animationStackForLayerWithIDInMainFrame:layerID]));
 }
 
-JSRetainPtr<JSStringRef> UIScriptControllerCocoa::progressBasedTimelinesForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID) const
+RefPtr<OpaqueJSString> UIScriptControllerCocoa::progressBasedTimelinesForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID) const
 {
-    return adopt(JSStringCreateWithCFString((CFStringRef) [webView() _progressBasedTimelinesForScrollingNodeID:scrollingNodeID processID:processID]));
+    return adoptRef(JSStringCreateWithCFString((CFStringRef) [webView() _progressBasedTimelinesForScrollingNodeID:scrollingNodeID processID:processID]));
 }
 #endif
+
+bool UIScriptControllerCocoa::displayLinkWantsHighFrameRate() const
+{
+    return [webView() _displayLinkWantsHighFrameRate];
+}
 
 } // namespace WTR

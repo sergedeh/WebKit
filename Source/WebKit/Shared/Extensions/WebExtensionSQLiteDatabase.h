@@ -31,6 +31,7 @@
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/URL.h>
 #include <wtf/WorkQueue.h>
 
@@ -41,7 +42,7 @@ namespace WebKit {
 class WebExtensionSQLiteStatement;
 class WebExtensionSQLiteStore;
 
-class WebExtensionSQLiteDatabase final : public RefCounted<WebExtensionSQLiteDatabase> {
+class WebExtensionSQLiteDatabase final : public ThreadSafeRefCounted<WebExtensionSQLiteDatabase> {
     WTF_MAKE_NONCOPYABLE(WebExtensionSQLiteDatabase);
     WTF_MAKE_TZONE_ALLOCATED(WebExtensionSQLiteDatabase);
 
@@ -55,7 +56,6 @@ public:
         return adoptRef(*new WebExtensionSQLiteDatabase(std::forward<Args>(args)...));
     }
 
-    explicit WebExtensionSQLiteDatabase(const URL&, Ref<WorkQueue>&&);
     ~WebExtensionSQLiteDatabase()
     {
         ASSERT(!m_db);
@@ -86,18 +86,20 @@ public:
 
     int close();
 
-    sqlite3* sqlite3Handle() const { return m_db; };
-    void assertQueue();
+    sqlite3* sqlite3Handle() const LIFETIME_BOUND { return m_db; };
+    void NODELETE assertQueue();
     WorkQueue& queue() const { return m_queue; };
 
 private:
+    WebExtensionSQLiteDatabase(const URL&, Ref<WorkQueue>&&);
+
     RefPtr<API::Error> errorWithSQLiteErrorCode(int errorCode);
     URL privateOnDiskDatabaseURL();
 
     sqlite3* m_db { nullptr };
     URL m_url;
 
-    CString m_lastErrorMessage;
+    UTF8CString m_lastErrorMessage;
 
     const Ref<WorkQueue> m_queue;
 };

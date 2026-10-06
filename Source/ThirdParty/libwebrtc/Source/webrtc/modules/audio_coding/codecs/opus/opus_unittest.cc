@@ -16,11 +16,11 @@
 #include <cstdlib>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <tuple>
 #include <vector>
 
-#include "api/array_view.h"
 #include "modules/audio_coding/codecs/opus/opus_interface.h"
 #include "modules/audio_coding/neteq/tools/audio_loop.h"
 #include "rtc_base/checks.h"
@@ -131,7 +131,7 @@ class OpusTest
   void PrepareSpeechData(int block_length_ms, int loop_length_ms);
 
   int EncodeDecode(WebRtcOpusEncInst* encoder,
-                   ArrayView<const int16_t> input_audio,
+                   std::span<const int16_t> input_audio,
                    WebRtcOpusDecInst* decoder,
                    int16_t* output_audio,
                    int16_t* audio_type);
@@ -217,7 +217,7 @@ void OpusTest::CheckAudioBounded(const int16_t* audio,
 }
 
 int OpusTest::EncodeDecode(WebRtcOpusEncInst* encoder,
-                           ArrayView<const int16_t> input_audio,
+                           std::span<const int16_t> input_audio,
                            WebRtcOpusDecInst* decoder,
                            int16_t* output_audio,
                            int16_t* audio_type) {
@@ -955,32 +955,6 @@ TEST_P(OpusTest, OpusDecodeRepacketized) {
   opus_repacketizer_destroy(rp);
   EXPECT_EQ(0, WebRtcOpus_EncoderFree(opus_encoder_));
   EXPECT_EQ(0, WebRtcOpus_DecoderFree(opus_decoder_));
-}
-
-TEST(OpusVadTest, CeltUnknownStatus) {
-  const uint8_t celt[] = {0x80};
-  EXPECT_EQ(WebRtcOpus_PacketHasVoiceActivity(celt, 1), -1);
-}
-
-TEST(OpusVadTest, Mono20msVadSet) {
-  uint8_t silk20msMonoVad[] = {0x78, 0x80};
-  EXPECT_TRUE(WebRtcOpus_PacketHasVoiceActivity(silk20msMonoVad, 2));
-}
-
-TEST(OpusVadTest, Mono20MsVadUnset) {
-  uint8_t silk20msMonoSilence[] = {0x78, 0x00};
-  EXPECT_FALSE(WebRtcOpus_PacketHasVoiceActivity(silk20msMonoSilence, 2));
-}
-
-TEST(OpusVadTest, Stereo20MsVadOnSideChannel) {
-  uint8_t silk20msStereoVadSideChannel[] = {0x78 | 0x04, 0x20};
-  EXPECT_TRUE(
-      WebRtcOpus_PacketHasVoiceActivity(silk20msStereoVadSideChannel, 2));
-}
-
-TEST(OpusVadTest, TwoOpusMonoFramesVadOnSecond) {
-  uint8_t twoMonoFrames[] = {0x78 | 0x1, 0x00, 0x80};
-  EXPECT_TRUE(WebRtcOpus_PacketHasVoiceActivity(twoMonoFrames, 3));
 }
 
 }  // namespace webrtc

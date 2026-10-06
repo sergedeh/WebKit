@@ -9,13 +9,10 @@
 #ifndef COMMON_UTILITIES_H_
 #define COMMON_UTILITIES_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLSLANG/ShaderLang.h>
+#include "common/unsafe_buffers.h"
 
 #include <math.h>
 #include <string>
@@ -51,6 +48,8 @@ bool IsImage2DType(GLenum type);
 bool IsAtomicCounterType(GLenum type);
 bool IsOpaqueType(GLenum type);
 bool IsMatrixType(GLenum type);
+bool IsFloatScalarAndVectorType(GLenum type);
+bool IsFloatVectorType(GLenum type);
 GLenum TransposeMatrixType(GLenum type);
 int VariableRegisterCount(GLenum type);
 int MatrixRegisterCount(GLenum type, bool isRowMajorMatrix);
@@ -99,9 +98,9 @@ constexpr T GetPrimitiveRestartIndexFromType()
 static_assert(GetPrimitiveRestartIndexFromType<uint8_t>() == 0xFF,
               "verify restart index for uint8_t values");
 static_assert(GetPrimitiveRestartIndexFromType<uint16_t>() == 0xFFFF,
-              "verify restart index for uint8_t values");
+              "verify restart index for uint16_t values");
 static_assert(GetPrimitiveRestartIndexFromType<uint32_t>() == 0xFFFFFFFF,
-              "verify restart index for uint8_t values");
+              "verify restart index for uint32_t values");
 
 bool IsTriangleMode(PrimitiveMode drawMode);
 bool IsPolygonMode(PrimitiveMode mode);
@@ -383,7 +382,7 @@ template <typename T>
 void FillWithNullptr(T *array)
 {
     // std::array::fill(nullptr) yields unoptimized, unrolled loop over array items
-    memset(array->data(), 0, array->size() * sizeof(*array->data()));
+    ANGLE_UNSAFE_TODO(memset(array->data(), 0, array->size() * sizeof(*array->data())));
     // sanity check for non-0 nullptr
     ASSERT(array->data()[0] == nullptr);
 }

@@ -33,6 +33,8 @@
 #include "JSDOMPromise.h"
 #include "JSFetchResponse.h"
 #include "Logging.h"
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/StrongInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
@@ -59,9 +61,9 @@ static inline Ref<DOMPromise> retrieveHandledPromise(JSC::JSGlobalObject& global
 
     JSC::JSLockHolder lock(globalObject.vm());
 
-    auto& jsDOMGlobalObject = *JSC::jsCast<JSDOMGlobalObject*>(&globalObject);
+    auto& jsDOMGlobalObject = downcast<JSDOMGlobalObject>(globalObject);
     auto deferredPromise = DeferredPromise::create(jsDOMGlobalObject);
-    return DOMPromise::create(jsDOMGlobalObject, *JSC::jsCast<JSC::JSPromise*>(deferredPromise->promise()));
+    return DOMPromise::create(jsDOMGlobalObject, *downcast<JSC::JSPromise>(deferredPromise->promise()));
 }
 
 FetchEvent::FetchEvent(JSC::JSGlobalObject& globalObject, const AtomString& type, Init&& initializer, IsTrusted isTrusted)
@@ -95,6 +97,13 @@ ExceptionOr<void> FetchEvent::respondWith(Ref<DOMPromise>&& promise)
     if (m_respondWithEntered)
         return Exception { ExceptionCode::InvalidStateError, "Event respondWith flag is set"_s };
 
+    processRespondWithPromise(WTF::move(promise));
+    return { };
+}
+
+void FetchEvent::processRespondWithPromise(Ref<DOMPromise>&& promise)
+{
+    ASSERT(!m_respondWithEntered);
     m_respondPromise = promise.copyRef();
     addExtendLifetimePromise(promise.get());
 
@@ -110,8 +119,6 @@ ExceptionOr<void> FetchEvent::respondWith(Ref<DOMPromise>&& promise)
 
     if (isRegistered == DOMPromise::IsCallbackRegistered::No)
         respondWithError(createResponseError(m_request->url(), "FetchEvent unable to handle respondWith promise."_s, ResourceError::IsSanitized::Yes));
-
-    return { };
 }
 
 void FetchEvent::onResponse(ResponseCallback&& callback)
@@ -126,7 +133,7 @@ void FetchEvent::respondWithError(ResourceError&& error)
     processResponse(makeUnexpected(WTF::move(error)));
 }
 
-void FetchEvent::processResponse(Expected<Ref<FetchResponse>, std::optional<ResourceError>>&& result)
+void FetchEvent::processResponse(std::expected<Ref<FetchResponse>, std::optional<ResourceError>>&& result)
 {
     m_respondPromise = nullptr;
     m_waitToRespond = false;
@@ -195,7 +202,7 @@ void FetchEvent::navigationPreloadIsReady(ResourceResponse&& response)
 
     auto& vm = globalObject->vm();
     JSC::JSLockHolder lock(vm);
-    JSC::Strong<JSC::Unknown> value { vm, toJS(globalObject, JSC::jsCast<JSDOMGlobalObject*>(globalObject), fetchResponse.get()) };
+    JSC::Strong<JSC::Unknown> value { vm, toJS(globalObject, globalObject, fetchResponse.get()) };
     m_preloadResponsePromise->resolve(value);
 
     // We postpone the load to leave some time for the service worker to use the preload before loading it.

@@ -43,15 +43,15 @@ public:
     static Ref<WindowProxy> create(Frame&);
     WEBCORE_EXPORT ~WindowProxy();
 
-    WEBCORE_EXPORT Frame* frame() const;
+    WEBCORE_EXPORT Frame* NODELETE frame() const;
     void detachFromFrame();
     void replaceFrame(Frame&);
 
-    void destroyJSWindowProxy(DOMWrapperWorld&);
+    void destroyJSWindowProxy(DOMWrapperWorld&, Frame* frameForNotification = nullptr);
 
     Vector<JSC::Strong<JSWindowProxy>> jsWindowProxiesAsVector() const;
 
-    JSWindowProxy* jsWindowProxy(DOMWrapperWorld&);
+    WEBCORE_EXPORT JSWindowProxy* jsWindowProxy(DOMWrapperWorld&);
     WEBCORE_EXPORT JSWindowProxy* existingJSWindowProxy(DOMWrapperWorld&) const;
 
     WEBCORE_EXPORT JSDOMGlobalObject* globalObject(DOMWrapperWorld&);

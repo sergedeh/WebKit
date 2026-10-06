@@ -33,6 +33,7 @@
 
 #if ENABLE(WEBDRIVER_BIDI)
 
+#include "DOMWrapperWorld.h"
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/NeverDestroyed.h>
@@ -45,7 +46,7 @@ namespace WebCore {
 using namespace Inspector;
 
 namespace {
-static WeakPtr<AutomationInstrumentationClient>& automationClient()
+static WeakPtr<AutomationInstrumentationClient>& NODELETE automationClient()
 {
     static NeverDestroyed<WeakPtr<AutomationInstrumentationClient>> s_client;
     return s_client.get();
@@ -71,6 +72,36 @@ void AutomationInstrumentation::addMessageToConsole(const std::unique_ptr<Consol
     WTF::ensureOnMainThread([source = message->source(), type = message->type(), level = message->level(), messageText = message->message(), timestamp = message->timestamp()] {
         if (RefPtr client = automationClient().get())
             client->addMessageToConsole(source, level, messageText, type, timestamp);
+    });
+}
+
+void AutomationInstrumentation::scriptRealmCreated(FrameIdentifier frameID, const SecurityOriginData& origin, DOMWrapperWorld& world)
+{
+    if (!automationClient()) [[likely]]
+        return;
+
+    // Only notify for normal world (main page execution), not user/internal worlds.
+    if (!world.isNormal())
+        return;
+
+    WTF::ensureOnMainThread([frameID, origin = origin.isolatedCopy()] {
+        if (RefPtr client = automationClient().get())
+            client->scriptRealmCreated(frameID, origin);
+    });
+}
+
+void AutomationInstrumentation::scriptRealmDestroyed(FrameIdentifier frameID, DOMWrapperWorld& world)
+{
+    if (!automationClient()) [[likely]]
+        return;
+
+    // Only notify for normal world (main page execution), not user/internal worlds.
+    if (!world.isNormal())
+        return;
+
+    WTF::ensureOnMainThread([frameID] {
+        if (RefPtr client = automationClient().get())
+            client->scriptRealmDestroyed(frameID);
     });
 }
 

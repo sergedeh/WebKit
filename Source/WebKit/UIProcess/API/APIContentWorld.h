@@ -40,16 +40,17 @@ namespace API {
 
 class ContentWorld final : public API::ObjectImpl<API::Object::Type::ContentWorld>, public CanMakeWeakPtr<ContentWorld> {
 public:
-    static OptionSet<WebKit::ContentWorldOption> defaultOptions();
+    static OptionSet<WebKit::ContentWorldOption> NODELETE defaultOptions();
     static ContentWorld* worldForIdentifier(WebKit::ContentWorldIdentifier);
     static Ref<ContentWorld> sharedWorldWithName(const WTF::String&, OptionSet<WebKit::ContentWorldOption> = defaultOptions() );
+    static Ref<ContentWorld> createNamelessWorld(OptionSet<WebKit::ContentWorldOption>);
     static ContentWorld& pageContentWorldSingleton();
     static ContentWorld& defaultClientWorldSingleton();
 
     virtual ~ContentWorld();
 
     WebKit::ContentWorldIdentifier identifier() const { return m_identifier; }
-    const WTF::String& name() const { return m_name; }
+    const WTF::String& name() const LIFETIME_BOUND { return m_name; }
     WebKit::ContentWorldData worldDataForProcess(WebKit::WebProcessProxy&) const;
 
     bool allowAccessToClosedShadowRoots() const { return m_options.contains(WebKit::ContentWorldOption::AllowAccessToClosedShadowRoots); }
@@ -67,8 +68,8 @@ public:
     bool allowJSHandleCreation() const { return m_options.contains(WebKit::ContentWorldOption::AllowJSHandleCreation); }
     void setAllowJSHandleCreation() { m_options.add(WebKit::ContentWorldOption::AllowJSHandleCreation); }
 
-    bool allowNodeSerialization() const { return m_options.contains(WebKit::ContentWorldOption::AllowNodeSerialization); }
-    void setAllowNodeSerialization() { m_options.add(WebKit::ContentWorldOption::AllowNodeSerialization); }
+    bool allowNodeSnapshotCreation() const { return m_options.contains(WebKit::ContentWorldOption::AllowNodeSnapshotCreation); }
+    void setAllowNodeSnapshotCreation() { m_options.add(WebKit::ContentWorldOption::AllowNodeSnapshotCreation); }
 
     void addAssociatedUserContentControllerProxy(WebKit::WebUserContentControllerProxy&);
 

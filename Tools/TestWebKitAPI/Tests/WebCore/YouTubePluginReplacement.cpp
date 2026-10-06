@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "PlatformUtilities.h"
+#include "Helpers/PlatformUtilities.h"
 #include <WebCore/YouTubePluginReplacement.h>
 #include <wtf/MainThread.h>
 #include <wtf/URL.h>
@@ -45,7 +45,7 @@ static void test(ASCIILiteral inputURLString, ASCIILiteral expectedURLString)
 {
     URL inputURL { inputURLString };
     String actualURLString = YouTubePluginReplacement::youTubeURLFromAbsoluteURL(inputURL, inputURLString);
-    EXPECT_WK_STREQ(expectedURLString.characters(), actualURLString.utf8().data());
+    EXPECT_WK_STREQ(expectedURLString.characters(), actualURLString);
 }
 
 TEST_F(YouTubePluginReplacementTest, YouTubeURLFromAbsoluteURL)

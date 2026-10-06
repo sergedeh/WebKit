@@ -35,7 +35,7 @@
 #include "Image.h"
 #include "LocalFrameView.h"
 #include "Logging.h"
-#include "PublicSuffixStore.h"
+#include "RegistrableDomain.h"
 #include "SharedBuffer.h"
 #include "WorkerGlobalScope.h"
 #include "WorkerLoaderProxy.h"
@@ -136,7 +136,7 @@ bool MemoryCache::add(CachedResource& resource)
     
     resourceAccessed(resource);
 
-    LOG(ResourceLoading, "MemoryCache::add Added '%.255s', resource %p\n", resource.url().string().latin1().data(), &resource);
+    LOG(ResourceLoading, "MemoryCache::add Added '%.255s', resource %p\n", resource.url().string().utf8(), &resource);
     return true;
 }
 
@@ -145,15 +145,10 @@ void MemoryCache::revalidationSucceeded(CachedResource& revalidatingResource, co
     RELEASE_ASSERT(isMainThread());
     ASSERT(response.source() == ResourceResponse::Source::MemoryCacheAfterValidation);
     ASSERT(revalidatingResource.resourceToRevalidate());
-    CachedResourceHandle protectedRevalidatingResource { revalidatingResource };
-    CachedResourceHandle resource = *revalidatingResource.resourceToRevalidate();
+    RefPtr protectedRevalidatingResource { revalidatingResource };
+    RefPtr resource = *revalidatingResource.resourceToRevalidate();
     ASSERT(!resource->inCache());
     ASSERT(resource->isLoaded());
-
-    // Calling remove() can potentially delete revalidatingResource, which we use
-    // below. This mustn't be the case since revalidation means it is loaded
-    // and so canDelete() is false.
-    ASSERT(!revalidatingResource.canDelete());
 
     remove(revalidatingResource);
 
@@ -162,7 +157,7 @@ void MemoryCache::revalidationSucceeded(CachedResource& revalidatingResource, co
     // one.
     std::pair key { resource->url(), resource->cachePartition() };
     if (auto* existingResources = sessionResourceMap(resource->sessionID())) {
-        if (CachedResourceHandle existingResource = existingResources->get(key))
+        if (RefPtr existingResource = existingResources->get(key))
             remove(*existingResource);
     }
 
@@ -181,7 +176,6 @@ void MemoryCache::revalidationSucceeded(CachedResource& revalidatingResource, co
         adjustSize(resource->hasClients(), delta);
 
     revalidatingResource.switchClientsToRevalidatedResource();
-    ASSERT(!revalidatingResource.m_deleted);
     // This deletes the revalidating resource.
     revalidatingResource.clearResourceToRevalidate();
 }
@@ -242,13 +236,13 @@ void MemoryCache::pruneLiveResources(bool shouldDestroyDecodedDataForAllLiveReso
 void MemoryCache::forEachResource(NOESCAPE const Function<void(CachedResource&)>& function)
 {
     RELEASE_ASSERT(isMainThread());
-    Vector<WeakPtr<CachedResource>> allResources;
+    Vector<CachedResourceHandle<CachedResource>> allResources;
     for (auto& lruList : m_allResources) {
         allResources.reserveCapacity(allResources.size() + lruList->computeSize());
         allResources.appendRange(lruList->begin(), lruList->end());
     }
     for (auto& resource : allResources) {
-        if (CachedResourceHandle resourceHandle = resource.get())
+        if (RefPtr resourceHandle = resource)
             function(*resourceHandle);
     }
 }
@@ -262,7 +256,7 @@ void MemoryCache::forEachSessionResource(PAL::SessionID sessionID, NOESCAPE cons
         return;
 
     for (auto& weakResource : copyToVector(it->value->values())) {
-        if (CachedResourceHandle resource = weakResource.get())
+        if (RefPtr resource = weakResource)
             function(*resource);
     }
 }
@@ -302,9 +296,9 @@ void MemoryCache::pruneLiveResourcesToSize(unsigned targetSize, bool shouldDestr
     // For more details see: https://bugs.webkit.org/show_bug.cgi?id=30209
     auto it = m_liveDecodedResources.begin();
     while (it != m_liveDecodedResources.end()) {
-        CachedResourceHandle current = *it;
+        RefPtr current = *it;
 
-        LOG(ResourceLoading, " live resource %p %.255s - loaded %d, decodedSize %u", current.get(), current->url().string().utf8().data(), current->isLoaded(), current->decodedSize());
+        LOG(ResourceLoading, " live resource %p %.255s - loaded %d, decodedSize %u", current.get(), current->url().string().utf8(), current->isLoaded(), current->decodedSize());
 
         // Increment the iterator now because the call to destroyDecodedData() below
         // may cause a call to ListHashSet::remove() and invalidate the current
@@ -370,7 +364,7 @@ void MemoryCache::pruneDeadResourcesToSize(unsigned targetSize)
         // First flush all the decoded data in this queue.
         // Remove from the head, since this is the least frequently accessed of the objects.
         for (auto& weakResource : lruList) {
-            CachedResourceHandle resource = weakResource.get();
+            RefPtr resource = weakResource;
             if (!resource)
                 continue;
 
@@ -379,8 +373,8 @@ void MemoryCache::pruneDeadResourcesToSize(unsigned targetSize)
                 continue;
 
             if (!resource->hasClients() && !resource->isPreloaded() && resource->isLoaded()) {
-                // Destroy our decoded data. This will remove us from 
-                // m_liveDecodedResources, and possibly move us to a different 
+                // Destroy our decoded data. This will remove us from
+                // m_liveDecodedResources, and possibly move us to a different
                 // LRU list in m_allResources.
 
                 LOG(ResourceLoading, " lru resource %p destroyDecodedData", resource.get());
@@ -397,7 +391,7 @@ void MemoryCache::pruneDeadResourcesToSize(unsigned targetSize)
         // Now evict objects from this list.
         // Remove from the head, since this is the least frequently accessed of the objects.
         for (auto& weakResource : lruList) {
-            CachedResourceHandle resource = weakResource.get();
+            RefPtr resource = weakResource;
             if (!resource)
                 continue;
 
@@ -434,9 +428,9 @@ void MemoryCache::setCapacities(unsigned minDeadBytes, unsigned maxDeadBytes, un
 void MemoryCache::remove(CachedResource& resource)
 {
     RELEASE_ASSERT(isMainThread());
-    CachedResourceHandle protectedResource { resource };
+    RefPtr protectedResource { resource };
 
-    LOG(ResourceLoading, "Evicting resource %p for '%.255s' from cache", &resource, resource.url().string().latin1().data());
+    LOG(ResourceLoading, "Evicting resource %p for '%.255s' from cache", &resource, resource.url().string().utf8());
     // The resource may have already been removed by someone other than our caller,
     // who needed a fresh copy for a reload. See <http://bugs.webkit.org/show_bug.cgi?id=12479#c6>.
     if (auto* resources = sessionResourceMap(resource.sessionID())) {
@@ -544,20 +538,20 @@ void MemoryCache::removeResourcesWithOrigin(const SecurityOrigin& origin, const 
     Vector<WeakPtr<CachedResource>> resourcesWithOrigin;
     for (auto& resources : m_sessionResources.values()) {
         for (auto& keyValue : *resources) {
-            auto& resource = *keyValue.value;
+            Ref resource = *keyValue.value;
             auto& partitionName = keyValue.key.second;
             if (partitionName == cachePartition) {
                 resourcesWithOrigin.append(resource);
                 continue;
             }
-            auto resourceOrigin = SecurityOrigin::create(resource.url());
+            auto resourceOrigin = SecurityOrigin::create(resource->url());
             if (resourceOrigin->equal(origin))
                 resourcesWithOrigin.append(resource);
         }
     }
 
     for (auto& weakResource : resourcesWithOrigin) {
-        if (CachedResourceHandle resource = weakResource.get())
+        if (RefPtr resource = weakResource)
             remove(*resource);
     }
 }
@@ -565,18 +559,20 @@ void MemoryCache::removeResourcesWithOrigin(const SecurityOrigin& origin, const 
 void MemoryCache::removeResourcesWithOrigin(const SecurityOrigin& origin)
 {
     RELEASE_ASSERT(isMainThread());
-    String originPartition = ResourceRequest::partitionName(origin.host());
+    RegistrableDomain domain = RegistrableDomain::uncheckedCreateFromHost(origin.host());
+    String originPartition = domain.isEmpty() ? emptyString() : domain.string();
     removeResourcesWithOrigin(origin, originPartition);
 }
 
 void MemoryCache::removeResourcesWithOrigin(const ClientOrigin& origin)
 {
     RELEASE_ASSERT(isMainThread());
-    auto cachePartition = origin.topOrigin == origin.clientOrigin ? emptyString() : ResourceRequest::partitionName(origin.topOrigin.host());
+    RegistrableDomain topDomain = RegistrableDomain::uncheckedCreateFromHost(origin.topOrigin.host());
+    auto cachePartition = origin.topOrigin == origin.clientOrigin ? emptyString() : (topDomain.isEmpty() ? emptyString() : topDomain.string());
     removeResourcesWithOrigin(origin.clientOrigin.securityOrigin(), cachePartition);
 }
 
-void MemoryCache::removeResourcesWithOrigins(PAL::SessionID sessionID, const HashSet<RefPtr<SecurityOrigin>>& origins)
+void MemoryCache::removeResourcesWithOrigins(PAL::SessionID sessionID, const HashSet<Ref<SecurityOrigin>>& origins)
 {
     RELEASE_ASSERT(isMainThread());
     auto* resourceMap = sessionResourceMap(sessionID);
@@ -585,23 +581,25 @@ void MemoryCache::removeResourcesWithOrigins(PAL::SessionID sessionID, const Has
 
     HashSet<String> originPartitions;
 
-    for (auto& origin : origins)
-        originPartitions.add(ResourceRequest::partitionName(origin->host()));
+    for (auto& origin : origins) {
+        RegistrableDomain domain = RegistrableDomain::uncheckedCreateFromHost(origin->host());
+        originPartitions.add(domain.isEmpty() ? emptyString() : domain.string());
+    }
 
     Vector<WeakPtr<CachedResource>> resourcesToRemove;
     for (auto& keyValuePair : *resourceMap) {
-        auto& resource = *keyValuePair.value;
+        Ref resource = *keyValuePair.value;
         auto& partitionName = keyValuePair.key.second;
         if (originPartitions.contains(partitionName)) {
             resourcesToRemove.append(resource);
             continue;
         }
-        if (origins.contains(SecurityOrigin::create(resource.url()).ptr()))
+        if (origins.contains(SecurityOrigin::create(resource->url()).ptr()))
             resourcesToRemove.append(resource);
     }
 
     for (auto& weakResource : resourcesToRemove) {
-        if (CachedResourceHandle resource = weakResource.get())
+        if (RefPtr resource = weakResource)
             remove(*resource);
     }
 }
@@ -611,31 +609,31 @@ void MemoryCache::getOriginsWithCache(SecurityOriginSet& origins)
     RELEASE_ASSERT(isMainThread());
     for (auto& resources : m_sessionResources.values()) {
         for (auto& keyValue : *resources) {
-            auto& resource = *keyValue.value;
+            Ref resource = *keyValue.value;
             auto& partitionName = keyValue.key.second;
             if (!partitionName.isEmpty())
                 origins.add(SecurityOrigin::create("http"_s, partitionName, 0));
             else
-                origins.add(SecurityOrigin::create(resource.url()));
+                origins.add(SecurityOrigin::create(resource->url()));
         }
     }
 }
 
-HashSet<RefPtr<SecurityOrigin>> MemoryCache::originsWithCache(PAL::SessionID sessionID) const
+HashSet<Ref<SecurityOrigin>> MemoryCache::originsWithCache(PAL::SessionID sessionID) const
 {
     RELEASE_ASSERT(isMainThread());
 
-    HashSet<RefPtr<SecurityOrigin>> origins;
+    HashSet<Ref<SecurityOrigin>> origins;
 
     auto it = m_sessionResources.find(sessionID);
     if (it != m_sessionResources.end()) {
         for (auto& keyValue : *it->value) {
-            auto& resource = *keyValue.value;
+            Ref resource = *keyValue.value;
             auto& partitionName = keyValue.key.second;
             if (!partitionName.isEmpty())
                 origins.add(SecurityOrigin::create("http"_s, partitionName, 0));
             else
-                origins.add(SecurityOrigin::create(resource.url()));
+                origins.add(SecurityOrigin::create(resource->url()));
         }
     }
 
@@ -691,7 +689,7 @@ void MemoryCache::adjustSize(bool live, long long delta)
 void MemoryCache::removeRequestFromSessionCaches(ScriptExecutionContext& context, const ResourceRequest& request)
 {
     if (auto* globalScope = dynamicDowncast<WorkerGlobalScope>(context)) {
-        auto* workerLoaderProxy = globalScope->thread()->workerLoaderProxy();
+        CheckedPtr workerLoaderProxy = globalScope->thread()->workerLoaderProxy();
         if (!workerLoaderProxy)
             return;
         workerLoaderProxy->postTaskToLoader([request = request.isolatedCopy()] (ScriptExecutionContext& context) {
@@ -702,7 +700,7 @@ void MemoryCache::removeRequestFromSessionCaches(ScriptExecutionContext& context
 
     Ref memoryCache = MemoryCache::singleton();
     for (auto& resources : memoryCache->m_sessionResources) {
-        if (CachedResourceHandle resource = memoryCache->resourceForRequestImpl(request, *resources.value))
+        if (RefPtr resource = memoryCache->resourceForRequestImpl(request, *resources.value))
             memoryCache->remove(*resource);
     }
 }
@@ -728,6 +726,7 @@ MemoryCache::Statistics MemoryCache::getStatistics()
             case CachedResource::Type::CSSStyleSheet:
                 stats.cssStyleSheets.addResource(*resource);
                 break;
+            case CachedResource::Type::Text:
             case CachedResource::Type::JSON:
             case CachedResource::Type::Script:
                 stats.scripts.addResource(*resource);
@@ -759,7 +758,7 @@ void MemoryCache::setDisabled(bool disabled)
     while (!m_sessionResources.isEmpty()) {
         auto& resources = *m_sessionResources.begin()->value;
         ASSERT(!resources.isEmpty());
-        CachedResourceHandle resource = *resources.begin()->value;
+        RefPtr resource = *resources.begin()->value;
         remove(*resource);
     }
 }
@@ -846,9 +845,9 @@ void MemoryCache::dumpLRULists(bool includeLive) const
     int size = m_allResources.size();
     for (int i = size - 1; i >= 0; i--) {
         WTFLogAlways("\nList %d:\n", i);
-        for (auto& resource : *m_allResources[i]) {
-            if (includeLive || !resource.hasClients())
-                WTFLogAlways("  %p %.255s %.1fK, %.1fK, accesses: %u, clients: %d\n", &resource, resource.url().string().utf8().data(), resource.decodedSize() / 1024.0f, (resource.encodedSize() + resource.overheadSize()) / 1024.0f, resource.accessCount(), resource.numberOfClients());
+        for (Ref resource : *m_allResources[i]) {
+            if (includeLive || !resource->hasClients())
+                SAFE_WTFLOGALWAYS("  %p %.255s %.1fK, %.1fK, accesses: %u, clients: %d\n", resource.ptr(), resource->url().string().utf8(), resource->decodedSize() / 1024.0f, (resource->encodedSize() + resource->overheadSize()) / 1024.0f, resource->accessCount(), resource->numberOfClients());
         }
     }
 }

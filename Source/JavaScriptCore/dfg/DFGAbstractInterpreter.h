@@ -224,7 +224,7 @@ public:
     FiltrationResult filterByValue(AbstractValue&, FrozenValue);
     FiltrationResult filterClassInfo(AbstractValue&, const ClassInfo*);
     
-    PhiChildren* phiChildren() { return m_phiChildren.get(); }
+    PhiChildren* phiChildren() LIFETIME_BOUND { return m_phiChildren.get(); }
     
     void filterICStatus(Node*);
     
@@ -235,7 +235,7 @@ private:
     bool handleConstantBinaryBitwiseOp(Node*);
 
     template<typename Functor>
-    void forAllValues(unsigned indexInBlock, Functor&);
+    void forAllValues(unsigned indexInBlock, NOESCAPE Functor&);
     
     void clobberStructures();
     void didFoldClobberStructures();
@@ -270,7 +270,7 @@ private:
 
     void verifyEdge(Node*, Edge);
     void verifyEdges(Node*);
-    void executeDoubleUnaryOpEffects(Node*, const auto& functor);
+    void executeDoubleUnaryOpEffects(Node*, NOESCAPE const auto& functor);
     
     bool handleConstantDivOp(Node*);
 

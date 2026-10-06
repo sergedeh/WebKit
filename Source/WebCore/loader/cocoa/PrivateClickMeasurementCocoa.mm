@@ -38,7 +38,7 @@ std::optional<String> PrivateClickMeasurement::calculateAndUpdateSourceUnlinkabl
     return calculateAndUpdateUnlinkableToken(serverPublicKeyBase64URL, m_sourceUnlinkableToken, "source"_s);
 }
 
-Expected<PCM::DestinationUnlinkableToken, String> PrivateClickMeasurement::calculateAndUpdateDestinationUnlinkableToken(const String& serverPublicKeyBase64URL)
+std::expected<PCM::DestinationUnlinkableToken, String> PrivateClickMeasurement::calculateAndUpdateDestinationUnlinkableToken(const String& serverPublicKeyBase64URL)
 {
     PCM::DestinationUnlinkableToken destinationToken;
     auto errorMessage = calculateAndUpdateUnlinkableToken(serverPublicKeyBase64URL, destinationToken, "destination"_s);
@@ -54,7 +54,7 @@ std::optional<String> PrivateClickMeasurement::calculateAndUpdateUnlinkableToken
         auto serverPublicKeyData = base64URLDecode(serverPublicKeyBase64URL);
         if (!serverPublicKeyData)
             return makeString("Could not decode the "_s, contextForLogMessage, "'s public key data."_s);
-        RetainPtr serverPublicKey = toNSData(serverPublicKeyData->span());
+        RetainPtr serverPublicKey = WTF::toNSData(serverPublicKeyData->span());
 
         NSError* nsError = 0;
         unlinkableToken.blinder = adoptNS([PAL::allocRSABSSATokenBlinderInstance() initWithPublicKey:serverPublicKey.get() error:&nsError]);
@@ -91,10 +91,10 @@ std::optional<String> PrivateClickMeasurement::calculateAndUpdateSourceSecretTok
     return std::nullopt;
 }
 
-Expected<PCM::DestinationSecretToken, String> PrivateClickMeasurement::calculateAndUpdateDestinationSecretToken(const String& serverResponseBase64URL, PCM::DestinationUnlinkableToken& unlinkableToken)
+std::expected<PCM::DestinationSecretToken, String> PrivateClickMeasurement::calculateAndUpdateDestinationSecretToken(const String& serverResponseBase64URL, PCM::DestinationUnlinkableToken& unlinkableToken)
 {
     PCM::DestinationSecretToken secretToken;
-    auto errorMessage = calculateAndUpdateSecretToken(serverResponseBase64URL, unlinkableToken, secretToken, "source"_s);
+    auto errorMessage = calculateAndUpdateSecretToken(serverResponseBase64URL, unlinkableToken, secretToken, "destination"_s);
     if (errorMessage)
         return makeUnexpected(*errorMessage);
     return secretToken;
@@ -110,7 +110,7 @@ std::optional<String> PrivateClickMeasurement::calculateAndUpdateSecretToken(con
         auto serverResponseData = base64URLDecode(serverResponseBase64URL);
         if (!serverResponseData)
             return makeString("Could not decode "_s, contextForLogMessage, " response data."_s);
-        RetainPtr serverResponse = toNSData(serverResponseData->span());
+        RetainPtr serverResponse = WTF::toNSData(serverResponseData->span());
 
         NSError* nsError = 0;
         unlinkableToken.readyToken = [unlinkableToken.waitingToken activateTokenWithServerResponse:serverResponse.get() error:&nsError];

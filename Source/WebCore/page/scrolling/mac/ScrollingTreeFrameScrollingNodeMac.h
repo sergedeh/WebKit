@@ -49,6 +49,9 @@ public:
 
     RetainPtr<CALayer> rootContentsLayer() const { return m_rootContentsLayer; }
 
+    void startRubberBandSnapBack();
+    void rubberBandTargetOffsetDidChange();
+
 protected:
     ScrollingTreeFrameScrollingNodeMac(ScrollingTree&, ScrollingNodeType, ScrollingNodeID);
 
@@ -68,7 +71,7 @@ protected:
     unsigned exposedUnfilledArea() const;
 
 private:
-    ScrollingTreeScrollingNodeDelegateMac& delegate() const;
+    ScrollingTreeScrollingNodeDelegateMac& NODELETE delegate() const;
 
     void willBeDestroyed() final;
     void willDoProgrammaticScroll(const FloatPoint&) final;

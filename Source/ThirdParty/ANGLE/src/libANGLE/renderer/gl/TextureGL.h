@@ -115,7 +115,7 @@ class TextureGL : public TextureImpl
                               const gl::ImageIndex &index,
                               GLenum internalFormat,
                               GLenum type,
-                              GLint sourceLevel,
+                              gl::LevelIndex sourceLevel,
                               bool unpackFlipY,
                               bool unpackPremultiplyAlpha,
                               bool unpackUnmultiplyAlpha,
@@ -123,7 +123,7 @@ class TextureGL : public TextureImpl
     angle::Result copySubTexture(const gl::Context *context,
                                  const gl::ImageIndex &index,
                                  const gl::Offset &destOffset,
-                                 GLint sourceLevel,
+                                 gl::LevelIndex sourceLevel,
                                  const gl::Box &sourceBox,
                                  bool unpackFlipY,
                                  bool unpackPremultiplyAlpha,
@@ -166,13 +166,6 @@ class TextureGL : public TextureImpl
                                            const void *imageCreateInfoPNext) override;
 
     angle::Result setImageExternal(const gl::Context *context,
-                                   const gl::ImageIndex &index,
-                                   GLenum internalFormat,
-                                   const gl::Extents &size,
-                                   GLenum format,
-                                   GLenum type) override;
-
-    angle::Result setImageExternal(const gl::Context *context,
                                    gl::TextureType type,
                                    egl::Stream *stream,
                                    const egl::Stream::GLTextureDescription &desc) override;
@@ -180,12 +173,12 @@ class TextureGL : public TextureImpl
     angle::Result generateMipmap(const gl::Context *context) override;
 
     angle::Result clearImage(const gl::Context *context,
-                             GLint level,
+                             gl::LevelIndex level,
                              GLenum format,
                              GLenum type,
                              const uint8_t *data) override;
     angle::Result clearSubImage(const gl::Context *context,
-                                GLint level,
+                                gl::LevelIndex level,
                                 const gl::Box &area,
                                 GLenum format,
                                 GLenum type,
@@ -197,8 +190,6 @@ class TextureGL : public TextureImpl
     angle::Result setEGLImageTarget(const gl::Context *context,
                                     gl::TextureType type,
                                     egl::Image *image) override;
-
-    GLint getNativeID() const override;
 
     GLuint getTextureID() const { return mTextureID; }
 
@@ -230,6 +221,20 @@ class TextureGL : public TextureImpl
 
   private:
     angle::Result recreateTexture(const gl::Context *context);
+    // One of sourceTexture or destTexture must be mTextureID.
+    angle::Result copyLevelsBetweenTextures(const gl::Context *context,
+                                            GLuint sourceTexture,
+                                            size_t sourceLevel,
+                                            GLuint destTexture,
+                                            size_t destLevel,
+                                            size_t levelCount);
+    angle::Result recreateNativeStoragePreservingLevels(const gl::Context *context);
+    angle::Result useTempForNonZeroBaseLevelGenmipmap(const gl::Context *context);
+
+    angle::Result recreateTextureOnTexImage3DDepthIncreaseWorkaround(const gl::Context *context,
+                                                                     gl::TextureTarget target,
+                                                                     size_t level,
+                                                                     const gl::Extents &size);
 
     angle::Result setImageHelper(const gl::Context *context,
                                  gl::TextureTarget target,
@@ -239,6 +244,17 @@ class TextureGL : public TextureImpl
                                  GLenum format,
                                  GLenum type,
                                  const uint8_t *pixels);
+    angle::Result setImageViaScratchUnpackBuffer(const gl::Context *context,
+                                                 gl::TextureTarget target,
+                                                 size_t level,
+                                                 GLenum internalFormat,
+                                                 const gl::Extents &size,
+                                                 GLenum format,
+                                                 GLenum type,
+                                                 const gl::PixelUnpackState &unpack,
+                                                 bool isCompressed,
+                                                 size_t imageSize,
+                                                 const uint8_t *pixels);
     // This changes the current pixel unpack state that will have to be reapplied.
     angle::Result reserveTexImageToBeFilled(const gl::Context *context,
                                             gl::TextureTarget target,
@@ -267,6 +283,7 @@ class TextureGL : public TextureImpl
                                                const gl::PixelUnpackState &unpack,
                                                const gl::Buffer *unpackBuffer,
                                                const uint8_t *pixels);
+    angle::Result allocateMipmapLevelsForGeneration(const gl::Context *context);
 
     angle::Result syncTextureStateSwizzle(const gl::Context *context,
                                           const FunctionsGL *functions,
@@ -286,6 +303,19 @@ class TextureGL : public TextureImpl
                       const LevelInfoGL &levelInfo);
     const LevelInfoGL &getLevelInfo(gl::TextureTarget target, size_t level) const;
     const LevelInfoGL &getBaseLevelInfo() const;
+
+    angle::Result initializeContentsImpl(const gl::Context *context,
+                                         GLenum binding,
+                                         const gl::ImageIndex &imageIndex);
+
+    angle::Result handleCopyImageSelfCopyRedefine(const gl::Context *context,
+                                                  GLenum internalFormat,
+                                                  GLenum initTexFormat,
+                                                  GLenum initTexType,
+                                                  const gl::Rectangle &sourceArea,
+                                                  bool outside,
+                                                  const gl::ImageIndex &destIndex,
+                                                  gl::Framebuffer *source);
 
     std::vector<LevelInfoGL> mLevelInfo;
     gl::Texture::DirtyBits mLocalDirtyBits;

@@ -38,9 +38,8 @@
 #import <wtf/spi/cf/CFBundleSPI.h>
 #import <wtf/text/WTFString.h>
 
-using namespace Inspector;
-
 namespace WebKit {
+using namespace Inspector;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AutomationClient);
 
@@ -87,6 +86,8 @@ void AutomationClient::requestAutomationSession(const String& sessionIdentifier,
         [configuration setAlwaysAllowAutoplay:sessionCapabilities.alwaysAllowAutoplay.value()];
     if (sessionCapabilities.siteIsolationEnabled)
         [configuration setSiteIsolationEnabled:sessionCapabilities.siteIsolationEnabled.value()];
+    if (sessionCapabilities.controlledByExternalAgent)
+        [configuration setControlledByExternalAgent:sessionCapabilities.controlledByExternalAgent.value()];
 
     // Force clients to create and register a session asynchronously. Otherwise,
     // RemoteInspector will try to acquire its lock to register the new session and

@@ -43,11 +43,14 @@ public:
     static StyleSheetContents* svgStyleSheet;
     static StyleSheetContents* mathMLStyleSheet;
     static StyleSheetContents* mathMLCoreExtrasStyleSheet;
+    static StyleSheetContents* mathMLCoreMathvariantStyleSheet;
     static StyleSheetContents* mathMLFontSizeMathStyleSheet;
     static StyleSheetContents* mathMLLegacyFontSizeMathStyleSheet;
     static StyleSheetContents* mediaQueryStyleSheet;
     static StyleSheetContents* horizontalFormControlsStyleSheet;
     static StyleSheetContents* htmlSwitchControlStyleSheet;
+    static StyleSheetContents* selectMultipleAndListBoxStyleSheet;
+    static StyleSheetContents* selectMultipleSelectedContentStyleSheet;
     static StyleSheetContents* popoverStyleSheet;
     static StyleSheetContents* counterStylesStyleSheet;
     static StyleSheetContents* viewTransitionsStyleSheet;

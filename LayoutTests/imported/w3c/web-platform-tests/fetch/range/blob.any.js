@@ -11,6 +11,15 @@ const supportedBlobRange = [
     result: "Hello, World!",
   },
   {
+    name: "A blob range request with no type.",
+    data: ["A simple Hello, World! example"],
+    type: undefined,
+    range: "bytes=9-21",
+    content_length: 13,
+    content_range: "bytes 9-21/30",
+    result: "Hello, World!",
+  },
+  {
     name: "A blob range request with no end.",
     data: ["Range with no end"],
     type: "text/plain",
@@ -98,6 +107,18 @@ const unsupportedBlobRange = [
     range: "byte=0-"
   },
   {
+    name: "Blob range unit is case-sensitive",
+    data: ["The range unit must be lowercase"],
+    type: "text/plain",
+    range: "BYTES=0-5"
+  },
+  {
+    name: "Blob range unit is case-sensitive #2",
+    data: ["The range unit must be lowercase"],
+    type: "text/plain",
+    range: "ByTes=0-5"
+  },
+  {
     name: "Blob range with incorrect range header #2",
     data: ["A"],
     type: "text/plain",
@@ -108,6 +129,24 @@ const unsupportedBlobRange = [
     data: ["A"],
     type: "text/plain",
     range: "bytes\t \t"
+  },
+  {
+    name: "Blob range with U+000C where HTTP tab or space is allowed",
+    data: ["U+000C is not HTTP tab or space"],
+    type: "text/plain",
+    range: "bytes=\u000C0-5"
+  },
+  {
+    name: "Blob range with U+000C before the dash",
+    data: ["U+000C is not HTTP tab or space"],
+    type: "text/plain",
+    range: "bytes=0\u000C-5"
+  },
+  {
+    name: "Blob range with U+000B where HTTP tab or space is allowed",
+    data: ["U+000B is not HTTP tab or space"],
+    type: "text/plain",
+    range: "bytes=\u000B0-5"
   },
   {
     name: "Blob range request with multiple range values",
@@ -158,6 +197,24 @@ const unsupportedBlobRange = [
     range: "bytes=5-x",
   },
   {
+    name: "Blob range start must not be signed",
+    data: ["Range start must be an ASCII digit"],
+    type: "text/plain",
+    range: "bytes=+0-5",
+  },
+  {
+    name: "Blob range start must not be signed #2",
+    data: ["Range start must be an ASCII digit"],
+    type: "text/plain",
+    range: "bytes=+5-",
+  },
+  {
+    name: "Blob range end must not be signed",
+    data: ["Range end must be an ASCII digit"],
+    type: "text/plain",
+    range: "bytes=0-+5",
+  },
+  {
     name: "Blob range should include '-'",
     data: ["Range end must include '-'"],
     type: "text/plain",
@@ -201,7 +258,7 @@ supportedBlobRange.forEach(({ name, data, type, range, content_length, content_r
     });
     assert_equals(resp.status, 206, "HTTP status is 206");
     assert_equals(resp.type, "basic", "response type is basic");
-    assert_equals(resp.headers.get("Content-Type"), type, "Content-Type is " + resp.headers.get("Content-Type"));
+    assert_equals(resp.headers.get("Content-Type"), type || "", "Content-Type is " + resp.headers.get("Content-Type"));
     assert_equals(resp.headers.get("Content-Length"), content_length.toString(), "Content-Length is " + resp.headers.get("Content-Length"));
     assert_equals(resp.headers.get("Content-Range"), content_range, "Content-Range is " + resp.headers.get("Content-Range"));
     const text = await resp.text();

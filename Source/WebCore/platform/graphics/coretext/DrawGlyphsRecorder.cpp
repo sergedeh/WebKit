@@ -31,6 +31,7 @@
 #include "FloatPoint.h"
 #include "Font.h"
 #include "FontCascade.h"
+#include "FontInlines.h"
 #include "FontPlatformData.h"
 #include "GlyphBuffer.h"
 #include "GraphicsContextCG.h"
@@ -79,6 +80,12 @@ static CGError drawPath(CGContextDelegateRef delegate, CGRenderingStateRef rstat
     return kCGErrorSuccess;
 }
 
+static CGColorSpaceRef getColorSpace(CGContextDelegateRef delegate, CGRenderingStateRef, CGGStateRef)
+{
+    DrawGlyphsRecorder& recorder = *static_cast<DrawGlyphsRecorder*>(CGContextDelegateGetInfo(delegate));
+    return recorder.colorSpace();
+}
+
 UniqueRef<GraphicsContext> DrawGlyphsRecorder::createInternalContext()
 {
     auto contextDelegate = adoptCF(CGContextDelegateCreate(this));
@@ -87,6 +94,8 @@ UniqueRef<GraphicsContext> DrawGlyphsRecorder::createInternalContext()
     CGContextDelegateSetCallback(contextDelegate.get(), deDrawGlyphs, reinterpret_cast<CGContextDelegateCallback>(&WebCore::drawGlyphs));
     CGContextDelegateSetCallback(contextDelegate.get(), deDrawImage, reinterpret_cast<CGContextDelegateCallback>(&drawImage));
     CGContextDelegateSetCallback(contextDelegate.get(), deDrawPath, reinterpret_cast<CGContextDelegateCallback>(&drawPath));
+    CGContextDelegateSetCallback(contextDelegate.get(), deGetColorSpace, reinterpret_cast<CGContextDelegateCallback>(&getColorSpace));
+
     auto contextType = kCGContextTypeUnknown;
     auto context = adoptCF(CGContextCreateWithDelegate(contextDelegate.get(), contextType, nullptr, nullptr));
     return makeUniqueRef<GraphicsContextCG>(context.get());
@@ -145,9 +154,7 @@ void DrawGlyphsRecorder::prepareInternalContext(const Font& font, FontSmoothingM
     m_originalFont = font;
     m_smoothingMode = smoothingMode;
 
-    m_originalTextMatrix = computeOverallTextMatrix(font);
-    if (font.platformData().orientation() == FontOrientation::Vertical)
-        m_originalTextMatrix = computeVerticalTextMatrix(font, m_originalTextMatrix);
+    m_originalTextMatrix = computeTextMatrix(font);
 
     auto& contextState = m_owner.state();
     populateInternalState(contextState);
@@ -300,7 +307,7 @@ void DrawGlyphsRecorder::recordDrawGlyphs(CGRenderingStateRef, CGGStateRef gstat
         return;
 
     RetainPtr usedFont = CGGStateGetFont(gstate);
-    if (m_deriveFontFromContext == DeriveFontFromContext::No && usedFont != adoptCF(CTFontCopyGraphicsFont(m_originalFont->platformData().protectedCTFont().get(), nullptr)).get())
+    if (m_deriveFontFromContext == DeriveFontFromContext::No && usedFont != adoptCF(CTFontCopyGraphicsFont(protect(m_originalFont->platformData().ctFont()).get(), nullptr)).get())
         return;
 
     updateCTM(*CGGStateGetCTM(gstate));
@@ -317,7 +324,7 @@ void DrawGlyphsRecorder::recordDrawGlyphs(CGRenderingStateRef, CGGStateRef gstat
     // If you set these two equal to each other, and solve for X, you get
     // CTM * currentTextMatrix = CTM * X * m_originalTextMatrix
     // currentTextMatrix * inverse(m_originalTextMatrix) = X
-    AffineTransform currentTextMatrix = CGContextGetTextMatrix(m_internalContext->protectedPlatformContext().get());
+    AffineTransform currentTextMatrix = CGContextGetTextMatrix(protect(m_internalContext->platformContext()).get());
     AffineTransform ctmFixup;
     if (auto invertedOriginalTextMatrix = m_originalTextMatrix.inverse())
         ctmFixup = currentTextMatrix * invertedOriginalTextMatrix.value();
@@ -344,7 +351,7 @@ void DrawGlyphsRecorder::recordDrawGlyphs(CGRenderingStateRef, CGGStateRef gstat
     AdvancesAndInitialPosition advances;
     if (font->platformData().orientation() == FontOrientation::Vertical) {
         Vector<CGSize, 256> translations(glyphs.size());
-        CTFontGetVerticalTranslationsForGlyphs(font->platformData().protectedCTFont().get(), glyphs.data(), translations.mutableSpan().data(), glyphs.size());
+        CTFontGetVerticalTranslationsForGlyphs(protect(font->platformData().ctFont()).get(), glyphs.data(), translations.mutableSpan().data(), glyphs.size());
         auto ascentDelta = font->fontMetrics().ascent(FontBaseline::Ideographic) - font->fontMetrics().ascent();
         advances = computeVerticalAdvancesFromPositions(translations.span(), positions, ascentDelta, textMatrix);
     } else
@@ -418,6 +425,11 @@ void DrawGlyphsRecorder::recordDrawPath(CGRenderingStateRef, CGGStateRef gstate,
     }
 }
 
+CGColorSpaceRef DrawGlyphsRecorder::colorSpace() const
+{
+    return m_owner.colorSpace().platformColorSpace();
+}
+
 void DrawGlyphsRecorder::drawOTSVGRun(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& startPoint, FontSmoothingMode smoothingMode)
 {
     FloatPoint penPosition = startPoint;
@@ -434,7 +446,7 @@ void DrawGlyphsRecorder::drawOTSVGRun(const Font& font, std::span<const GlyphBuf
 #endif
 
         // Create a local ImageBuffer because decoding the SVG fonts has to happen in WebProcess.
-        if (auto imageBuffer = m_owner.createAlignedImageBuffer(bounds, DestinationColorSpace::SRGB(), RenderingMethod::Local)) {
+        if (auto imageBuffer = m_owner.createAlignedImageBuffer(bounds, m_owner.colorSpace(), RenderingMethod::Local)) {
             FontCascade::drawGlyphs(imageBuffer->context(), font, glyphs.subspan(i, 1), advances.subspan(i, 1), FloatPoint(), smoothingMode);
 
             FloatRect destinationRect = enclosingIntRect(bounds);
@@ -507,6 +519,7 @@ void DrawGlyphsRecorder::drawNativeText(CTFontRef font, CGFloat fontSize, CTLine
 
     prepareInternalContext(Font::create(FontPlatformData(font, fontSize)), FontSmoothingMode::SubpixelAntialiased);
     RetainPtr context = m_internalContext->platformContext();
+    CGContextSetTextMatrix(context.get(), CGAffineTransformIdentity);
     CGContextSetTextPosition(context.get(), 0, 0);
     CTLineDraw(line, context.get());
     concludeInternalContext();

@@ -61,6 +61,35 @@ template<typename T, typename arcEnabled = ARCEnabled> struct DefaultOSObjectRet
 
 template<typename T, typename RetainTraits = DefaultOSObjectRetainTraits<T, ARCEnabled>> [[nodiscard]] OSObjectPtr<T, RetainTraits> adoptOSObject(T);
 
+/**
+ * @brief OSObjectPtr is a reference-counting smart pointer for Darwin OS object types.
+ *
+ * It extends the lifetime of the referenced object by retaining it on construction and releasing it on
+ * destruction.
+ *
+ * OSObjectPtr is used for libdispatch types (dispatch_queue_t, dispatch_source_t, dispatch_data_t,
+ * dispatch_group_t, dispatch_semaphore_t, etc.), XPC types (xpc_connection_t, xpc_object_t,
+ * xpc_endpoint_t, etc.), and Network framework types (nw_endpoint_t, nw_path_t, etc.). Each type family
+ * uses its own retain/release functions (dispatch_retain/dispatch_release, xpc_retain/xpc_release,
+ * nw_retain/nw_release, or os_retain/os_release for other types).
+ *
+ * To create an OSObjectPtr, use one of the following:
+ * @code
+ * OSObjectPtr ptr = value;            // Retains the value (increments the ref count)
+ * OSObjectPtr ptr = adoptOSObject(x); // Takes ownership without retaining
+ * @endcode
+ *
+ * Use adoptOSObject() when you receive an object that you already own (i.e., the object was returned to
+ * you with a +1 retain count). This includes objects from creation functions like dispatch_queue_create()
+ * or xpc_*_create(). Using the regular OSObjectPtr constructor instead of adoptOSObject() would add an
+ * extra retain, causing a leak when the OSObjectPtr is destroyed. Use the regular constructor when you
+ * want to add a reference to an object you don't already own.
+ *
+ * @note For Objective-C types and Core Foundation types, use RetainPtr instead of OSObjectPtr.
+ *
+ * @note OSObjectPtr is compatible with ARC (Automatic Reference Counting) and will automatically use the
+ * appropriate retain/release semantics based on the compilation mode.
+ */
 template<typename T, typename RetainTraits> class OSObjectPtr {
 public:
     using ValueType = std::remove_pointer_t<T>;
@@ -74,13 +103,14 @@ public:
     ~OSObjectPtr()
     {
         if (m_ptr)
-            RetainTraits::release(m_ptr);
+            SUPPRESS_FORWARD_DECL_ARG RetainTraits::release(m_ptr);
     }
 
     // Hash table deleted values, which are only constructed and never copied or destroyed.
     constexpr OSObjectPtr(HashTableDeletedValueType) : m_ptr(hashTableDeletedValue()) { }
     constexpr bool isHashTableDeletedValue() const { return m_ptr == hashTableDeletedValue(); }
 
+    constexpr operator PtrType() const LIFETIME_BOUND { return m_ptr; }
     T get() const LIFETIME_BOUND { return m_ptr; }
 
     explicit operator bool() const { return m_ptr; }
@@ -169,8 +199,20 @@ template<typename T, typename RetainTraits> inline OSObjectPtr<T, RetainTraits> 
     return OSObjectPtr<T, RetainTraits> { typename OSObjectPtr<T, RetainTraits>::AdoptOSObject { }, WTF::move(ptr) };
 }
 
+template<typename T, typename RetainTraits>
+ALWAYS_INLINE CLANG_POINTER_CONVERSION OSObjectPtr<T, RetainTraits> protect(const OSObjectPtr<T, RetainTraits>& ptr)
+{
+    return ptr;
+}
+
+template<typename T, typename RetainTraits>
+OSObjectPtr<T, RetainTraits> protect(OSObjectPtr<T, RetainTraits>&&)
+{
+    static_assert(WTF::unreachableForType<T>, "Calling protect() on an rvalue is unnecessary; the caller already owns the value.");
+}
+
 template<typename T, typename U, typename RetainTraits>
-ALWAYS_INLINE void lazyInitialize(const OSObjectPtr<T, RetainTraits>& ptr, OSObjectPtr<U, RetainTraits>&& obj)
+SUPPRESS_NODELETE ALWAYS_INLINE void NODELETE lazyInitialize(const OSObjectPtr<T, RetainTraits>& ptr, OSObjectPtr<U, RetainTraits>&& obj)
 {
     RELEASE_ASSERT(!ptr);
     const_cast<OSObjectPtr<T, RetainTraits>&>(ptr) = std::move(obj); // NOLINT

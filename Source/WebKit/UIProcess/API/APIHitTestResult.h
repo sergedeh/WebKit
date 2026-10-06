@@ -48,6 +48,7 @@ public:
     WTF::String absolutePDFURL() const { return m_data.absolutePDFURL; }
     WTF::String absoluteLinkURL() const { return m_data.absoluteLinkURL; }
     WTF::String absoluteMediaURL() const { return m_data.absoluteMediaURL; }
+    WTF::String absoluteModelURL() const { return m_data.absoluteModelURL; }
 
     WTF::String linkLabel() const { return m_data.linkLabel; }
     WTF::String linkTitle() const { return m_data.linkTitle; }
@@ -76,14 +77,14 @@ public:
 
     WebKit::WebPageProxy* page() { return m_page.get(); }
 
-    const std::optional<WebKit::FrameInfoData>& frameInfo() const { return m_data.frameInfo; }
+    const std::optional<WebKit::FrameInfoData>& frameInfo() const LIFETIME_BOUND { return m_data.frameInfo; }
     const std::optional<WebCore::FrameIdentifier> targetFrame() const { return m_data.targetFrame; }
 
     bool allowsFollowingLink() const { return m_data.allowsFollowingLink; }
 
     bool allowsFollowingImageURL() const { return m_data.allowsFollowingImageURL; }
 
-    const std::optional<WebCore::ResourceResponse>& linkLocalResourceResponse() const { return m_data.linkLocalResourceResponse; }
+    const std::optional<WebCore::ResourceResponse>& linkLocalResourceResponse() const LIFETIME_BOUND { return m_data.linkLocalResourceResponse; }
 
 private:
     explicit HitTestResult(const WebKit::WebHitTestResultData& hitTestResultData, WebKit::WebPageProxy* page)

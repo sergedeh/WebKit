@@ -78,12 +78,12 @@ public:
     const MIMETypeRegistryThreadGlobalData& mimeTypeRegistryThreadGlobalData()
     {
         ASSERT(!m_destroyed);
-        if (!m_MIMETypeRegistryThreadGlobalData) [[unlikely]]
+        if (!m_mimeTypeRegistryThreadGlobalData) [[unlikely]]
             initializeMimeTypeRegistryThreadGlobalData();
-        return *m_MIMETypeRegistryThreadGlobalData;
+        return *m_mimeTypeRegistryThreadGlobalData;
     }
 
-    ThreadTimers& threadTimers() { return m_threadTimers; }
+    ThreadTimers& threadTimers() LIFETIME_BOUND { return m_threadTimers; }
 
     JSC::JSGlobalObject* currentState() const { return m_currentState; }
     void setCurrentState(JSC::JSGlobalObject* state) { m_currentState = state; }
@@ -115,12 +115,12 @@ private:
     WEBCORE_EXPORT void initializeMimeTypeRegistryThreadGlobalData();
     WEBCORE_EXPORT void initializeFontCache();
 
-    std::unique_ptr<CachedResourceRequestInitiatorTypes> m_cachedResourceRequestInitiatorTypes;
-    std::unique_ptr<EventNames> m_eventNames;
+    const std::unique_ptr<CachedResourceRequestInitiatorTypes> m_cachedResourceRequestInitiatorTypes;
+    const std::unique_ptr<EventNames> m_eventNames;
     const UniqueRef<ThreadTimers> m_threadTimers;
-    std::unique_ptr<QualifiedNameCache> m_qualifiedNameCache;
+    const std::unique_ptr<QualifiedNameCache> m_qualifiedNameCache;
     JSC::JSGlobalObject* m_currentState { nullptr };
-    std::unique_ptr<MIMETypeRegistryThreadGlobalData> m_MIMETypeRegistryThreadGlobalData;
+    const std::unique_ptr<MIMETypeRegistryThreadGlobalData> m_mimeTypeRegistryThreadGlobalData;
     std::unique_ptr<FontCache> m_fontCache;
 
 #ifndef NDEBUG

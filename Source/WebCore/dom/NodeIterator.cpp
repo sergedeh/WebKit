@@ -80,7 +80,7 @@ inline NodeIterator::NodeIterator(Node& rootNode, unsigned whatToShow, RefPtr<No
     : NodeIteratorBase(rootNode, whatToShow, WTF::move(filter))
     , m_referenceNode(rootNode, true)
 {
-    root().protectedDocument()->attachNodeIterator(*this);
+    protect(root().document())->attachNodeIterator(*this);
 }
 
 Ref<NodeIterator> NodeIterator::create(Node& rootNode, unsigned whatToShow, RefPtr<NodeFilter>&& filter)
@@ -90,7 +90,7 @@ Ref<NodeIterator> NodeIterator::create(Node& rootNode, unsigned whatToShow, RefP
 
 NodeIterator::~NodeIterator()
 {
-    root().document().detachNodeIterator(*this);
+    protect(root().document())->detachNodeIterator(*this);
 }
 
 ExceptionOr<RefPtr<Node>> NodeIterator::nextNode()
@@ -165,7 +165,7 @@ void NodeIterator::updateForNodeRemoval(Node& removedNode, NodePointer& referenc
 
     // Iterator is not affected if the removed node is the reference node and is the root.
     // or if removed node is not the reference node, or the ancestor of the reference node.
-    Ref root = this->root();
+    auto& root = this->root();
     if (!removedNode.isDescendantOf(root))
         return;
     bool willRemoveReferenceNode = &removedNode == referenceNode.node;
@@ -174,12 +174,12 @@ void NodeIterator::updateForNodeRemoval(Node& removedNode, NodePointer& referenc
         return;
 
     if (referenceNode.isPointerBeforeNode) {
-        RefPtr node = NodeTraversal::next(removedNode, root.ptr());
+        RefPtr node = NodeTraversal::next(removedNode, &root);
         if (node) {
             // Move out from under the node being removed if the new reference
             // node is a descendant of the node being removed.
             while (node && node->isDescendantOf(removedNode))
-                node = NodeTraversal::next(*node, root.ptr());
+                node = NodeTraversal::next(*node, &root);
             if (node)
                 referenceNode.node = node;
         } else {
@@ -193,7 +193,7 @@ void NodeIterator::updateForNodeRemoval(Node& removedNode, NodePointer& referenc
                 }
                 if (node) {
                     // Removing last node.
-                    // Need to move the pointer after the node preceding the 
+                    // Need to move the pointer after the node preceding the
                     // new reference node.
                     referenceNode.node = node;
                     referenceNode.isPointerBeforeNode = false;
@@ -201,28 +201,19 @@ void NodeIterator::updateForNodeRemoval(Node& removedNode, NodePointer& referenc
             }
         }
     } else {
+        // NodeTraversal::previous() without a stayWithin boundary only returns null when
+        // the node has no parent. Since removedNode.isDescendantOf(root) was verified above,
+        // removedNode is in the tree and always has a parent.
         RefPtr node = NodeTraversal::previous(removedNode);
-        if (node) {
-            // Move out from under the node being removed if the reference node is
-            // a descendant of the node being removed.
-            if (willRemoveReferenceNodeAncestor) {
-                while (node && node->isDescendantOf(removedNode))
-                    node = NodeTraversal::previous(*node);
-            }
-            if (node)
-                referenceNode.node = WTF::move(node);
-        } else {
-            // FIXME: This branch doesn't appear to have any LayoutTests.
-            node = NodeTraversal::next(removedNode, root.ptr());
-            // Move out from under the node being removed if the reference node is
-            // a descendant of the node being removed.
-            if (willRemoveReferenceNodeAncestor) {
-                while (node && node->isDescendantOf(removedNode))
-                    node = NodeTraversal::previous(*node);
-            }
-            if (node)
-                referenceNode.node = WTF::move(node);
+        ASSERT(node);
+        // Move out from under the node being removed if the reference node is
+        // a descendant of the node being removed.
+        if (willRemoveReferenceNodeAncestor) {
+            while (node && node->isDescendantOf(removedNode))
+                node = NodeTraversal::previous(*node);
         }
+        if (node)
+            referenceNode.node = node;
     }
 }
 

@@ -43,7 +43,7 @@ std::optional<PipelineDescriptorBase> ConvertToBackingContext::convertToBacking(
 
     std::optional<WebGPUIdentifier> layout;
     if (pipelineDescriptorBase.layout) {
-        layout = convertToBacking(*pipelineDescriptorBase.protectedLayout().get());
+        layout = convertToBacking(*protect(pipelineDescriptorBase.layout));
         if (!layout)
             return std::nullopt;
     }
@@ -51,14 +51,17 @@ std::optional<PipelineDescriptorBase> ConvertToBackingContext::convertToBacking(
     return { { WTF::move(*base), layout } };
 }
 
-std::optional<WebCore::WebGPU::PipelineDescriptorBase> ConvertFromBackingContext::convertFromBacking(const PipelineDescriptorBase& pipelineDescriptorBase)
+std::optional<WebCore::WebGPU::PipelineDescriptorBase> ConvertFromBackingContext::convertFromBacking(const PipelineDescriptorBase& pipelineDescriptorBase, bool allowMissingPipelineLayout)
 {
     auto base = convertFromBacking(static_cast<const ObjectDescriptorBase&>(pipelineDescriptorBase));
     if (!base)
         return std::nullopt;
 
-    if (!pipelineDescriptorBase.layout)
-        return std::nullopt;
+    if (!pipelineDescriptorBase.layout) {
+        if (!allowMissingPipelineLayout)
+            return std::nullopt;
+        return { { WTF::move(*base), nullptr } };
+    }
 
     auto layout = convertPipelineLayoutFromBacking(*pipelineDescriptorBase.layout);
     if (!layout)

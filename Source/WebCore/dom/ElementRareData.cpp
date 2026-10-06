@@ -40,7 +40,7 @@ struct SameSizeAsElementRareData : NodeRareData {
     IntPoint savedLayerScrollPosition;
     HashMap<std::optional<Style::PseudoElementIdentifier>, std::unique_ptr<ElementAnimationRareData>> animationRareData;
     HashMap<std::optional<Style::PseudoElementIdentifier>, AtomString> viewTransitionCapture;
-    void* pointers[18];
+    void* pointers[17];
     void* intersectionObserverData;
     void* resizeObserverData;
     void* largestContentfulPaintData;
@@ -48,6 +48,9 @@ struct SameSizeAsElementRareData : NodeRareData {
     Markable<LayoutUnit> lastRemembedSize[2];
     ExplicitlySetAttrElementsMap explicitlySetAttrElementsMap;
     uint8_t visibilityAdjustment;
+#if ENABLE(SPATIAL_PORTAL)
+    void* spatialPortalController;
+#endif
     HashMap<std::optional<Style::PseudoElementIdentifier>, Ref<CSSCalc::RandomCachingKeyMap>> randomCachingKeyMaps;
     WeakPtr<Element, WeakPtrImplWithEventTargetData> invokedPopoverWeakPtr;
 };

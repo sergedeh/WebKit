@@ -34,7 +34,7 @@ class WebProcessProxy;
 
 class UserMediaProcessManager : public WebCore::RealtimeMediaSourceCenterObserver {
 public:
-    static UserMediaProcessManager& singleton();
+    static UserMediaProcessManager& NODELETE singleton();
 
     UserMediaProcessManager();
 
@@ -42,7 +42,7 @@ public:
     void ref() const { ASSERT(this == &singleton()); }
     void deref() const { ASSERT(this == &singleton()); }
 
-    bool willCreateMediaStream(UserMediaPermissionRequestManagerProxy&, const UserMediaPermissionRequestProxy&);
+    bool NODELETE willCreateMediaStream(UserMediaPermissionRequestManagerProxy&, const UserMediaPermissionRequestProxy&);
 
     void revokeSandboxExtensionsIfNeeded(WebProcessProxy&);
 

@@ -54,7 +54,7 @@ RemoteCompositorIntegrationProxy::~RemoteCompositorIntegrationProxy()
 }
 
 #if PLATFORM(COCOA)
-Vector<MachSendRight> RemoteCompositorIntegrationProxy::recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&& destinationColorSpace, WebCore::AlphaPremultiplication alphaMode, WebCore::WebGPU::TextureFormat textureFormat, unsigned bufferCount, WebCore::WebGPU::Device& device)
+Vector<MachSendRight> RemoteCompositorIntegrationProxy::recreateRenderBuffers(int width, int height, WebCore::ColorSpace&& destinationColorSpace, WebCore::AlphaPremultiplication alphaMode, WebCore::WebGPU::TextureFormat textureFormat, unsigned bufferCount, WebCore::WebGPU::Device& device)
 {
     RemoteDeviceProxy& proxyDevice = downcast<RemoteDeviceProxy>(device);
     auto sendResult = sendSync(Messages::RemoteCompositorIntegration::RecreateRenderBuffers(width, height, WTF::move(destinationColorSpace), alphaMode, textureFormat, bufferCount, proxyDevice.backing()));
@@ -69,8 +69,10 @@ Vector<MachSendRight> RemoteCompositorIntegrationProxy::recreateRenderBuffers(in
 void RemoteCompositorIntegrationProxy::prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&& completionHandler)
 {
     auto sendResult = sendSync(Messages::RemoteCompositorIntegration::PrepareForDisplay(frameIndex));
-    UNUSED_VARIABLE(sendResult);
-    RefPtr { m_presentationContext }->present(frameIndex);
+    auto [gpuFrameCost, presentStall] = sendResult.takeReplyOr(Seconds { 0 }, Seconds { 0 });
+    m_lastFrameGPUCost = gpuFrameCost;
+    m_lastFramePresentStall = presentStall;
+    protect(m_presentationContext)->present(frameIndex);
 
     completionHandler();
 }

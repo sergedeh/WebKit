@@ -29,9 +29,12 @@
 #include "Chrome.h"
 #include "DetectedText.h"
 #include "Document.h"
+#include "DocumentPage.h"
 #include "ImageBitmap.h"
 #include "ImageBitmapOptions.h"
 #include "ImageBuffer.h"
+#include "JSDOMConvertDictionary.h"
+#include "JSDOMConvertSequences.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSDetectedText.h"
 #include "Page.h"
@@ -75,8 +78,7 @@ void TextDetector::detect(ScriptExecutionContext& scriptExecutionContext, ImageB
             return;
         }
 
-        // FIXME: This is a safer cpp false positive (rdar://160082559).
-        SUPPRESS_UNCOUNTED_ARG RefPtr imageBuffer = imageBitmap.releaseReturnValue()->takeImageBuffer();
+        RefPtr imageBuffer = protect(imageBitmap.returnValue())->takeImageBuffer();
         RefPtr<NativeImage> image = imageBuffer ? imageBuffer->copyNativeImage() : nullptr;
         if (!image) {
             promise.resolve({ });
@@ -84,8 +86,8 @@ void TextDetector::detect(ScriptExecutionContext& scriptExecutionContext, ImageB
         }
 
         backing->detect(*image, [promise = WTF::move(promise)](Vector<ShapeDetection::DetectedText>&& detectedText) mutable {
-            promise.resolve(detectedText.map([](const auto& detectedText) {
-                return convertFromBacking(detectedText);
+            promise.resolve(WTF::map(WTF::move(detectedText), [](ShapeDetection::DetectedText&& detectedText) {
+                return convertFromBacking(WTF::move(detectedText));
             }));
         });
     });

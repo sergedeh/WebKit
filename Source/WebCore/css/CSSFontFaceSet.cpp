@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2024 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,9 @@
 #include "CSSFontFaceSet.h"
 
 #include "CSSFontFaceSource.h"
+#include "CSSFontFamilyNameValue.h"
 #include "CSSFontSelector.h"
+#include "CSSKeywordValue.h"
 #include "CSSParser.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSPropertyParserConsumer+Font.h"
@@ -40,6 +42,7 @@
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StyleProperties.h"
 #include <ranges>
+#include <wtf/Borrow.h>
 
 namespace WebCore {
 
@@ -50,7 +53,7 @@ CSSFontFaceSet::CSSFontFaceSet(CSSFontSelector* owningFontSelector)
 
 CSSFontFaceSet::~CSSFontFaceSet()
 {
-    for (auto& face : m_faces)
+    for (Ref face : borrow(m_faces).get())
         face->removeClient(*this);
 
     for (auto& pair : m_locallyInstalledFacesLookupTable) {
@@ -107,7 +110,7 @@ bool CSSFontFaceSet::hasFace(const CSSFontFace& face) const
 void CSSFontFaceSet::updateStyleIfNeeded()
 {
     if (m_owningFontSelector)
-        Ref { *m_owningFontSelector }->updateStyleIfNeeded();
+        protect(*m_owningFontSelector)->updateStyleIfNeeded();
 }
 
 void CSSFontFaceSet::ensureLocalFontFacesForFamilyRegistered(const AtomString& familyName)
@@ -119,8 +122,8 @@ void CSSFontFaceSet::ensureLocalFontFacesForFamilyRegistered(const AtomString& f
     Ref owningFontSelector = *m_owningFontSelector;
     if (!owningFontSelector->scriptExecutionContext())
         return;
-    auto allowUserInstalledFonts = owningFontSelector->protectedScriptExecutionContext()->settingsValues().shouldAllowUserInstalledFonts ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No;
-    auto capabilities = FontCache::forCurrentThread()->getFontSelectionCapabilitiesInFamily(familyName, allowUserInstalledFonts);
+    auto allowUserInstalledFonts = protect(owningFontSelector->scriptExecutionContext())->settingsValues().shouldAllowUserInstalledFonts ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No;
+    auto capabilities = protect(FontCache::forCurrentThread())->getFontSelectionCapabilitiesInFamily(familyName, allowUserInstalledFonts);
     if (capabilities.isEmpty())
         return;
 
@@ -128,8 +131,8 @@ void CSSFontFaceSet::ensureLocalFontFacesForFamilyRegistered(const AtomString& f
     for (auto item : capabilities) {
         auto face = CSSFontFace::create(owningFontSelector, nullptr, nullptr, true);
 
-        auto& pool = owningFontSelector->protectedScriptExecutionContext()->cssValuePool();
-        face->setFamily(pool.createFontFamilyValue(familyName));
+        auto& pool = protect(owningFontSelector->scriptExecutionContext())->cssValuePool();
+        face->setFamily(pool.createFontFamilyNameValue(familyName));
         face->setFontSelectionCapabilities(item);
         face->adoptSource(makeUniqueWithoutRefCountedCheck<CSSFontFaceSource>(face.get(), familyName));
         ASSERT(!face->computeFailureState());
@@ -138,33 +141,37 @@ void CSSFontFaceSet::ensureLocalFontFacesForFamilyRegistered(const AtomString& f
     m_locallyInstalledFacesLookupTable.add(familyName, WTF::move(faces));
 }
 
-String CSSFontFaceSet::familyNameFromPrimitive(const CSSPrimitiveValue& value)
+AtomString CSSFontFaceSet::familyName(const CSSValue& value)
 {
-    if (value.isFontFamily())
-        return value.stringValue();
+    if (auto* fontFamilyNameValue = dynamicDowncast<CSSFontFamilyNameValue>(value))
+        return fontFamilyNameValue->fontFamilyName().value;
 
     // We need to use the raw text for all the generic family types, since @font-face is a way of actually
     // defining what font to use for those types.
-    switch (value.valueID()) {
-    case CSSValueSerif:
-        return serifFamily.get();
-    case CSSValueSansSerif:
-        return sansSerifFamily.get();
-    case CSSValueCursive:
-        return cursiveFamily.get();
-    case CSSValueFantasy:
-        return fantasyFamily.get();
-    case CSSValueMonospace:
-        return monospaceFamily.get();
-    case CSSValueWebkitPictograph:
-        return pictographFamily.get();
-    case CSSValueSystemUi:
-        return systemUiFamily.get();
-    case CSSValueMath:
-        return mathFamily.get();
-    default:
-        return { };
+    if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
+        case CSSValueSerif:
+            return serifFamily.get();
+        case CSSValueSansSerif:
+            return sansSerifFamily.get();
+        case CSSValueCursive:
+            return cursiveFamily.get();
+        case CSSValueFantasy:
+            return fantasyFamily.get();
+        case CSSValueMonospace:
+            return monospaceFamily.get();
+        case CSSValueWebkitPictograph:
+            return pictographFamily.get();
+        case CSSValueSystemUi:
+            return systemUiFamily.get();
+        case CSSValueMath:
+            return mathFamily.get();
+        default:
+            return { };
+        }
     }
+
+    return { };
 }
 
 void CSSFontFaceSet::addToFacesLookupTable(CSSFontFace& face)
@@ -176,7 +183,7 @@ void CSSFontFaceSet::addToFacesLookupTable(CSSFontFace& face)
         return;
     }
 
-    auto familyName = AtomString { CSSFontFaceSet::familyNameFromPrimitive(downcast<CSSPrimitiveValue>(*family)) };
+    auto familyName = CSSFontFaceSet::familyName(*family);
     if (familyName.isNull())
         return;
 
@@ -222,7 +229,7 @@ void CSSFontFaceSet::add(CSSFontFace& face)
 
 void CSSFontFaceSet::removeFromFacesLookupTable(const CSSFontFace& face, const CSSValue& familyToSearchFor)
 {
-    auto familyName = CSSFontFaceSet::familyNameFromPrimitive(downcast<CSSPrimitiveValue>(familyToSearchFor));
+    auto familyName = CSSFontFaceSet::familyName(familyToSearchFor);
     if (familyName.isNull())
         return;
 
@@ -400,7 +407,7 @@ static CodePointsMap codePointsFromString(StringView stringView)
     return result;
 }
 
-ExceptionOr<Vector<std::reference_wrapper<CSSFontFace>>> CSSFontFaceSet::matchingFacesExcludingPreinstalledFonts(ScriptExecutionContext& context, const String& fontShorthand, const String& string)
+ExceptionOr<Vector<Ref<CSSFontFace>>> CSSFontFaceSet::matchingFacesExcludingPreinstalledFonts(ScriptExecutionContext& context, const String& fontShorthand, const String& string)
 {
     auto font = CSSPropertyParserHelpers::parseUnresolvedFont(fontShorthand, context);
     if (!font)
@@ -446,7 +453,7 @@ ExceptionOr<Vector<std::reference_wrapper<CSSFontFace>>> CSSFontFaceSet::matchin
         }
     }
 
-    return WTF::map(resultConstituents, [](auto* constituent) -> std::reference_wrapper<CSSFontFace> {
+    return WTF::map(resultConstituents, [](auto* constituent) -> Ref<CSSFontFace> {
         return *constituent;
     });
 }
@@ -474,42 +481,49 @@ CSSSegmentedFontFace* CSSFontFaceSet::fontFace(FontSelectionRequest request, con
 
     auto& segmentedFontFaceCache = m_cache.add(family, FontSelectionHashMap()).iterator->value;
 
-    auto& face = segmentedFontFaceCache.add(request, nullptr).iterator->value;
-    if (face)
-        return face.get();
+    return segmentedFontFaceCache.ensure(request, [&] {
+        Ref face = CSSSegmentedFontFace::create();
 
-    face = CSSSegmentedFontFace::create();
-
-    Vector<std::reference_wrapper<CSSFontFace>, 32> candidateFontFaces;
-    for (int i = familyFontFaces.size() - 1; i >= 0; --i) {
-        Ref candidate = familyFontFaces[i];
-        if (candidate->status() == CSSFontFace::Status::Failure)
-            continue;
-        if (!isItalic(request.slope) && isItalic(candidate->fontSelectionCapabilities().slope.minimum))
-            continue;
-        candidateFontFaces.append(candidate);
-    }
-
-    auto localIterator = m_locallyInstalledFacesLookupTable.find(family);
-    if (localIterator != m_locallyInstalledFacesLookupTable.end()) {
-        for (auto& candidate : localIterator->value) {
+        Vector<std::reference_wrapper<CSSFontFace>, 32> candidateFontFaces;
+        for (int i = familyFontFaces.size() - 1; i >= 0; --i) {
+            Ref candidate = familyFontFaces[i];
             if (candidate->status() == CSSFontFace::Status::Failure)
-                continue;
-            if (!isItalic(request.slope) && isItalic(candidate->fontSelectionCapabilities().slope.minimum))
                 continue;
             candidateFontFaces.append(candidate);
         }
-    }
 
-    if (!candidateFontFaces.isEmpty()) {
+        auto localIterator = m_locallyInstalledFacesLookupTable.find(family);
+        if (localIterator != m_locallyInstalledFacesLookupTable.end()) {
+            for (auto& candidate : localIterator->value) {
+                if (candidate->status() == CSSFontFace::Status::Failure)
+                    continue;
+                candidateFontFaces.append(candidate);
+            }
+        }
+
+        if (candidateFontFaces.isEmpty())
+            return face;
+
         auto capabilities = candidateFontFaces.map([](auto& face) {
             return face.get().fontSelectionCapabilities();
         });
-        FontSelectionAlgorithm fontSelectionAlgorithm(request, capabilities);
+        FontSelectionAlgorithm fontSelectionAlgorithm(request, WTF::move(capabilities));
+
+        // Per CSS Fonts 5.2.6: Only faces with the best-matching width, style, and weight are eligible
+        // to supply glyphs, even via unicode-range.
+        const auto& eliminated = fontSelectionAlgorithm.eliminatedCapabilities();
+        RELEASE_ASSERT(eliminated.size() == candidateFontFaces.size());
+        size_t eliminatedIndex = 0;
+        candidateFontFaces.removeAllMatching([&](auto&) {
+            return eliminated[eliminatedIndex++];
+        });
+        if (candidateFontFaces.isEmpty())
+            return face;
+
         std::ranges::stable_sort(candidateFontFaces, [&fontSelectionAlgorithm](auto& first, auto& second) {
             auto firstCapabilities = first.get().fontSelectionCapabilities();
             auto secondCapabilities = second.get().fontSelectionCapabilities();
-            
+
             auto widthDistanceFirst = fontSelectionAlgorithm.widthDistance(firstCapabilities).distance;
             auto widthDistanceSecond = fontSelectionAlgorithm.widthDistance(secondCapabilities).distance;
             if (widthDistanceFirst < widthDistanceSecond)
@@ -537,9 +551,9 @@ CSSSegmentedFontFace* CSSFontFaceSet::fontFace(FontSelectionRequest request, con
             previousCandidate = &candidate.get();
             face->appendFontFace(candidate.get());
         }
-    }
 
-    return face.get();
+        return face;
+    }).iterator->value.ptr();
 }
 
 void CSSFontFaceSet::fontStateChanged(CSSFontFace& face, CSSFontFace::Status oldState, CSSFontFace::Status newState)

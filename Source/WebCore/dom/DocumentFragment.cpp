@@ -24,6 +24,7 @@
 #include "DocumentFragment.h"
 
 #include "CSSTokenizerInputStream.h"
+#include "ContainerNodeInlines.h"
 #include "Document.h"
 #include "ElementIterator.h"
 #include "HTMLDocumentParser.h"
@@ -40,7 +41,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DocumentFragment);
 
 DocumentFragment::DocumentFragment(Document& document, OptionSet<TypeFlag> typeFlags)
-    : ContainerNode(document, DOCUMENT_FRAGMENT_NODE, typeFlags)
+    : ContainerNode(document, NodeType::DocumentFragment, typeFlags)
 {
     if (document.usesNullCustomElementRegistry())
         setUsesNullCustomElementRegistry();
@@ -66,14 +67,14 @@ String DocumentFragment::nodeName() const
 bool DocumentFragment::childTypeAllowed(NodeType type) const
 {
     switch (type) {
-        case ELEMENT_NODE:
-        case PROCESSING_INSTRUCTION_NODE:
-        case COMMENT_NODE:
-        case TEXT_NODE:
-        case CDATA_SECTION_NODE:
-            return true;
-        default:
-            return false;
+    case NodeType::Element:
+    case NodeType::ProcessingInstruction:
+    case NodeType::Comment:
+    case NodeType::Text:
+    case NodeType::CDATASection:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -94,7 +95,7 @@ Ref<Node> DocumentFragment::cloneNodeInternal(Document& document, CloningOperati
 void DocumentFragment::parseHTML(const String& source, Element& contextElement, OptionSet<ParserContentPolicy> parserContentPolicy, CustomElementRegistry* registry)
 {
     Ref document = this->document();
-    if (!registry && tryFastParsingHTMLFragment(source, document, *this, contextElement, parserContentPolicy)) {
+    if (!registry && !usesNullCustomElementRegistry() && tryFastParsingHTMLFragment(source, document, *this, contextElement, parserContentPolicy)) {
         setWasParsedWithFastPath();
 #if ASSERT_ENABLED
         // As a sanity check for the fast-path, create another fragment using the full parser and compare the results.
@@ -123,12 +124,12 @@ RefPtr<Element> DocumentFragment::getElementById(const AtomString& id) const
 
     // Fast path for ShadowRoot, where we are both a DocumentFragment and a TreeScope.
     if (isTreeScope())
-        return protectedTreeScope()->getElementById(id);
+        return protect(treeScope())->getElementById(id);
 
     // Otherwise, fall back to iterating all of the element descendants.
-    for (Ref element : descendantsOfType<Element>(*const_cast<DocumentFragment*>(this))) {
-        if (element->getIdAttribute() == id)
-            return element;
+    for (auto& element : descendantsOfType<Element>(*const_cast<DocumentFragment*>(this))) {
+        if (element.getIdAttribute() == id)
+            return &element;
     }
 
     return nullptr;

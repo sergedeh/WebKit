@@ -44,7 +44,7 @@ Structure* JSFinalizationRegistry::createStructure(VM& vm, JSGlobalObject* globa
 JSFinalizationRegistry* JSFinalizationRegistry::create(VM& vm, Structure* structure, JSObject* callback)
 {
     JSFinalizationRegistry* instance = new (NotNull, allocateCell<JSFinalizationRegistry>(vm)) JSFinalizationRegistry(vm, structure);
-    instance->finishCreation(vm, structure->globalObject(), callback);
+    instance->finishCreation(vm, structure->realm(), callback);
     return instance;
 }
 
@@ -57,8 +57,8 @@ void JSFinalizationRegistry::finishCreation(VM& vm, JSGlobalObject* globalObject
         Base::internalField(index).setWithoutWriteBarrier(values[index]);
     internalField(Field::Callback).setWithoutWriteBarrier(callback);
 
-    // Make sure we init the DOM wrapper for our document since it must be allocated before finalizeUnconditionally is called. finalizeUnconditionally,
-    // is called during the GC flip so no JS objects can be allocated there. This only works because we no longer weakly hold on to DOM wrappers.
+    // Init the DOM wrapper for our document now: reconciliation runs during the GC flip, where no
+    // JS objects can be allocated. This only works because we no longer weakly hold DOM wrappers.
     globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject);
 }
 
@@ -67,7 +67,7 @@ void JSFinalizationRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     Base::visitChildren(cell, visitor);
 
-    auto* thisObject = jsCast<JSFinalizationRegistry*>(cell);
+    auto* thisObject = uncheckedDowncast<JSFinalizationRegistry>(cell);
 
     Locker locker { thisObject->cellLock() };
     for (const auto& iter : thisObject->m_liveRegistrations) {
@@ -87,7 +87,7 @@ void JSFinalizationRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     totalBufferSizesInBytes += thisObject->m_liveRegistrations.capacity() * sizeof(typename decltype(thisObject->m_deadRegistrations)::KeyValuePairType);
     totalBufferSizesInBytes += thisObject->m_noUnregistrationLive.capacity() * sizeof(decltype(thisObject->m_noUnregistrationLive.takeLast()));
     totalBufferSizesInBytes += thisObject->m_noUnregistrationDead.capacity() * sizeof(decltype(thisObject->m_noUnregistrationLive.takeLast()));
-    visitor.vm().heap.reportExtraMemoryVisited(totalBufferSizesInBytes);
+    thisObject->vm().heap.reportExtraMemoryVisited(totalBufferSizesInBytes);
 }
 
 DEFINE_VISIT_CHILDREN(JSFinalizationRegistry);
@@ -97,7 +97,7 @@ void JSFinalizationRegistry::destroy(JSCell* table)
     static_cast<JSFinalizationRegistry*>(table)->~JSFinalizationRegistry();
 }
 
-void JSFinalizationRegistry::finalizeUnconditionally(VM& vm, CollectionScope)
+void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
     Locker locker { cellLock() };
 
@@ -151,13 +151,13 @@ void JSFinalizationRegistry::finalizeUnconditionally(VM& vm, CollectionScope)
     });
 
     if (!m_hasAlreadyScheduledWork && (readiedCell || deadCount(locker))) {
-        auto ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
-        ASSERT(vm.deferredWorkTimer->hasPendingWork(ticket));
-        vm.deferredWorkTimer->scheduleWorkSoon(ticket, [this](DeferredWorkTimer::Ticket) {
-            JSGlobalObject* globalObject = this->globalObject();
+        auto weakTicket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
+        bool queued = vm.deferredWorkTimer->scheduleWorkSoonIfActive(weakTicket, [this](DeferredWorkTimer::Ticket&) {
+            JSGlobalObject* globalObject = this->realm();
             this->m_hasAlreadyScheduledWork = false;
             this->runFinalizationCleanup(globalObject);
         });
+        RELEASE_ASSERT(queued);
         m_hasAlreadyScheduledWork = true;
     }
 }
@@ -168,9 +168,10 @@ void JSFinalizationRegistry::runFinalizationCleanup(JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     while (JSValue value = takeDeadHoldingsValue()) {
-        MarkedArgumentBuffer args;
-        args.append(value);
-        call(globalObject, callback(), args, "This should not be visible: please report a bug to bugs.webkit.org"_s);
+        auto args = WTF::toArray<EncodedJSValue>({
+            JSValue::encode(value),
+        });
+        call(globalObject, callback(), ArgList { args.data(), args.size() }, "This should not be visible: please report a bug to bugs.webkit.org"_s);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }

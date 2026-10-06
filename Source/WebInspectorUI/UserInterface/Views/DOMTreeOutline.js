@@ -288,12 +288,15 @@ WI.DOMTreeOutline = class DOMTreeOutline extends WI.TreeOutline
 
     populateContextMenu(contextMenu, event, treeElement)
     {
-        let subMenus = {
-            add: new WI.ContextSubMenuItem(contextMenu, WI.UIString("Add")),
-            edit: new WI.ContextSubMenuItem(contextMenu, WI.UIString("Edit")),
-            copy: new WI.ContextSubMenuItem(contextMenu, WI.UIString("Copy")),
-            delete: new WI.ContextSubMenuItem(contextMenu, WI.UIString("Delete")),
-        };
+        let subMenus = {};
+
+        if (this.selectedTreeElements.length === 1) {
+            subMenus.add = new WI.ContextSubMenuItem(contextMenu, WI.UIString("Add"));
+            subMenus.edit = new WI.ContextSubMenuItem(contextMenu, WI.UIString("Edit"));
+        }
+
+        subMenus.copy = new WI.ContextSubMenuItem(contextMenu, WI.UIString("Copy"));
+        subMenus.delete = new WI.ContextSubMenuItem(contextMenu, WI.UIString("Delete"));
 
         if (this.editable && treeElement.selected && this.selectedTreeElements.length > 1) {
             subMenus.delete.appendItem(WI.UIString("Nodes"), () => {
@@ -315,7 +318,8 @@ WI.DOMTreeOutline = class DOMTreeOutline extends WI.TreeOutline
         if (treeElement.bindRevealDescendantBreakpointsMenuItemHandler)
             options.revealDescendantBreakpointsMenuItemHandler = treeElement.bindRevealDescendantBreakpointsMenuItemHandler();
 
-        WI.appendContextMenuItemsForDOMNode(contextMenu, treeElement.representedObject, options);
+        if (this.selectedTreeElements.length === 1)
+            WI.appendContextMenuItemsForDOMNode(contextMenu, treeElement.representedObject, options);
 
         super.populateContextMenu(contextMenu, event, treeElement);
     }
@@ -345,7 +349,7 @@ WI.DOMTreeOutline = class DOMTreeOutline extends WI.TreeOutline
             if (isNaN(level)) {
                 level = 0;
                 let current = treeElement;
-                while (current = current.parent)
+                while ((current = current.parent))
                     level++;
                 levelMap.set(treeElement, level);
             }
@@ -433,7 +437,13 @@ WI.DOMTreeOutline = class DOMTreeOutline extends WI.TreeOutline
 
     _revealAndSelectNode(node, omitFocus)
     {
-        if (!node || this._suppressRevealAndSelect)
+        if (this._suppressRevealAndSelect)
+            return;
+
+        if (!this._includeRootDOMNode && this.rootDOMNode && node === this.rootDOMNode)
+            node = this.rootDOMNode.firstChild;
+
+        if (!node)
             return;
 
         var treeElement = this.createTreeElementFor(node);
@@ -604,7 +614,7 @@ WI.DOMTreeOutline = class DOMTreeOutline extends WI.TreeOutline
 
         let treeElement = this.treeElementFromEvent(event);
         if (this._nodeBeingDragged && treeElement) {
-            let parentNode = null;
+            let parentNode;
             let anchorNode = null;
 
             if (treeElement.isElementCloseTag) {

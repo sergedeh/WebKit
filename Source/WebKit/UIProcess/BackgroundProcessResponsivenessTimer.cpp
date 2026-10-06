@@ -44,14 +44,7 @@ BackgroundProcessResponsivenessTimer::BackgroundProcessResponsivenessTimer(WebPr
 {
 }
 
-BackgroundProcessResponsivenessTimer::~BackgroundProcessResponsivenessTimer()
-{
-}
-
-Ref<WebProcessProxy> BackgroundProcessResponsivenessTimer::protectedWebProcessProxy() const
-{
-    return const_cast<WebProcessProxy&>(m_webProcessProxy.get());
-}
+BackgroundProcessResponsivenessTimer::~BackgroundProcessResponsivenessTimer() = default;
 
 void BackgroundProcessResponsivenessTimer::updateState()
 {
@@ -98,7 +91,7 @@ void BackgroundProcessResponsivenessTimer::responsivenessCheckTimerFired()
     ASSERT(!m_timeoutTimer.isActive());
 
     m_timeoutTimer.startOneShot(responsivenessTimeout);
-    protectedWebProcessProxy()->send(Messages::WebProcess::BackgroundResponsivenessPing(), 0);
+    protect(m_webProcessProxy)->send(Messages::WebProcess::BackgroundResponsivenessPing(), 0);
 }
 
 void BackgroundProcessResponsivenessTimer::timeoutTimerFired()
@@ -109,13 +102,13 @@ void BackgroundProcessResponsivenessTimer::timeoutTimerFired()
 
     // This shouldn't happen but still check to be 100% sure we don't report
     // suspended processes as unresponsive.
-    if (protectedWebProcessProxy()->throttler().isSuspended())
+    if (m_webProcessProxy->throttler().isSuspended())
         return;
 
     if (!m_isResponsive)
         return;
 
-    if (!protectedClient()->mayBecomeUnresponsive())
+    if (!protect(client())->mayBecomeUnresponsive())
         return;
 
     setResponsive(false);
@@ -144,14 +137,14 @@ void BackgroundProcessResponsivenessTimer::setResponsive(bool isResponsive)
 bool BackgroundProcessResponsivenessTimer::shouldBeActive() const
 {
 #if !USE(RUNNINGBOARD)
-    Ref webProcess = m_webProcessProxy.get();
-    if (webProcess->visiblePageCount())
+    auto& webProcess = m_webProcessProxy.get();
+    if (webProcess.visiblePageCount())
         return false;
-    if (webProcess->throttler().isSuspended())
+    if (webProcess.throttler().isSuspended())
         return false;
-    if (webProcess->isStandaloneServiceWorkerProcess())
+    if (webProcess.isStandaloneServiceWorkerProcess())
         return true;
-    return webProcess->pageCount();
+    return webProcess.pageCount();
 #else
     // Disable background process responsiveness checking when using RunningBoard since such processes usually get suspended.
     return false;

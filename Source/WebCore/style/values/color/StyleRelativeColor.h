@@ -33,13 +33,15 @@
 #include "Color.h"
 #include "ColorSerialization.h"
 #include "StyleColor.h"
-#include "StylePrimitiveKeyword+Logging.h"
+#include "StyleKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 #include "StyleResolvedColor.h"
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace Style {
+
+class ResolvedColors;
 
 template<typename D, unsigned Index> using RelativeColorComponent = GetCSSColorParseTypeWithCalcAndSymbolsComponentResult<D, Index>;
 
@@ -88,11 +90,11 @@ template<typename D> Style::Color toStyleColor(const CSS::RelativeColor<D>& unre
     return { ResolvedColor { WTF::move(color) } };
 }
 
-template<typename D> WebCore::Color resolveColor(const RelativeColor<D>& relative, const WebCore::Color& currentColor)
+template<typename D> WebCore::Color resolveColor(const RelativeColor<D>& relative, const ResolvedColors& resolvedColors)
 {
     return resolveNoConversionDataRequired(
         CSS::RelativeColorResolver<D> {
-            .origin = relative.origin.resolveColor(currentColor),
+            .origin = relative.origin.resolveColor(resolvedColors),
             .components = relative.components
         }
     );
@@ -135,7 +137,7 @@ template<typename D> void serializationForCSSTokenization(StringBuilder& builder
     builder.append(')');
 }
 
-template<typename D> String serializationForCSSTokenization(const CSS::SerializationContext& context, const RelativeColor<D>& relative)
+template<typename D> WTF::String serializationForCSSTokenization(const CSS::SerializationContext& context, const RelativeColor<D>& relative)
 {
     StringBuilder builder;
     serializationForCSSTokenization(builder, context, relative);

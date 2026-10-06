@@ -82,8 +82,8 @@ public:
     void setHostAddress(const String& ip, uint16_t port) { m_targetIp = ip; m_targetPort = port; }
     bool isConnected() const;
 
-    const String& sessionID() const { return m_sessionID; }
-    const Capabilities& capabilities() const { return m_capabilities; }
+    const String& sessionID() const LIFETIME_BOUND { return m_sessionID; }
+    const Capabilities& capabilities() const LIFETIME_BOUND { return m_capabilities; }
 
     void connectToBrowser(Function<void (std::optional<String> error)>&&);
     void startAutomationSession(Function<void (bool, std::optional<String>)>&&);
@@ -109,7 +109,7 @@ private:
 
     struct Target {
         uint64_t id { 0 };
-        CString name;
+        UTF8CString name;
         bool paired { false };
     };
 
@@ -121,8 +121,14 @@ private:
 #endif
 
 #if USE(GLIB)
+
+    enum class DisconnectReason {
+        BrowserDidCloseConnection,
+        AutomationTargetLost,
+    };
+
     static const SocketConnection::MessageHandlers& messageHandlers();
-    void connectionDidClose();
+    void disconnect(DisconnectReason);
     void launchBrowser(Function<void (std::optional<String> error)>&&);
     void connectToBrowser(std::unique_ptr<ConnectToBrowserAsyncData>&&);
     bool matchCapabilities(GVariant*);

@@ -32,19 +32,19 @@
 #include "RenderChildIterator.h"
 #include "RenderGrid.h"
 #include "RenderStyleConstants.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleGridTrackSizingDirection.h"
 
 namespace WebCore {
 
 namespace GridLayoutFunctions {
 
-static inline bool marginStartIsAuto(const RenderBox& gridItem, Style::GridTrackSizingDirection direction)
+static inline bool NODELETE marginStartIsAuto(const RenderBox& gridItem, Style::GridTrackSizingDirection direction)
 {
     return direction == Style::GridTrackSizingDirection::Columns ? gridItem.style().marginStart().isAuto() : gridItem.style().marginBefore().isAuto();
 }
 
-static inline bool marginEndIsAuto(const RenderBox& gridItem, Style::GridTrackSizingDirection direction)
+static inline bool NODELETE marginEndIsAuto(const RenderBox& gridItem, Style::GridTrackSizingDirection direction)
 {
     return direction == Style::GridTrackSizingDirection::Columns ? gridItem.style().marginEnd().isAuto() : gridItem.style().marginAfter().isAuto();
 }
@@ -55,9 +55,10 @@ static bool gridItemHasMargin(const RenderBox& gridItem, Style::GridTrackSizingD
         return !edge.isKnownZero() && !edge.isAuto();
     };
 
+    auto& itemStyle = gridItem.style();
     if (direction == Style::GridTrackSizingDirection::Columns)
-        return hasMarginEdge(gridItem.style().marginStart()) || hasMarginEdge(gridItem.style().marginEnd());
-    return hasMarginEdge(gridItem.style().marginBefore()) || hasMarginEdge(gridItem.style().marginAfter());
+        return hasMarginEdge(itemStyle.marginStart()) || hasMarginEdge(itemStyle.marginEnd());
+    return hasMarginEdge(itemStyle.marginBefore()) || hasMarginEdge(itemStyle.marginAfter());
 }
 
 LayoutUnit computeMarginLogicalSizeForGridItem(const RenderGrid& grid, Style::GridTrackSizingDirection direction, const RenderBox& gridItem)
@@ -75,11 +76,11 @@ LayoutUnit computeMarginLogicalSizeForGridItem(const RenderGrid& grid, Style::Gr
     return marginStartIsAuto(gridItem, flowAwareDirection) ? marginEnd : marginEndIsAuto(gridItem, flowAwareDirection) ? marginStart : marginStart + marginEnd;
 }
 
-bool hasRelativeOrIntrinsicSizeForGridItem(const RenderBox& gridItem, Style::GridTrackSizingDirection direction)
+bool hasRelativeOrKeywordOrAutoSizeForGridItem(const RenderBox& gridItem, Style::GridTrackSizingDirection direction)
 {
     if (direction == Style::GridTrackSizingDirection::Columns)
-        return gridItem.hasRelativeLogicalWidth() || gridItem.style().logicalWidth().isIntrinsicOrLegacyIntrinsicOrAuto();
-    return gridItem.hasRelativeLogicalHeight() || gridItem.style().logicalHeight().isIntrinsicOrLegacyIntrinsicOrAuto();
+        return gridItem.hasRelativeLogicalWidth() || gridItem.style().logicalWidth().isSizingKeywordOrAuto();
+    return gridItem.hasRelativeLogicalHeight() || gridItem.style().logicalHeight().isSizingKeywordOrAuto();
 }
 
 static ExtraMarginsFromSubgrids extraMarginForSubgrid(const RenderGrid& parent, unsigned startLine, unsigned endLine, Style::GridTrackSizingDirection direction)
@@ -89,7 +90,7 @@ static ExtraMarginsFromSubgrids extraMarginForSubgrid(const RenderGrid& parent, 
         return { };
 
     std::optional<LayoutUnit> availableSpace;
-    if (!hasRelativeOrIntrinsicSizeForGridItem(parent, direction))
+    if (!hasRelativeOrKeywordOrAutoSizeForGridItem(parent, direction))
         availableSpace = parent.availableSpaceForGutters(direction);
 
     RenderGrid& grandParent = downcast<RenderGrid>(*parent.parent());
@@ -141,7 +142,8 @@ bool isOrthogonalParent(const RenderGrid& grid, const RenderElement& parent)
 
 bool isAspectRatioBlockSizeDependentGridItem(const RenderBox& gridItem)
 {
-    return (gridItem.style().hasAspectRatio() || gridItem.hasIntrinsicAspectRatio()) && (gridItem.hasRelativeLogicalHeight() || gridItem.hasStretchedLogicalHeight());
+    return (gridItem.style().aspectRatio().hasRatio() || gridItem.hasIntrinsicAspectRatio())
+        && (gridItem.hasRelativeLogicalHeight() || gridItem.hasStretchedLogicalHeight());
 }
 
 bool isGridItemInlineSizeDependentOnBlockConstraints(const RenderBox& gridItem, const RenderGrid& parentGrid, ItemPosition gridItemAlignSelf)
@@ -152,8 +154,7 @@ bool isGridItemInlineSizeDependentOnBlockConstraints(const RenderBox& gridItem, 
         return true;
 
     auto& gridItemStyle = gridItem.style();
-    auto gridItemFlexWrap = gridItemStyle.flexWrap();
-    if (gridItem.isRenderFlexibleBox() && gridItem.style().isColumnFlexDirection() && (gridItemFlexWrap == FlexWrap::Wrap || gridItemFlexWrap == FlexWrap::Reverse))
+    if (gridItem.isRenderFlexibleBox() && gridItemStyle.isColumnFlexDirection() && gridItemStyle.flexWrap().isMultiline())
         return true;
 
     if (gridItem.isRenderMultiColumnFlow())
@@ -168,9 +169,9 @@ bool isGridItemInlineSizeDependentOnBlockConstraints(const RenderBox& gridItem, 
 
     auto hasAspectRatioAndInlineSizeDependsOnBlockSize = [](auto& renderer) {
         auto& rendererStyle = renderer.style();
-        bool rendererHasAspectRatio = renderer.hasIntrinsicAspectRatio() || rendererStyle.hasAspectRatio();
+        bool rendererHasAspectRatio = renderer.hasIntrinsicAspectRatio() || rendererStyle.aspectRatio().hasRatio();
 
-        return rendererHasAspectRatio && rendererStyle.logicalWidth().isAuto() && !rendererStyle.logicalHeight().isIntrinsicOrLegacyIntrinsicOrAuto();
+        return rendererHasAspectRatio && rendererStyle.logicalWidth().isAuto() && !rendererStyle.logicalHeight().isSizingKeywordOrAuto();
     };
 
     for (auto& gridItemChild : childrenOfType<RenderBox>(gridItem)) {
@@ -250,11 +251,14 @@ bool hasAutoMarginsInRowAxis(const RenderBox& gridItem, WritingMode parentWritin
 
 bool hasStretchableSizeInColumnAxis(const RenderBox& gridItem, const RenderGrid& gridContainer)
 {
-    // Only auto sizes are stretchable.
-    if (!(gridContainer.isHorizontalWritingMode() ? gridItem.style().height().isAuto() : gridItem.style().width().isAuto()))
+    // Auto and stretch sizes are stretchable — alignment stretch handles the
+    // final layout for both. During intrinsic track sizing, the CSS stretch
+    // keyword falls back to auto, and alignment stretch applies afterward.
+    auto& columnAxisSize = gridContainer.isHorizontalWritingMode() ? gridItem.style().height() : gridItem.style().width();
+    if (!(columnAxisSize.isAuto() || columnAxisSize.isStretch()))
         return false;
 
-    if (gridItem.style().hasAspectRatio() && !gridContainer.selfAlignmentForGridItem(gridItem, LogicalBoxAxis::Block, StretchingMode::Explicit).isStretch()) {
+    if (gridItem.style().aspectRatio().hasRatio() && !gridContainer.selfAlignmentForGridItem(gridItem, LogicalBoxAxis::Block, StretchingMode::Explicit).isStretch()) {
         if (gridContainer.isHorizontalWritingMode() == gridItem.isHorizontalWritingMode()) {
             // A non-auto inline size means the same for block size (column axis size) because of the aspect ratio.
             if (!gridItem.style().logicalWidth().isAuto())
@@ -273,11 +277,13 @@ bool hasStretchableSizeInColumnAxis(const RenderBox& gridItem, const RenderGrid&
 
 bool hasStretchableSizeInRowAxis(const RenderBox& gridItem, const RenderGrid& gridContainer)
 {
-    // Only auto sizes are stretchable.
-    if (!(gridContainer.isHorizontalWritingMode() ? gridItem.style().width().isAuto() : gridItem.style().height().isAuto()))
+    // Auto and stretch sizes are stretchable — alignment stretch handles the
+    // final layout for both.
+    auto& rowAxisSize = gridContainer.isHorizontalWritingMode() ? gridItem.style().width() : gridItem.style().height();
+    if (!(rowAxisSize.isAuto() || rowAxisSize.isStretch()))
         return false;
 
-    if (gridItem.style().hasAspectRatio() && !gridContainer.selfAlignmentForGridItem(gridItem, LogicalBoxAxis::Inline, StretchingMode::Explicit).isStretch()) {
+    if (gridItem.style().aspectRatio().hasRatio() && !gridContainer.selfAlignmentForGridItem(gridItem, LogicalBoxAxis::Inline, StretchingMode::Explicit).isStretch()) {
         if (gridContainer.isHorizontalWritingMode() != gridItem.isHorizontalWritingMode()) {
             // A non-auto inline size (column axis size) means the same for block size (row axis size) because of the aspect ratio.
             if (!gridItem.style().logicalWidth().isAuto())
@@ -320,9 +326,9 @@ void updateAutoMarginsInRowAxisIfNeeded(RenderBox& gridItem, WritingMode writing
     // 'auto', since such computed value may come from a previous layout and may
     // be incorrect now.
     if (!marginStart.isAuto())
-        marginLogicalWidth += gridItem.marginStart();
+        marginLogicalWidth += gridItem.marginStart(gridItem.writingMode());
     if (!marginEnd.isAuto())
-        marginLogicalWidth += gridItem.marginEnd();
+        marginLogicalWidth += gridItem.marginEnd(gridItem.writingMode());
 
     auto availableAlignmentSpace = gridItem.gridAreaContentLogicalWidth()->value() - gridItem.logicalWidth() - marginLogicalWidth;
     if (availableAlignmentSpace <= 0)
@@ -348,9 +354,9 @@ void updateAutoMarginsInColumnAxisIfNeeded(RenderBox& gridItem, WritingMode writ
     // 'auto', since such computed value may come from a previous layout and may
     // be incorrect now.
     if (!marginBefore.isAuto())
-        marginLogicalHeight += gridItem.marginBefore();
+        marginLogicalHeight += gridItem.marginBefore(gridItem.writingMode());
     if (!marginAfter.isAuto())
-        marginLogicalHeight += gridItem.marginAfter();
+        marginLogicalHeight += gridItem.marginAfter(gridItem.writingMode());
 
     auto availableAlignmentSpace = gridItem.gridAreaContentLogicalHeight()->value() - gridItem.logicalHeight() - marginLogicalHeight;
     if (availableAlignmentSpace <= 0)
@@ -372,6 +378,44 @@ bool isRelativeGridTrackBreadthAsAuto(const Style::GridTrackFitContentLength& le
 bool isRelativeGridTrackBreadthAsAuto(const Style::GridTrackBreadth& length, std::optional<LayoutUnit> availableSpace)
 {
     return length.isPercentOrCalculated() && !availableSpace;
+}
+
+const Style::GridTrackSize& rawGridTrackSize(const Style::ComputedStyle& renderStyle, Style::GridTrackSizingDirection direction, unsigned translatedIndex, unsigned autoRepeatTracksCount, unsigned explicitGridStart)
+{
+    auto& autoTrackStyles = renderStyle.gridAutoList(direction);
+    auto& tracks = renderStyle.gridTemplateList(direction);
+    auto& trackStyles = tracks.sizes;
+    auto& autoRepeatTrackStyles = tracks.autoRepeatSizes;
+    unsigned insertionPoint = tracks.autoRepeatInsertionPoint;
+
+    // We should not use Style::GridPositionsResolver::explicitGridXXXCount() for this because the
+    // explicit grid might be larger than the number of tracks in grid-template-rows|columns (if
+    // grid-template-areas is specified for example).
+    unsigned explicitTracksCount = trackStyles.size() + autoRepeatTracksCount;
+
+    int untranslatedIndexAsInt = translatedIndex - explicitGridStart;
+    unsigned autoTrackStylesSize = autoTrackStyles.size();
+    if (untranslatedIndexAsInt < 0) {
+        int index = untranslatedIndexAsInt % static_cast<int>(autoTrackStylesSize);
+        // We need to transpose the index because the first negative implicit line will get the last defined auto track and so on.
+        index += index ? autoTrackStylesSize : 0;
+        ASSERT(index >= 0);
+        return autoTrackStyles[index];
+    }
+
+    unsigned untranslatedIndex = static_cast<unsigned>(untranslatedIndexAsInt);
+    if (untranslatedIndex >= explicitTracksCount)
+        return autoTrackStyles[(untranslatedIndex - explicitTracksCount) % autoTrackStylesSize];
+
+    if (!autoRepeatTracksCount || untranslatedIndex < insertionPoint)
+        return trackStyles[untranslatedIndex];
+
+    if (untranslatedIndex < (insertionPoint + autoRepeatTracksCount)) {
+        unsigned autoRepeatLocalIndex = untranslatedIndexAsInt - insertionPoint;
+        return autoRepeatTrackStyles[autoRepeatLocalIndex % autoRepeatTrackStyles.size()];
+    }
+
+    return trackStyles[untranslatedIndex - autoRepeatTracksCount];
 }
 
 } // namespace GridLayoutFunctions

@@ -7,12 +7,11 @@
 //   Performance test for glBindVertexArray.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
 #include "ANGLEPerfTest.h"
 #include "DrawCallPerfParams.h"
+#include "common/unsafe_buffers.h"
 #include "test_utils/gl_raii.h"
 
 using namespace angle;
@@ -43,7 +42,7 @@ struct VertexArrayParams final : public RenderTestParams
 
     int numVertexArrays  = 2000;
     int numBuffers       = 5;
-    GLuint bufferSize[5] = {384, 1028, 192, 384, 192};
+    std::array<GLuint, 5> bufferSize = {384, 1028, 192, 384, 192};
     TestMode testMode    = TestMode::BufferData;
 };
 
@@ -91,7 +90,14 @@ class VertexArrayBenchmark : public ANGLERenderTest,
     std::vector<GLuint> mVertexArrays;
 };
 
-VertexArrayBenchmark::VertexArrayBenchmark() : ANGLERenderTest("VertexArrayPerf", GetParam()) {}
+VertexArrayBenchmark::VertexArrayBenchmark() : ANGLERenderTest("VertexArrayPerf", GetParam())
+{
+    const auto &params = GetParam();
+    if (IsWindows() && IsQualcomm() && params.driver == GLESDriverType::SystemWGL)
+    {
+        skipTest("anglebug.com/546189136 Fails on Windows ARM64 Qualcomm");
+    }
+}
 
 void VertexArrayBenchmark::initializeBenchmark()
 {

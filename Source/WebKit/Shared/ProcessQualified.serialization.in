@@ -24,7 +24,9 @@
 additional_forward_declaration: namespace WebCore { using BackForwardFrameItemIdentifierID = ObjectIdentifier<BackForwardFrameItemIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using BackForwardItemIdentifierID = ObjectIdentifier<BackForwardItemIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using DOMCacheIdentifierID = AtomicObjectIdentifier<DOMCacheIdentifierType>; }
+additional_forward_declaration: namespace WebCore { using MediaSessionIdentifier = ObjectIdentifier<MediaSessionIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using OpaqueOriginIdentifier = AtomicObjectIdentifier<OpaqueOriginIdentifierType>; }
+additional_forward_declaration: namespace WebCore { using PageIdentifier = ObjectIdentifier<PageIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using PlatformLayerIdentifierID = ObjectIdentifier<PlatformLayerIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using PlaybackTargetClientContextID = ObjectIdentifier<PlaybackTargetClientContextIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using RTCDataChannelLocalIdentifier =  AtomicObjectIdentifier<RTCDataChannelLocalIdentifierType>; }
@@ -32,6 +34,7 @@ additional_forward_declaration: namespace WebCore { using ScrollingNodeIdentifie
 additional_forward_declaration: namespace WebCore { using SharedWorkerObjectIdentifierID = ObjectIdentifier<SharedWorkerObjectIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using UserGestureTokenIdentifierID = ObjectIdentifier<UserGestureTokenIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using WebLockIdentifierID = AtomicObjectIdentifier<WebLockIdentifierType>; }
+additional_forward_declaration: namespace WebCore { using ResourceLoaderIdentifier = AtomicObjectIdentifier<ResourceLoaderIdentifierType>; }
 
 header: <WebCore/ProcessQualified.h>
 [Alias=class ProcessQualified<BackForwardFrameItemIdentifierID>, AdditionalEncoder=StreamConnectionEncoder, CustomHeader] alias WebCore::BackForwardFrameItemIdentifier {
@@ -89,6 +92,16 @@ header: <WebCore/ProcessQualified.h>
     WebCore::ProcessIdentifier processIdentifier();
 };
 
+[Alias=class ProcessQualified<MediaSessionIdentifier>, CustomHeader] alias WebCore::QualifiedMediaSessionIdentifier {
+    WebCore::MediaSessionIdentifier object();
+    WebCore::ProcessIdentifier processIdentifier();
+};
+
+[Alias=class ProcessQualified<PageIdentifier>, CustomHeader] alias WebCore::QualifiedPageIdentifier {
+    WebCore::PageIdentifier object();
+    WebCore::ProcessIdentifier processIdentifier();
+};
+
 [Alias=class ProcessQualified<WTF::UUID>, CustomHeader] alias WebCore::ScriptExecutionContextIdentifier {
     WTF::UUID object();
     WebCore::ProcessIdentifier processIdentifier();
@@ -96,11 +109,6 @@ header: <WebCore/ProcessQualified.h>
 
 [Alias=class WebCore::ProcessQualified<TransactionIdentifier>, CustomHeader] alias WebKit::TransactionID {
     WebKit::TransactionIdentifier object();
-    WebCore::ProcessIdentifier processIdentifier();
-};
-
-[Alias=class WebCore::ProcessQualified<ObjectIdentifier<WebCore::MediaPlayerClientIdentifierType>>, CustomHeader] alias WebKit::PlaybackSessionContextIdentifier {
-    WebCore::MediaPlayerClientIdentifier object();
     WebCore::ProcessIdentifier processIdentifier();
 };
 
@@ -112,5 +120,11 @@ header: <WebCore/WebKitJSHandle.h>
 
 [Alias=class WebCore::ProcessQualified<ObjectIdentifier<WebKit::ContentWorldIdentifierType>>, CustomHeader] alias WebKit::ContentWorldIdentifier {
     WebKit::NonProcessQualifiedContentWorldIdentifier object();
+    WebCore::ProcessIdentifier processIdentifier();
+};
+
+header: <WebCore/ResourceLoaderIdentifier.h>
+[Alias=class ProcessQualified<ResourceLoaderIdentifier>, CustomHeader] alias WebCore::ScopedResourceLoaderIdentifier {
+    WebCore::ResourceLoaderIdentifier object();
     WebCore::ProcessIdentifier processIdentifier();
 };

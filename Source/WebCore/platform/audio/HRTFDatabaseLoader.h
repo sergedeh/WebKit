@@ -34,7 +34,10 @@
 #include <wtf/Lock.h>
 #include <wtf/RefPtr.h>
 #include <wtf/ThreadSafeWeakPtr.h>
-#include <wtf/Threading.h>
+
+namespace WTF {
+class Thread;
+}
 
 namespace WebCore {
 
@@ -52,12 +55,12 @@ public:
     ~HRTFDatabaseLoader();
     
     // Returns true once the default database has been completely loaded.
-    bool isLoaded() const;
+    bool NODELETE isLoaded() const;
 
     // waitForLoaderThreadCompletion() may be called more than once and is thread-safe.
     void waitForLoaderThreadCompletion();
     
-    HRTFDatabase* database() { return m_hrtfDatabase.get(); }
+    HRTFDatabase* database() LIFETIME_BOUND { return m_hrtfDatabase.get(); }
 
     float databaseSampleRate() const { return m_databaseSampleRate; }
     
@@ -76,7 +79,7 @@ private:
 
     // Holding a m_threadLock is required when accessing m_databaseLoaderThread.
     Lock m_threadLock;
-    RefPtr<Thread> m_databaseLoaderThread WTF_GUARDED_BY_LOCK(m_threadLock);
+    RefPtr<WTF::Thread> m_databaseLoaderThread WTF_GUARDED_BY_LOCK(m_threadLock);
 
     float m_databaseSampleRate;
 };

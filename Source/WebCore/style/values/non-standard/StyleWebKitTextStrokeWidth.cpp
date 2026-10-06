@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2025-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,8 +26,9 @@
 #include "config.h"
 #include "StyleWebKitTextStrokeWidth.h"
 
-#include "CSSPrimitiveValue.h"
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
+#include "StyleLengthResolution.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 
 namespace WebCore {
@@ -37,30 +38,28 @@ namespace Style {
 
 auto CSSValueConversion<WebkitTextStrokeWidth>::operator()(BuilderState& state, const CSSValue& value) -> WebkitTextStrokeWidth
 {
-    RefPtr primitiveValue = requiredDowncast<CSSPrimitiveValue>(state, value);
-    if (!primitiveValue)
-        return 0_css_px;
+    using namespace CSS::Literals;
 
-    auto handleKeyword = [&](double result) -> WebkitTextStrokeWidth {
-        Ref emsValue = CSSPrimitiveValue::create(result, CSSUnitType::CSS_EM);
-        return toStyleFromCSSValue<WebkitTextStrokeWidth::Length>(state, emsValue);
-    };
+    if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        // FIXME: This should probably use the unzoomed Style::emToPx conversion. Like this, zoom is being applied twice. Once now, once at use time.
+        auto convertFromEms = [&](auto ems) -> WebkitTextStrokeWidth::Length {
+            return emToPxZoomed<float>(ems, state.style());
+        };
 
-    if (primitiveValue->isValueID()) {
-        switch (primitiveValue->valueID()) {
+        switch (keywordValue->valueID()) {
         case CSSValueThin:
-            return handleKeyword(1.0 / 48.0);
+            return convertFromEms(1.0 / 48.0);
         case CSSValueMedium:
-            return handleKeyword(3.0 / 48.0);
+            return convertFromEms(3.0 / 48.0);
         case CSSValueThick:
-            return handleKeyword(5.0 / 48.0);
+            return convertFromEms(5.0 / 48.0);
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
             return 0_css_px;
         }
     }
 
-    return toStyleFromCSSValue<WebkitTextStrokeWidth::Length>(state, *primitiveValue);
+    return toStyleFromCSSValue<WebkitTextStrokeWidth::Length>(state, value);
 }
 
 } // namespace Style

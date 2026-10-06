@@ -60,6 +60,7 @@ Cross-Origin-Resource-Policy
 Date
 DNT
 Default-Style
+Document-Isolation-Policy
 ETag
 Expect
 Expires
@@ -77,6 +78,7 @@ Last-Modified
 Link
 Location
 Origin
+Origin-Agent-Cluster
 Ping-From
 Ping-To
 Pragma
@@ -90,6 +92,7 @@ Reporting-Endpoints
 Sec-Fetch-Dest
 Sec-Fetch-Mode
 Sec-Fetch-Site
+Sec-GPC
 Sec-Purpose
 Sec-Speculation-Tags
 Speculation-Rules
@@ -111,6 +114,7 @@ Trailer
 Transfer-Encoding
 Upgrade
 Upgrade-Insecure-Requests
+Use-As-Dictionary
 User-Agent
 Vary
 Via

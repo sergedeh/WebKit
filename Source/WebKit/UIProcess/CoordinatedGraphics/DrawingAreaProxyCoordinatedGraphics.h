@@ -33,7 +33,7 @@
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
 
-#if !PLATFORM(WPE)
+#if !PLATFORM(WPE) && !PLATFORM(GTK)
 #include "BackingStore.h"
 #endif
 
@@ -54,12 +54,12 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-#if !PLATFORM(WPE)
+#if !PLATFORM(WPE) && !PLATFORM(GTK)
     void paint(PlatformPaintContextPtr, const WebCore::IntRect&, WebCore::Region& unpaintedRegion);
 #endif
 
     bool isInAcceleratedCompositingMode() const { return !m_layerTreeContext.isEmpty(); }
-    const LayerTreeContext& layerTreeContext() const { return m_layerTreeContext; }
+    const LayerTreeContext& layerTreeContext() const LIFETIME_BOUND { return m_layerTreeContext; }
 
     void dispatchAfterEnsuringDrawing(CompletionHandler<void()>&&);
 
@@ -77,13 +77,15 @@ private:
 
 #if PLATFORM(GTK)
     void adjustTransientZoom(double scale, WebCore::FloatPoint originInLayerForPageScale, WebCore::FloatPoint originInVisibleRect) override;
-    void commitTransientZoom(double scale, WebCore::FloatPoint originInLayerForPageScale) override;
+    void commitTransientZoom(double scale, WebCore::FloatPoint originInLayerForPageScale, std::optional<WebCore::FloatPoint> targetScrollPosition) override;
 #endif
 
     // IPC message handlers
-    void update(uint64_t backingStoreStateID, UpdateInfo&&) override;
     void enterAcceleratedCompositingMode(uint64_t backingStoreStateID, const LayerTreeContext&) override;
+#if !PLATFORM(WPE) && !PLATFORM(GTK)
+    void update(uint64_t backingStoreStateID, UpdateInfo&&) override;
     void exitAcceleratedCompositingMode(uint64_t backingStoreStateID, UpdateInfo&&) override;
+#endif
     void updateAcceleratedCompositingMode(uint64_t backingStoreStateID, const LayerTreeContext&) override;
     void dispatchPresentationCallbacksAfterFlushingLayers(IPC::Connection&, Vector<IPC::AsyncReplyID>&&) override;
 
@@ -97,7 +99,7 @@ private:
     void sendUpdateGeometry();
     void didUpdateGeometry();
 
-#if !PLATFORM(WPE)
+#if !PLATFORM(WPE) && !PLATFORM(GTK)
     bool forceUpdateIfNeeded();
     void incorporateUpdate(UpdateInfo&&);
     void discardBackingStoreSoon();
@@ -130,13 +132,13 @@ private:
     WebCore::IntSize m_lastSentSize;
 
 
-#if !PLATFORM(WPE)
+#if !PLATFORM(WPE) && !PLATFORM(GTK)
     bool m_isBackingStoreDiscardable { true };
     bool m_inForceUpdate { false };
     std::unique_ptr<BackingStore> m_backingStore;
     RunLoop::Timer m_discardBackingStoreTimer;
 #endif
-    std::unique_ptr<DrawingMonitor> m_drawingMonitor;
+    const std::unique_ptr<DrawingMonitor> m_drawingMonitor;
 };
 
 } // namespace WebKit

@@ -55,7 +55,7 @@ public:
     AudioWorkletThread& workletThread() { return m_workletThread.get(); }
 
     void postTaskToAudioWorklet(Function<void(AudioWorklet&)>&&);
-    ScriptExecutionContextIdentifier loaderContextIdentifier() const final;
+    ScriptExecutionContextIdentifier NODELETE loaderContextIdentifier() const final;
 
     uint32_t checkedPtrCount() const final { return CanMakeThreadSafeCheckedPtr<AudioWorkletMessagingProxy>::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeThreadSafeCheckedPtr<AudioWorkletMessagingProxy>::checkedPtrCountWithoutThreadCheck(); }
@@ -68,7 +68,9 @@ private:
 
     // WorkerLoaderProxy.
     RefPtr<CacheStorageConnection> createCacheStorageConnection() final;
+    RefPtr<FileSystemStorageConnection> createFileSystemStorageConnection() final;
     RefPtr<RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final;
+    RefPtr<IDBClient::IDBConnectionProxy> createIDBConnectionProxy() final;
     void postTaskToLoader(ScriptExecutionContext::Task&&) final;
 
     bool isAudioWorkletMessagingProxy() const final { return true; }

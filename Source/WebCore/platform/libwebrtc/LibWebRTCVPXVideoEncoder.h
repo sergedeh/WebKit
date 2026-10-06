@@ -27,7 +27,7 @@
 
 #if USE(LIBWEBRTC)
 
-#include <WebCore/VideoEncoder.h>
+#include "VideoEncoder.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
 
@@ -51,13 +51,13 @@ public:
     ~LibWebRTCVPXVideoEncoder();
 
 private:
-    LibWebRTCVPXVideoEncoder(Type, OutputCallback&&);
+    LibWebRTCVPXVideoEncoder(Type, DescriptionCallback&&, OutputCallback&&);
 
     int initialize(LibWebRTCVPXVideoEncoder::Type, const VideoEncoder::Config&);
     Ref<EncodePromise> encode(RawFrame&&, bool shouldGenerateKeyFrame) final;
     Ref<GenericPromise> flush() final;
     void reset() final;
-    void close() final;
+    void NODELETE close() final;
     Ref<GenericPromise> setRates(uint64_t bitRate, double frameRate) final;
 
     const Ref<LibWebRTCVPXInternalVideoEncoder> m_internalEncoder;

@@ -63,6 +63,8 @@
 #include "TreeScopeInlines.h"
 #include "TreeScopeOrderedMap.h"
 #include "TypedElementDescendantIteratorInlines.h"
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
+#include <JavaScriptCore/StructureInlines.h>
 #include <algorithm>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/text/AtomStringHash.h>
@@ -88,6 +90,13 @@ struct SVGResourcesMap {
     MemoryCompactRobinHoodHashMap<AtomString, WeakSVGElementSet> pendingResourcesForRemoval;
     MemoryCompactRobinHoodHashMap<AtomString, SingleThreadWeakPtr<LegacyRenderSVGResourceContainer>> legacyResources;
 };
+
+struct NodesInCommonTreeScope {
+    SUPPRESS_UNCOUNTED_MEMBER TreeScope* treeScope { nullptr };
+    SUPPRESS_UNCOUNTED_MEMBER Node* nodeA { nullptr };
+    SUPPRESS_UNCOUNTED_MEMBER Node* nodeB { nullptr };
+};
+static NodesInCommonTreeScope NODELETE findNodesInCommonTreeScope(Node*, Node*);
 
 TreeScope::TreeScope(ShadowRoot& shadowRoot, Document& document, RefPtr<CustomElementRegistry>&& registry)
     : m_rootNode(shadowRoot)
@@ -127,7 +136,7 @@ void TreeScope::deref() const
 IdTargetObserverRegistry& TreeScope::ensureIdTargetObserverRegistry()
 {
     if (!m_idTargetObserverRegistry)
-        m_idTargetObserverRegistry = makeUnique<IdTargetObserverRegistry>();
+        lazyInitialize(m_idTargetObserverRegistry, makeUnique<IdTargetObserverRegistry>());
     return *m_idTargetObserverRegistry;
 }
 
@@ -146,7 +155,7 @@ void TreeScope::setParentTreeScope(TreeScope& newParentScope)
     ASSERT(!m_rootNode->isDocumentNode());
 
     m_parentTreeScope = &newParentScope;
-    setDocumentScope(newParentScope.documentScope());
+    setDocumentScope(protect(newParentScope.documentScope()));
 }
 
 void TreeScope::setCustomElementRegistry(RefPtr<CustomElementRegistry>&& registry)
@@ -243,36 +252,12 @@ void TreeScope::removeElementByName(const AtomString& name, Element& element)
 
 Ref<Node> TreeScope::retargetToScope(Node& node) const
 {
-    Ref scope = node.treeScope();
-    if (this == scope.ptr() || !node.isInShadowTree()) [[likely]]
-        return node;
-    ASSERT(is<ShadowRoot>(scope->rootNode()));
-
-    Vector<TreeScope*, 8> nodeTreeScopes;
-    for (auto* currentScope = scope.ptr(); currentScope; currentScope = currentScope->parentTreeScope())
-        nodeTreeScopes.append(currentScope);
-    ASSERT(nodeTreeScopes.size() >= 2);
-
-    Vector<const TreeScope*, 8> ancestorScopes;
-    for (auto* currentScope = this; currentScope; currentScope = currentScope->parentTreeScope())
-        ancestorScopes.append(currentScope);
-
-    auto i = nodeTreeScopes.size();
-    auto j = ancestorScopes.size();
-    while (i > 0 && j > 0 && nodeTreeScopes[i - 1] == ancestorScopes[j - 1]) {
-        --i;
-        --j;
-    }
-
-    bool nodeIsInOuterTreeScope = !i;
-    if (nodeIsInOuterTreeScope)
-        return node;
-
-    auto& shadowRootInLowestCommonTreeScope = downcast<ShadowRoot>(nodeTreeScopes[i - 1]->rootNode());
-    return *shadowRootInLowestCommonTreeScope.host();
+    ASSERT(findNodesInCommonTreeScope(&rootNode(), &node).nodeB == findNodesInCommonTreeScope(&node, &rootNode()).nodeA);
+    auto* nodeInCommonAncestorTreeScope = findNodesInCommonTreeScope(&rootNode(), &node).nodeB;
+    return nodeInCommonAncestorTreeScope ? *nodeInCommonAncestorTreeScope : node;
 }
 
-Node* TreeScope::ancestorNodeInThisScope(SUPPRESS_UNCHECKED_ARG Node* node) const
+Node* TreeScope::ancestorNodeInThisScope(Node* node) const
 {
     for (; node; node = node->shadowHost()) {
         if (&node->treeScope() == this)
@@ -283,7 +268,7 @@ Node* TreeScope::ancestorNodeInThisScope(SUPPRESS_UNCHECKED_ARG Node* node) cons
     return nullptr;
 }
 
-Element* TreeScope::ancestorElementInThisScope(SUPPRESS_UNCHECKED_ARG Element* element) const
+Element* TreeScope::ancestorElementInThisScope(Element* element) const
 {
     for (; element; element = element->shadowHost()) {
         if (&element->treeScope() == this)
@@ -294,24 +279,28 @@ Element* TreeScope::ancestorElementInThisScope(SUPPRESS_UNCHECKED_ARG Element* e
     return nullptr;
 }
 
-void TreeScope::addImageMap(HTMLMapElement& imageMap)
+void TreeScope::addImageMap(HTMLMapElement& imageMap, const AtomString& name, const AtomString& id)
 {
-    auto name = imageMap.getName();
-    if (name.isNull())
+    if (name.isNull() && id.isNull())
         return;
     if (!m_imageMapsByName)
         m_imageMapsByName = makeUnique<TreeScopeOrderedMap>();
-    m_imageMapsByName->add(name, imageMap, *this);
+
+    if (!name.isNull())
+        m_imageMapsByName->add(name, imageMap, *this);
+    if (!id.isNull() && id != name)
+        m_imageMapsByName->add(id, imageMap, *this);
 }
 
-void TreeScope::removeImageMap(HTMLMapElement& imageMap)
+void TreeScope::removeImageMap(HTMLMapElement& imageMap, const AtomString& name, const AtomString& id)
 {
     if (!m_imageMapsByName)
         return;
-    auto name = imageMap.getName();
-    if (name.isNull())
-        return;
-    m_imageMapsByName->remove(name, imageMap);
+
+    if (!name.isNull())
+        m_imageMapsByName->remove(name, imageMap);
+    if (!id.isNull() && id != name)
+        m_imageMapsByName->remove(id, imageMap);
 }
 
 RefPtr<HTMLMapElement> TreeScope::getImageMap(const AtomString& name) const
@@ -381,7 +370,7 @@ static std::optional<LayoutPoint> absolutePointIfNotClipped(Document& document, 
     const auto& settings = document.frame()->settings();
     if (settings.visualViewportEnabled() && settings.clientCoordinatesRelativeToLayoutViewport()) {
         document.updateLayout();
-        if (!document.view() || !document.hasLivingRenderTree())
+        if (!document.view() || document.renderTreeState() != Document::RenderTreeState::Built)
             return std::nullopt;
         RefPtr view = document.view();
         FloatPoint layoutViewportPoint = view->clientToLayoutViewportPoint(clientPoint);
@@ -426,7 +415,7 @@ RefPtr<Node> TreeScope::nodeFromPoint(const LayoutPoint& clientPoint, LayoutPoin
 
 RefPtr<Element> TreeScope::elementFromPoint(double clientX, double clientY, HitTestSource source)
 {
-    if (!protectedDocumentScope()->hasLivingRenderTree())
+    if (documentScope().renderTreeState() != Document::RenderTreeState::Built)
         return nullptr;
 
     auto node = nodeFromPoint(LayoutPoint { clientX, clientY }, nullptr, source);
@@ -449,7 +438,7 @@ Vector<Ref<Element>> TreeScope::elementsFromPoint(double clientX, double clientY
     Vector<Ref<Element>> elements;
 
     Ref document = documentScope();
-    if (!document->hasLivingRenderTree())
+    if (document->renderTreeState() != Document::RenderTreeState::Built)
         return elements;
 
     auto absolutePoint = absolutePointIfNotClipped(document, LayoutPoint(clientX, clientY));
@@ -482,7 +471,7 @@ Vector<Ref<Element>> TreeScope::elementsFromPoint(double clientX, double clientY
         if (!node)
             continue;
 
-        if (auto pseudoElement = dynamicDowncast<PseudoElement>(*node))
+        if (RefPtr pseudoElement = dynamicDowncast<PseudoElement>(*node))
             node = pseudoElement->hostElement();
 
         // Prune duplicate entries. A pseudo ::before content above its parent
@@ -513,9 +502,9 @@ RefPtr<Element> TreeScope::findAnchor(StringView name)
     if (RefPtr element = getElementById(name))
         return element;
     Ref rootNode = m_rootNode.get();
-    for (Ref anchor : descendantsOfType<HTMLAnchorElement>(rootNode)) {
+    for (auto& anchor : descendantsOfType<HTMLAnchorElement>(rootNode)) {
         if (isMatchingAnchor(anchor, name))
-            return anchor;
+            return &anchor;
     }
     return nullptr;
 }
@@ -536,7 +525,7 @@ bool TreeScope::isMatchingAnchor(HTMLAnchorElement& anchor, StringView name)
     return false;
 }
 
-static Element* focusedFrameOwnerElement(Frame* focusedFrame, LocalFrame* currentFrame)
+static Element* NODELETE focusedFrameOwnerElement(Frame* focusedFrame, LocalFrame* currentFrame)
 {
     for (; focusedFrame; focusedFrame = focusedFrame->tree().parent()) {
         if (focusedFrame->tree().parent() == currentFrame)
@@ -547,79 +536,111 @@ static Element* focusedFrameOwnerElement(Frame* focusedFrame, LocalFrame* curren
 
 Element* TreeScope::focusedElementInScope()
 {
-    Ref document = documentScope();
-    RefPtr element = document->focusedElement();
+    auto& document = documentScope();
+    auto* element = document.focusedElement();
 
-    if (!element && document->page())
-        element = focusedFrameOwnerElement(document->page()->focusController().focusedFrame(), document->frame());
+    if (!element && document.page())
+        element = focusedFrameOwnerElement(document.page()->focusController().focusedFrame(), document.frame());
 
-    return ancestorElementInThisScope(element.get());
+    return ancestorElementInThisScope(element);
 }
 
 #if ENABLE(POINTER_LOCK)
 
 Element* TreeScope::pointerLockElement() const
 {
-    CheckedRef document = documentScope();
-    RefPtr page = document->page();
+    auto& document = documentScope();
+    auto* page = document.page();
     if (!page || page->pointerLockController().lockPending())
         return nullptr;
-    RefPtr element = page->pointerLockController().element();
-    if (!element || &element->document() != document.ptr())
+    auto* element = page->pointerLockController().element();
+    if (!element || &element->document() != &document)
         return nullptr;
-    return ancestorElementInThisScope(element.get());
+    return ancestorElementInThisScope(element);
 }
 
 #endif
 
-static void listTreeScopes(Node* node, Vector<TreeScope*, 5>& treeScopes)
+static ALWAYS_INLINE Node* NODELETE host(TreeScope& treeScope)
 {
-    while (true) {
-        treeScopes.append(&node->treeScope());
-        RefPtr ancestor = node->shadowHost();
-        if (!ancestor)
-            break;
-        SUPPRESS_UNCHECKED_ARG(node) = ancestor.get();
+    if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(treeScope.rootNode()))
+        return shadowRoot->host();
+    return nullptr;
+}
+
+static NodesInCommonTreeScope findNodesInCommonTreeScope(Node* nodeA, Node* nodeB)
+{
+    if (!nodeA || !nodeB)
+        return { nullptr, nullptr, nullptr };
+
+    if (&nodeA->treeScope() == &nodeB->treeScope())
+        return { &nodeA->treeScope(), nodeA, nodeB };
+
+    if (&nodeA->document() != &nodeB->document())
+        return { nullptr, nullptr, nullptr };
+
+    unsigned depthA = 0;
+    Node* currentNodeA = nodeA;
+    for (auto* treeScope = &nodeA->treeScope(); treeScope; treeScope = treeScope->parentTreeScope()) {
+        if (treeScope == &nodeB->treeScope())
+            return { treeScope, currentNodeA, nodeB };
+        depthA++;
+        currentNodeA = host(*treeScope);
     }
+
+    unsigned depthB = 0;
+    Node* currentNodeB = nodeB;
+    for (auto* treeScope = &nodeB->treeScope(); treeScope; treeScope = treeScope->parentTreeScope()) {
+        if (treeScope == &nodeA->treeScope())
+            return { treeScope, nodeA, currentNodeB };
+        depthB++;
+        currentNodeB = host(*treeScope);
+    }
+
+    if (depthA > depthB) {
+        for (auto* treeScope = &nodeA->treeScope(); treeScope && depthA > depthB; treeScope = treeScope->parentTreeScope()) {
+            nodeA = host(*treeScope);
+            depthA--;
+        }
+    } else {
+        for (auto* treeScope = &nodeB->treeScope(); treeScope && depthB > depthA; treeScope = treeScope->parentTreeScope()) {
+            nodeB = host(*treeScope);
+            depthB--;
+        }
+    }
+    ASSERT(nodeA && nodeB);
+    ASSERT(depthA == depthB);
+    auto* treeScopeA = &nodeA->treeScope();
+    auto* treeScopeB = &nodeB->treeScope();
+    while (treeScopeA && treeScopeB) {
+        if (treeScopeA == treeScopeB)
+            return { treeScopeA, nodeA, nodeB };
+        nodeA = host(*treeScopeA);
+        nodeB = host(*treeScopeB);
+        treeScopeA = treeScopeA->parentTreeScope();
+        treeScopeB = treeScopeB->parentTreeScope();
+    }
+
+    ASSERT_NOT_REACHED(); // If they didn't share the root, document equality check above should have failed.
+    return { nullptr, nullptr, nullptr };
 }
 
 TreeScope* commonTreeScope(Node* nodeA, Node* nodeB)
 {
-    if (!nodeA || !nodeB)
-        return nullptr;
-
-    if (&nodeA->treeScope() == &nodeB->treeScope())
-        return &nodeA->treeScope();
-
-    Vector<TreeScope*, 5> treeScopesA;
-    listTreeScopes(nodeA, treeScopesA);
-
-    Vector<TreeScope*, 5> treeScopesB;
-    listTreeScopes(nodeB, treeScopesB);
-
-    size_t indexA = treeScopesA.size();
-    size_t indexB = treeScopesB.size();
-
-    for (; indexA > 0 && indexB > 0 && treeScopesA[indexA - 1] == treeScopesB[indexB - 1]; --indexA, --indexB) { }
-
-    // If the nodes had no common tree scope, return immediately.
-    if (indexA == treeScopesA.size())
-        return nullptr;
-    
-    return treeScopesA[indexA] == treeScopesB[indexB] ? treeScopesA[indexA] : nullptr;
+    return findNodesInCommonTreeScope(nodeA, nodeB).treeScope;
 }
 
 RadioButtonGroups& TreeScope::radioButtonGroups()
 {
     if (!m_radioButtonGroups)
-        m_radioButtonGroups = makeUnique<RadioButtonGroups>();
+        lazyInitialize(m_radioButtonGroups, makeUnique<RadioButtonGroups>());
     return *m_radioButtonGroups;
 }
 
 CSSStyleSheetObservableArray& TreeScope::ensureAdoptedStyleSheets()
 {
     if (!m_adoptedStyleSheets) [[unlikely]]
-        m_adoptedStyleSheets = CSSStyleSheetObservableArray::create(m_rootNode.get());
+        lazyInitialize(m_adoptedStyleSheets, CSSStyleSheetObservableArray::create(m_rootNode.get()));
     return *m_adoptedStyleSheets;
 }
 
@@ -637,13 +658,13 @@ ExceptionOr<void> TreeScope::setAdoptedStyleSheets(Vector<Ref<CSSStyleSheet>>&& 
 {
     if (!m_adoptedStyleSheets && sheets.isEmpty())
         return { };
-    return ensureAdoptedStyleSheets().setSheets(WTF::move(sheets));
+    return protect(ensureAdoptedStyleSheets())->setSheets(WTF::move(sheets));
 }
 
 SVGResourcesMap& TreeScope::svgResourcesMap() const
 {
     if (!m_svgResourcesMap)
-        const_cast<TreeScope&>(*this).m_svgResourcesMap = makeUnique<SVGResourcesMap>();
+        lazyInitialize(m_svgResourcesMap, makeUnique<SVGResourcesMap>());
     return *m_svgResourcesMap;
 }
 
@@ -744,17 +765,11 @@ void TreeScope::removeElementFromPendingSVGResources(SVGElement& element)
     }
 
     if (!svgResourcesMap().pendingResourcesForRemoval.isEmpty()) {
-        Vector<AtomString> toBeRemoved;
-        for (auto& resource : svgResourcesMap().pendingResourcesForRemoval) {
-            auto& elements = resource.value;
-            elements.remove(element);
-            if (elements.isEmptyIgnoringNullReferences())
-                toBeRemoved.append(resource.key);
-        }
-
-        // We use m_pendingResourcesForRemoval here because it deals with set lifetime correctly.
-        for (auto& resource : toBeRemoved)
-            svgResourcesMap().pendingResourcesForRemoval.remove(resource);
+        // We remove from m_pendingResourcesForRemoval directly here because it deals with set lifetime correctly.
+        svgResourcesMap().pendingResourcesForRemoval.removeIf([&](auto& resource) {
+            resource.value.remove(element);
+            return resource.value.isEmptyIgnoringNullReferences();
+        });
     }
 }
 
@@ -795,11 +810,6 @@ RefPtr<SVGElement> TreeScope::takeElementFromPendingSVGResourcesForRemovalMap(co
         svgResourcesMap().pendingResourcesForRemoval.remove(id);
 
     return firstElement;
-}
-
-Ref<Document> TreeScope::protectedDocumentScope() const
-{
-    return m_documentScope.get();
 }
 
 } // namespace WebCore

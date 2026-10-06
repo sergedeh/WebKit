@@ -47,8 +47,8 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER_AND_EXPORT(MetaAllocatorFreeSpace, WTF_IN
 class MetaAllocatorTracker {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(MetaAllocatorTracker);
 public:
-    void notify(MetaAllocatorHandle&);
-    void release(MetaAllocatorHandle&);
+    void NODELETE notify(MetaAllocatorHandle&);
+    void NODELETE release(MetaAllocatorHandle&);
 
     MetaAllocatorHandle* find(void* address)
     {
@@ -101,7 +101,7 @@ public:
         Locker locker { m_lock };
         return currentStatistics(locker);
     }
-    WTF_EXPORT_PRIVATE Statistics currentStatistics(const Locker<Lock>&);
+    WTF_EXPORT_PRIVATE Statistics NODELETE currentStatistics(const Locker<Lock>&);
 
     // Add more free space to the allocator. Call this directly from
     // the constructor if you wish to operate the allocator within a
@@ -110,7 +110,7 @@ public:
 
     // This is meant only for implementing tests. Never call this in release
     // builds.
-    WTF_EXPORT_PRIVATE size_t debugFreeSpaceSize();
+    WTF_EXPORT_PRIVATE size_t NODELETE debugFreeSpaceSize();
 
     WTF_EXPORT_PRIVATE bool isInAllocatedMemory(const AbstractLocker&, void* address);
     
@@ -187,10 +187,10 @@ private:
 
     // Utilities.
     
-    size_t roundUp(size_t sizeInBytes);
+    size_t NODELETE roundUp(size_t sizeInBytes);
     
-    FreeSpaceNode* allocFreeSpaceNode();
-    WTF_EXPORT_PRIVATE void freeFreeSpaceNode(CheckedPtr<FreeSpaceNode>&&);
+    FreeSpaceNode* NODELETE allocFreeSpaceNode();
+    WTF_EXPORT_PRIVATE void NODELETE freeFreeSpaceNode(CheckedPtr<FreeSpaceNode>&&);
     
     size_t m_allocationGranule;
     size_t m_pageSize;

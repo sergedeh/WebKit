@@ -48,10 +48,10 @@ private:
 
     bool isGradientStop() const final { return true; }
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool rendererIsNeeded(const RenderStyle&) final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    bool rendererIsNeeded(const Style::ComputedStyle&) final;
 
-    Ref<SVGAnimatedNumber> m_offset { SVGAnimatedNumber::create(this, 0) };
+    const Ref<SVGAnimatedNumber> m_offset { SVGAnimatedNumber::create(this, 0) };
 };
 
 } // namespace WebCore

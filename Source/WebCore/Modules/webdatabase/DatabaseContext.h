@@ -27,15 +27,11 @@
 
 #pragma once
 
-#include <WebCore/ActiveDOMObject.h>
-#include <WebCore/Document.h>
+#include "ActiveDOMObject.h"
+#include "Document.h"
 #include <wtf/Platform.h>
 #include <wtf/RefPtr.h>
 #include <wtf/ThreadSafeRefCounted.h>
-
-#if PLATFORM(IOS_FAMILY)
-#include <wtf/Threading.h>
-#endif
 
 namespace WebCore {
 
@@ -66,7 +62,7 @@ public:
     bool allowDatabaseAccess() const;
     void databaseExceededQuota(const String& name, DatabaseDetails);
 
-    Document* document() const;
+    Document* NODELETE document() const;
     const SecurityOriginData& securityOrigin() const;
 
     bool isContextThread() const;

@@ -59,7 +59,7 @@ HashSet<String>& RemoteMediaPlayerMIMETypeCache::supportedTypes()
 {
     ASSERT(isMainRunLoop());
     if (!m_hasPopulatedSupportedTypesCacheFromGPUProcess) {
-        auto sendResult = manager()->gpuProcessConnection().connection().sendSync(Messages::RemoteMediaPlayerManagerProxy::GetSupportedTypes(m_engineIdentifier), 0);
+        auto sendResult = protect(manager()->gpuProcessConnection().connection())->sendSync(Messages::RemoteMediaPlayerManagerProxy::GetSupportedTypes(m_engineIdentifier), 0);
         if (sendResult.succeeded()) {
             auto& [types] = sendResult.reply();
             addSupportedTypes(types);
@@ -81,7 +81,7 @@ MediaPlayerEnums::SupportsType RemoteMediaPlayerMIMETypeCache::supportsTypeAndCo
     MediaPlaybackTargetType targetType = MediaPlaybackTargetType::None;
 #endif
 
-    SupportedTypesAndCodecsKey searchKey { parameters.type.raw(), parameters.isMediaSource, parameters.isMediaStream, parameters.requiresRemotePlayback, targetType };
+    SupportedTypesAndCodecsKey searchKey { parameters.type.raw(), parameters.platformType, parameters.requiresRemotePlayback, targetType };
 
     if (m_supportsTypeAndCodecsCache) {
         auto it = m_supportsTypeAndCodecsCache->find(searchKey);
@@ -92,7 +92,7 @@ MediaPlayerEnums::SupportsType RemoteMediaPlayerMIMETypeCache::supportsTypeAndCo
     if (!m_supportsTypeAndCodecsCache)
         m_supportsTypeAndCodecsCache = HashMap<SupportedTypesAndCodecsKey, MediaPlayerEnums::SupportsType> { };
 
-    auto sendResult = manager()->gpuProcessConnection().connection().sendSync(Messages::RemoteMediaPlayerManagerProxy::SupportsTypeAndCodecs(m_engineIdentifier, parameters), 0);
+    auto sendResult = protect(manager()->gpuProcessConnection().connection())->sendSync(Messages::RemoteMediaPlayerManagerProxy::SupportsTypeAndCodecs(m_engineIdentifier, parameters), 0);
     auto [result] = sendResult.takeReplyOr(MediaPlayerEnums::SupportsType::IsNotSupported);
     if (sendResult.succeeded())
         m_supportsTypeAndCodecsCache->add(searchKey, result);

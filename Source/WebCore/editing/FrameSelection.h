@@ -68,17 +68,17 @@ class CaretBase {
     WTF_MAKE_TZONE_ALLOCATED(CaretBase);
     WTF_MAKE_NONCOPYABLE(CaretBase);
 public:
-    WEBCORE_EXPORT static Color computeCaretColor(const RenderStyle& elementStyle, const Node*);
+    WEBCORE_EXPORT static Color computeCaretColor(const Style::ComputedStyle& elementStyle, const Node*, std::optional<LayoutRect> caretRectInPainterSpace = std::nullopt);
 protected:
     explicit CaretBase(CaretVisibility = CaretVisibility::Hidden);
 
     void invalidateCaretRect(Node*, bool caretRectChanged = false, CaretAnimator* = nullptr);
-    void clearCaretRect();
+    void NODELETE clearCaretRect();
     bool updateCaretRect(Document&, const VisiblePosition& caretPosition);
-    bool shouldRepaintCaret(const RenderView*, bool isContentEditable) const;
+    bool NODELETE shouldRepaintCaret(const RenderView*, bool isContentEditable) const;
     void paintCaret(const Node&, GraphicsContext&, const LayoutPoint&, CaretAnimator*) const;
 
-    const LayoutRect& localCaretRectWithoutUpdate() const { return m_caretLocalRect; }
+    const LayoutRect& localCaretRectWithoutUpdate() const LIFETIME_BOUND { return m_caretLocalRect; }
 
     bool shouldUpdateCaretRect() const { return m_caretRectNeedsUpdate; }
     void setCaretRectNeedsUpdate() { m_caretRectNeedsUpdate = true; }
@@ -106,7 +106,7 @@ public:
     WEBCORE_EXPORT bool isContentRichlyEditable() const;
 
     bool hasCaret() const { return m_position.isNotNull(); }
-    const VisiblePosition& caretPosition() { return m_position; }
+    const VisiblePosition& caretPosition() const LIFETIME_BOUND { return m_position; }
     void setCaretPosition(const VisiblePosition&);
     void clear() { setCaretPosition(VisiblePosition()); }
     WEBCORE_EXPORT IntRect caretRectInRootViewCoordinates() const;
@@ -169,11 +169,12 @@ public:
     void moveTo(const Position&, const Position&, Affinity, UserTriggered = UserTriggered::No);
     void moveWithoutValidationTo(const Position&, const Position&, bool selectionHasDirection, OptionSet<SetSelectionOption> = defaultSetSelectionOptions(), const AXTextStateChangeIntent& = AXTextStateChangeIntent());
 
-    const VisibleSelection& selection() const { return m_selection; }
+    const VisibleSelection& selection() const LIFETIME_BOUND { return m_selection; }
     WEBCORE_EXPORT void setSelection(const VisibleSelection&, OptionSet<SetSelectionOption> = defaultSetSelectionOptions(), AXTextStateChangeIntent = AXTextStateChangeIntent(), CursorAlignOnScroll = CursorAlignOnScroll::IfNeeded, TextGranularity = TextGranularity::CharacterGranularity);
 
     enum class ShouldCloseTyping : bool { No, Yes };
     WEBCORE_EXPORT bool setSelectedRange(const std::optional<SimpleRange>&, Affinity, ShouldCloseTyping, UserTriggered = UserTriggered::No);
+    WEBCORE_EXPORT bool setSelectedVisibleSelection(const VisibleSelection&, ShouldCloseTyping, UserTriggered = UserTriggered::No);
     WEBCORE_EXPORT void selectAll();
     WEBCORE_EXPORT void clear();
     void willBeRemovedFromFrame();
@@ -204,6 +205,8 @@ public:
 
     // Bounds of possibly-transformed caret in absolute coordinates.
     WEBCORE_EXPORT IntRect absoluteCaretBounds(bool* insideFixed = nullptr);
+
+    WEBCORE_EXPORT Color paintedCaretColor();
     void setCaretRectNeedsUpdate() { CaretBase::setCaretRectNeedsUpdate(); }
 
     void willBeModified(Alteration, SelectionDirection);
@@ -225,7 +228,7 @@ public:
 
     // Used to suspend caret blinking while the mouse is down.
     WEBCORE_EXPORT void setCaretBlinkingSuspended(bool);
-    WEBCORE_EXPORT bool isCaretBlinkingSuspended() const;
+    WEBCORE_EXPORT bool NODELETE isCaretBlinkingSuspended() const;
 
 #if ENABLE(ACCESSIBILITY_NON_BLINKING_CURSOR)
     WEBCORE_EXPORT void setPrefersNonBlinkingCursor(bool);
@@ -233,7 +236,7 @@ public:
 
     WEBCORE_EXPORT void setFocused(bool);
     bool isFocused() const { return m_focused; }
-    WEBCORE_EXPORT bool isFocusedAndActive() const;
+    WEBCORE_EXPORT bool NODELETE isFocusedAndActive() const;
     void pageActivationChanged();
 
     WEBCORE_EXPORT void updateAppearance();
@@ -311,7 +314,7 @@ private:
     void updateDataDetectorsForSelection();
 
     bool setSelectionWithoutUpdatingAppearance(const VisibleSelection&, OptionSet<SetSelectionOption>, CursorAlignOnScroll, TextGranularity);
-    void setNodeFlags(VisibleSelection&, bool value);
+    void NODELETE setNodeFlags(VisibleSelection&, bool value);
 
     void respondToNodeModification(Node&, bool anchorRemoved, bool focusRemoved, bool baseRemoved, bool extentRemoved, bool startRemoved, bool endRemoved);
     TextDirection directionOfEnclosingBlock();
@@ -353,8 +356,7 @@ private:
 
     void caretAnimationDidUpdate(CaretAnimator&) final;
 
-    Document* document() final;
-    inline RefPtr<Document> protectedDocument() const; // Defined in DocumentInlines.h
+    Document* NODELETE document() final;
 
     Node* caretNode() final;
 

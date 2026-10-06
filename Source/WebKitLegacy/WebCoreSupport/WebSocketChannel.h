@@ -79,8 +79,8 @@ public:
     ConnectStatus connect(const URL&, const String& protocol) final;
     String subprotocol() final;
     String extensions() final;
-    void send(CString&&) final;
-    void send(const JSC::ArrayBuffer&, unsigned byteOffset, unsigned byteLength) final;
+    void send(UTF8CString&&) final;
+    void send(const JSC::ArrayBuffer&, size_t byteOffset, size_t byteLength) final;
     void send(Blob&) final;
     void close(int code, const String& reason) final; // Start closing handshake.
     void fail(String&& reason) final;
@@ -109,7 +109,7 @@ public:
     ResourceRequest clientHandshakeRequest(const CookieGetter&) const final;
     const ResourceResponse& serverHandshakeResponse() const final;
 
-    Document* document();
+    Document* NODELETE document();
     
 private:
     WEBCORE_EXPORT WebSocketChannel(Document&, WebSocketChannelClient&, SocketProvider&);
@@ -142,11 +142,11 @@ private:
         WebSocketFrame::OpCode opCode;
         QueuedFrameType frameType;
         // Only one of the following items is used, according to the value of frameType.
-        CString stringData;
+        UTF8CString stringData;
         Vector<uint8_t> vectorData;
         RefPtr<Blob> blobData;
     };
-    void enqueueTextFrame(CString&&);
+    void enqueueTextFrame(UTF8CString&&);
     void enqueueRawFrame(WebSocketFrame::OpCode, std::span<const uint8_t> data);
     void enqueueBlobFrame(WebSocketFrame::OpCode, Blob&);
 
@@ -176,8 +176,6 @@ private:
         BlobLoaderFailed
     };
 
-    RefPtr<WebSocketChannelClient> protectedClient() const;
-
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
     ThreadSafeWeakPtr<WebSocketChannelClient> m_client;
     std::unique_ptr<WebSocketHandshake> m_handshake;
@@ -192,7 +190,7 @@ private:
     Timer m_closingTimer;
     bool m_closed { false };
     bool m_shouldDiscardReceivedData { false };
-    unsigned m_unhandledBufferedAmount { 0 };
+    uint64_t m_unhandledBufferedAmount { 0 };
 
     WebSocketChannelIdentifier m_progressIdentifier;
 

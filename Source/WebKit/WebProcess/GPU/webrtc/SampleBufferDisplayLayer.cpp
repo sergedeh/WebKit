@@ -124,7 +124,7 @@ void SampleBufferDisplayLayer::enqueueBlackFrameFrom(const VideoFrame& videoFram
 {
     auto size = videoFrame.presentationSize();
     WebCore::IntSize blackFrameSize { static_cast<int>(size.width()), static_cast<int>(size.height()) };
-    SharedVideoFrame sharedVideoFrame { videoFrame.presentationTime(), false, videoFrame.rotation(), blackFrameSize };
+    SharedVideoFrame sharedVideoFrame { videoFrame.presentationTime(), false, videoFrame.rotation(), { }, blackFrameSize };
     m_connection->send(Messages::RemoteSampleBufferDisplayLayer::EnqueueVideoFrame { WTF::move(sharedVideoFrame) }, identifier());
 }
 
@@ -161,6 +161,12 @@ void SampleBufferDisplayLayer::setDidFail(bool value)
     RefPtr client = m_client.get();
     if (client && m_didFail)
         client->sampleBufferDisplayLayerStatusDidFail();
+}
+
+void SampleBufferDisplayLayer::updateVideoFrameCounters(uint64_t totalVideoFrames, uint64_t droppedVideoFrames)
+{
+    if (RefPtr client = m_client.get())
+        client->updateVideoFrameCounters(totalVideoFrames, droppedVideoFrames);
 }
 
 void SampleBufferDisplayLayer::gpuProcessConnectionDidClose(GPUProcessConnection&)

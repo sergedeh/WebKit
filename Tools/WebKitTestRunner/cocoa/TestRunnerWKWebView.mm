@@ -31,15 +31,21 @@
 #import <WebKit/WKUIDelegatePrivate.h>
 #import <WebKit/WKWebViewPrivateForTesting.h>
 #import <WebKit/_WKFormInputSession.h>
+#import <WebKit/_WKTranslationDelegate.h>
 #import <wtf/Assertions.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/NeverDestroyed.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/RunLoop.h>
+#import <wtf/Seconds.h>
 #import <wtf/SoftLinking.h>
+#import <wtf/Vector.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-#import <WebKit/_WKImmersiveEnvironmentDelegate.h>
+#import <WebKit/WKImmersiveEnvironment.h>
+#import <WebKit/WKImmersiveEnvironmentDelegate.h>
 #endif
 
 #if PLATFORM(MAC)
@@ -72,18 +78,21 @@ struct CustomMenuActionInfo {
     BlockPtr<void()> callback;
 };
 
-@interface TestRunnerWKWebView () <WKUIDelegatePrivate, _WKInputDelegate
+@interface TestRunnerWKWebView () <WKUIDelegatePrivate, _WKInputDelegate, _WKTranslationDelegate
 #if PLATFORM(IOS_FAMILY)
     , UIGestureRecognizerDelegate
 #endif
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    , _WKImmersiveEnvironmentDelegate
+    , WKImmersiveEnvironmentDelegate
 #endif
 > {
     RetainPtr<NSNumber> _stableStateOverride;
     BOOL _isInteractingWithFormControl;
     BOOL _scrollingUpdatesDisabled;
     RetainPtr<NSArray<NSString *>> _allowedMenuActions;
+    // This is relevant for "reverse" mode, where replies are buffered here and returned in reverse
+    // order, ensuring the implementation can handle announcing in the correct order regardless.
+    Vector<BlockPtr<void()>> _bufferedAnnouncementTranslationReplies;
 #if PLATFORM(MAC)
     int _draggingSequenceNumber;
     RetainPtr<WebKitTestRunnerDraggingInfo> _currentDraggingInfo;
@@ -113,15 +122,66 @@ struct CustomMenuActionInfo {
 @dynamic _stableStateOverride;
 
 #if PLATFORM(MAC)
+- (void)_startTestDragWithImage:(NSImage *)image offset:(NSSize)offset pasteboard:(NSPasteboard *)pasteboard source:(id)source
+{
+    ++_draggingSequenceNumber;
+    RetainPtr draggingInfo = adoptNS([[WebKitTestRunnerDraggingInfo alloc] initWithImage:image offset:offset pasteboard:pasteboard source:source sequenceNumber:_draggingSequenceNumber]);
+    _currentDraggingInfo = draggingInfo;
+    [self draggingEntered:draggingInfo.get()];
+    [self draggingUpdated:draggingInfo.get()];
+}
+
 IGNORE_WARNINGS_BEGIN("deprecated-implementations")
 - (void)dragImage:(NSImage *)anImage at:(NSPoint)viewLocation offset:(NSSize)initialOffset event:(NSEvent *)event pasteboard:(NSPasteboard *)pboard source:(id)sourceObj slideBack:(BOOL)slideFlag
 IGNORE_WARNINGS_END
 {
-    ++_draggingSequenceNumber;
-    RetainPtr draggingInfo = adoptNS([[WebKitTestRunnerDraggingInfo alloc] initWithImage:anImage offset:initialOffset pasteboard:pboard source:sourceObj sequenceNumber:_draggingSequenceNumber]);
-    _currentDraggingInfo = draggingInfo;
-    [self draggingEntered:draggingInfo.get()];
-    [self draggingUpdated:draggingInfo.get()];
+    [self _startTestDragWithImage:anImage offset:initialOffset pasteboard:pboard source:sourceObj];
+}
+
+- (NSDraggingSession *)beginDraggingSessionWithItems:(NSArray<NSDraggingItem *> *)items event:(NSEvent *)event source:(id<NSDraggingSource>)source
+{
+    RetainPtr pasteboard = [NSPasteboard pasteboardWithName:NSPasteboardNameDrag];
+
+    // Save and restore legacy pasteboard data around clearContents + writeObjects:,
+    // since this override fires draggingEntered: synchronously (before the caller
+    // can restore the data itself).
+    RetainPtr savedTypes = adoptNS([[pasteboard types] copy]);
+    RetainPtr savedData = adoptNS([[NSMutableDictionary alloc] init]);
+    for (NSString *type in savedTypes.get()) {
+        if (RetainPtr data = [pasteboard dataForType:type])
+            [savedData setObject:data.get() forKey:type];
+    }
+
+    [pasteboard clearContents];
+    RetainPtr pasteboardObjects = [NSMutableArray arrayWithCapacity:items.count];
+    NSMutableArray<NSString *> *promisedFileTypes = [NSMutableArray array];
+    for (NSDraggingItem *item in items) {
+        id pasteboardObject = item.item;
+        if ([pasteboardObject isKindOfClass:[NSFilePromiseProvider class]])
+            [promisedFileTypes addObject:[(NSFilePromiseProvider *)pasteboardObject fileType]];
+        else
+            [pasteboardObjects addObject:pasteboardObject];
+    }
+    if ([pasteboardObjects count])
+        [pasteboard writeObjects:pasteboardObjects.get()];
+    if (promisedFileTypes.count) {
+        [pasteboard setPropertyList:promisedFileTypes forType:NSFilesPromisePboardType];
+        [pasteboard addTypes:@[@"NSPromiseContentsPboardType", (NSString *)kPasteboardTypeFileURLPromise] owner:nil];
+    }
+
+    if ([savedTypes count]) {
+        [pasteboard clearContents];
+        [pasteboard addTypes:savedTypes.get() owner:nil];
+        for (NSString *type in savedTypes.get()) {
+            if (RetainPtr data = [savedData objectForKey:type])
+                [pasteboard setData:data.get() forType:type];
+        }
+    }
+
+    RetainPtr dragImage = dynamic_objc_cast<NSImage>(items.firstObject.imageComponents.firstObject.contents);
+    [self _startTestDragWithImage:dragImage.get() offset:NSZeroSize pasteboard:pasteboard.get() source:source];
+
+    return adoptNS([[NSDraggingSession alloc] init]).autorelease();
 }
 
 - (void)mouseDown:(NSEvent *)event
@@ -178,8 +238,9 @@ IGNORE_WARNINGS_END
         self.traitOverrides.displayScale = 2.0f;
 #endif
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-        self._immersiveEnvironmentDelegate = self;
+        self.immersiveEnvironmentDelegate = self;
 #endif
+        self._translationDelegate = self;
     }
     return self;
 }
@@ -256,6 +317,72 @@ IGNORE_WARNINGS_END
 #endif
 }
 
+// Fake translation client for tests.
+- (void)_webView:(WKWebView *)webView translateAccessibilityAnnouncementStrings:(NSArray<NSString *> *)strings targetLocaleIdentifier:(NSString *)targetLocaleIdentifier completionHandler:(void (^)(NSArray<NSString *> *))completionHandler
+{
+    NSString *mode = self.announcementTranslationMode;
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcompletion-handler"
+    // Releases the handler without invoking it. WebKit must treat this as "no translation available".
+    if ([mode isEqualToString:@"drop"])
+        return;
+
+    // Holds the handler indefinitely without invoking it, the way a client waiting on a translation
+    // service that never answers would. Note the handler must be retained here, unlike "drop" above.
+    // Releasing it uncalled takes the finalizer path and replies immediately, which would never reach
+    // the timeout. NeverDestroyed keeps these alive for the process lifetime, which is deliberate.
+    if ([mode isEqualToString:@"hang"]) {
+        static NeverDestroyed<Vector<BlockPtr<void(NSArray<NSString *> *)>>> neverInvokedHandlers;
+        neverInvokedHandlers->append(makeBlockPtr(completionHandler));
+        return;
+    }
+#pragma clang diagnostic pop
+
+    // Declines to translate.
+    if ([mode isEqualToString:@"fail"])
+        return completionHandler(nil);
+
+    RetainPtr<NSMutableArray<NSString *>> translated = adoptNS([[NSMutableArray alloc] initWithCapacity:strings.count]);
+    for (NSString *string in strings)
+        [translated addObject:[NSString stringWithFormat:@"%@_translated_to_%@", string, targetLocaleIdentifier]];
+
+    auto reply = makeBlockPtr([completionHandler = makeBlockPtr(completionHandler), translated] {
+        completionHandler(translated.get());
+    });
+
+    // Replies well after WebKit's deadline, so the announcement goes out untranslated and the late
+    // translation must then be discarded rather than announced a second time.
+    if ([mode isEqualToString:@"delayed"]) {
+        RunLoop::mainSingleton().dispatchAfter(300_ms, [reply] {
+            reply();
+        });
+        return;
+    }
+
+    // Buffers replies and flushes them in reverse arrival order once the run loop drains, so tests
+    // can prove announcements are still released in the order they were produced.
+    if ([mode isEqualToString:@"reverse"]) {
+        _bufferedAnnouncementTranslationReplies.append(reply);
+        RunLoop::mainSingleton().dispatch([self, protectedSelf = retainPtr(self)] {
+            auto replies = std::exchange(_bufferedAnnouncementTranslationReplies, { });
+            for (auto it = replies.rbegin(); it != replies.rend(); ++it)
+                (*it)();
+        });
+        return;
+    }
+
+    if ([mode isEqualToString:@"async"]) {
+        RunLoop::mainSingleton().dispatch([reply] {
+            reply();
+        });
+        return;
+    }
+
+    // For "immediate" and any unrecognized mode, reply synchronously.
+    reply();
+}
+
 - (void)resetInteractionCallbacks
 {
     self.didShowContextMenuCallback = nil;
@@ -272,6 +399,7 @@ IGNORE_WARNINGS_END
     self.didShowKeyboardCallback = nil;
     self.didHideKeyboardCallback = nil;
     self.willStartInputSessionCallback = nil;
+    self.didStartInputSessionCallback = nil;
     self.willPresentPopoverCallback = nil;
     self.didDismissPopoverCallback = nil;
     self.didPresentViewControllerCallback = nil;
@@ -662,9 +790,26 @@ static bool isQuickboardViewController(UIViewController *viewController)
     inputSession.accessoryViewShouldNotShow = self.suppressInputAccessoryView;
 }
 
+- (void)_webView:(WKWebView *)webView didStartInputSession:(id<_WKFormInputSession>)inputSession
+{
+    if (self.didStartInputSessionCallback)
+        self.didStartInputSessionCallback();
+}
+
 - (_WKFocusStartsInputSessionPolicy)_webView:(WKWebView *)webView decidePolicyForFocusedElement:(id<_WKFocusedElementInfo>)info
 {
     return self.focusStartsInputSessionPolicy;
+}
+
+- (void)_webView:(WKWebView *)webView focusRequiresStrongPasswordAssistance:(id<_WKFocusedElementInfo>)info completionHandler:(void(^)(BOOL))completionHandler
+{
+    auto delay = Seconds { self.showKeyboardAfterElementFocusDelay };
+    if (!delay)
+        return completionHandler(NO);
+
+    RunLoop::mainSingleton().dispatchAfter(delay, [completionHandler = makeBlockPtr(completionHandler)] {
+        completionHandler(NO);
+    });
 }
 
 #pragma mark - UIGestureRecognizerDelegate
@@ -743,21 +888,21 @@ static bool isQuickboardViewController(UIViewController *viewController)
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
 
-#pragma mark - _WKImmersiveEnvironmentDelegate
+#pragma mark - WKImmersiveEnvironmentDelegate
 
-- (void)webView:(WKWebView *)webView allowImmersiveEnvironmentFromURL:(NSURL *)url completion:(void (^)(bool))completion
+- (void)webView:(WKWebView *)webView shouldAllowImmersiveEnvironmentFromFrame:(WKFrameInfo *)frame completionHandler:(void (^)(BOOL))completionHandler
 {
-    completion(self.shouldAcceptImmersiveEnvironmentRequests);
+    completionHandler(self.shouldAcceptImmersiveEnvironmentRequests);
 }
 
-- (void)webView:(WKWebView *)webView presentImmersiveEnvironment:(UIView *)environmentView completion:(void (^)(NSError * _Nullable))completion
+- (void)webView:(WKWebView *)webView presentImmersiveEnvironment:(WKImmersiveEnvironment *)environment completionHandler:(void (^)(NSError * _Nullable))completionHandler
 {
-    completion(nil);
+    completionHandler(nil);
 }
 
-- (void)webView:(WKWebView *)webView dismissImmersiveEnvironment:(void (^)())completion
+- (void)webView:(WKWebView *)webView dismissImmersiveEnvironment:(WKImmersiveEnvironment *)environment completionHandler:(void (^)(void))completionHandler
 {
-    completion();
+    completionHandler();
 }
 
 #endif

@@ -91,7 +91,7 @@ header: "RemoteLayerBackingStore.h"
     [NotSerialized] std::optional<WebKit::BufferAndBackendInfo> m_frontBufferInfo;
     [NotSerialized] std::optional<WebKit::BufferAndBackendInfo> m_backBufferInfo;
     [NotSerialized] std::optional<WebKit::BufferAndBackendInfo> m_secondaryBackBufferInfo;
-    std::optional<WebCore::RenderingResourceIdentifier> m_contentsRenderingResourceIdentifier;
+    std::optional<WebCore::PlaceholderFrameIdentifier> m_contentsFrameIdentifier;
     std::optional<WebCore::IntRect> m_paintedRect;
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     std::optional<WebCore::DynamicContentScalingDisplayList> m_displayListBufferHandle;
@@ -134,7 +134,7 @@ headers: "LayerProperties.h" "PlatformCALayerRemote.h"
 };
 
 [Nested] struct WebKit::RemoteLayerTreeTransaction::LayerCreationProperties::VideoElementData {
-    WebKit::PlaybackSessionContextIdentifier playerIdentifier;
+    WebCore::MediaPlayerClientIdentifier playerIdentifier;
     WebCore::FloatSize initialSize;
     WebCore::FloatSize naturalSize;
 };
@@ -285,9 +285,9 @@ using WebKit::PageData::TransactionCallbackID = IPC::AsyncReplyID;
     bool viewportMetaTagWidthWasExplicit;
     bool viewportMetaTagCameFromImageDocument;
     bool isInStableState;
-    WebCore::InteractiveWidget viewportMetaTagInteractiveWidget;
+    bool hasMainThreadScrollDrivenAnimations;
+    WebCore::InteractiveWidgetValue viewportMetaTagInteractiveWidget;
 
-    std::optional<WebKit::EditorState> editorState;
 #if PLATFORM(IOS_FAMILY)
     std::optional<uint64_t> dynamicViewportSizeUpdateID;
 #endif
@@ -299,6 +299,8 @@ struct WebKit::RemoteLayerTreeCommitBundle {
     Vector<WebKit::RemoteLayerTreeCommitBundle::RootFrameData> transactions;
     WebKit::PageData pageData;
     std::optional<WebKit::MainFrameData> mainFrameData;
+
+    std::optional<WebKit::EditorState> editorState;
     
     WebKit::TransactionID transactionID;
     MonotonicTime startTime;

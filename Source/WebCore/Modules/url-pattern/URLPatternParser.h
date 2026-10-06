@@ -67,9 +67,9 @@ public:
     static ExceptionOr<Vector<Part>> parse(StringView, const URLPatternStringOptions&, EncodingCallbackType);
 
 private:
-    Token tryToConsumeToken(TokenType);
-    Token tryToConsumeRegexOrWildcardToken(const Token&);
-    Token tryToConsumeModifierToken();
+    Token NODELETE tryToConsumeToken(TokenType);
+    Token NODELETE tryToConsumeRegexOrWildcardToken(const Token&);
+    Token NODELETE tryToConsumeModifierToken();
 
     String consumeText();
     ExceptionOr<Token> consumeRequiredToken(TokenType);
@@ -97,7 +97,7 @@ ASCIILiteral convertModifierToString(Modifier);
 std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& partList, const URLPatternStringOptions&);
 String generatePatternString(const Vector<Part>& partList, const URLPatternStringOptions&);
 String escapePatternString(StringView input);
-bool isValidNameCodepoint(char16_t codepoint, URLPatternUtilities::IsFirst);
+bool isValidNameCodepoint(char32_t codepoint, URLPatternUtilities::IsFirst);
 
 
 } // namespace URLPatternUtilities

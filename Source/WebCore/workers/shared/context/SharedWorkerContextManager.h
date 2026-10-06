@@ -40,7 +40,7 @@ class SharedWorkerThreadProxy;
 class SharedWorkerContextManager {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(SharedWorkerContextManager, WEBCORE_EXPORT);
 public:
-    WEBCORE_EXPORT static SharedWorkerContextManager& singleton();
+    WEBCORE_EXPORT static SharedWorkerContextManager& NODELETE singleton();
 
     SharedWorkerThreadProxy* sharedWorker(SharedWorkerIdentifier) const;
     void stopSharedWorker(SharedWorkerIdentifier);
@@ -72,8 +72,7 @@ public:
     };
 
     WEBCORE_EXPORT void setConnection(RefPtr<Connection>&&);
-    WEBCORE_EXPORT Connection* connection() const;
-    RefPtr<Connection> protectedConnection() const { return m_connection; }
+    WEBCORE_EXPORT Connection* NODELETE connection() const;
 
     WEBCORE_EXPORT void registerSharedWorkerThread(Ref<SharedWorkerThreadProxy>&&);
 

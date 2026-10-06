@@ -45,7 +45,7 @@ namespace JSC { namespace B3 { namespace Air {
 
 namespace {
 
-bool hasPartialXmmRegUpdate(const Inst& inst)
+bool NODELETE hasPartialXmmRegUpdate(const Inst& inst)
 {
     switch (inst.kind.opcode) {
     case ConvertDoubleToFloat:
@@ -69,10 +69,17 @@ bool hasPartialXmmRegUpdate(const Inst& inst)
     return false;
 }
 
-bool isDependencyBreaking(const Inst& inst)
+bool NODELETE isDependencyBreaking(const Inst& inst)
 {
     // "xorps reg, reg" is used by the frontend to remove the dependency on its argument.
-    return inst.kind.opcode == MoveZeroToDouble;
+    switch (inst.kind.opcode) {
+    case MoveFloat:
+    case MoveDouble:
+    case MoveVector:
+        return inst.args()[0].isFPImmZero();
+    default:
+        return false;
+    }
 }
 
 // FIXME: find a good distance per architecture experimentally.
@@ -86,20 +93,20 @@ struct FPDefDistance {
             distance[i] = 255;
     }
 
-    void reset(FPRReg reg)
+    void NODELETE reset(FPRReg reg)
     {
         unsigned index = MacroAssembler::fpRegisterIndex(reg);
         distance[index] = 255;
     }
 
-    void add(FPRReg reg, unsigned registerDistance)
+    void NODELETE add(FPRReg reg, unsigned registerDistance)
     {
         unsigned index = MacroAssembler::fpRegisterIndex(reg);
         if (registerDistance < distance[index])
             distance[index] = static_cast<unsigned char>(registerDistance);
     }
 
-    bool updateFromPrecessor(FPDefDistance& precessorDistance, unsigned constantOffset = 0)
+    bool NODELETE updateFromPrecessor(FPDefDistance& precessorDistance, unsigned constantOffset = 0)
     {
         bool changed = false;
         for (unsigned i = 0; i < MacroAssembler::numberOfFPRegisters(); ++i) {
@@ -120,7 +127,8 @@ void updateDistances(Inst& inst, FPDefDistance& localDistance, unsigned& distanc
     --distanceToBlockEnd;
 
     if (isDependencyBreaking(inst)) {
-        localDistance.reset(inst.args[0].tmp().fpr());
+        // MoveFloat/MoveDouble/MoveVector with FPImm zero: fpImm is args[0], dest tmp is args[1]
+        localDistance.reset(inst.args()[1].tmp().fpr());
         return;
     }
 
@@ -212,8 +220,8 @@ void fixPartialRegisterStalls(Code& code)
             Inst& inst = block->at(i);
 
             if (hasPartialXmmRegUpdate(inst)) {
-                RegisterSetBuilder defs;
-                RegisterSetBuilder uses;
+                RegisterSet defs;
+                RegisterSet uses;
                 inst.forEachTmp([&] (Tmp& tmp, Arg::Role role, Bank, Width width) {
                     if (tmp.isFPR() && width <= Width64) {
                         if (Arg::isAnyDef(role))
@@ -226,9 +234,9 @@ void fixPartialRegisterStalls(Code& code)
                 // for the value to be resolved anyway.
                 defs.exclude(uses);
 
-                defs.buildWithLowerBits().forEach([&] (Reg reg) {
+                defs.normalizeWidths().forEach([&] (Reg reg) {
                     if (localDistance.distance[MacroAssembler::fpRegisterIndex(reg.fpr())] < minimumSafeDistance)
-                        insertionSet.insert(i, MoveZeroToDouble, inst.origin, Tmp(reg));
+                        insertionSet.insert(i, MoveDouble, inst.origin, Arg::fpImm64(0), Tmp(reg));
                 });
             }
 

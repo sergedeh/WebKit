@@ -52,20 +52,20 @@ public:
     USING_CAN_MAKE_WEAKPTR(HTMLElement);
 
     const AtomString& kind();
-    bool isDefault() const;
+    bool NODELETE isDefault() const;
 
     enum ReadyState { NONE = 0, LOADING = 1, LOADED = 2, TRACK_ERROR = 3 };
-    ReadyState readyState() const;
+    ReadyState NODELETE readyState() const;
     void setReadyState(ReadyState);
 
-    TextTrack& track();
+    TextTrack& NODELETE track();
 
     void scheduleLoad();
 
     enum LoadStatus { Failure, Success };
     void didCompleteLoad(LoadStatus);
 
-    RefPtr<HTMLMediaElement> mediaElement() const;
+    RefPtr<HTMLMediaElement> NODELETE mediaElement() const;
     const AtomString& mediaElementCrossOriginAttribute() const;
 
     void scheduleTask(Function<void(HTMLTrackElement&)>&&);
@@ -79,17 +79,17 @@ private:
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
 
-    bool isURLAttribute(const Attribute&) const final;
+    bool NODELETE isURLAttribute(const Attribute&) const final;
 
     // EventTarget.
     void eventListenersDidChange() final;
 
     // TextTrackClient
-    void textTrackModeChanged(TextTrack&) final;
+    void textTrackModeChanged(TextTrack&, TextTrack::ModeChangeType) final;
 
     bool canLoadURL(const URL&);
 

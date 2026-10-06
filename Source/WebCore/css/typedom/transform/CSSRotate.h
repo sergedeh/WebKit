@@ -42,9 +42,9 @@ public:
     static ExceptionOr<Ref<CSSRotate>> create(Ref<CSSNumericValue>);
     static ExceptionOr<Ref<CSSRotate>> create(Ref<const CSSFunctionValue>, Document&);
 
-    CSSNumberish x() { return { m_x.ptr() }; }
-    CSSNumberish y() { return { m_y.ptr() }; }
-    CSSNumberish z() { return { m_z.ptr() }; }
+    CSSNumberish x() { return { m_x }; }
+    CSSNumberish y() { return { m_y }; }
+    CSSNumberish z() { return { m_z }; }
     const CSSNumericValue& angle() { return m_angle.get(); }
 
     ExceptionOr<void> setX(CSSNumberish);
@@ -60,7 +60,7 @@ public:
     RefPtr<CSSValue> toCSSValue() const final;
     
 private:
-    CSSRotate(CSSTransformComponent::Is2D, Ref<CSSNumericValue>, Ref<CSSNumericValue>, Ref<CSSNumericValue>, Ref<CSSNumericValue>);
+    CSSRotate(CSSTransformComponent::Is2D, Ref<CSSNumericValue>&&, Ref<CSSNumericValue>&&, Ref<CSSNumericValue>&&, Ref<CSSNumericValue>&&);
     
     Ref<CSSNumericValue> m_x;
     Ref<CSSNumericValue> m_y;

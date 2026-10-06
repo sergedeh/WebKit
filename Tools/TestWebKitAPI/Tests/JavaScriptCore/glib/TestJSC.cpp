@@ -25,10 +25,13 @@
 #undef JSC_COMPILATION
 
 #include <JavaScriptCore/JSContextRef.h>
+#include <array>
 #include <jsc/jsc.h>
 #include <wtf/HashSet.h>
+#include <wtf/MainThread.h>
 #include <wtf/Threading.h>
 #include <wtf/Vector.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/CString.h>
@@ -1593,7 +1596,7 @@ static void testJSCObject()
 typedef struct _Foo Foo;
 struct _Foo {
     int foo;
-    HashMap<CString, int> properties;
+    HashMap<UTF8CString, int> properties;
     Foo* sibling;
 };
 
@@ -1693,13 +1696,13 @@ static void multiplyFooV(Foo* foo, GPtrArray* multipliers)
 
 static int fooGetProperty(Foo* foo, const char* name)
 {
-    auto addResult = foo->properties.add(name, 0);
+    auto addResult = foo->properties.add(UTF8CString::unsafeFromUTF8(name), 0);
     return addResult.iterator->value;
 }
 
 static void fooSetProperty(Foo* foo, const char* name, int value)
 {
-    auto addResult = foo->properties.add(name, value);
+    auto addResult = foo->properties.add(UTF8CString::unsafeFromUTF8(name), value);
     if (!addResult.isNewEntry)
         addResult.iterator->value = value;
 }
@@ -1812,11 +1815,7 @@ static JSCClassVTable fooVTable = {
         }
 
         auto* foo = static_cast<Foo*>(instance);
-        if (!foo->properties.contains(name))
-            return FALSE;
-
-        foo->properties.remove(name);
-        return TRUE;
+        return foo->properties.remove(UTF8CString::unsafeFromUTF8(name));
     },
     // enumerate_properties
     [](JSCClass* jscClass, JSCContext* context, gpointer instance) -> char** {
@@ -1825,11 +1824,11 @@ static JSCClassVTable fooVTable = {
 
         auto* foo = static_cast<Foo*>(instance);
         GRefPtr<GPtrArray> properties = adoptGRef(g_ptr_array_new_with_free_func(g_free));
-        Vector<CString> names = copyToVector(foo->properties.keys());
+        Vector<UTF8CString> names = copyToVector(foo->properties.keys());
         std::sort(names.begin(), names.end());
         for (const auto& name : names) {
-            if (g_str_has_prefix(name.data(), "prop_enum_"))
-                g_ptr_array_add(properties.get(), g_strdup(name.data()));
+            if (g_str_has_prefix(name.legacyCStringPointer(), "prop_enum_"))
+                g_ptr_array_add(properties.get(), gStrdup(name));
         }
         if (!properties->len)
             return nullptr;
@@ -3683,6 +3682,38 @@ static void testJSCExceptions()
         checker.watch(context.get());
         g_assert_false(jsc_context_get_exception(context.get()));
 
+        GRefPtr<JSCValue> result = adoptGRef(jsc_context_evaluate_with_source_uri(context.get(),
+            "function fünf() {\n"
+            "    throw new Error('Größe ✓');\n"
+            "}\n"
+            "fünf();\n",
+            -1, "file:///skript/größe.js", 1));
+        checker.watch(result.get());
+
+        g_assert_true(jsc_value_is_undefined(result.get()));
+        auto* exception = jsc_context_get_exception(context.get());
+        g_assert_true(JSC_IS_EXCEPTION(exception));
+        checker.watch(exception);
+        g_assert_cmpstr(jsc_exception_get_message(exception), ==, "Größe ✓");
+        // The source URI is a URL, so it comes back percent-encoded; the function name and message stay UTF-8.
+        g_assert_cmpstr(jsc_exception_get_source_uri(exception), ==, "file:///skript/gr%C3%B6%C3%9Fe.js");
+        g_assert_cmpuint(jsc_exception_get_line_number(exception), ==, 2);
+        g_assert_true(g_str_has_prefix(jsc_exception_get_backtrace_string(exception), "fünf@file:///skript/gr%C3%B6%C3%9Fe.js:2:"));
+        GUniquePtr<char> reportString(jsc_exception_report(exception));
+        g_assert_true(g_str_has_prefix(reportString.get(), "file:///skript/gr%C3%B6%C3%9Fe.js:2:"));
+        g_assert_nonnull(g_strstr_len(reportString.get(), -1, " Error: Größe ✓\n  fünf@file:///skript/gr%C3%B6%C3%9Fe.js:2:"));
+        g_assert_nonnull(g_strstr_len(reportString.get(), -1, "\n  global code@file:///skript/gr%C3%B6%C3%9Fe.js:4:"));
+
+        jsc_context_clear_exception(context.get());
+        g_assert_null(jsc_context_get_exception(context.get()));
+    }
+
+    {
+        LeakChecker checker;
+        GRefPtr<JSCContext> context = adoptGRef(jsc_context_new());
+        checker.watch(context.get());
+        g_assert_false(jsc_context_get_exception(context.get()));
+
         GRefPtr<JSCValue> function = adoptGRef(jsc_value_new_function(context.get(), "createError", G_CALLBACK(createError), nullptr, nullptr, G_TYPE_NONE, 0, G_TYPE_NONE));
         checker.watch(function.get());
         jsc_context_set_value(context.get(), "createError", function.get());
@@ -4819,9 +4850,51 @@ static void testJSCJSON()
     }
 }
 
+static constexpr unsigned varargsParameterCount = 16;
+static constexpr unsigned varargsParameterLength = 512 * 1024;
+
+// Each parameter is large enough that converting the next one triggers a collection, when the earlier ones are only referenced from the argument list.
+static void testJSCFunctionCallParameterLifetime()
+{
+    LeakChecker checker;
+    GRefPtr<JSCContext> context = adoptGRef(jsc_context_new());
+    checker.watch(context.get());
+    ExceptionHandler exceptionHandler(context.get());
+
+    GUniquePtr<char> script(g_strdup_printf(
+        "(function() {\n"
+        "    for (var i = 0; i < arguments.length; i++) {\n"
+        "        if (arguments[i] !== String.fromCharCode(65 + i).repeat(%u))\n"
+        "            return 'parameter ' + i + ' did not survive';\n"
+        "    }\n"
+        "    return 'ok';\n"
+        "})", varargsParameterLength));
+    GRefPtr<JSCValue> function = adoptGRef(jsc_context_evaluate(context.get(), script.get(), -1));
+    checker.watch(function.get());
+    g_assert_true(jsc_value_is_function(function.get()));
+
+    std::array<GUniquePtr<char>, varargsParameterCount> parameters;
+    for (unsigned i = 0; i < varargsParameterCount; ++i)
+        parameters[i].reset(g_strnfill(varargsParameterLength, static_cast<char>('A' + i)));
+
+#define STRING_PARAMETER(index) G_TYPE_STRING, parameters[index].get()
+    GRefPtr<JSCValue> result = adoptGRef(jsc_value_function_call(function.get(),
+        STRING_PARAMETER(0), STRING_PARAMETER(1), STRING_PARAMETER(2), STRING_PARAMETER(3),
+        STRING_PARAMETER(4), STRING_PARAMETER(5), STRING_PARAMETER(6), STRING_PARAMETER(7),
+        STRING_PARAMETER(8), STRING_PARAMETER(9), STRING_PARAMETER(10), STRING_PARAMETER(11),
+        STRING_PARAMETER(12), STRING_PARAMETER(13), STRING_PARAMETER(14), STRING_PARAMETER(15),
+        G_TYPE_NONE));
+#undef STRING_PARAMETER
+
+    checker.watch(result.get());
+    GUniquePtr<char> resultString(jsc_value_to_string(result.get()));
+    g_assert_cmpstr(resultString.get(), ==, "ok");
+}
+
 int main(int argc, char** argv)
 {
     g_test_init(&argc, &argv, nullptr);
+    WTF::initializeMainThread();
 
     // options should always be the first test, since changing options
     // is not allowed after the first VM instance is created.
@@ -4846,6 +4919,7 @@ int main(int argc, char** argv)
     g_test_add_func("/jsc/autocleanups", testsJSCAutocleanups);
 #endif
     g_test_add_func("/jsc/json", testJSCJSON);
+    g_test_add_func("/jsc/function-call-parameter-lifetime", testJSCFunctionCallParameterLifetime);
 
     return g_test_run();
 }

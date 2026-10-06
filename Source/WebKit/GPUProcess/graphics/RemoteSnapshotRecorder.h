@@ -43,7 +43,7 @@ public:
     static Ref<RemoteSnapshotRecorder> create(RemoteSnapshotRecorderIdentifier, RemoteSnapshot&, RemoteRenderingBackend&);
     ~RemoteSnapshotRecorder();
     void stopListeningForIPC();
-    Ref<RemoteSnapshot> snapshot() const;
+    Ref<RemoteSnapshot> NODELETE snapshot() const;
     Ref<const WebCore::DisplayList::DisplayList> takeDisplayList() { return m_recorder->takeDisplayList(); }
 
 private:
@@ -57,7 +57,7 @@ private:
     void drawSnapshotFrame(WebCore::FrameIdentifier);
 
     const Ref<RemoteSnapshot> m_snapshot;
-    UniqueRef<WebCore::DisplayList::RecorderImpl> m_recorder;
+    const UniqueRef<WebCore::DisplayList::RecorderImpl> m_recorder;
     const RemoteSnapshotRecorderIdentifier m_identifier;
 };
 

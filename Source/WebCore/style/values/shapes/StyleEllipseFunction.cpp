@@ -25,11 +25,12 @@
 #include "config.h"
 #include "StyleEllipseFunction.h"
 
+#include "AcceleratedEffectEllipseFunction.h"
 #include "FloatRect.h"
 #include "GeometryUtilities.h"
 #include "Path.h"
 #include "StyleGradient.h"
-#include "StyleLengthWrapper+Blending.h"
+#include "StylePrimitiveNumericOrKeyword+Blending.h"
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <WebCore/StylePosition.h>
@@ -42,7 +43,7 @@ namespace Style {
 
 struct EllipsePathPolicy final : public TinyLRUCachePolicy<FloatRect, WebCore::Path> {
 public:
-    static bool isKeyNull(const FloatRect& rect)
+    static bool NODELETE isKeyNull(const FloatRect& rect)
     {
         return rect.isEmpty();
     }
@@ -63,17 +64,17 @@ static const WebCore::Path& cachedEllipsePath(const FloatRect& rect)
 
 // MARK: - Path Generation
 
-FloatPoint resolvePosition(const Ellipse& value, FloatSize boundingBox)
+FloatPoint resolvePosition(const Ellipse& value, FloatSize boundingBox, ZoomFactor zoom)
 {
-    return value.position ? evaluate<FloatPoint>(*value.position, boundingBox, Style::ZoomNeeded { }) : FloatPoint { boundingBox.width() / 2, boundingBox.height() / 2 };
+    return value.position ? evaluate<FloatPoint>(*value.position, boundingBox, zoom) : FloatPoint { boundingBox.width() / 2, boundingBox.height() / 2 };
 }
 
-FloatSize resolveRadii(const Ellipse& value, FloatSize boxSize, FloatPoint center)
+FloatSize resolveRadii(const Ellipse& value, FloatSize boxSize, FloatPoint center, ZoomFactor zoom)
 {
     auto sizeForAxis = [&](const Ellipse::RadialSize& radius, float centerValue, float dimensionSize) {
         return WTF::switchOn(radius,
             [&](const Ellipse::Length& length) -> float {
-                return evaluate<float>(length, std::abs(dimensionSize), Style::ZoomNeeded { });
+                return evaluate<float>(length, std::abs(dimensionSize), zoom);
             },
             [&](const Ellipse::Extent& extent) -> float {
                 return WTF::switchOn(extent,
@@ -100,9 +101,9 @@ FloatSize resolveRadii(const Ellipse& value, FloatSize boxSize, FloatPoint cente
     };
 }
 
-WebCore::Path pathForCenterCoordinate(const Ellipse& value, const FloatRect& boundingBox, FloatPoint center)
+WebCore::Path pathForCenterCoordinate(const Ellipse& value, const FloatRect& boundingBox, FloatPoint center, ZoomFactor zoom)
 {
-    auto radii = resolveRadii(value, boundingBox.size(), center);
+    auto radii = resolveRadii(value, boundingBox.size(), center, zoom);
     auto bounding = FloatRect {
         center.x() - radii.width() + boundingBox.x(),
         center.y() - radii.height() + boundingBox.y(),
@@ -112,9 +113,9 @@ WebCore::Path pathForCenterCoordinate(const Ellipse& value, const FloatRect& bou
     return cachedEllipsePath(bounding);
 }
 
-WebCore::Path PathComputation<Ellipse>::operator()(const Ellipse& value, const FloatRect& boundingBox)
+WebCore::Path PathComputation<Ellipse>::operator()(const Ellipse& value, const FloatRect& boundingBox, ZoomFactor zoom)
 {
-    return pathForCenterCoordinate(value, boundingBox, resolvePosition(value, boundingBox.size()));
+    return pathForCenterCoordinate(value, boundingBox, resolvePosition(value, boundingBox.size(), zoom), zoom);
 }
 
 // MARK: - Blending
@@ -159,6 +160,50 @@ auto Blending<Ellipse>::blend(const Ellipse& a, const Ellipse& b, const Blending
         .position = WebCore::Style::blend(a.position, b.position, context),
     };
 }
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+template<> struct Evaluation<Ellipse::RadialSize, AcceleratedEffectEllipseFunction::RadialSize> { AcceleratedEffectEllipseFunction::RadialSize operator()(const Ellipse::RadialSize&, float, ZoomFactor); };
+
+AcceleratedEffectEllipseFunction::RadialSize Evaluation<Ellipse::RadialSize, AcceleratedEffectEllipseFunction::RadialSize>::operator()(const Ellipse::RadialSize& value, float dimensionSize, ZoomFactor zoom)
+{
+    return WTF::switchOn(value,
+        [&](const Ellipse::Length& length) -> AcceleratedEffectEllipseFunction::RadialSize {
+            return evaluate<float>(length, dimensionSize, zoom);
+        },
+        [&](const Ellipse::Extent& extent) -> AcceleratedEffectEllipseFunction::RadialSize {
+            return WTF::switchOn(extent,
+                [&](CSS::Keyword::ClosestSide) -> AcceleratedEffectEllipseFunction::Extent {
+                    return AcceleratedEffectEllipseFunction::Extent::ClosestSide;
+                },
+                [&](CSS::Keyword::FarthestSide) -> AcceleratedEffectEllipseFunction::Extent {
+                    return AcceleratedEffectEllipseFunction::Extent::FarthestSide;
+                },
+                [&](CSS::Keyword::ClosestCorner) -> AcceleratedEffectEllipseFunction::Extent {
+                    return AcceleratedEffectEllipseFunction::Extent::ClosestCorner;
+                },
+                [&](CSS::Keyword::FarthestCorner) -> AcceleratedEffectEllipseFunction::Extent {
+                    return AcceleratedEffectEllipseFunction::Extent::FarthestCorner;
+                }
+            );
+        }
+    );
+}
+
+AcceleratedEffectEllipseFunction Evaluation<EllipseFunction, AcceleratedEffectEllipseFunction>::operator()(const EllipseFunction& value, const FloatSize& containingBlockSize, ZoomFactor zoom)
+{
+    return {
+        .radii = {
+            evaluate<AcceleratedEffectEllipseFunction::RadialSize>(get<0>(value->radii), containingBlockSize.width(), zoom),
+            evaluate<AcceleratedEffectEllipseFunction::RadialSize>(get<1>(value->radii), containingBlockSize.height(), zoom),
+        },
+        .position = value->position ? std::optional { evaluate<FloatPoint>(*value->position, containingBlockSize, zoom) } : std::nullopt,
+    };
+}
+
+#endif
 
 } // namespace Style
 } // namespace WebCore

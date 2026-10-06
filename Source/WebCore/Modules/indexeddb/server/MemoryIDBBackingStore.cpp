@@ -38,6 +38,7 @@
 #include "MemoryObjectStore.h"
 #include "MemoryObjectStoreCursor.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace IDBServer {
@@ -103,7 +104,7 @@ IDBError MemoryIDBBackingStore::beginTransaction(const IDBTransactionInfo& info)
 
 IDBError MemoryIDBBackingStore::abortTransaction(const IDBResourceIdentifier& transactionIdentifier)
 {
-    LOG(IndexedDB, "MemoryIDBBackingStore::abortTransaction - %s", transactionIdentifier.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIDBBackingStore::abortTransaction - "_s << transactionIdentifier.loggingString());
 
     auto transaction = m_transactions.take(transactionIdentifier);
     if (!transaction)
@@ -116,7 +117,7 @@ IDBError MemoryIDBBackingStore::abortTransaction(const IDBResourceIdentifier& tr
 
 IDBError MemoryIDBBackingStore::commitTransaction(const IDBResourceIdentifier& transactionIdentifier)
 {
-    LOG(IndexedDB, "MemoryIDBBackingStore::commitTransaction - %s", transactionIdentifier.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIDBBackingStore::commitTransaction - "_s << transactionIdentifier.loggingString());
 
     auto transaction = m_transactions.take(transactionIdentifier);
     if (!transaction)
@@ -129,7 +130,7 @@ IDBError MemoryIDBBackingStore::commitTransaction(const IDBResourceIdentifier& t
 
 IDBError MemoryIDBBackingStore::createObjectStore(const IDBResourceIdentifier& transactionIdentifier, const IDBObjectStoreInfo& info)
 {
-    LOG(IndexedDB, "MemoryIDBBackingStore::createObjectStore - adding OS %s with ID %" PRIu64, info.name().utf8().data(), info.identifier().toRawValue());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIDBBackingStore::createObjectStore - adding OS "_s << info.name() << " with ID "_s << info.identifier().toUInt64());
 
     ASSERT(m_databaseInfo);
     if (m_databaseInfo->hasObjectStore(info.name()))
@@ -208,9 +209,9 @@ IDBError MemoryIDBBackingStore::clearObjectStore(const IDBResourceIdentifier& tr
 
     ASSERT_UNUSED(transactionIdentifier, m_transactions.contains(transactionIdentifier));
 
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     RefPtr transaction = m_transactions.get(transactionIdentifier);
-    ASSERT_UNUSED(transaction, transaction->isWriting());
+    ASSERT(transaction->isWriting());
 #endif
 
     RefPtr objectStore = m_objectStoresByIdentifier.get(objectStoreIdentifier);
@@ -341,9 +342,9 @@ IDBError MemoryIDBBackingStore::deleteRange(const IDBResourceIdentifier& transac
     return IDBError { };
 }
 
-IDBError MemoryIDBBackingStore::addRecord(const IDBResourceIdentifier& transactionIdentifier, const IDBObjectStoreInfo& objectStoreInfo, const IDBKeyData& keyData, const IndexIDToIndexKeyMap& indexKeys, const IDBValue& value)
+IDBError MemoryIDBBackingStore::overwriteRecord(const IDBResourceIdentifier& transactionIdentifier, const IDBObjectStoreInfo& objectStoreInfo, const IDBKeyData& keyData, const IndexIDToIndexKeyMap& indexKeys, const IDBValue& value)
 {
-    LOG(IndexedDB, "MemoryIDBBackingStore::addRecord");
+    LOG(IndexedDB, "MemoryIDBBackingStore::overwriteRecord");
 
     RefPtr transaction = m_transactions.get(transactionIdentifier);
     if (!transaction)
@@ -353,7 +354,7 @@ IDBError MemoryIDBBackingStore::addRecord(const IDBResourceIdentifier& transacti
     if (!objectStore)
         return IDBError { ExceptionCode::UnknownError, "No backing store object store found to put record"_s };
 
-    return objectStore->addRecord(*transaction, keyData, indexKeys, value);
+    return objectStore->overwriteRecord(*transaction, keyData, indexKeys, value);
 }
 
 IDBError MemoryIDBBackingStore::getRecord(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier objectStoreIdentifier, const IDBKeyRangeData& range, IDBGetRecordDataType type, IDBGetResult& outValue)
@@ -623,7 +624,7 @@ IDBError MemoryIDBBackingStore::addIndex(const IDBResourceIdentifier& transactio
     auto error = objectStore->addIndex(*transaction, indexInfo);
     if (error.isNull()) {
         objectStoreInfo->addExistingIndex(indexInfo);
-        m_databaseInfo->setMaxIndexID(indexInfo.identifier().toRawValue());
+        m_databaseInfo->setMaxIndexID(indexInfo.identifier().toUInt64());
     }
 
     return error;
@@ -670,7 +671,7 @@ IDBError MemoryIDBBackingStore::updateIndexRecordsWithIndexKey(const IDBResource
     return objectStore->updateIndexRecordsWithIndexKey(*transaction, indexInfo, key, indexKey);
 }
 
-void MemoryIDBBackingStore::forEachObjectStoreRecord(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier objectStoreIdentifier, Function<void(RecordOrError&&)>&& apply)
+void MemoryIDBBackingStore::forEachObjectStoreRecord(const IDBResourceIdentifier& transactionIdentifier, IDBObjectStoreIdentifier objectStoreIdentifier, NOESCAPE const Function<void(RecordOrError&&)>& apply)
 {
     RefPtr transaction = m_transactions.get(transactionIdentifier);
     if (!transaction) {

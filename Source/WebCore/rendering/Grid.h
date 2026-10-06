@@ -27,7 +27,7 @@
 
 #include "OrderIterator.h"
 #include <wtf/HashMap.h>
-#include <wtf/ListHashSet.h>
+#include <wtf/OrderedHashSet.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -38,7 +38,7 @@ enum class GridTrackSizingDirection : bool;
 
 using GridCell = Vector<SingleThreadWeakPtr<RenderBox>, 1>;
 using GridAsMatrix = Vector<Vector<GridCell>>;
-using OrderedTrackIndexSet = ListHashSet<size_t>;
+using OrderedTrackIndexSet = OrderedHashSet<size_t>;
 
 class GridArea;
 class GridSpan;
@@ -46,9 +46,7 @@ class RenderGrid;
 
 class Grid final {
 public:
-    explicit Grid(RenderGrid&);
-
-    unsigned numTracks(Style::GridTrackSizingDirection) const;
+    unsigned NODELETE numTracks(Style::GridTrackSizingDirection) const;
 
     void ensureGridSize(unsigned maximumRowSize, unsigned maximumColumnSize);
     GridArea insert(RenderBox&, const GridArea&);
@@ -61,17 +59,16 @@ public:
     void setGridItemArea(const RenderBox& item, GridArea);
 
     GridSpan gridItemSpan(const RenderBox&, Style::GridTrackSizingDirection) const;
-    GridSpan gridItemSpanIgnoringCollapsedTracks(const RenderBox&, Style::GridTrackSizingDirection) const;
 
-    const GridCell& cell(unsigned row, unsigned column) const;
+    const GridCell& NODELETE cell(unsigned row, unsigned column) const LIFETIME_BOUND;
 
-    unsigned explicitGridStart(Style::GridTrackSizingDirection) const;
-    void setExplicitGridStart(unsigned rowStart, unsigned columnStart);
+    unsigned NODELETE explicitGridStart(Style::GridTrackSizingDirection) const;
+    void NODELETE setExplicitGridStart(unsigned rowStart, unsigned columnStart);
 
-    unsigned autoRepeatTracks(Style::GridTrackSizingDirection) const;
-    void setAutoRepeatTracks(unsigned autoRepeatRows, unsigned autoRepeatColumns);
+    unsigned NODELETE autoRepeatTracks(Style::GridTrackSizingDirection) const;
+    void NODELETE setAutoRepeatTracks(unsigned autoRepeatRows, unsigned autoRepeatColumns);
 
-    void setClampingForSubgrid(unsigned maxRows, unsigned maxColumns);
+    void NODELETE setClampingForSubgrid(unsigned maxRows, unsigned maxColumns);
 
     void clampAreaToSubgridIfNeeded(GridArea&);
 
@@ -79,18 +76,18 @@ public:
     void setAutoRepeatEmptyRows(std::unique_ptr<OrderedTrackIndexSet>);
 
     unsigned autoRepeatEmptyTracksCount(Style::GridTrackSizingDirection) const;
-    bool hasAutoRepeatEmptyTracks(Style::GridTrackSizingDirection) const;
-    bool isEmptyAutoRepeatTrack(Style::GridTrackSizingDirection, unsigned) const;
+    bool NODELETE hasAutoRepeatEmptyTracks(Style::GridTrackSizingDirection) const;
+    bool NODELETE isEmptyAutoRepeatTrack(Style::GridTrackSizingDirection, unsigned) const;
 
-    OrderedTrackIndexSet* autoRepeatEmptyTracks(Style::GridTrackSizingDirection) const;
+    OrderedTrackIndexSet* NODELETE autoRepeatEmptyTracks(Style::GridTrackSizingDirection) const LIFETIME_BOUND;
 
-    OrderIterator& orderIterator() { return m_orderIterator; }
-    const OrderIterator& orderIterator() const { return m_orderIterator; }
+    OrderIterator& orderIterator() LIFETIME_BOUND { return m_orderIterator; }
+    const OrderIterator& orderIterator() const LIFETIME_BOUND { return m_orderIterator; }
 
     void setNeedsItemsPlacement(bool);
     bool needsItemsPlacement() const { return m_needsItemsPlacement; };
 
-    void setupGridForMasonryLayout();
+    void setupForGridLanesLayout();
     unsigned maxRows() const { return m_maxRows; }
     unsigned maxColumns() const { return m_maxColumns; }
 private:
@@ -124,9 +121,9 @@ public:
     // GridIterator(m_grid, ForColumns, 1) will walk over the rows of the 2nd column.
     GridIterator(const Grid&, Style::GridTrackSizingDirection, unsigned fixedTrackIndex, unsigned varyingTrackIndex = 0);
 
-    static GridIterator createForSubgrid(const RenderGrid& subgrid, const GridIterator& outer, GridSpan subgridSpanInOuter);
+    static GridIterator NODELETE createForSubgrid(const RenderGrid& subgrid, const GridIterator& outer, GridSpan subgridSpanInOuter);
 
-    RenderBox* nextGridItem();
+    RenderBox* NODELETE nextGridItem();
     bool isEmptyAreaEnough(unsigned rowSpan, unsigned columnSpan) const;
     std::optional<GridArea> nextEmptyGridArea(unsigned fixedTrackSpan, unsigned varyingTrackSpan);
 

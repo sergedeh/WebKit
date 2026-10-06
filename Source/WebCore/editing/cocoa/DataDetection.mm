@@ -35,7 +35,7 @@
 #import "CommonAtomStrings.h"
 #import "DataDetectionResultsStorage.h"
 #import "DocumentView.h"
-#import "Editing.h"
+#import "EditingInlines.h"
 #import "ElementAncestorIteratorInlines.h"
 #import "ElementRareData.h"
 #import "ElementTraversal.h"
@@ -47,12 +47,14 @@
 #import "HitTestResult.h"
 #import "HitTestSource.h"
 #import "ImageOverlay.h"
+#import "LocalFrameInlines.h"
 #import "LocalFrameView.h"
 #import "NodeList.h"
 #import "NodeTraversal.h"
 #import "QualifiedName.h"
 #import "Range.h"
 #import "RenderObject.h"
+#import "StyleComputedStyle.h"
 #import "StyleProperties.h"
 #import "Text.h"
 #import "TextIterator.h"
@@ -60,6 +62,9 @@
 #import "TypedElementDescendantIteratorInlines.h"
 #import "VisiblePosition.h"
 #import "VisibleUnits.h"
+#import <pal/cocoa/DataDetectorsCoreSoftLink.h>
+#import <pal/mac/DataDetectorsSoftLink.h>
+#import <pal/spi/ios/DataDetectorsUISoftLink.h>
 #import <wtf/WorkQueue.h>
 #import <wtf/cf/TypeCastsCF.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
@@ -67,16 +72,6 @@
 #import <wtf/text/ParsingUtilities.h>
 #import <wtf/text/StringBuilder.h>
 #import <wtf/text/StringToIntegerConversion.h>
-
-#import <pal/cocoa/DataDetectorsCoreSoftLink.h>
-#import <pal/mac/DataDetectorsSoftLink.h>
-#import <pal/spi/ios/DataDetectorsUISoftLink.h>
-
-#if PLATFORM(MAC)
-template<> struct WTF::CFTypeTrait<DDResultRef> {
-    static inline CFTypeID typeID(void) { return DDResultGetCFTypeID(); }
-};
-#endif
 
 namespace WebCore {
 
@@ -140,7 +135,7 @@ std::optional<DetectedItem> DataDetection::detectItemAroundHitTestResult(const H
     RefPtr<Node> node = hitTestResult.innerNonSharedNode();
     if (!node)
         return { };
-    auto renderer = node->renderer();
+    CheckedPtr renderer = node->renderer();
     if (!renderer)
         return { };
 
@@ -183,11 +178,11 @@ static BOOL resultIsURL(DDResultRef result)
         return NO;
 
     static NeverDestroyed<RetainPtr<NSSet>> urlTypes = [NSSet setWithObjects:
-        bridge_cast(retainPtr(PAL::get_DataDetectorsCore_DDBinderHttpURLKey()).get()),
-        bridge_cast(retainPtr(PAL::get_DataDetectorsCore_DDBinderWebURLKey()).get()),
-        bridge_cast(retainPtr(PAL::get_DataDetectorsCore_DDBinderMailURLKey()).get()),
-        bridge_cast(retainPtr(PAL::get_DataDetectorsCore_DDBinderGenericURLKey()).get()),
-        bridge_cast(retainPtr(PAL::get_DataDetectorsCore_DDBinderEmailKey()).get()),
+        protect(bridge_cast(PAL::get_DataDetectorsCore_DDBinderHttpURLKey())).get(),
+        protect(bridge_cast(PAL::get_DataDetectorsCore_DDBinderWebURLKey())).get(),
+        protect(bridge_cast(PAL::get_DataDetectorsCore_DDBinderMailURLKey())).get(),
+        protect(bridge_cast(PAL::get_DataDetectorsCore_DDBinderGenericURLKey())).get(),
+        protect(bridge_cast(PAL::get_DataDetectorsCore_DDBinderEmailKey())).get(),
         nil];
     RetainPtr type = PAL::softLink_DataDetectorsCore_DDResultGetType(result);
     return [urlTypes.get() containsObject:bridge_cast(type.get())];
@@ -197,7 +192,7 @@ static BOOL resultIsURL(DDResultRef result)
 
 bool DataDetection::canBePresentedByDataDetectors(const URL& url)
 {
-    return [PAL::softLink_DataDetectorsCore_DDURLTapAndHoldSchemes() containsObject:url.protocol().convertToASCIILowercase().createNSString().get()];
+    return [protect(PAL::softLink_DataDetectorsCore_DDURLTapAndHoldSchemes()) containsObject:url.protocol().convertToASCIILowercase().createNSString().get()];
 }
 
 bool DataDetection::isDataDetectorLink(Element& element)
@@ -232,18 +227,18 @@ bool DataDetection::canPresentDataDetectorsUIForElement(Element& element)
     if (!dataDetectionResults)
         return false;
 
-    NSArray *results = dataDetectionResults->documentLevelResults();
+    RetainPtr results = dataDetectionResults->documentLevelResults();
     if (!results)
         return false;
 
     auto resultIndices = StringView { resultAttribute }.split('/');
     auto indexIterator = resultIndices.begin();
-    auto result = [results[parseIntegerAllowingTrailingJunk<int>(*indexIterator).value_or(0)] coreResult];
+    RetainPtr result = [[results objectAtIndex:parseIntegerAllowingTrailingJunk<int>(*indexIterator).value_or(0)] coreResult];
 
     // Handle the case of a signature block, where we need to follow the path down one or more subresult levels.
     while (++indexIterator != resultIndices.end()) {
         results = (__bridge NSArray *)PAL::softLink_DataDetectorsCore_DDResultGetSubResults(result);
-        result = (__bridge DDResultRef)results[parseIntegerAllowingTrailingJunk<int>(*indexIterator).value_or(0)];
+        result = (__bridge DDResultRef)[results objectAtIndex:parseIntegerAllowingTrailingJunk<int>(*indexIterator).value_or(0)];
     }
 
     return PAL::softLink_DataDetectorsCore_DDShouldImmediatelyShowActionSheetForResult(result);
@@ -256,7 +251,7 @@ static NSString *constructURLStringForResult(DDResultRef currentResult, NSString
 
     auto phoneTypes = detectionTypes.contains(DataDetectorType::PhoneNumber) ? DDURLifierPhoneNumberDetectionRegular : DDURLifierPhoneNumberDetectionNone;
     auto category = PAL::softLink_DataDetectorsCore_DDResultGetCategory(currentResult);
-    auto type = PAL::softLink_DataDetectorsCore_DDResultGetType(currentResult);
+    RetainPtr type = PAL::softLink_DataDetectorsCore_DDResultGetType(currentResult);
 
     if ((detectionTypes.contains(DataDetectorType::Address) && DDResultCategoryAddress == category)
         || (detectionTypes.contains(DataDetectorType::TrackingNumber) && CFEqual(PAL::get_DataDetectorsCore_DDBinderTrackingNumberKey(), type))
@@ -283,7 +278,7 @@ static void removeResultLinksFromAnchor(Element& element)
     for (auto* child = ElementTraversal::firstChild(element); child; child = ElementTraversal::nextSibling(*child))
         removeResultLinksFromAnchor(*child);
 
-    auto* elementParent = element.parentElement();
+    RefPtr elementParent = element.parentElement();
     if (!elementParent)
         return;
     
@@ -292,7 +287,7 @@ static void removeResultLinksFromAnchor(Element& element)
         return;
 
     // Iterate over the children and move them all onto the same level as this anchor. Remove the anchor afterwards.
-    while (auto* child = element.firstChild())
+    while (RefPtr child = element.firstChild())
         elementParent->insertBefore(*child, &element);
 
     elementParent->removeChild(element);
@@ -302,7 +297,7 @@ static bool searchForLinkRemovingExistingDDLinks(Node& startNode, Node& endNode)
 {
     Vector<Ref<HTMLAnchorElement>> elementsToProcess;
     auto result = ([&] {
-        for (auto* node = &startNode; node; node = NodeTraversal::next(*node)) {
+        for (RefPtr node = &startNode; node; node = NodeTraversal::next(*node)) {
             if (RefPtr anchor = dynamicDowncast<HTMLAnchorElement>(*node)) {
                 if (!equalLettersIgnoringASCIICase(anchor->attributeWithoutSynchronization(x_apple_data_detectorsAttr), "true"_s))
                     return true;
@@ -312,10 +307,10 @@ static bool searchForLinkRemovingExistingDDLinks(Node& startNode, Node& endNode)
             if (node == &endNode) {
                 // If we found the end node and no link, return false unless an ancestor node is a link.
                 // The only ancestors not tested at this point are in the direct line from self's parent to the top.
-                for (auto& anchor : ancestorsOfType<HTMLAnchorElement>(startNode)) {
-                    if (!equalLettersIgnoringASCIICase(anchor.attributeWithoutSynchronization(x_apple_data_detectorsAttr), "true"_s))
+                for (Ref anchor : ancestorsOfType<HTMLAnchorElement>(startNode)) {
+                    if (!equalLettersIgnoringASCIICase(anchor->attributeWithoutSynchronization(x_apple_data_detectorsAttr), "true"_s))
                         return true;
-                    elementsToProcess.append(anchor);
+                    elementsToProcess.append(WTF::move(anchor));
                 }
                 return false;
             }
@@ -373,8 +368,8 @@ static void buildQuery(DDScanQueryRef scanQuery, const SimpleRange& contextRange
     // Once we're over this number of fragments, we stop at the space.
     const CFIndex maxFragmentSpace = 10000;
 
-    CFCharacterSetRef whiteSpacesSet = CFCharacterSetGetPredefined(kCFCharacterSetWhitespaceAndNewline);
-    CFCharacterSetRef newLinesSet = CFCharacterSetGetPredefined(kCFCharacterSetNewline);
+    RetainPtr whiteSpacesSet = CFCharacterSetGetPredefined(kCFCharacterSetWhitespaceAndNewline);
+    RetainPtr newLinesSet = CFCharacterSetGetPredefined(kCFCharacterSetNewline);
     
     CFIndex iteratorCount = 0;
     
@@ -452,8 +447,8 @@ static inline CFComparisonResult queryOffsetCompare(DDQueryOffset o1, DDQueryOff
 void DataDetection::removeDataDetectedLinksInDocument(Document& document)
 {
     Vector<Ref<HTMLAnchorElement>> allAnchorElements;
-    for (auto& anchor : descendantsOfType<HTMLAnchorElement>(document))
-        allAnchorElements.append(anchor);
+    for (Ref anchor : descendantsOfType<HTMLAnchorElement>(document))
+        allAnchorElements.append(WTF::move(anchor));
 
     for (auto& anchor : allAnchorElements)
         removeResultLinksFromAnchor(anchor.get());
@@ -580,10 +575,10 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
     // Iterate through the scanner results to find signatures and extract all the subresults while
     // populating the array of index paths to use in the href of the anchors being created.
     for (id resultObject in (NSArray *)scannerResults.get()) {
-        DDResultRef result = (DDResultRef)resultObject;
+        RetainPtr result = (DDResultRef)resultObject;
         NSIndexPath *indexPath = [NSIndexPath indexPathWithIndex:currentTopLevelIndex];
         if (CFEqual(PAL::softLink_DataDetectorsCore_DDResultGetType(result), PAL::get_DataDetectorsCore_DDBinderSignatureBlockKey())) {
-            NSArray *subresults = (NSArray *)PAL::softLink_DataDetectorsCore_DDResultGetSubResults(result);
+            RetainPtr subresults = (NSArray *)PAL::softLink_DataDetectorsCore_DDResultGetSubResults(result);
 
             for (NSUInteger subResultIndex = 0 ; subResultIndex < [subresults count] ; subResultIndex++) {
                 indexPaths.append([indexPath indexPathByAddingIndex:subResultIndex]);
@@ -614,7 +609,7 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
     // we are about to process a different text node.
     CFIndex resultCount = allResults.size();
     for (CFIndex resultIndex = 0; resultIndex < resultCount; ++resultIndex) {
-        DDResultRef coreResult = allResults[resultIndex].get();
+        RetainPtr coreResult = allResults[resultIndex];
         DDQueryRange queryRange = PAL::softLink_DataDetectorsCore_DDResultGetQueryRangeForURLification(coreResult);
         auto& resultRanges = (*allResultRanges)[resultIndex];
 
@@ -635,7 +630,7 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
         BOOL shouldUseLightLinks = PAL::softLink_DataDetectorsCore_DDShouldUseLightLinksForResult(coreResult, [indexPaths[resultIndex] length] > 1);
 
         for (auto& range : resultRanges) {
-            auto* parentNode = range.start.container->parentNode();
+            RefPtr parentNode = range.start.container->parentNode();
             if (!parentNode)
                 continue;
 
@@ -643,7 +638,7 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
             if (!currentTextNode)
                 continue;
 
-            auto& document = currentTextNode->document();
+            Ref document = currentTextNode->document();
             String textNodeData;
 
             if (lastTextNodeToUpdate != currentTextNode.get()) {
@@ -667,10 +662,8 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
             anchorElement->setAttributeWithoutSynchronization(dirAttr, "ltr"_s);
 
             if (shouldUseLightLinks) {
-                document.updateStyleIfNeeded();
-
-                auto* renderStyle = parentNode->computedStyle();
-                if (renderStyle) {
+                document->updateStyleIfNeeded();
+                if (CheckedPtr renderStyle = parentNode->computedStyle()) {
                     auto textColor = renderStyle->visitedDependentColor();
                     if (textColor.isValid()) {
                         // FIXME: Consider using LCHA<float> rather than HSLA<float> for better perceptual results and to avoid clamping to sRGB gamut, which is what HSLA does.
@@ -741,7 +734,7 @@ void DataDetection::detectContentInFrame(LocalFrame* frame, OptionSet<DataDetect
     if (types.contains(DataDetectorType::LookupSuggestion))
         PAL::softLink_DataDetectorsCore_DDScannerEnableOptionalSource(scanner.get(), DDScannerSourceSpotlight, true);
 
-    workQueue().dispatch([scanner = WTF::move(scanner), types, referenceDateFromContext, scanQuery = WTF::move(scanQuery), weakDocument = WeakPtr { *document }, fragments = WTF::move(fragments), completionHandler = WTF::move(completionHandler)]() mutable {
+    protect(workQueue())->dispatch([scanner = WTF::move(scanner), types, referenceDateFromContext, scanQuery = WTF::move(scanQuery), weakDocument = WeakPtr { *document }, fragments = WTF::move(fragments), completionHandler = WTF::move(completionHandler)]() mutable {
         if (!PAL::softLink_DataDetectorsCore_DDScannerScanQuery(scanner.get(), scanQuery.get())) {
             callOnMainRunLoop([scanner = WTF::move(scanner), scanQuery = WTF::move(scanQuery), weakDocument = WTF::move(weakDocument), fragments = WTF::move(fragments), completionHandler = WTF::move(completionHandler)]() mutable {
                 completionHandler(nil);
@@ -755,7 +748,7 @@ void DataDetection::detectContentInFrame(LocalFrame* frame, OptionSet<DataDetect
                 return;
 
             auto contextRange = makeRangeSelectingNodeContents(*document);
-            completionHandler(processDataDetectorScannerResults(scanner.get(), types, referenceDateFromContext, scanQuery.get(), contextRange, fragments));
+            completionHandler(protect(processDataDetectorScannerResults(scanner.get(), types, referenceDateFromContext, scanQuery.get(), contextRange, fragments)));
         });
     });
 }

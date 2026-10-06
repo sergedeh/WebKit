@@ -36,9 +36,8 @@
 #include "pas_megapage_cache.h"
 #include "pas_mte.h"
 #include "pas_reserved_memory_provider.h"
-#include "pas_segregated_shared_page_directory.h"
 
-static pas_allocation_result allocate_from_compact_megapages(
+static pas_allocation_result allocate_from_large(
     size_t size,
     pas_alignment alignment,
     const char* name,
@@ -57,33 +56,7 @@ static pas_allocation_result allocate_from_compact_megapages(
     heap_config = pas_heap_config_kind_get_config(heap->config_kind);
 
     return pas_large_heap_try_allocate_and_forget(
-        &heap->large_heap, size, alignment.alignment, pas_non_compact_allocation_mode,
-        heap_config, transaction);
-}
-
-static pas_allocation_result allocate_from_megapages(
-    size_t size,
-    pas_alignment alignment,
-    const char* name,
-    pas_heap* heap,
-    pas_physical_memory_transaction* transaction,
-    void* arg)
-{
-    const pas_heap_config* heap_config;
-    pas_megapage_cache_size cache_size = (pas_megapage_cache_size)(uintptr_t)arg;
-
-    PAS_UNUSED_PARAM(name);
-    PAS_ASSERT(heap);
-    PAS_ASSERT(transaction);
-    PAS_ASSERT(!alignment.alignment_begin);
-
-    heap_config = pas_heap_config_kind_get_config(heap->config_kind);
-
-    PAS_PROFILE(MEGAPAGES_ALLOCATION, heap, size, alignment.alignment, heap_config, cache_size);
-    PAS_MTE_HANDLE(MEGAPAGES_ALLOCATION, heap, size, alignment.alignment, heap_config);
-
-    return pas_large_heap_try_allocate_and_forget(
-        &heap->megapage_large_heap, size, alignment.alignment, pas_non_compact_allocation_mode,
+        &heap->large_heap, size, alignment.alignment,
         heap_config, transaction);
 }
 
@@ -95,7 +68,8 @@ pas_basic_heap_page_caches* pas_create_basic_heap_page_caches_with_reserved_memo
 {
     pas_reserved_memory_provider* provider;
     pas_basic_heap_page_caches* caches;
-    pas_segregated_page_config_variant segregated_variant;
+
+    PAS_UNUSED_PARAM(template_runtime_config);
 
     pas_heap_lock_lock();
 
@@ -112,57 +86,25 @@ pas_basic_heap_page_caches* pas_create_basic_heap_page_caches_with_reserved_memo
         pas_object_allocation);
 
     pas_large_heap_physical_page_sharing_cache_construct(
-        &caches->megapage_large_heap_cache,
-        pas_reserved_memory_provider_try_allocate,
-        provider);
-
-    pas_large_heap_physical_page_sharing_cache_construct(
         &caches->large_heap_cache,
         pas_reserved_memory_provider_try_allocate,
-        provider);
+        provider,
+        pas_decommitted);
     
     pas_megapage_cache_construct(
         &caches->small_exclusive_segregated_megapage_cache,
-        allocate_from_megapages,
+        allocate_from_large,
         pas_megapage_cache_size_small);
 
     pas_megapage_cache_construct(
         &caches->small_other_megapage_cache,
-        allocate_from_megapages,
+        allocate_from_large,
         pas_megapage_cache_size_small);
 
     pas_megapage_cache_construct(
         &caches->medium_megapage_cache,
-        allocate_from_megapages,
+        allocate_from_large,
         pas_megapage_cache_size_medium);
-
-    pas_megapage_cache_construct(
-        &caches->small_compact_exclusive_segregated_megapage_cache,
-        allocate_from_compact_megapages,
-        pas_megapage_cache_size_small_compact);
-
-    pas_megapage_cache_construct(
-        &caches->small_compact_other_megapage_cache,
-        allocate_from_compact_megapages,
-        pas_megapage_cache_size_small_compact);
-
-    pas_megapage_cache_construct(
-        &caches->medium_compact_megapage_cache,
-        allocate_from_compact_megapages,
-        pas_megapage_cache_size_medium_compact);
-
-    for (PAS_EACH_SEGREGATED_PAGE_CONFIG_VARIANT_ASCENDING(segregated_variant)) {
-        pas_shared_page_directory_by_size* directories;
-
-        directories = pas_basic_heap_page_caches_get_shared_page_directories(caches,
-                                                                             segregated_variant);
-
-        *directories = PAS_SHARED_PAGE_DIRECTORY_BY_SIZE_INITIALIZER(
-            pas_basic_heap_page_caches_get_shared_page_directories(
-                template_runtime_config->page_caches,
-                segregated_variant)->log_shift,
-            pas_share_pages);
-    }
 
     pas_heap_lock_unlock();
 

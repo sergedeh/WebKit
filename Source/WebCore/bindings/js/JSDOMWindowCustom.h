@@ -34,19 +34,19 @@ bool jsDOMWindowGetOwnPropertySlotRestrictedAccess(JSDOMGlobalObject*, DOMWindow
 enum class CrossOriginObject : bool { Window, Location };
 template<CrossOriginObject> void addCrossOriginOwnPropertyNames(JSC::JSGlobalObject&, JSC::PropertyNameArrayBuilder&);
 
-bool handleCommonCrossOriginProperties(JSC::JSObject* thisObject, JSC::VM&, JSC::PropertyName, JSC::PropertySlot&);
+bool NODELETE handleCommonCrossOriginProperties(JSC::JSObject* thisObject, JSC::VM&, JSC::PropertyName, JSC::PropertySlot&);
 
 JSDOMWindow& mainWorldGlobalObject(LocalFrame&);
 JSDOMWindow* mainWorldGlobalObject(LocalFrame*);
 
 inline JSDOMWindow* asJSDOMWindow(JSC::JSGlobalObject* globalObject)
 {
-    return JSC::jsCast<JSDOMWindow*>(globalObject);
+    return uncheckedDowncast<JSDOMWindow>(globalObject);
 }
 
 inline const JSDOMWindow* asJSDOMWindow(const JSC::JSGlobalObject* globalObject)
 {
-    return JSC::jsCast<const JSDOMWindow*>(globalObject);
+    return uncheckedDowncast<JSDOMWindow>(globalObject);
 }
 
 inline JSDOMWindow* mainWorldGlobalObject(LocalFrame* frame)

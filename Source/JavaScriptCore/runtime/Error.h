@@ -25,12 +25,9 @@
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ErrorType.h>
 #include <JavaScriptCore/Exception.h>
-#include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/LineColumn.h>
 #include <JavaScriptCore/ThrowScope.h>
-#include <stdint.h>
-
 
 namespace JSC {
 
@@ -91,9 +88,10 @@ JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const 
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&, const String& errorMessage);
 inline Exception* throwRangeError(JSGlobalObject* globalObject, ThrowScope& scope, const String& errorMessage) { return throwException(globalObject, scope, createRangeError(globalObject, errorMessage)); }
+inline Exception* throwError(JSGlobalObject* globalObject, ThrowScope& scope, ErrorType errorType, const String& errorMessage) { return throwException(globalObject, scope, createError(globalObject, errorType, errorMessage)); }
 
-JS_EXPORT_PRIVATE String makeDOMAttributeGetterTypeErrorMessage(const char* interfaceName, const String& attributeName);
-JS_EXPORT_PRIVATE String makeDOMAttributeSetterTypeErrorMessage(const char* interfaceName, const String& attributeName);
+JS_EXPORT_PRIVATE String makeDOMAttributeGetterTypeErrorMessage(StringView interfaceName, const String& attributeName);
+JS_EXPORT_PRIVATE String makeDOMAttributeSetterTypeErrorMessage(StringView interfaceName, const String& attributeName);
 
 JS_EXPORT_PRIVATE JSValue throwDOMAttributeGetterTypeError(JSGlobalObject*, ThrowScope&, const ClassInfo*, PropertyName);
 JS_EXPORT_PRIVATE JSValue throwDOMAttributeSetterTypeError(JSGlobalObject*, ThrowScope&, const ClassInfo*, PropertyName);

@@ -40,6 +40,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/glib/Application.h>
 #include <wtf/glib/Sandbox.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if USE(ATSPI)
 #include <wtf/UUID.h>
@@ -73,9 +74,9 @@
 #endif
 
 #if OS(LINUX)
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <bmalloc/valgrind.h>
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
 namespace WebKit {
@@ -141,15 +142,14 @@ static void seatDevicesChangedCallback(GdkSeat* seat, GdkDevice*, WebProcessPool
 }
 #endif
 
-IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
 void WebProcessPool::platformInitialize(NeedsGlobalStaticInitialization)
 {
-    if (const char* forceComplexText = getenv("WEBKIT_FORCE_COMPLEX_TEXT"))
-        m_alwaysUsesComplexTextCodePath = !strcmp(forceComplexText, "1");
+    if (const auto forceComplexText = UTF8CStringView::unsafeFromUTF8(getenv("WEBKIT_FORCE_COMPLEX_TEXT")))
+        m_alwaysUsesComplexTextCodePath = forceComplexText == "1"_s;
 
 #if !ENABLE(2022_GLIB_API)
-    if (const char* forceSandbox = getenv("WEBKIT_FORCE_SANDBOX")) {
-        if (!strcmp(forceSandbox, "1"))
+    if (const auto forceSandbox = UTF8CStringView::unsafeFromUTF8(getenv("WEBKIT_FORCE_SANDBOX"))) {
+        if (forceSandbox == "1"_s)
             setSandboxEnabled(true);
         else {
             static bool once = false;
@@ -161,7 +161,7 @@ void WebProcessPool::platformInitialize(NeedsGlobalStaticInitialization)
     }
 #endif
 
-#if OS(LINUX)
+#if OS(LINUX) && !OS(ANDROID)
     if (!MemoryPressureMonitor::disabled())
         installMemoryPressureHandler();
 #endif
@@ -175,7 +175,6 @@ void WebProcessPool::platformInitialize(NeedsGlobalStaticInitialization)
     }
 #endif
 }
-IGNORE_CLANG_WARNINGS_END
 
 void WebProcessPool::platformInitializeWebProcess(const WebProcessProxy& process, WebProcessCreationParameters& parameters)
 {
@@ -221,17 +220,13 @@ void WebProcessPool::platformInitializeWebProcess(const WebProcessProxy& process
     parameters.availableInputDevices = availableInputDevices();
     parameters.memoryCacheDisabled = m_memoryCacheDisabled || LegacyGlobalSettings::singleton().cacheModel() == CacheModel::DocumentViewer;
 
-#if OS(LINUX)
+#if OS(LINUX) && !OS(ANDROID)
     if (MemoryPressureMonitor::disabled())
         parameters.shouldSuppressMemoryPressureHandler = true;
 #endif
 
 #if USE(GSTREAMER)
     parameters.gstreamerOptions = WebCore::extractGStreamerOptionsFromCommandLine();
-#endif
-
-#if PLATFORM(GTK) && !USE(GTK4) && USE(CAIRO)
-    parameters.useSystemAppearanceForScrollbars = m_configuration->useSystemAppearanceForScrollbars();
 #endif
 
     parameters.memoryPressureHandlerConfiguration = m_configuration->memoryPressureHandlerConfiguration();
@@ -297,8 +292,8 @@ void WebProcessPool::setSandboxEnabled(bool enabled)
 
     if (!enabled) {
 #if !ENABLE(2022_GLIB_API)
-        if (const char* forceSandbox = getenv("WEBKIT_FORCE_SANDBOX")) {
-            if (!strcmp(forceSandbox, "1"))
+        if (const auto forceSandbox = UTF8CStringView::unsafeFromUTF8(getenv("WEBKIT_FORCE_SANDBOX"))) {
+            if (forceSandbox == "1"_s)
                 return;
         }
 #endif
@@ -316,17 +311,15 @@ void WebProcessPool::setSandboxEnabled(bool enabled)
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
-IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
-    if (const char* disableSandbox = getenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS")) {
-        if (strcmp(disableSandbox, "0"))
+    if (const auto disableSandbox = UTF8CStringView::unsafeFromUTF8(getenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"))) {
+        if (disableSandbox != "0"_s)
             return;
     }
-IGNORE_CLANG_WARNINGS_END
 
     m_sandboxEnabled = true;
 #if USE(ATSPI)
     if (shouldUseBubblewrap())
-        m_sandboxedAccessibilityBusAddress = makeString("unix:path="_s, FileSystem::pathByAppendingComponent(FileSystem::stringFromFileSystemRepresentation(sandboxedUserRuntimeDirectory().data()), "at-spi-bus"_s));
+        m_sandboxedAccessibilityBusAddress = makeString("unix:path="_s, FileSystem::pathByAppendingComponent(String { sandboxedUserRuntimeDirectory() }, "at-spi-bus"_s));
 #endif
 }
 
@@ -389,8 +382,8 @@ const String& WebProcessPool::sandboxedAccessibilityBusAddress() const
 const String& WebProcessPool::generateNextAccessibilityBusName()
 {
     m_accessibilityBusName = makeString(String::fromUTF8(WTF::applicationID().span()), ".Sandboxed.WebProcess-"_s, WTF::UUID::createVersion4());
-    RELEASE_ASSERT(g_dbus_is_name(m_accessibilityBusName.value().utf8().data()));
-    RELEASE_ASSERT(!g_dbus_is_unique_name(m_accessibilityBusName.value().utf8().data()));
+    RELEASE_ASSERT(g_dbus_is_name(m_accessibilityBusName.value().utf8().legacyCStringPointer()));
+    RELEASE_ASSERT(!g_dbus_is_unique_name(m_accessibilityBusName.value().utf8().legacyCStringPointer()));
 
     return accessibilityBusName();
 }

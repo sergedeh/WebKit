@@ -23,7 +23,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
 #import "config.h"
 #import "DigitalCredentialsRequestValidatorBridge.h"
 
@@ -40,8 +39,10 @@
 #import <WebCore/ISO18013.h>
 #import <WebCore/SecurityOrigin.h>
 #import <WebCore/UnvalidatedDigitalCredentialRequest.h>
+#import <WebCore/X509SubjectKeyIdentifier.h>
 #import <WebKit/WKIdentityDocumentPresentmentMobileDocumentRequest.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/cocoa/VectorCocoa.h>
 #import "WebKitSwiftSoftLink.h"
 
 namespace WebKit {
@@ -110,6 +111,20 @@ static WebCore::ISO18013DocumentRequest buildDocumentRequest(WKIdentityDocumentP
         mappedDocumentRequest.namespaces.append(std::make_pair(WTF::move(mappedNamespaceKey), WTF::move(innerVector)));
     }
 
+    if (individualDocumentRequest.issuerIdentifiers && [individualDocumentRequest.issuerIdentifiers count] > 0) {
+        Vector<WebCore::X509SubjectKeyIdentifier> issuerIdentifiers;
+        issuerIdentifiers.reserveInitialCapacity([individualDocumentRequest.issuerIdentifiers count]);
+
+        for (NSData *data in individualDocumentRequest.issuerIdentifiers)
+            issuerIdentifiers.append(WebCore::X509SubjectKeyIdentifier { makeVector(data) });
+
+        if (!issuerIdentifiers.isEmpty()) {
+            if (!mappedDocumentRequest.requestInfo)
+                mappedDocumentRequest.requestInfo = WebCore::ISO18013DocumentRequestInfo { };
+            mappedDocumentRequest.requestInfo->issuerIdentifiers = WTF::move(issuerIdentifiers);
+        }
+    }
+
     return mappedDocumentRequest;
 }
 
@@ -149,17 +164,23 @@ static WebCore::ValidatedMobileDocumentRequest buildValidatedRequest(WKIdentityD
     return validatedRequest;
 }
 
-Vector<WebCore::ValidatedMobileDocumentRequest> DigitalCredentials::validateRequests(const SecurityOrigin &topOrigin, const Document &document, const Vector<WebCore::MobileDocumentRequest> &unvalidatedRequests)
+Vector<WebCore::ValidatedMobileDocumentRequest> DigitalCredentials::validateRequests(const SecurityOrigin &topOrigin, const Document &document, const Vector<WebCore::UnvalidatedDigitalCredentialRequest> &unvalidatedRequests)
 {
     RetainPtr convertedTopOrigin = topOrigin.toURL().createNSURL().get();
     RetainPtr validator = adoptNS([WebKit::allocWKIdentityDocumentRawRequestValidatorInstance() init]);
 
     Vector<WebCore::ValidatedMobileDocumentRequest> validatedRequests;
 
-    for (auto mobileDocumentRequest : unvalidatedRequests) {
+    for (auto& unvalidatedRequest : unvalidatedRequests) {
+        auto* mobileDocumentRequest = std::get_if<WebCore::MobileDocumentRequest>(&unvalidatedRequest);
+        if (!mobileDocumentRequest) {
+            // FIXME: Validate the OpenID4VP protocols once rdar://problem/183338719 is
+            // fulfilled.
+            continue;
+        }
 
-        RetainPtr convertedEncryptionInfo = mobileDocumentRequest.encryptionInfo.createNSString();
-        RetainPtr convertedDeviceRequest = mobileDocumentRequest.deviceRequest.createNSString();
+        RetainPtr convertedEncryptionInfo = mobileDocumentRequest->encryptionInfo.createNSString();
+        RetainPtr convertedDeviceRequest = mobileDocumentRequest->deviceRequest.createNSString();
 
         RetainPtr iso18013Request = adoptNS([WebKit::allocWKISO18013RequestInstance() initWithEncryptionInfo:convertedEncryptionInfo.get() deviceRequest:convertedDeviceRequest.get()]);
 
@@ -182,10 +203,11 @@ Vector<WebCore::ValidatedMobileDocumentRequest> DigitalCredentials::validateRequ
                 MessageLevel::Warning,
                 errorMessage));
 
-            LOG(DigitalCredentials, "Validation failed for request: %@", error);
+            LOG(DigitalCredentials, "DigitalCredentials::validateRequests() - WebProcess: Validation failed for request: %@", error);
         }
     }
 
+    LOG(DigitalCredentials, "DigitalCredentials::validateRequests() - WebProcess: returning %zu validated requests", validatedRequests.size());
     return validatedRequests;
 }
 

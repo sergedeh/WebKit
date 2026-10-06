@@ -32,6 +32,7 @@
 #include "MarkedBlockInlines.h"
 #include "SweepingScope.h"
 #include "VMManager.h"
+#include "WeakSetInlines.h"
 #include <wtf/CommaPrinter.h>
 
 #if PLATFORM(COCOA)
@@ -68,8 +69,8 @@ MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAlloca
 
 MarkedBlock::Handle::Handle(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator, void* blockSpace)
     : m_alignedMemoryAllocator(alignedMemoryAllocator)
-    , m_weakSet(heap.vm())
     , m_block(new (NotNull, blockSpace) MarkedBlock(heap.vm(), *this))
+    , m_weakSet(heap.vm())
 {
     heap.didAllocateBlock(blockSize);
 }
@@ -117,7 +118,7 @@ void MarkedBlock::Handle::unsweepWithNoNewlyAllocated()
     m_directory->didFinishUsingBlock(this);
 }
 
-void MarkedBlock::Handle::stopAllocating(const FreeList& freeList)
+void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatingMode mode)
 {
     Locker locker { blockHeader().m_lock };
     
@@ -138,26 +139,42 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList)
     if (MarkedBlockInternal::verbose)
         dataLog("Free list: ", freeList, "\n");
     
+    if (mode == StopAllocatingMode::ForGood) {
+        // MarkedSpace::lastChanceToFinalize() runs next and clears the newly-allocated bitmap before
+        // sweeping, so computing it here would be wasted work. The free list still has to be zapped:
+        // the sweep runs a destructor for every cell that is not zapped.
+        if (m_attributes.destruction != DoesNotNeedDestruction) {
+            freeList.forEach(
+                [&] (HeapCell* cell) {
+                    cell->zap(HeapCell::StopAllocating);
+                });
+        }
+        m_isFreeListed = false;
+        directory()->didFinishUsingBlock(this);
+        return;
+    }
+
     // Roll back to a coherent state for Heap introspection. Cells newly
     // allocated from our free list are not currently marked, so we need another
     // way to tell what's live vs dead. 
     
     blockHeader().m_newlyAllocated.clearAll();
     blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
+    blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
 
-    forEachCell(
-        [&] (size_t, HeapCell* cell, HeapCell::Kind) -> IterationStatus {
-            block().setNewlyAllocated(cell);
-            return IterationStatus::Continue;
-        });
-
-    freeList.forEach(
-        [&] (HeapCell* cell) {
-            if constexpr (MarkedBlockInternal::verbose)
-                dataLog("Free cell: ", RawPointer(cell), "\n");
-            if (m_attributes.destruction != DoesNotNeedDestruction)
-                cell->zap(HeapCell::StopAllocating);
-            block().clearNewlyAllocated(cell);
+    ASSERT(freeList.cellSize() == m_atomsPerCell * atomSize);
+    bool needsZapping = m_attributes.destruction != DoesNotNeedDestruction;
+    freeList.forEachInterval(
+        [&](char* intervalStart, char* intervalEnd) {
+            if (needsZapping || MarkedBlockInternal::verbose) {
+                for (char* cell = intervalStart; cell < intervalEnd; cell += freeList.cellSize()) {
+                    if constexpr (MarkedBlockInternal::verbose)
+                        dataLog("Free cell: ", RawPointer(cell), "\n");
+                    if (needsZapping)
+                        std::bit_cast<HeapCell*>(cell)->zap(HeapCell::StopAllocating);
+                }
+            }
+            blockHeader().m_newlyAllocated.clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
         });
     
     m_isFreeListed = false;
@@ -216,11 +233,10 @@ void MarkedBlock::Handle::resumeAllocating(FreeList& freeList)
 inline void MarkedBlock::setupTestForDumpInfoAndCrash()
 {
     static std::atomic<uint64_t> count = 0;
-    char* blockMem = std::bit_cast<char*>(this);
+    char* blockMem = reinterpret_cast<char*>(this);
 
     // Option set to 0 disables testing.
     if (++count == Options::markedBlockDumpInfoCount()) {
-        memset(&header(), 0, sizeof(uintptr_t));
         switch (Options::markedBlockDumpInfoCount() & 0xf) {
         case 1: // Test null VM pointer.
             dataLogLn("Zeroing MarkedBlock::Header::m_vm");
@@ -239,7 +255,13 @@ inline void MarkedBlock::setupTestForDumpInfoAndCrash()
             dataLogLn("Zeroing MarkedBlock");
             memset(blockMem, 0, blockSize);
             break;
+        case 5: // Test already freed block (test this case with --useConcurrentGC=0)
+            dataLogLn("Simulating freed MarkedBlock");
+            space()->blocks().remove(this);
+            handle().removeFromDirectory();
+            break;
         }
+        *reinterpret_cast<uintptr_t*>(&header()) = 0;
     }
 }
 
@@ -261,7 +283,7 @@ void MarkedBlock::aboutToMarkSlow(HeapVersion markingVersion, HeapCell* cell)
 
     MarkedBlock::Handle* handle = header().handlePointerForNullCheck();
     if (!handle) [[unlikely]]
-        dumpInfoAndCrashForInvalidHandleV2(locker, cell);
+        analyzeInvalidHandleAndCrash(locker, cell);
 
     BlockDirectory* directory = handle->directory();
     bool isAllocated;
@@ -466,12 +488,17 @@ Subspace* MarkedBlock::Handle::subspace() const
 
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
-    SweepingScope sweepingScope(*heap());
     m_directory->assertIsMutatorOrMutatorIsStopped();
     ASSERT(m_directory->isInUse(this));
 
     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
     bool needsDestruction = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
+    // Nothing has been allocated into a block that is still swept, so no weak handle into it can have
+    // been created and died since; re-sweeping its weak set would find nothing.
+    if (sweepMode == SweepOnly && !needsDestruction && !m_directory->isUnswept(this))
+        return;
+
+    SweepingScope sweepingScope(*heap());
 
     m_weakSet.sweep();
 
@@ -553,7 +580,32 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     specializedSweep<false, IsEmpty, SweepOnly, BlockHasNoDestructors, DontScribble, HasNewlyAllocated, MarksStale>(freeList, emptyMode, sweepMode, BlockHasNoDestructors, scribbleMode, newlyAllocatedMode, marksMode, [] (VM&, JSCell*) { });
 }
 
-NO_RETURN_DUE_TO_CRASH NEVER_INLINE void MarkedBlock::dumpInfoAndCrashForInvalidHandleV2(AbstractLocker&, HeapCell* heapCell)
+NO_RETURN_DUE_TO_CRASH NEVER_INLINE static void crashDueToGarbageCollectorClientDanglingReference_CheckRootsAndBarriers(HeapCell* heapCell, uint64_t cellFirst8Bytes, uint64_t zeroCounts, uint64_t bitfield, uint64_t subspaceHash, VM* blockVM, VM* actualVM)
+{
+#if PLATFORM(COCOA)
+    StringPrintStream out;
+    out.printf("JavaScriptCore garbage collector detected a dangling reference to cell %p. "
+        "The referenced object was collected because it was not properly kept alive. "
+        "JSC API clients: do not call JSValueUnprotect on values still in use, "
+        "do not store JSValueRef in heap-allocated memory without calling JSValueProtect, "
+        "do not use values after their JSContext has been destroyed, "
+        "and do not use values across different JSContextGroups (JSVirtualMachines). "
+        "WebKit developers: check for missing write barriers, incomplete visitChildren implementations, "
+        "or unrooted GC objects.",
+        heapCell);
+    auto message = out.toUTF8CString();
+    dataLogLn(message);
+    WTF::setCrashLogMessage(WTF::move(message));
+#endif
+    CRASH_WITH_INFO(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
+}
+
+NO_RETURN_DUE_TO_CRASH NEVER_INLINE void MarkedBlock::dumpInfoAndCrashForInvalidHandleV2(HeapCell* heapCell, uint64_t cellFirst8Bytes, uint64_t zeroCounts, uint64_t bitfield, uint64_t subspaceHash, VM* blockVM, VM* actualVM)
+{
+    CRASH_WITH_INFO(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
+}
+
+NO_RETURN_DUE_TO_CRASH NEVER_INLINE void MarkedBlock::analyzeInvalidHandleAndCrash(AbstractLocker&, HeapCell* heapCell)
 {
     VM* blockVM = header().m_vm;
     VM* actualVM = nullptr;
@@ -575,11 +627,11 @@ NO_RETURN_DUE_TO_CRASH NEVER_INLINE void MarkedBlock::dumpInfoAndCrashForInvalid
     auto updateCrashLogMsg = [&](int line) {
 #if PLATFORM(COCOA)
         StringPrintStream out;
-        out.printf("INVALID HANDLE [%d]: markedBlock=%p; heapCell=%p; cellFirst8Bytes=%#llx; subspaceHash=%#x; contiguousZeros=%lu; totalZeros=%lu; blockVM=%p; actualVM=%p; isBlockVMValid=%d; isBlockInSet=%d; isBlockInDir=%d; foundInBlockVM=%d;",
+        out.printf("Suspected memory corruption: invalid handle [line=%d]: markedBlock=%p; heapCell=%p; cellFirst8Bytes=%#llx; subspaceHash=%#x; contiguousZeros=%lu; totalZeros=%lu; blockVM=%p; actualVM=%p; isBlockVMValid=%d; isBlockInSet=%d; isBlockInDir=%d; foundInBlockVM=%d;",
             line, this, heapCell, cellFirst8Bytes, subspaceHash, contiguousZeroBytesHeadOfBlock, totalZeroBytesInBlock, blockVM, actualVM, isBlockVMValid, isBlockInSet, isBlockInDirectory, foundInBlockVM);
-        auto message = out.toCString();
-        WTF::setCrashLogMessage(message.data());
-        dataLogLn(message.data());
+        auto message = out.toUTF8CString();
+        dataLogLn(message);
+        WTF::setCrashLogMessage(WTF::move(message));
 #else
         UNUSED_PARAM(line);
 #endif
@@ -657,7 +709,13 @@ NO_RETURN_DUE_TO_CRASH NEVER_INLINE void MarkedBlock::dumpInfoAndCrashForInvalid
     static_assert(MarkedBlock::blockSize < (1ull << 32));
     uint64_t zeroCounts = contiguousZeroBytesHeadOfBlock | (static_cast<uint64_t>(totalZeroBytesInBlock) << 32);
 
-    CRASH_WITH_INFO(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
+    // If the block isn't attached to any VM's directory or block set, then the block was either already freed or the heapCell isn't
+    // really a heapCell. Assume either of these cases are due to a GC client bug not keeping this cell or the cell pointing at this cell alive.
+    if (!foundInBlockVM && !isBlockInSet && !isBlockInDirectory)
+        crashDueToGarbageCollectorClientDanglingReference_CheckRootsAndBarriers(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
+
+    // Otherwise, the block is attached to some VM yet in some inconsistent state that is probably due to general memory corruption.
+    dumpInfoAndCrashForInvalidHandleV2(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
 }
 
 } // namespace JSC

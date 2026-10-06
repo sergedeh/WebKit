@@ -14,11 +14,12 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
-#include "api/array_view.h"
 #include "api/frame_transformer_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/sequence_checker.h"
@@ -79,10 +80,35 @@ class TransformableOutgoingAudioFrame
       const std::string& codec_mime_type,
       std::optional<uint16_t> sequence_number,
       std::optional<uint8_t> audio_level_dbov)
+      : TransformableOutgoingAudioFrame(
+            frame_type,
+            payload_type,
+            RtpTimestampInfo(RtpTimestampWithOffset{rtp_timestamp_with_offset}),
+            payload_data,
+            payload_size,
+            absolute_capture_timestamp_ms,
+            ssrc,
+            std::move(csrcs),
+            codec_mime_type,
+            sequence_number,
+            audio_level_dbov) {}
+
+  TransformableOutgoingAudioFrame(
+      AudioFrameType frame_type,
+      uint8_t payload_type,
+      RtpTimestampInfo rtp_timestamp_info,
+      const uint8_t* payload_data,
+      size_t payload_size,
+      std::optional<uint64_t> absolute_capture_timestamp_ms,
+      uint32_t ssrc,
+      std::vector<uint32_t> csrcs,
+      const std::string& codec_mime_type,
+      std::optional<uint16_t> sequence_number,
+      std::optional<uint8_t> audio_level_dbov)
       : TransformableAudioFrameInterface(Passkey()),
         frame_type_(frame_type),
         payload_type_(payload_type),
-        rtp_timestamp_with_offset_(rtp_timestamp_with_offset),
+        rtp_timestamp_info_(rtp_timestamp_info),
         payload_(payload_data, payload_size),
         absolute_capture_timestamp_ms_(absolute_capture_timestamp_ms),
         ssrc_(ssrc),
@@ -90,12 +116,18 @@ class TransformableOutgoingAudioFrame
         codec_mime_type_(codec_mime_type),
         sequence_number_(sequence_number),
         audio_level_dbov_(audio_level_dbov) {}
+
   ~TransformableOutgoingAudioFrame() override = default;
-  ArrayView<const uint8_t> GetData() const override { return payload_; }
-  void SetData(ArrayView<const uint8_t> data) override {
+  std::span<const uint8_t> GetData() const override { return payload_; }
+  void SetData(std::span<const uint8_t> data) override {
     payload_.SetData(data.data(), data.size());
   }
-  uint32_t GetTimestamp() const override { return rtp_timestamp_with_offset_; }
+  uint32_t GetTimestamp() const override {
+    if (std::holds_alternative<RtpTimestampWithOffset>(rtp_timestamp_info_)) {
+      return std::get<RtpTimestampWithOffset>(rtp_timestamp_info_);
+    }
+    return 0;
+  }
   uint32_t GetSsrc() const override { return ssrc_; }
 
   IfaceFrameType Type() const override {
@@ -110,7 +142,7 @@ class TransformableOutgoingAudioFrame
   Direction GetDirection() const override { return Direction::kSender; }
   std::string GetMimeType() const override { return codec_mime_type_; }
 
-  ArrayView<const uint32_t> GetContributingSources() const override {
+  std::span<const uint32_t> GetContributingSources() const override {
     return csrcs_;
   }
 
@@ -119,7 +151,7 @@ class TransformableOutgoingAudioFrame
   }
 
   void SetRTPTimestamp(uint32_t rtp_timestamp_with_offset) override {
-    rtp_timestamp_with_offset_ = rtp_timestamp_with_offset;
+    rtp_timestamp_info_ = RtpTimestampWithOffset{rtp_timestamp_with_offset};
   }
 
   std::optional<uint64_t> AbsoluteCaptureTimestamp() const override {
@@ -155,10 +187,14 @@ class TransformableOutgoingAudioFrame
     return std::nullopt;
   }
 
+  RtpTimestampInfo GetRtpTimestampInfo() const override {
+    return rtp_timestamp_info_;
+  }
+
  private:
   AudioFrameType frame_type_;
   uint8_t payload_type_;
-  uint32_t rtp_timestamp_with_offset_;
+  RtpTimestampInfo rtp_timestamp_info_;
   Buffer payload_;
   std::optional<uint64_t> absolute_capture_timestamp_ms_;
   uint32_t ssrc_;
@@ -171,10 +207,10 @@ class TransformableOutgoingAudioFrame
 ChannelSendFrameTransformerDelegate::ChannelSendFrameTransformerDelegate(
     SendFrameCallback send_frame_callback,
     scoped_refptr<FrameTransformerInterface> frame_transformer,
-    TaskQueueBase* encoder_queue)
+    TaskQueueBase* send_queue)
     : send_frame_callback_(send_frame_callback),
       frame_transformer_(std::move(frame_transformer)),
-      encoder_queue_(encoder_queue) {}
+      send_queue_(send_queue) {}
 
 void ChannelSendFrameTransformerDelegate::Init() {
   frame_transformer_->RegisterTransformedFrameCallback(
@@ -200,21 +236,22 @@ void ChannelSendFrameTransformerDelegate::Transform(
     const std::string& codec_mime_type,
     std::optional<uint8_t> audio_level_dbov,
     const std::vector<uint32_t>& csrcs) {
+  auto frame = std::make_unique<TransformableOutgoingAudioFrame>(
+      frame_type, payload_type, rtp_timestamp, payload_data, payload_size,
+      absolute_capture_timestamp_ms, ssrc, csrcs, codec_mime_type,
+      /*sequence_number=*/std::nullopt, audio_level_dbov);
   {
     MutexLock lock(&send_lock_);
     if (short_circuit_) {
-      send_frame_callback_(frame_type, payload_type, rtp_timestamp,
-                           ArrayView<const uint8_t>(payload_data, payload_size),
-                           absolute_capture_timestamp_ms, csrcs,
-                           audio_level_dbov);
+      scoped_refptr<ChannelSendFrameTransformerDelegate> delegate(this);
+      send_queue_->PostTask(
+          [delegate = std::move(delegate), frame = std::move(frame)]() mutable {
+            delegate->SendFrame(std::move(frame));
+          });
       return;
     }
   }
-  frame_transformer_->Transform(
-      std::make_unique<TransformableOutgoingAudioFrame>(
-          frame_type, payload_type, rtp_timestamp, payload_data, payload_size,
-          absolute_capture_timestamp_ms, ssrc, csrcs, codec_mime_type,
-          /*sequence_number=*/std::nullopt, audio_level_dbov));
+  frame_transformer_->Transform(std::move(frame));
 }
 
 void ChannelSendFrameTransformerDelegate::OnTransformedFrame(
@@ -223,7 +260,7 @@ void ChannelSendFrameTransformerDelegate::OnTransformedFrame(
   if (!send_frame_callback_)
     return;
   scoped_refptr<ChannelSendFrameTransformerDelegate> delegate(this);
-  encoder_queue_->PostTask(
+  send_queue_->PostTask(
       [delegate = std::move(delegate), frame = std::move(frame)]() mutable {
         delegate->SendFrame(std::move(frame));
       });
@@ -237,15 +274,15 @@ void ChannelSendFrameTransformerDelegate::StartShortCircuiting() {
 void ChannelSendFrameTransformerDelegate::SendFrame(
     std::unique_ptr<TransformableFrameInterface> frame) const {
   MutexLock lock(&send_lock_);
-  RTC_DCHECK_RUN_ON(encoder_queue_);
+  RTC_DCHECK_RUN_ON(send_queue_);
   if (!send_frame_callback_)
     return;
   auto* transformed_frame =
       static_cast<TransformableAudioFrameInterface*>(frame.get());
   send_frame_callback_(
       InterfaceFrameTypeToInternalFrameType(transformed_frame->Type()),
-      transformed_frame->GetPayloadType(), transformed_frame->GetTimestamp(),
-      transformed_frame->GetData(),
+      transformed_frame->GetPayloadType(),
+      transformed_frame->GetRtpTimestampInfo(), transformed_frame->GetData(),
       transformed_frame->AbsoluteCaptureTimestamp()
           ? *transformed_frame->AbsoluteCaptureTimestamp()
           : 0,
@@ -260,11 +297,30 @@ std::unique_ptr<TransformableAudioFrameInterface> CloneSenderAudioFrame(
                original->GetContributingSources().end());
   return std::make_unique<TransformableOutgoingAudioFrame>(
       InterfaceFrameTypeToInternalFrameType(original->Type()),
-      original->GetPayloadType(), original->GetTimestamp(),
+      original->GetPayloadType(), original->GetRtpTimestampInfo(),
       original->GetData().data(), original->GetData().size(),
       original->AbsoluteCaptureTimestamp(), original->GetSsrc(),
       std::move(csrcs), original->GetMimeType(), original->SequenceNumber(),
       original->AudioLevel());
+}
+
+std::unique_ptr<TransformableAudioFrameInterface> CreateSenderAudioFrame(
+    TransformableAudioFrameInterface::FrameType frame_type,
+    uint8_t payload_type,
+    RtpTimestampInfo rtp_timestamp_info,
+    const uint8_t* payload_data,
+    size_t payload_size,
+    std::optional<uint64_t> absolute_capture_timestamp_ms,
+    uint32_t ssrc,
+    const std::vector<uint32_t>& csrcs,
+    const std::string& codec_mime_type,
+    std::optional<uint16_t> sequence_number,
+    std::optional<uint8_t> audio_level_dbov) {
+  return std::make_unique<TransformableOutgoingAudioFrame>(
+      InterfaceFrameTypeToInternalFrameType(frame_type), payload_type,
+      rtp_timestamp_info, payload_data, payload_size,
+      absolute_capture_timestamp_ms, ssrc, csrcs, codec_mime_type,
+      sequence_number, audio_level_dbov);
 }
 
 }  // namespace webrtc

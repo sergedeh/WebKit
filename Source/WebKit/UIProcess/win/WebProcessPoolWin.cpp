@@ -27,6 +27,7 @@
 #include "config.h"
 #include "WebProcessPool.h"
 
+#include "WebMemoryPressureHandler.h"
 #include "WebProcessCreationParameters.h"
 #include <WebCore/NotImplemented.h>
 
@@ -57,12 +58,14 @@ static void initializeRemoteInspectorServer(StringView address)
 
     auto backendCommands = WebCore::webKitBundlePath({ "WebKit.Resources"_s, "WebInspectorUI"_s, "Protocol"_s, "InspectorBackendCommands.js"_s });
     Inspector::RemoteInspector::singleton().setBackendCommandsPath(backendCommands);
-    Inspector::RemoteInspectorServer::singleton().start(host.utf8().data(), port.value());
+    Inspector::RemoteInspectorServer::singleton().start(host.utf8(), port.value());
 }
 #endif
 
 void WebProcessPool::platformInitialize(NeedsGlobalStaticInitialization)
 {
+    WebKit::installMemoryPressureHandler();
+
 #if ENABLE(REMOTE_INSPECTOR)
     if (const char* address = getenv("WEBKIT_INSPECTOR_SERVER"))
         initializeRemoteInspectorServer(StringView::fromLatin1(address));

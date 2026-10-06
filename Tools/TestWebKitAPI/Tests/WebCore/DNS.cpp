@@ -25,11 +25,10 @@
 
 #include "config.h"
 
-#include "Test.h"
-#include "Utilities.h"
+#include "Helpers/Test.h"
+#include "Helpers/Utilities.h"
 #include <WebCore/DNS.h>
 #include <wtf/CompletionHandler.h>
-#include <wtf/Expected.h>
 #include <wtf/RunLoop.h>
 
 using namespace WebCore;

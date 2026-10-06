@@ -28,6 +28,7 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "MessageReceiver.h"
+#include "RemoteNativeImageIdentifier.h"
 #include "RemoteSerializedImageBufferIdentifier.h"
 #include "ThreadSafeObjectHeap.h"
 #include <WebCore/ImageBuffer.h>
@@ -36,6 +37,7 @@
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Ref.h>
+#include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
@@ -44,6 +46,9 @@
 #endif
 
 namespace WebKit {
+
+// Timeout for waiting on a resource to be published in the shared cache from another work queue.
+constexpr Seconds defaultRemoteSharedResourceCacheTimeout = 15_s;
 
 class GPUConnectionToWebProcess;
 // Class holding GPU process resources per Web Content process.
@@ -60,22 +65,22 @@ public:
     bool addSerializedImageBuffer(RemoteSerializedImageBufferIdentifier, Ref<WebCore::ImageBuffer>);
     RefPtr<WebCore::ImageBuffer> takeSerializedImageBuffer(RemoteSerializedImageBufferIdentifier);
 
-    bool addNativeImage(WebCore::RenderingResourceIdentifier, Ref<WebCore::NativeImage>);
-    RefPtr<WebCore::NativeImage> takeNativeImage(WebCore::RenderingResourceIdentifier);
+    bool addNativeImage(RemoteNativeImageReference, Ref<WebCore::NativeImage>);
+    RefPtr<WebCore::NativeImage> readNativeImage(RemoteNativeImageReadReference&&, Seconds timeout);
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
-    const WebCore::ProcessIdentity& resourceOwner() const { return m_resourceOwner; }
+    const WebCore::ProcessIdentity& resourceOwner() const LIFETIME_BOUND { return m_resourceOwner; }
 #if HAVE(IOSURFACE)
     WebCore::IOSurfacePool& ioSurfacePool() const { return m_ioSurfacePool; }
 #endif
 
-    void didCreateImageBuffer(WebCore::RenderingPurpose, WebCore::RenderingMode);
-    void didReleaseImageBuffer(WebCore::RenderingPurpose, WebCore::RenderingMode);
-    bool reachedAcceleratedImageBufferLimit(WebCore::RenderingPurpose) const;
-    bool reachedImageBufferForCanvasLimit() const;
-    WebCore::ImageBufferResourceLimits getResourceLimitsForTesting() const;
+    void NODELETE didCreateImageBuffer(WebCore::RenderingPurpose, WebCore::RenderingMode);
+    void NODELETE didReleaseImageBuffer(WebCore::RenderingPurpose, WebCore::RenderingMode);
+    bool NODELETE reachedAcceleratedImageBufferLimit(WebCore::RenderingPurpose) const;
+    bool NODELETE reachedImageBufferForCanvasLimit() const;
+    WebCore::ImageBufferResourceLimits NODELETE getResourceLimitsForTesting() const;
 
     void lowMemoryHandler();
 
@@ -84,13 +89,14 @@ private:
 
     // Messages
     void releaseSerializedImageBuffer(RemoteSerializedImageBufferIdentifier);
+    void releaseNativeImage(RemoteNativeImageWriteReference&&);
 
     IPC::ThreadSafeObjectHeap<RemoteSerializedImageBufferIdentifier, RefPtr<WebCore::ImageBuffer>> m_serializedImageBuffers;
     IPC::ThreadSafeObjectHeap<WebCore::RenderingResourceIdentifier, RefPtr<WebCore::NativeImage>> m_nativeImages;
 
     WebCore::ProcessIdentity m_resourceOwner;
 #if HAVE(IOSURFACE)
-    Ref<WebCore::IOSurfacePool> m_ioSurfacePool;
+    const Ref<WebCore::IOSurfacePool> m_ioSurfacePool;
 #endif
     std::atomic<size_t> m_acceleratedImageBufferForCanvasCount;
     std::atomic<size_t> m_imageBufferForCanvasCount;

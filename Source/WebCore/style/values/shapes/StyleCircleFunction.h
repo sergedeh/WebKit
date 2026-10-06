@@ -30,6 +30,9 @@
 #include <WebCore/StylePrimitiveNumericTypes.h>
 
 namespace WebCore {
+
+struct AcceleratedEffectCircleFunction;
+
 namespace Style {
 
 struct Circle {
@@ -54,16 +57,24 @@ template<size_t I> const auto& get(const Circle& value)
 
 DEFINE_TYPE_MAPPING(CSS::Circle, Circle)
 
-FloatPoint resolvePosition(const Circle& value, FloatSize boxSize);
-float resolveRadius(const Circle& value, FloatSize boxSize, FloatPoint center);
-WebCore::Path pathForCenterCoordinate(const Circle&, const FloatRect&, FloatPoint);
+FloatPoint resolvePosition(const Circle& value, FloatSize boxSize, ZoomFactor);
+float resolveRadius(const Circle& value, FloatSize boxSize, FloatPoint center, ZoomFactor);
+WebCore::Path pathForCenterCoordinate(const Circle&, const FloatRect&, FloatPoint, ZoomFactor);
 
-template<> struct PathComputation<Circle> { WebCore::Path operator()(const Circle&, const FloatRect&); };
+template<> struct PathComputation<Circle> { WebCore::Path operator()(const Circle&, const FloatRect&, ZoomFactor); };
 
 template<> struct Blending<Circle> {
     auto canBlend(const Circle&, const Circle&) -> bool;
     auto blend(const Circle&, const Circle&, const BlendingContext&) -> Circle;
 };
+
+// MARK: - Evaluation
+
+#if ENABLE(THREADED_ANIMATIONS)
+
+template<> struct Evaluation<CircleFunction, AcceleratedEffectCircleFunction> { AcceleratedEffectCircleFunction operator()(const CircleFunction&, const FloatSize&, ZoomFactor); };
+
+#endif
 
 } // namespace Style
 } // namespace WebCore

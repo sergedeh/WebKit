@@ -121,7 +121,9 @@ std::unique_ptr<WebGLRenderingContext> WebGLRenderingContext::create(CanvasBase&
 
 WebGLRenderingContext::~WebGLRenderingContext()
 {
-    m_activeQuery = nullptr;
+    // The object -> context WeakPtr might be used with upcasting. This is not
+    // safe, so mark the context lost.
+    m_contextObjectWeakPtrFactory.revokeAll();
 }
 
 void WebGLRenderingContext::initializeDefaultObjects()
@@ -129,6 +131,12 @@ void WebGLRenderingContext::initializeDefaultObjects()
     WebGLRenderingContextBase::initializeDefaultObjects();
     m_defaultVertexArrayObject = WebGLVertexArrayObjectOES::createDefault(*this);
     m_boundVertexArrayObject = m_defaultVertexArrayObject;
+}
+
+void WebGLRenderingContext::detachAndRemoveAllObjects()
+{
+    WebGLRenderingContextBase::detachAndRemoveAllObjects();
+    m_activeQuery = nullptr;
 }
 
 std::optional<WebGLExtensionAny> WebGLRenderingContext::getExtension(const String& name)
@@ -294,19 +302,19 @@ WebGLAny WebGLRenderingContext::getFramebufferAttachmentParameter(GCGLenum targe
         return static_cast<unsigned>(GraphicsContextGL::RENDERBUFFER);
     case GraphicsContextGL::FRAMEBUFFER_ATTACHMENT_OBJECT_NAME:
         if (isTexture)
-            return std::get<RefPtr<WebGLTexture>>(WTF::move(*object));
-        return std::get<RefPtr<WebGLRenderbuffer>>(WTF::move(*object));
+            return toWebGLAny(std::get<RefPtr<WebGLTexture>>(WTF::move(*object)));
+        return toWebGLAny(std::get<RefPtr<WebGLRenderbuffer>>(WTF::move(*object)));
     case GraphicsContextGL::FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL:
     case GraphicsContextGL::FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE:
         if (!isTexture)
             break;
-        return graphicsContextGL()->getFramebufferAttachmentParameteri(target, attachment, pname);
+        return protect(graphicsContextGL())->getFramebufferAttachmentParameteri(target, attachment, pname);
     case GraphicsContextGL::FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING_EXT:
         if (!m_extsRGB) {
             synthesizeGLError(GraphicsContextGL::INVALID_ENUM, functionName, "invalid parameter name, EXT_sRGB not enabled"_s);
             return nullptr;
         }
-        return graphicsContextGL()->getFramebufferAttachmentParameteri(target, attachment, pname);
+        return protect(graphicsContextGL())->getFramebufferAttachmentParameteri(target, attachment, pname);
     case GraphicsContextGL::FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE_EXT:
         if (!m_extColorBufferHalfFloat && !m_webglColorBufferFloat) {
             synthesizeGLError(GraphicsContextGL::INVALID_ENUM, functionName, "invalid parameter name, EXT_color_buffer_half_float or WEBGL_color_buffer_float not enabled"_s);
@@ -316,7 +324,7 @@ WebGLAny WebGLRenderingContext::getFramebufferAttachmentParameter(GCGLenum targe
             synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, functionName, "component type cannot be queried for DEPTH_STENCIL_ATTACHMENT"_s);
             return nullptr;
         }
-        return graphicsContextGL()->getFramebufferAttachmentParameteri(target, attachment, pname);
+        return protect(graphicsContextGL())->getFramebufferAttachmentParameteri(target, attachment, pname);
     }
 
     synthesizeGLError(GraphicsContextGL::INVALID_ENUM, functionName, "invalid parameter name"_s);
@@ -325,7 +333,7 @@ WebGLAny WebGLRenderingContext::getFramebufferAttachmentParameter(GCGLenum targe
 
 long long WebGLRenderingContext::getInt64Parameter(GCGLenum pname)
 {
-    return graphicsContextGL()->getInteger64EXT(pname);
+    return protect(graphicsContextGL())->getInteger64EXT(pname);
 }
 
 GCGLint WebGLRenderingContext::maxDrawBuffers()
@@ -346,7 +354,7 @@ GCGLint WebGLRenderingContext::maxColorAttachments()
     if (!supportsDrawBuffers())
         return 0;
     if (!m_maxColorAttachments)
-        m_maxColorAttachments = graphicsContextGL()->getInteger(GraphicsContextGL::MAX_COLOR_ATTACHMENTS_EXT);
+        m_maxColorAttachments = protect(graphicsContextGL())->getInteger(GraphicsContextGL::MAX_COLOR_ATTACHMENTS_EXT);
     return m_maxColorAttachments;
 }
 
@@ -355,7 +363,7 @@ void WebGLRenderingContext::addMembersToOpaqueRoots(JSC::AbstractSlotVisitor& vi
     WebGLRenderingContextBase::addMembersToOpaqueRoots(visitor);
 
     Locker locker { objectGraphLock() };
-    addWebCoreOpaqueRoot(visitor, RefPtr { m_activeQuery.get() }.get());
+    SUPPRESS_UNCHECKED_LOCAL addWebCoreOpaqueRoot(visitor, m_activeQuery.get());
 }
 
 WebCoreOpaqueRoot root(const WebGLExtension<WebGLRenderingContext>* extension)
@@ -364,5 +372,7 @@ WebCoreOpaqueRoot root(const WebGLExtension<WebGLRenderingContext>* extension)
 }
 
 } // namespace WebCore
+
+#undef ENABLE_IF_REQUESTED
 
 #endif // ENABLE(WEBGL)

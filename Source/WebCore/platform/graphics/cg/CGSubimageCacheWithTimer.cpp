@@ -30,6 +30,7 @@
 
 #if CACHE_SUBIMAGES
 
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 
@@ -37,23 +38,29 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CGSubimageCacheWithTimer);
 
-CGSubimageCacheWithTimer* CGSubimageCacheWithTimer::s_cache;
+static Lock subimageCacheLock;
+
+static std::unique_ptr<CGSubimageCacheWithTimer>& subimageCacheStorage() WTF_REQUIRES_LOCK(subimageCacheLock)
+{
+    static NeverDestroyed<std::unique_ptr<CGSubimageCacheWithTimer>> cache;
+    return cache.get();
+}
 
 RetainPtr<CGImageRef> CGSubimageCacheWithTimer::getSubimage(CGImageRef image, const FloatRect& rect)
 {
-    return subimageCache().subimage(image, rect);
+    return subimageCacheSingleton().subimage(image, rect);
 }
 
 void CGSubimageCacheWithTimer::clearImage(CGImageRef image)
 {
     if (subimageCacheExists())
-        subimageCache().clearImageAndSubimages(image);
+        subimageCacheSingleton().clearImageAndSubimages(image);
 }
 
 void CGSubimageCacheWithTimer::clear()
 {
     if (subimageCacheExists())
-        subimageCache().clearAll();
+        subimageCacheSingleton().clearAll();
 }
 
 struct CGSubimageRequest {
@@ -62,12 +69,12 @@ struct CGSubimageRequest {
 };
 
 struct CGSubimageCacheAdder {
-    static unsigned hash(const CGSubimageRequest& value)
+    static unsigned NODELETE hash(const CGSubimageRequest& value)
     {
         return CGSubimageCacheWithTimer::CacheHash::hash(value.image.get(), value.rect);
     }
 
-    static bool equal(const CGSubimageCacheWithTimer::CacheEntry& a, const CGSubimageRequest& b)
+    static bool NODELETE equal(const CGSubimageCacheWithTimer::CacheEntry& a, const CGSubimageRequest& b)
     {
         return a.image == b.image && a.rect == b.rect;
     }
@@ -99,17 +106,14 @@ void CGSubimageCacheWithTimer::prune()
 {
     auto now = MonotonicTime::now();
 
-    Vector<CacheEntry> toBeRemoved;
-
-    for (const auto& entry : m_cache) {
-        if ((now - entry.lastAccessTime) > CGSubimageCacheWithTimer::cacheEntryLifetime)
-            toBeRemoved.append(entry);
-    }
-
-    for (auto& entry : toBeRemoved) {
-        m_imageCounts.remove(entry.image.get());
-        m_cache.remove(entry);
-    }
+    m_cache.removeIf([&](auto& entry) {
+        assertIsHeld(m_lock);
+        if ((now - entry.lastAccessTime) > CGSubimageCacheWithTimer::cacheEntryLifetime) {
+            m_imageCounts.remove(entry.image.get());
+            return true;
+        }
+        return false;
+    });
 }
 
 RetainPtr<CGImageRef> CGSubimageCacheWithTimer::subimage(CGImageRef image, const FloatRect& rect)
@@ -137,14 +141,9 @@ void CGSubimageCacheWithTimer::clearImageAndSubimages(CGImageRef image)
 {
     Locker locker { m_lock };
     if (m_imageCounts.contains(image)) {
-        Vector<CacheEntry> toBeRemoved;
-        for (const auto& entry : m_cache) {
-            if (entry.image.get() == image)
-                toBeRemoved.append(entry);
-        }
-
-        for (auto& entry : toBeRemoved)
-            m_cache.remove(entry);
+        m_cache.removeIf([&](auto& entry) {
+            return entry.image.get() == image;
+        });
 
         m_imageCounts.removeAll(image);
     }
@@ -157,18 +156,19 @@ void CGSubimageCacheWithTimer::clearAll()
     m_cache.clear();
 }
 
-CGSubimageCacheWithTimer& CGSubimageCacheWithTimer::subimageCache()
+CGSubimageCacheWithTimer& CGSubimageCacheWithTimer::subimageCacheSingleton()
 {
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [&] {
-        s_cache = new CGSubimageCacheWithTimer;
-    });
-    return *s_cache;
+    Locker locker { subimageCacheLock };
+    auto& cache = subimageCacheStorage();
+    if (!cache)
+        cache = std::unique_ptr<CGSubimageCacheWithTimer>(new CGSubimageCacheWithTimer);
+    return *cache;
 }
 
 bool CGSubimageCacheWithTimer::subimageCacheExists()
 {
-    return !!s_cache;
+    Locker locker { subimageCacheLock };
+    return !!subimageCacheStorage();
 }
 
 } // namespace WebCore

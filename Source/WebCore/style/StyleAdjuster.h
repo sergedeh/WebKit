@@ -35,56 +35,68 @@ namespace WebCore {
 class Document;
 class Element;
 class EventTarget;
-class RenderStyle;
 class SVGElement;
 class Settings;
 
 enum class AnimationImpact : uint8_t;
+enum class PaginationMode : uint8_t;
 
 namespace Style {
 
+class ComputedStyle;
 class Update;
 
 class Adjuster {
 public:
-    Adjuster(const Document&, const RenderStyle& parentStyle, const RenderStyle* parentBoxStyle, Element*);
+    Adjuster(const Document&, const Style::ComputedStyle& parentStyle, const Style::ComputedStyle* parentBoxStyle, Element*);
 
-    static void adjustFromBuilder(RenderStyle&);
-    void adjust(RenderStyle&) const;
-    void adjustAnimatedStyle(RenderStyle&, OptionSet<AnimationImpact>) const;
+    static void adjustFromBuilder(Style::ComputedStyle&);
+    void adjust(Style::ComputedStyle&) const;
+    void adjustAnimatedStyle(Style::ComputedStyle&, OptionSet<AnimationImpact>) const;
+    void adjustUsedUserSelect(Style::ComputedStyle&) const;
 
-    static void adjustVisibilityForPseudoElement(RenderStyle&, const Element& host);
-    static void adjustFirstLetterStyle(RenderStyle&);
-    static void adjustFirstLineStyle(RenderStyle&);
-    static void adjustSVGElementStyle(RenderStyle&, const SVGElement&);
-    static bool adjustEventListenerRegionTypesForRootStyle(RenderStyle&, const Document&);
+    static void adjustVisibilityForPseudoElement(Style::ComputedStyle&, const Element& host);
+    static void NODELETE adjustFirstLetterStyle(Style::ComputedStyle&);
+    static void NODELETE adjustFirstLineStyle(Style::ComputedStyle&);
+    static void adjustSVGElementStyle(Style::ComputedStyle&, const SVGElement&);
+    static bool adjustEventListenerRegionTypesForRootStyle(Style::ComputedStyle&, const Document&);
+    static void adjustColumnStylesForPaginationMode(Style::ComputedStyle&, PaginationMode);
     static void propagateToDocumentElementAndInitialContainingBlock(Update&, const Document&);
-    static std::unique_ptr<RenderStyle> restoreUsedDocumentElementStyleToComputed(const RenderStyle&);
+    static std::unique_ptr<Style::ComputedStyle> restoreUsedDocumentElementStyleToComputed(const Style::ComputedStyle&);
 
-#if ENABLE(TEXT_AUTOSIZING)
     struct AdjustmentForTextAutosizing {
         std::optional<float> newFontSize;
         std::optional<float> newLineHeight;
         std::optional<AutosizeStatus> newStatus;
         explicit operator bool() const { return newFontSize || newLineHeight || newStatus; }
     };
-    static AdjustmentForTextAutosizing adjustmentForTextAutosizing(const RenderStyle&, const Element&);
-    static bool adjustForTextAutosizing(RenderStyle&, AdjustmentForTextAutosizing);
-    static bool adjustForTextAutosizing(RenderStyle&, const Element&);
-#endif
+    static AdjustmentForTextAutosizing adjustmentForTextAutosizing(const Style::ComputedStyle&, const Element&);
+    static bool adjustForTextAutosizing(Style::ComputedStyle&, AdjustmentForTextAutosizing);
+    static bool adjustForTextAutosizing(Style::ComputedStyle&, const Element&);
 
 private:
-    void adjustDisplayContentsStyle(RenderStyle&) const;
-    void adjustForSiteSpecificQuirks(RenderStyle&) const;
+    void NODELETE adjustDisplayContentsStyle(Style::ComputedStyle&) const;
+    void adjustForSiteSpecificQuirks(Style::ComputedStyle&) const;
 
-    void adjustThemeStyle(RenderStyle&, const RenderStyle& parentStyle) const;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    void adjustForAXCustomColorMode(Style::ComputedStyle&) const;
+#endif
 
-    static OptionSet<EventListenerRegionType> computeEventListenerRegionTypes(const Document&, const RenderStyle&, const EventTarget&, OptionSet<EventListenerRegionType>);
+    void adjustThemeStyle(Style::ComputedStyle&, const Style::ComputedStyle& parentStyle) const;
+
+    static void adjustAnimations(Style::ComputedStyle&);
+    static void adjustTransitions(Style::ComputedStyle&);
+    static void adjustBackgroundLayers(Style::ComputedStyle&);
+    static void adjustMaskLayers(Style::ComputedStyle&);
+    static void adjustScrollTimelines(Style::ComputedStyle&);
+    static void adjustViewTimelines(Style::ComputedStyle&);
+
+    static OptionSet<EventListenerRegionType> computeEventListenerRegionTypes(const Document&, const Style::ComputedStyle&, const EventTarget&, OptionSet<EventListenerRegionType>);
 
     CheckedRef<const Document> m_document;
-    const RenderStyle& m_parentStyle;
-    const RenderStyle& m_parentBoxStyle;
-    RefPtr<Element> m_element;
+    const Style::ComputedStyle& m_parentStyle;
+    const Style::ComputedStyle& m_parentBoxStyle;
+    const RefPtr<Element> m_element;
 };
 
 }

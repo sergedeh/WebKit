@@ -38,10 +38,10 @@ class GetByStatus;
 class InByStatus;
 class PutByStatus;
 class DeleteByStatus;
-class StructureStubInfo;
+class PropertyInlineCache;
 
 struct ICStatus {
-    StructureStubInfo* stubInfo { nullptr };
+    PropertyInlineCache* propertyCache { nullptr };
     CallLinkInfo* callLinkInfo { nullptr };
     CallLinkStatus* callStatus { nullptr };
     GetByStatus* getStatus { nullptr };
@@ -54,8 +54,8 @@ typedef UncheckedKeyHashMap<CodeOrigin, ICStatus, CodeOriginApproximateHash> ICS
 
 struct ICStatusContext {
     ICStatus get(CodeOrigin) const;
-    bool isInlined(CodeOrigin) const;
-    ExitingInlineKind inlineKind(CodeOrigin) const;
+    bool NODELETE isInlined(CodeOrigin) const;
+    ExitingInlineKind NODELETE inlineKind(CodeOrigin) const;
     
     InlineCallFrame* inlineCallFrame { nullptr };
     CodeBlock* optimizedCodeBlock { nullptr };

@@ -38,7 +38,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-static WeakPtr<WebStorageNamespaceProvider>& existingStorageNameSpaceProvider()
+static WeakPtr<WebStorageNamespaceProvider>& NODELETE existingStorageNameSpaceProvider()
 {
     static NeverDestroyed<WeakPtr<WebStorageNamespaceProvider>> storageNameSpaceProvider;
     return storageNameSpaceProvider.get();
@@ -64,7 +64,8 @@ void WebStorageNamespaceProvider::decrementUseCount(const StorageNamespaceImpl::
 {
     if (auto& provider = existingStorageNameSpaceProvider()) {
         auto iterator = provider->m_sessionStorageNamespaces.find(identifier);
-        ASSERT(iterator != provider->m_sessionStorageNamespaces.end());
+        if (iterator == provider->m_sessionStorageNamespaces.end())
+            return;
         auto& sessionStorageNamespaces = iterator->value;
         ASSERT(sessionStorageNamespaces.useCount);
         if (!--sessionStorageNamespaces.useCount)

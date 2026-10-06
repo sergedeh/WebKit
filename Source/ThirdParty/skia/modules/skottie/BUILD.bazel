@@ -26,7 +26,6 @@ skia_cc_binary(
         "//modules/skshaper:skshaper_harfbuzz",
         "//modules/skshaper:skshaper_unicode",
         "//modules/skunicode:skunicode_icu",
-        "//src/base",
         "//src/core:core_priv",
         "//tools/flags:cmd_flags",
     ] + select({
@@ -59,7 +58,6 @@ skia_cc_binary(
         "//modules/skshaper:skshaper_harfbuzz",
         "//modules/skshaper:skshaper_unicode",
         "//modules/skunicode:skunicode_icu",
-        "//src/base",
         "//src/core:core_priv",
         "//src/gpu/ganesh/gl:ganesh_gl_TEST_UTIL",
         "//tools/flags:cmd_flags",
@@ -82,7 +80,6 @@ skia_cc_binary(
         "//modules/skshaper:skshaper_harfbuzz",
         "//modules/skshaper:skshaper_unicode",
         "//modules/skunicode:skunicode_icu",
-        "//src/base",
         "//src/core:core_priv",
         "//tools/flags:cmd_flags",
     ] + select({
@@ -107,7 +104,6 @@ skia_cc_library(
     ],
     features = ["layering_check"],
     local_defines = [
-        "SK_DISABLE_LEGACY_SHAPER_FACTORY",
         "SK_ENABLE_SKOTTIE_SKSLEFFECT",
     ],
     visibility = ["//:__subpackages__"],
@@ -120,7 +116,6 @@ skia_cc_library(
         "//modules/sksg:sksg_priv",
         "//modules/skshaper:skshaper_core",
         "//modules/skunicode:skunicode_core",
-        "//src/base",
         "//src/codec:codec_support_priv",
         "//src/core:core_priv",
     ],
@@ -144,16 +139,12 @@ skia_cc_library(
     name = "textshaper",
     srcs = ["//modules/skottie/src/text:text_shaper_srcs"],
     hdrs = ["//modules/skottie/include:text_shaper_hdrs"],
-    defines = [
-        "SK_DISABLE_LEGACY_SHAPER_FACTORY",
-    ],
     features = ["layering_check"],
     visibility = ["//:__subpackages__"],
     deps = [
         "//:core",
         "//modules/skshaper:skshaper_core",
         "//modules/skunicode:skunicode_core",
-        "//src/base",
         "//src/core:core_priv",
     ],
 )

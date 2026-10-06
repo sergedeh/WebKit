@@ -31,7 +31,7 @@
 #include "LegacyInlineTextBox.h"
 #include "PaintInfo.h"
 #include "RenderLayer.h"
-#include "RenderStyle+GettersInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -54,18 +54,18 @@ struct GlyphDisplayListCacheKey {
     const bool shouldSubpixelQuantizeFonts;
 };
 
-static void add(Hasher& hasher, const GlyphDisplayListCacheKey& key)
+static void NODELETE add(Hasher& hasher, const GlyphDisplayListCacheKey& key)
 {
     add(hasher, key.textRun, key.scaleFactor.width(), key.scaleFactor.height(), key.fontCascadeGeneration, key.shouldSubpixelQuantizeFonts);
 }
 
 struct GlyphDisplayListCacheKeyTranslator {
-    static unsigned hash(const GlyphDisplayListCacheKey& key)
+    static unsigned NODELETE hash(const GlyphDisplayListCacheKey& key)
     {
         return computeHash(key);
     }
 
-    static bool equal(const WeakPtr<GlyphDisplayListCacheEntry, SingleThreadWeakPtrImpl>& entryRef, const GlyphDisplayListCacheKey& key)
+    static bool NODELETE equal(const WeakPtr<GlyphDisplayListCacheEntry, SingleThreadWeakPtrImpl>& entryRef, const GlyphDisplayListCacheKey& key)
     {
         if (!entryRef)
             return false;

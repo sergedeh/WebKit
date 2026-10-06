@@ -25,26 +25,34 @@
 
 #pragma once
 
+#include <JavaScriptCore/ConstructorKind.h>
+#include <JavaScriptCore/ImplementationVisibility.h>
 #include <JavaScriptCore/ParserModes.h>
 #include <JavaScriptCore/ParserTokens.h>
+#include <wtf/PackedRefPtr.h>
+#include <wtf/TrailingArray.h>
 #include <wtf/Vector.h>
 #include <wtf/text/UniquedStringImpl.h>
 #include <wtf/text/WTFString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 struct SourceProviderCacheItemCreationParameters {
-    unsigned lastTokenLine { 0 };
+    std::span<UniquedStringImpl* const> freeVariables() const LIFETIME_BOUND
+    {
+        ASSERT(freeVariableCount <= usedVariables.size());
+        return usedVariables.span().first(freeVariableCount);
+    }
+
     unsigned lastTokenStartOffset { 0 };
     unsigned lastTokenEndOffset { 0 };
-    unsigned lastTokenLineStartOffset { 0 };
     unsigned endFunctionOffset { 0 };
     unsigned parameterCount { 0 };
+    unsigned freeVariableCount { 0 };
     LexicallyScopedFeatures lexicallyScopedFeatures { 0 };
     InnerArrowFunctionCodeFeatures innerArrowFunctionFeatures { 0 };
     ImplementationVisibility implementationVisibility { ImplementationVisibility::Public };
+    // Scope's own free variables followed by the captures from its parameter expressions.
     Vector<UniquedStringImpl*, 8> usedVariables;
     JSTokenType tokenType { CLOSEBRACE };
     ConstructorKind constructorKind;
@@ -57,20 +65,18 @@ struct SourceProviderCacheItemCreationParameters {
 };
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SourceProviderCacheItem);
-class SourceProviderCacheItem {
+class SourceProviderCacheItem final : public TrailingArray<SourceProviderCacheItem, PackedRefPtr<UniquedStringImpl>> {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(SourceProviderCacheItem, SourceProviderCacheItem);
 public:
+    using Base = TrailingArray<SourceProviderCacheItem, PackedRefPtr<UniquedStringImpl>>;
+
     static std::unique_ptr<SourceProviderCacheItem> create(const SourceProviderCacheItemCreationParameters&);
-    ~SourceProviderCacheItem();
 
     JSToken endFunctionToken() const 
     {
         JSToken token;
         token.m_type = isBodyArrowExpression ? static_cast<JSTokenType>(tokenType) : CLOSEBRACE;
-        token.m_data.offset = lastTokenStartOffset;
         token.m_startPosition.offset = lastTokenStartOffset;
-        token.m_startPosition.line = lastTokenLine;
-        token.m_startPosition.lineStartOffset = lastTokenLineStartOffset;
         token.m_endPosition.offset = lastTokenEndOffset;
         // token.m_location.sourceOffset is initialized once by the client. So,
         // we do not need to set it here.
@@ -90,60 +96,45 @@ public:
     bool needsFullActivation : 1;
     unsigned endFunctionOffset : 31;
     bool usesEval : 1;
-    unsigned lastTokenLine : 31;
-    bool strictMode : 1;
     unsigned lastTokenStartOffset : 31;
-    unsigned expectedSuperBinding : 1; // SuperBinding
+    bool strictMode : 1;
     unsigned lastTokenEndOffset: 31;
-    bool needsSuperBinding: 1;
+    unsigned expectedSuperBinding : 1; // SuperBinding
     unsigned parameterCount : 31;
+    bool needsSuperBinding: 1;
     bool taintedByWithScope : 1;
-    unsigned lastTokenLineStartOffset : 31;
     bool isBodyArrowExpression : 1;
-    unsigned usedVariablesCount;
     unsigned tokenType : 24; // JSTokenType
     unsigned innerArrowFunctionFeatures : 6; // InnerArrowFunctionCodeFeatures
     unsigned constructorKind : 2; // ConstructorKind
     unsigned implementationVisibility : 2; // ImplementationVisibility
     bool usesImportMeta : 1 { false };
 
-    PackedPtr<UniquedStringImpl>* usedVariables() const { return const_cast<PackedPtr<UniquedStringImpl>*>(m_variables); }
+    std::span<const PackedRefPtr<UniquedStringImpl>> usedVariables() const LIFETIME_BOUND { return span(); }
 
 private:
     SourceProviderCacheItem(const SourceProviderCacheItemCreationParameters&);
-
-    PackedPtr<UniquedStringImpl> m_variables[0];
 };
-
-inline SourceProviderCacheItem::~SourceProviderCacheItem()
-{
-    for (unsigned i = 0; i < usedVariablesCount; ++i)
-        m_variables[i]->deref();
-}
 
 inline std::unique_ptr<SourceProviderCacheItem> SourceProviderCacheItem::create(const SourceProviderCacheItemCreationParameters& parameters)
 {
-    size_t variableCount = parameters.usedVariables.size();
-    size_t objectSize = sizeof(SourceProviderCacheItem) + sizeof(UniquedStringImpl*) * variableCount;
-    void* slot = SourceProviderCacheItemMalloc::malloc(objectSize);
-    return std::unique_ptr<SourceProviderCacheItem>(new (slot) SourceProviderCacheItem(parameters));
+    void* slot = SourceProviderCacheItemMalloc::malloc(Base::allocationSize(parameters.usedVariables.size()));
+    return std::unique_ptr<SourceProviderCacheItem>(new (NotNull, slot) SourceProviderCacheItem(parameters));
 }
 
 inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCacheItemCreationParameters& parameters)
-    : needsFullActivation(parameters.needsFullActivation)
+    : Base(parameters.usedVariables.span())
+    , needsFullActivation(parameters.needsFullActivation)
     , endFunctionOffset(parameters.endFunctionOffset)
     , usesEval(parameters.usesEval)
-    , lastTokenLine(parameters.lastTokenLine)
-    , strictMode(parameters.lexicallyScopedFeatures & StrictModeLexicallyScopedFeature)
     , lastTokenStartOffset(parameters.lastTokenStartOffset)
-    , expectedSuperBinding(static_cast<unsigned>(parameters.expectedSuperBinding))
+    , strictMode(parameters.lexicallyScopedFeatures & StrictModeLexicallyScopedFeature)
     , lastTokenEndOffset(parameters.lastTokenEndOffset)
-    , needsSuperBinding(parameters.needsSuperBinding)
+    , expectedSuperBinding(static_cast<unsigned>(parameters.expectedSuperBinding))
     , parameterCount(parameters.parameterCount)
+    , needsSuperBinding(parameters.needsSuperBinding)
     , taintedByWithScope(parameters.lexicallyScopedFeatures & TaintedByWithScopeLexicallyScopedFeature)
-    , lastTokenLineStartOffset(parameters.lastTokenLineStartOffset)
     , isBodyArrowExpression(parameters.isBodyArrowExpression)
-    , usedVariablesCount(parameters.usedVariables.size())
     , tokenType(static_cast<unsigned>(parameters.tokenType))
     , innerArrowFunctionFeatures(static_cast<unsigned>(parameters.innerArrowFunctionFeatures))
     , constructorKind(static_cast<unsigned>(parameters.constructorKind))
@@ -155,13 +146,6 @@ inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCach
     ASSERT(constructorKind == static_cast<unsigned>(parameters.constructorKind));
     ASSERT(implementationVisibility == static_cast<unsigned>(parameters.implementationVisibility));
     ASSERT(expectedSuperBinding == static_cast<unsigned>(parameters.expectedSuperBinding));
-    for (unsigned i = 0; i < usedVariablesCount; ++i) {
-        auto* pointer = parameters.usedVariables[i];
-        pointer->ref();
-        m_variables[i] = pointer;
-    }
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

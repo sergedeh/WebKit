@@ -33,13 +33,13 @@ class CSSAppleColorFilterValue final : public CSSValue {
 public:
     static Ref<CSSAppleColorFilterValue> create(CSS::AppleColorFilter);
 
-    const CSS::AppleColorFilter& filter() const { return m_filter; }
+    const CSS::AppleColorFilter& filter() const LIFETIME_BOUND { return m_filter; }
 
     String customCSSText(const CSS::SerializationContext&) const;
     bool equals(const CSSAppleColorFilterValue&) const;
     IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>&) const;
 
-    Ref<DeprecatedCSSOMValue> createDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
+    Ref<DeprecatedCSSOMValue> customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
 
 private:
     CSSAppleColorFilterValue(CSS::AppleColorFilter);

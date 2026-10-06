@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WorkerOrWorkletGlobalScope.h"
 
+#include "ContentSecurityPolicy.h"
 #include "NoiseInjectionPolicy.h"
 #include "ScriptModuleLoader.h"
 #include "ServiceWorkerGlobalScope.h"
@@ -35,6 +36,8 @@
 #include "WorkerOrWorkletThread.h"
 #include "WorkerRunLoop.h"
 #include "WorkletGlobalScope.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/WeakInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -53,7 +56,6 @@ WorkerOrWorkletGlobalScope::WorkerOrWorkletGlobalScope(WorkerThreadType type, PA
     , m_noiseInjectionHashSalt(noiseInjectionHashSalt)
     , m_advancedPrivacyProtections(advancedPrivacyProtections)
 {
-    relaxAdoptionRequirement();
 }
 
 WorkerOrWorkletGlobalScope::~WorkerOrWorkletGlobalScope() = default;
@@ -66,6 +68,7 @@ void WorkerOrWorkletGlobalScope::prepareForDestruction()
     }
 
     stopActiveDOMObjects();
+    clearMicrotaskGlobalObjects();
 
     // Event listeners would keep DOMWrapperWorld objects alive for too long. Also, they have references to JS objects,
     // which become dangling once Heap is destroyed.
@@ -96,17 +99,17 @@ JSC::VM* WorkerOrWorkletGlobalScope::vmIfExists() const
 
 void WorkerOrWorkletGlobalScope::disableEval(const String& errorMessage)
 {
-    m_script->disableEval(errorMessage);
+    protect(m_script)->disableEval(errorMessage);
 }
 
 void WorkerOrWorkletGlobalScope::disableWebAssembly(const String& errorMessage)
 {
-    m_script->disableWebAssembly(errorMessage);
+    protect(m_script)->disableWebAssembly(errorMessage);
 }
 
 void WorkerOrWorkletGlobalScope::setTrustedTypesEnforcement(JSC::TrustedTypesEnforcement enforcement)
 {
-    m_script->setTrustedTypesEnforcement(enforcement);
+    protect(m_script)->setTrustedTypesEnforcement(enforcement);
 }
 
 bool WorkerOrWorkletGlobalScope::isJSExecutionForbidden() const
@@ -120,6 +123,7 @@ EventLoopTaskGroup& WorkerOrWorkletGlobalScope::eventLoop()
     if (!m_defaultTaskGroup) [[unlikely]] {
         lazyInitialize(m_eventLoop, WorkerEventLoop::create(*this));
         lazyInitialize(m_defaultTaskGroup, makeUnique<EventLoopTaskGroup>(*m_eventLoop));
+        m_defaultTaskGroup->setScriptExecutionContext(*this);
         if (activeDOMObjectsAreStopped())
             m_defaultTaskGroup->stopAndDiscardAllTasks();
     }
@@ -131,16 +135,25 @@ bool WorkerOrWorkletGlobalScope::isContextThread() const
     return m_contextThreadUID == Thread::currentSingleton().uid();
 }
 
+bool WorkerOrWorkletGlobalScope::isEventLoopGroupStoppedPermanently() const
+{
+    return m_defaultTaskGroup && m_defaultTaskGroup->isStoppedPermanently();
+}
+
 void WorkerOrWorkletGlobalScope::postTask(Task&& task)
 {
-    ASSERT(workerOrWorkletThread());
-    workerOrWorkletThread()->runLoop().postTask(WTF::move(task));
+    RefPtr thread = workerOrWorkletThread();
+    ASSERT(thread);
+    if (thread)
+        thread->runLoop().postTask(WTF::move(task));
 }
 
 void WorkerOrWorkletGlobalScope::postTaskForMode(Task&& task, const String& mode)
 {
-    ASSERT(workerOrWorkletThread());
-    workerOrWorkletThread()->runLoop().postTaskForMode(WTF::move(task), mode);
+    RefPtr thread = workerOrWorkletThread();
+    ASSERT(thread);
+    if (thread)
+        thread->runLoop().postTaskForMode(WTF::move(task), mode);
 }
 
 OptionSet<NoiseInjectionPolicy> WorkerOrWorkletGlobalScope::noiseInjectionPolicies() const
@@ -156,6 +169,11 @@ OptionSet<NoiseInjectionPolicy> WorkerOrWorkletGlobalScope::noiseInjectionPolici
 RefPtr<WorkerOrWorkletThread> WorkerOrWorkletGlobalScope::workerOrWorkletThread() const
 {
     return m_thread.get();
+}
+
+void WorkerOrWorkletGlobalScope::applyContentSecurityPolicyResponseHeaders(const ContentSecurityPolicyResponseHeaders& contentSecurityPolicyResponseHeaders)
+{
+    protect(contentSecurityPolicy())->didReceiveHeaders(contentSecurityPolicyResponseHeaders, String { });
 }
 
 } // namespace WebCore

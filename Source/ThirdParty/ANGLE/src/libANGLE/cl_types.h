@@ -9,19 +9,26 @@
 #ifndef LIBANGLE_CLTYPES_H_
 #define LIBANGLE_CLTYPES_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #if defined(ANGLE_ENABLE_CL)
 #    include "libANGLE/CLBitField.h"
 #    include "libANGLE/CLRefPointer.h"
 #    include "libANGLE/Debug.h"
+#    include "libANGLE/Error.h"
 #    include "libANGLE/angletypes.h"
 
+#    include "common/MemoryBuffer.h"
 #    include "common/PackedCLEnums_autogen.h"
+#    include "common/PackedEnums.h"
+#    include "common/SimpleMutex.h"
+#    include "common/SynchronizedValue.h"
 #    include "common/WorkerThread.h"
 #    include "common/angleutils.h"
+#    include "common/hash_containers.h"
+#    include "common/log_utils.h"
+#    include "common/mathutil.h"
+#    include "common/string_utils.h"
+#    include "common/system_utils.h"
+#    include "common/unsafe_buffers.h"
 
 // Include frequently used standard headers
 #    include <algorithm>
@@ -56,6 +63,7 @@ using DevicePtr       = RefPointer<Device>;
 using EventPtr        = RefPointer<Event>;
 using KernelPtr       = RefPointer<Kernel>;
 using MemoryPtr       = RefPointer<Memory>;
+using ConstMemoryPtr  = RefPointer<const Memory>;
 using PlatformPtr     = RefPointer<Platform>;
 using ProgramPtr      = RefPointer<Program>;
 using SamplerPtr      = RefPointer<Sampler>;
@@ -65,6 +73,7 @@ using DevicePtrs   = std::vector<DevicePtr>;
 using EventPtrs    = std::vector<EventPtr>;
 using KernelPtrs   = std::vector<KernelPtr>;
 using MemoryPtrs   = std::vector<MemoryPtr>;
+using ConstMemoryPtrs = std::vector<ConstMemoryPtr>;
 using PlatformPtrs = std::vector<PlatformPtr>;
 using ProgramPtrs  = std::vector<ProgramPtr>;
 using SamplerPtrs  = std::vector<SamplerPtr>;
@@ -79,8 +88,21 @@ using EventStatusMap = std::array<T, 3>;
 
 using Extents = angle::Extents<size_t>;
 constexpr Extents kExtentsZero(0, 0, 0);
-using Offset  = angle::Offset<size_t>;
+using Offset = angle::Offset<size_t>;
 constexpr Offset kOffsetZero(0, 0, 0);
+
+using ChannelMapping = std::array<uint32_t, 4>;
+union PixelColor
+{
+    uint8_t u8[4];
+    int8_t s8[4];
+    uint16_t u16[4];
+    int16_t s16[4];
+    uint32_t u32[4];
+    int32_t s32[4];
+    cl_half fp16[4];
+    cl_float fp32[4];
+};
 
 struct KernelArg
 {
@@ -225,6 +247,15 @@ struct ImageDescriptor
             arraySize = 1;
         }
     }
+
+    bool operator==(const ImageDescriptor &other) const
+    {
+        return (type == other.type && width == other.width && height == other.height &&
+                depth == other.depth && arraySize == other.arraySize &&
+                rowPitch == other.rowPitch && slicePitch == other.slicePitch &&
+                numMipLevels == other.numMipLevels && numSamples == other.numSamples);
+    }
+    bool operator!=(const ImageDescriptor &other) const { return !(*this == other); }
 };
 
 struct NDRange
@@ -243,19 +274,28 @@ struct NDRange
         {
             if (globalWorkOffsetIn != nullptr)
             {
-                ASSERT(!(static_cast<uint32_t>((globalWorkOffsetIn[dim] + globalWorkSizeIn[dim])) <
-                         globalWorkOffsetIn[dim]));
-                globalWorkOffset[dim] = static_cast<uint32_t>(globalWorkOffsetIn[dim]);
+                ASSERT(!ANGLE_UNSAFE_TODO(
+                    (static_cast<uint32_t>((globalWorkOffsetIn[dim] + globalWorkSizeIn[dim])) <
+                     globalWorkOffsetIn[dim])));
+                globalWorkOffset[dim] =
+                    static_cast<uint32_t>(ANGLE_UNSAFE_TODO(globalWorkOffsetIn[dim]));
             }
             if (globalWorkSizeIn != nullptr)
             {
-                ASSERT(globalWorkSizeIn[dim] <= UINT32_MAX);
-                globalWorkSize[dim] = static_cast<uint32_t>(globalWorkSizeIn[dim]);
+                ASSERT(ANGLE_UNSAFE_TODO(globalWorkSizeIn[dim]) <= UINT32_MAX);
+                globalWorkSize[dim] =
+                    static_cast<uint32_t>(ANGLE_UNSAFE_TODO(globalWorkSizeIn[dim]));
+            }
+            else
+            {
+                // For versions >= 2.1, global work size can be a nullptr, in which case set dim to
+                // zero. Validation checks ensure that we are here only for >= 2.1 versions.
+                globalWorkSize[dim] = 0;
             }
             if (localWorkSizeIn != nullptr)
             {
-                ASSERT(localWorkSizeIn[dim] <= UINT32_MAX);
-                localWorkSize[dim] = static_cast<uint32_t>(localWorkSizeIn[dim]);
+                ASSERT(ANGLE_UNSAFE_TODO(localWorkSizeIn[dim]) <= UINT32_MAX);
+                localWorkSize[dim] = static_cast<uint32_t>(ANGLE_UNSAFE_TODO(localWorkSizeIn[dim]));
             }
         }
     }
@@ -283,22 +323,21 @@ struct NDRange
     std::vector<NDRange> createUniformRegions(
         const std::array<uint32_t, 3> maxComputeWorkGroupCount) const
     {
+        // Work-group sizes could be non-uniform in multiple dimensions, potentially producing
+        // work-groups of up to 4 different sizes in a 2D range and 8 different sizes in a 3D range.
+        constexpr size_t kMaxNonUniformWorkGroupShapes = 8u;
+
         std::vector<NDRange> regions;
+        regions.reserve(kMaxNonUniformWorkGroupShapes);
         regions.push_back(*this);
         regions.front().globalWorkOffset = {0};
-        uint32_t regionCount             = 1;
-        for (uint32_t regionPos = 0; regionPos < regionCount; ++regionPos)
+        for (uint32_t regionPos = 0; regionPos < regions.size(); ++regionPos)
         {
-            // "Work-group sizes could be non-uniform in multiple dimensions, potentially producing
-            // work-groups of up to 4 different sizes in a 2D range and 8 different sizes in a 3D
-            // range."
-            // https://registry.khronos.org/OpenCL/specs/3.0-unified/html/OpenCL_API.html#_mapping_work_items_onto_an_nd_range
-            ASSERT(regionPos < 8);
-
             for (uint32_t dim = 0; dim < workDimensions; dim++)
             {
-                NDRange &region    = regions.at(regionPos);
-                uint32_t remainder = region.globalWorkSize[dim] % region.localWorkSize[dim];
+                NDRange &region = regions.at(regionPos);
+                uint32_t remainder =
+                    ANGLE_UNSAFE_TODO(region.globalWorkSize[dim] % region.localWorkSize[dim]);
                 if (remainder != 0)
                 {
                     // Split the range along this dimension. The original range's global work size
@@ -308,24 +347,26 @@ struct NDRange
                     // range).
                     NDRange newRegion(region);
                     newRegion.globalWorkSize[dim] = newRegion.localWorkSize[dim] = remainder;
-                    region.globalWorkSize[dim] = newRegion.globalWorkOffset[dim] =
-                        (region.globalWorkSize[dim] - remainder);
+                    ANGLE_UNSAFE_TODO(region.globalWorkSize[dim] = newRegion.globalWorkOffset[dim] =
+                                          (region.globalWorkSize[dim] - remainder));
                     regions.push_back(newRegion);
-                    regionCount++;
                 }
             }
         }
+        ASSERT(regions.size() <= kMaxNonUniformWorkGroupShapes);
+
         // Break into uniform regions that fit into given maxComputeWorkGroupCount (if needed)
-        uint32_t limitRegionCount = 1;
         std::vector<NDRange> regionsWithinDeviceLimits;
+        regionsWithinDeviceLimits.reserve(regions.size());
         for (const auto &region : regions)
         {
             regionsWithinDeviceLimits.push_back(region);
-            for (uint32_t regionPos = 0; regionPos < limitRegionCount; ++regionPos)
+            for (uint32_t regionPos = 0; regionPos < regionsWithinDeviceLimits.size(); ++regionPos)
             {
-                NDRange &currentRegion = regionsWithinDeviceLimits.at(regionPos);
                 for (uint32_t dim = 0; dim < workDimensions; dim++)
                 {
+                    NDRange &currentRegion = regionsWithinDeviceLimits.at(regionPos);
+
                     uint32_t maxGwsForRegion = gl::clampCast<uint32_t, uint64_t>(
                         static_cast<uint64_t>(maxComputeWorkGroupCount[dim]) *
                         static_cast<uint64_t>(currentRegion.localWorkSize[dim]));
@@ -342,7 +383,7 @@ struct NDRange
                                 (currentRegion.globalWorkSize[dim] - remainderGws);
                             currentRegion.globalWorkSize[dim] = maxGwsForRegion;
                             regionsWithinDeviceLimits.push_back(remainderRegion);
-                            limitRegionCount++;
+                            continue;
                         }
                     }
                 }
@@ -358,11 +399,11 @@ struct NDRange
     bool nullLocalWorkSize{false};
 };
 
-// Memory property element from cl_khr_external_memory
+// name-value pair for cl_properties lists
 struct NameValueProperty
 {
-    intptr_t name;
-    intptr_t value;
+    cl_properties name;
+    cl_properties value;
 };
 
 // this Defer class provides the user with a closure that executes on its destruction
@@ -377,6 +418,8 @@ class Defer : public angle::Closure
   private:
     F mFunc;
 };
+
+constexpr cl_ulong kMaxAllocSentinel = 0;
 
 }  // namespace cl
 

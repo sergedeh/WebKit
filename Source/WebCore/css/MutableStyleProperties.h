@@ -57,7 +57,7 @@ public:
     static constexpr std::nullptr_t end() { return nullptr; }
     unsigned size() const { return propertyCount(); }
 
-    CSSStyleProperties* cssStyleProperties();
+    CSSStyleProperties* NODELETE cssStyleProperties();
 
     bool addParsedProperties(const ParsedPropertyVector&);
     bool addParsedProperty(const CSSProperty&);
@@ -82,8 +82,8 @@ public:
     WEBCORE_EXPORT CSSStyleProperties& ensureCSSStyleProperties();
     CSSStyleProperties& ensureInlineCSSStyleProperties(StyledElement& parentElement);
 
-    int findPropertyIndex(CSSPropertyID) const;
-    int findCustomPropertyIndex(StringView propertyName) const;
+    int NODELETE findPropertyIndex(CSSPropertyID) const;
+    int NODELETE findCustomPropertyIndex(StringView propertyName) const;
 
     // Methods for querying and altering CSS custom properties.
     bool setCustomProperty(const String& propertyName, const String& value, CSSParserContext, IsImportant = IsImportant::No);
@@ -97,8 +97,8 @@ private:
     bool removeLonghandProperty(CSSPropertyID, String* returnText);
     bool removeShorthandProperty(CSSPropertyID, String* returnText);
     bool removePropertyAtIndex(int index, String* returnText);
-    CSSProperty* findCSSPropertyWithID(CSSPropertyID);
-    CSSProperty* findCustomCSSPropertyWithName(const String&);
+    CSSProperty* NODELETE findCSSPropertyWithID(CSSPropertyID);
+    CSSProperty* NODELETE findCustomCSSPropertyWithName(const String&);
     bool canUpdateInPlace(const CSSProperty&, CSSProperty* toReplace) const;
 
     friend class StyleProperties;

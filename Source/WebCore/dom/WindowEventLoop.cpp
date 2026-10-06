@@ -27,12 +27,15 @@
 #include "WindowEventLoop.h"
 
 #include "CommonVM.h"
+#include "ContextDestructionObserverInlines.h"
 #include "CustomElementReactionQueue.h"
 #include "DocumentPage.h"
 #include "HTMLSlotElement.h"
 #include "IdleCallbackController.h"
 #include "Microtasks.h"
+#include "MutationCallback.h"
 #include "MutationObserver.h"
+#include "NodeDocument.h"
 #include "OpportunisticTaskScheduler.h"
 #include "SecurityOrigin.h"
 #include "ThreadGlobalData.h"
@@ -46,7 +49,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WindowEventLoop);
 
-static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& windowEventLoopMap()
+static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& NODELETE windowEventLoopMap()
 {
     RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>> map;
@@ -119,7 +122,7 @@ bool WindowEventLoop::isContextThread() const
 MicrotaskQueue& WindowEventLoop::microtaskQueue()
 {
     if (!m_microtaskQueue)
-        m_microtaskQueue = makeUnique<MicrotaskQueue>(commonVM(), *this);
+        lazyInitialize(m_microtaskQueue, MicrotaskQueue::create(commonVM(), *this));
     return *m_microtaskQueue;
 }
 
@@ -134,7 +137,7 @@ void WindowEventLoop::opportunisticallyRunIdleCallbacks(std::optional<MonotonicT
         return; // No need to schedule m_idleTimer since there is a task. didReachTimeToRun() will call this function.
 
     auto hasPendingIdleCallbacks = findMatchingAssociatedContext([&](ScriptExecutionContext& context) {
-        if (RefPtr document = dynamicDowncast<Document>(context))
+        if (auto* document = dynamicDowncast<Document>(context))
             return document->hasPendingIdleCallback();
         return false;
     });
@@ -180,7 +183,8 @@ bool WindowEventLoop::shouldEndIdlePeriod()
 {
     if (hasTasksForFullyActiveDocument())
         return true;
-    if (microtaskQueue().hasMicrotasksForFullyActiveDocument())
+    SUPPRESS_UNCOUNTED_LOCAL auto& microtaskQueue = this->microtaskQueue();
+    if (microtaskQueue.hasMicrotasksForFullyActiveDocument())
         return true;
     return false;
 }
@@ -230,8 +234,8 @@ void WindowEventLoop::didReachTimeToRun()
 {
     Ref protectedThis { *this }; // Executing tasks may remove the last reference to this WindowEventLoop.
     auto deadline = ApproximateTime::now() + ThreadTimers::maxDurationOfFiringTimers;
-    run(deadline);
-    opportunisticallyRunIdleCallbacks(deadline.approximateMonotonicTime());
+    run(commonVM(), deadline);
+    opportunisticallyRunIdleCallbacks(deadline.approximate<MonotonicTime>());
 }
 
 void WindowEventLoop::didFireIdleTimer()
@@ -245,7 +249,7 @@ void WindowEventLoop::queueMutationObserverCompoundMicrotask()
     if (m_mutationObserverCompoundMicrotaskQueuedFlag)
         return;
     m_mutationObserverCompoundMicrotaskQueuedFlag = true;
-    m_perpetualTaskGroupForSimilarOriginWindowAgents->queueMicrotask([weakThis = WeakPtr { *this }] {
+    m_perpetualTaskGroupForSimilarOriginWindowAgents->queueMicrotask(commonVM(), [weakThis = WeakPtr { *this }] {
         // We can't make a Ref to WindowEventLoop in the lambda capture as that would result in a reference cycle & leak.
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
@@ -262,11 +266,36 @@ void WindowEventLoop::queueMutationObserverCompoundMicrotask()
     });
 }
 
+void WindowEventLoop::removeMutationObserversForContext(ScriptExecutionContext& context)
+{
+    if (m_activeObservers.isEmpty() && m_suspendedObservers.isEmpty() && m_signalSlotList.isEmpty())
+        return;
+
+    auto disconnectMatching = [&](HashSet<Ref<MutationObserver>>& observers) {
+        observers.removeIf([&](auto& observer) {
+            auto* observerContext = observer->callback().scriptExecutionContext();
+            if (observerContext && observerContext != &context)
+                return false;
+            observer->disconnect();
+            return true;
+        });
+    };
+    disconnectMatching(m_activeObservers);
+    disconnectMatching(m_suspendedObservers);
+
+    m_signalSlotList.removeAllMatching([&](auto& slot) {
+        if (&slot->document() != &context)
+            return false;
+        slot->didRemoveFromSignalSlotList();
+        return true;
+    });
+}
+
 CustomElementQueue& WindowEventLoop::backupElementQueue()
 {
     if (!m_processingBackupElementQueue) {
         m_processingBackupElementQueue = true;
-        m_perpetualTaskGroupForSimilarOriginWindowAgents->queueMicrotask([weakThis = WeakPtr { *this }] {
+        m_perpetualTaskGroupForSimilarOriginWindowAgents->queueMicrotask(commonVM(), [weakThis = WeakPtr { *this }] {
             // We can't make a Ref to WindowEventLoop in the lambda capture as that would result in a reference cycle & leak.
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
@@ -278,7 +307,7 @@ CustomElementQueue& WindowEventLoop::backupElementQueue()
         });
     }
     if (!m_customElementQueue)
-        m_customElementQueue = makeUnique<CustomElementQueue>();
+        lazyInitialize(m_customElementQueue, makeUnique<CustomElementQueue>());
     return *m_customElementQueue;
 }
 

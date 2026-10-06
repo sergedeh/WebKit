@@ -26,10 +26,11 @@
 #import "config.h"
 #import "WKNotificationPrivateMac.h"
 
+#import "WKAPICast.h"
 #import "WebNotification.h"
 #import <WebCore/NotificationData.h>
 
 NSDictionary *WKNotificationCopyDictionaryRepresentation(WKNotificationRef notification)
 {
-    return WebKit::toImpl(notification)->data().protectedDictionaryRepresentation().leakRef();
+    return protect(WebKit::toImpl(notification)->data().dictionaryRepresentation()).leakRef();
 }

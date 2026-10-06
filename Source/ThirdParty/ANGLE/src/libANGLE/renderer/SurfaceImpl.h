@@ -78,6 +78,7 @@ class SurfaceImpl : public FramebufferAttachmentObjectImpl
     virtual void setSwapInterval(const egl::Display *display, EGLint interval) = 0;
     virtual void setFixedWidth(EGLint width);
     virtual void setFixedHeight(EGLint height);
+    virtual void setSwapBehavior(EGLenum behavior);
 
     // Explicitly resolves surface size to use before state synchronization (e.g. validation).
     virtual angle::Result ensureSizeResolved(const gl::Context *context);
@@ -92,10 +93,8 @@ class SurfaceImpl : public FramebufferAttachmentObjectImpl
     virtual EGLint isPostSubBufferSupported() const;
     virtual EGLint getSwapBehavior() const = 0;
 
-    virtual egl::Error attachToFramebuffer(const gl::Context *context,
-                                           gl::Framebuffer *framebuffer)   = 0;
-    virtual egl::Error detachFromFramebuffer(const gl::Context *context,
-                                             gl::Framebuffer *framebuffer) = 0;
+    virtual void attachToFramebuffer(const gl::Context *context, gl::Framebuffer *framebuffer);
+    virtual void detachFromFramebuffer(gl::Framebuffer *framebuffer);
 
     // Used to query color format from pbuffers created from D3D and WebGPU textures.
     virtual const angle::Format *getClientBufferTextureColorFormat() const;

@@ -305,6 +305,23 @@
 #define RETURNS_NONNULL __attribute__((returns_nonnull))
 #endif
 
+/* PRESERVE_MOST */
+
+// Shrinks the register set a caller must spill around a call.
+// See: https://clang.llvm.org/docs/AttributeReference.html#preserve-most
+//
+// Requires LTO, so the build defines HAVE_PRESERVE_MOST only when LTO is on. Without LTO,
+// LLVM's hot/cold splitting extracts cold regions into separate functions that get the default
+// calling convention, and the preserve_most parent then has to save X9-X15 for them in its entry
+// block (on the hot path), which costs more than the attribute saves. See rdar://183555125.
+#if !defined(PRESERVE_MOST)
+#if defined(HAVE_PRESERVE_MOST) && HAVE_PRESERVE_MOST && defined(__aarch64__)
+#define PRESERVE_MOST __attribute__((preserve_most))
+#else
+#define PRESERVE_MOST
+#endif
+#endif
+
 /* OBJC_CLASS */
 
 #if !defined(OBJC_CLASS) && defined(__OBJC__)
@@ -556,7 +573,13 @@
 #define SUPPRESS_UNCOUNTED_MEMBER \
     IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE_ON_MEMBER("webkit.NoUncountedMemberChecker")
 
-#if COMPILER(APPLE_CLANG) || defined(CLANG_WEBKIT_BRANCH) || (defined(__clang__) && (!defined __clang_major__ || __clang_major__ >= 19))
+#define SUPPRESS_NODELETE \
+    IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE_ON_MEMBER("webkit.NoDeleteChecker")
+
+// FIXME: Disabled for Windows build, clang-cl 21 MS ABI mangler crashes on
+// [[clang::annotate_type]] on template functions with deduced return types.
+// https://github.com/llvm/llvm-project/issues/191590
+#if COMPILER(APPLE_CLANG) || defined(CLANG_WEBKIT_BRANCH) || (defined(__clang__) && !defined(_MSC_VER) && (!defined __clang_major__ || __clang_major__ >= 21))
 #define SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE \
     IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("webkit.UncountedLambdaCapturesChecker")
 #define SUPPRESS_UNRETAINED_LOCAL \
@@ -568,14 +591,30 @@
 #define SUPPRESS_RETAINPTR_CTOR_ADOPT \
     IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("alpha.webkit.RetainPtrCtorAdoptChecker")
 #define CLANG_POINTER_CONVERSION [[clang::annotate_type("webkit.pointerconversion")]]
+
+// Add this annotation to right after the return type of a function when the function does not run any destructor or free memory.
+// Static analyzer does not require the use of smart pointers in the code which calls a function with this annotation.
+#ifndef NODELETE
+#define NODELETE [[clang::annotate_type("webkit.nodelete")]]
+#endif
+
 #else
+
 #define SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE
 #define SUPPRESS_UNRETAINED_LOCAL
 #define SUPPRESS_UNRETAINED_ARG
 #define SUPPRESS_UNRETAINED_MEMBER
 #define SUPPRESS_RETAINPTR_CTOR_ADOPT
 #define CLANG_POINTER_CONVERSION
+#define NODELETE
+
 #endif
+
+// FIXME: The static analyzer does not perform escape analysis inside function templates, so it
+// reports uncounted lambda captures even when the lambda is invoked immediately, passed to a
+// NOESCAPE parameter, or forwarded through WTF::makeVisitor. Replace every use of this macro
+// with nothing once rdar://187551637 is fixed.
+#define SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE_IN_FUNCTION_TEMPLATE SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE
 
 // To suppress webkit.RefCntblBaseVirtualDtor, use NoVirtualDestructorBase instead.
 
@@ -619,7 +658,9 @@
 /* NO_UNIQUE_ADDRESS */
 
 #if !defined(NO_UNIQUE_ADDRESS)
-#if COMPILER_HAS_CPP_ATTRIBUTE(no_unique_address)
+#if COMPILER_HAS_CPP_ATTRIBUTE(msvc::no_unique_address)
+#define NO_UNIQUE_ADDRESS [[msvc::no_unique_address]] // NOLINT: check-webkit-style does not understand annotations.
+#elif COMPILER_HAS_CPP_ATTRIBUTE(no_unique_address)
 #define NO_UNIQUE_ADDRESS [[no_unique_address]] // NOLINT: check-webkit-style does not understand annotations.
 #else
 #define NO_UNIQUE_ADDRESS
@@ -649,7 +690,8 @@
     _Pragma("clang diagnostic push") \
     _Pragma("clang diagnostic ignored \"-Wunknown-warning-option\"") \
     _Pragma("clang diagnostic ignored \"-Wunsafe-buffer-usage\"") \
-    _Pragma("clang diagnostic ignored \"-Wunsafe-buffer-usage-in-libc-call\"")
+    _Pragma("clang diagnostic ignored \"-Wunsafe-buffer-usage-in-libc-call\"") \
+    _Pragma("clang diagnostic ignored \"-Wunsafe-buffer-usage-in-format-attr-call\"")
 
 #define WTF_ALLOW_UNSAFE_BUFFER_USAGE_END \
     _Pragma("clang diagnostic pop")
@@ -704,9 +746,14 @@
 #define WTF_NONNULL
 #endif
 
-// Used to indicate that a class member has a specialized implementation in Swift. See
-// "SwiftCXXThunk.h".
-#define HAS_SWIFTCXX_THUNK  NS_REFINED_FOR_SWIFT
+#ifdef __cplusplus
+namespace WTF {
+// When -fpch-debuginfo is enabled, clang sometimes forgets to emit a vtable (rdar://176736350).
+// This tag identifies an unused out-of-line constructor that reminds clang to emit a vtable.
+enum class ClangVTableWorkaroundTag { };
+} // namespace WTF
+using WTF::ClangVTableWorkaroundTag;
+#endif
 
 // This comment is incremented each time we add or remove a modulemap file, to force
 // rebuild of all WTF's dependencies. This is a workaround for rdar://151920332.

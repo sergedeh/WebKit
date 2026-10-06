@@ -33,14 +33,14 @@
 
 #if ENABLE(MEDIA_STREAM)
 
-#include <WebCore/ActiveDOMObject.h>
-#include <WebCore/EventNames.h>
-#include <WebCore/EventTarget.h>
-#include <WebCore/EventTargetInterfaces.h>
-#include <WebCore/IDLTypes.h>
-#include <WebCore/MediaTrackConstraints.h>
-#include <WebCore/RealtimeMediaSourceCenter.h>
-#include <WebCore/UserMediaClient.h>
+#include "ActiveDOMObject.h"
+#include "EventNames.h"
+#include "EventTarget.h"
+#include "EventTargetInterfaces.h"
+#include "IDLTypes.h"
+#include "MediaTrackConstraints.h"
+#include "RealtimeMediaSourceCenter.h"
+#include "UserMediaClient.h"
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/RunLoop.h>
 #include <wtf/WeakPtr.h>
@@ -69,7 +69,7 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    Document* document() const;
+    Document* NODELETE document() const;
 
     using Promise = DOMPromiseDeferred<IDLInterface<MediaStream>>;
     using EnumerateDevicesPromise = DOMPromiseDeferred<IDLSequence<IDLUnion<IDLInterface<MediaDeviceInfo>, IDLInterface<InputDeviceInfo>>>>;
@@ -94,7 +94,7 @@ public:
     void getDisplayMedia(DisplayMediaStreamConstraints&&, Promise&&);
 
     void enumerateDevices(EnumerateDevicesPromise&&);
-    MediaTrackSupportedConstraints getSupportedConstraints();
+    MediaTrackSupportedConstraints NODELETE getSupportedConstraints();
 
     String deviceIdToPersistentId(const String&) const;
 
@@ -105,6 +105,7 @@ private:
 
     void scheduledEventTimerFired();
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) override;
+    using EventTarget::addEventListener;
 
     void exposeDevices(Vector<CaptureDeviceWithCapabilities>&&, MediaDeviceHashSalts&&, EnumerateDevicesPromise&&);
     void listenForDeviceChanges();
@@ -117,7 +118,7 @@ private:
 
     // EventTarget.
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::MediaDevices; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 

@@ -25,8 +25,10 @@
 
 #pragma once
 
+#include <WebCore/BackForwardItemIdentifier.h>
 #include <WebCore/CachedFrame.h>
 #include <wtf/CheckedRef.h>
+#include <wtf/HashSet.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
@@ -36,6 +38,7 @@ namespace WebCore {
 class BackForwardController;
 class Document;
 class DocumentLoader;
+class LocalFrame;
 class Page;
 class RegistrableDomain;
 
@@ -50,14 +53,12 @@ public:
     void clear();
 
     Page& page() const { return m_page; }
-    Ref<Page> protectedPage() const { return page(); }
     Document* document() const { return m_cachedMainFrame->document(); }
     DocumentLoader* documentLoader() const { return m_cachedMainFrame->documentLoader(); }
-    RefPtr<DocumentLoader> protectedDocumentLoader() const;
 
     bool hasExpired() const;
     
-    CachedFrame* cachedMainFrame() const { return m_cachedMainFrame.get(); }
+    CachedFrame* cachedMainFrame() const LIFETIME_BOUND { return m_cachedMainFrame.get(); }
 
 #if ENABLE(VIDEO)
     void markForCaptionPreferencesChanged() { m_needsCaptionPreferencesChanged = true; }
@@ -67,12 +68,23 @@ public:
 
     void markForContentsSizeChanged() { m_needsUpdateContentsSize = true; }
 
+    // Bound by callers that go through the explicit-IPC same-site BFCache path
+    // so that eviction signals from BackForwardCache can carry a
+    // BackForwardItemIdentifier (the key UIProcess uses).
+    void setItemID(BackForwardItemIdentifier itemID) { m_itemID = itemID; }
+    std::optional<BackForwardItemIdentifier> itemID() const { return m_itemID; }
+
+    void setDetachedRootFrames(HashSet<WeakRef<LocalFrame>>&& frames) { m_detachedRootFrames = WTF::move(frames); }
+    HashSet<WeakRef<LocalFrame>> takeDetachedRootFrames() { return std::exchange(m_detachedRootFrames, { }); }
+
 private:
     void restoreNavigationAPIHistoryItems(LocalFrame&, BackForwardController*);
 
     WeakRef<Page> m_page;
     MonotonicTime m_expirationTime;
     std::unique_ptr<CachedFrame> m_cachedMainFrame;
+    std::optional<BackForwardItemIdentifier> m_itemID;
+    HashSet<WeakRef<LocalFrame>> m_detachedRootFrames;
 #if ENABLE(VIDEO)
     bool m_needsCaptionPreferencesChanged { false };
 #endif

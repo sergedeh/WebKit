@@ -15,7 +15,10 @@
 #include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/ganesh/gl/GrGLBackendSurface.h"
 #include "include/gpu/ganesh/gl/GrGLTypes.h"
+#include "include/private/SkLog.h"
+#include "src/gpu/GlobalResourceStats.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
+#include "src/gpu/ganesh/GrSurface.h"
 #include "src/gpu/ganesh/gl/GrGLDefines.h"
 #include "src/gpu/ganesh/gl/GrGLUtil.h"
 
@@ -75,15 +78,23 @@ GrBackendFormat GetGLBackendFormat(GrDirectContext* dContext,
 
 class GLTextureHelper {
 public:
-    GLTextureHelper(GrGLuint texID, EGLImageKHR image, EGLDisplay display, GrGLuint texTarget)
-        : fTexID(texID)
-        , fImage(image)
-        , fDisplay(display)
-        , fTexTarget(texTarget) { }
+    GLTextureHelper(GrGLuint texID, EGLImageKHR image, EGLDisplay display, GrGLuint texTarget,
+                    size_t size, skgpu::Protected isProtected)
+            : fTexID(texID)
+            , fImage(image)
+            , fDisplay(display)
+            , fTexTarget(texTarget)
+            , fSize(size)
+            , fProtected(isProtected) {
+        skgpu::GlobalResourceStats::RecordCreateBackendTexture(isProtected, size);
+    }
+
     ~GLTextureHelper() {
         glDeleteTextures(1, &fTexID);
         // eglDestroyImageKHR will remove a ref from the AHardwareBuffer
         eglDestroyImageKHR(fDisplay, fImage);
+
+        skgpu::GlobalResourceStats::RecordDeleteBackendTexture(fProtected, fSize);
     }
     void rebind(GrDirectContext*);
 
@@ -92,19 +103,23 @@ private:
     EGLImageKHR fImage;
     EGLDisplay  fDisplay;
     GrGLuint    fTexTarget;
+
+    // For stats tracking
+    size_t fSize;
+    skgpu::Protected fProtected;
 };
 
 void GLTextureHelper::rebind(GrDirectContext* dContext) {
     glBindTexture(fTexTarget, fTexID);
     GLenum status = GL_NO_ERROR;
     if ((status = glGetError()) != GL_NO_ERROR) {
-        SkDebugf("glBindTexture(%#x, %d) failed (%#x)", (int) fTexTarget,
+        SKIA_LOG_E("glBindTexture(%#x, %d) failed (%#x)", (int) fTexTarget,
             (int) fTexID, (int) status);
         return;
     }
     glEGLImageTargetTexture2DOES(fTexTarget, fImage);
     if ((status = glGetError()) != GL_NO_ERROR) {
-        SkDebugf("glEGLImageTargetTexture2DOES failed (%#x)", (int) status);
+        SKIA_LOG_E("glEGLImageTargetTexture2DOES failed (%#x)", (int) status);
         return;
     }
     dContext->resetContext(kTextureBinding_GrGLBackendState);
@@ -133,7 +148,7 @@ static GrBackendTexture make_gl_backend_texture(
 
     auto textureType = backendFormat.textureType();
     if (textureType != GrTextureType::k2D && textureType != GrTextureType::kExternal) {
-        SkDebugf("Unsupported texture target type: %d\n", (int) textureType);
+        SKIA_LOG_E("Unsupported texture target type: %d\n", (int) textureType);
         return GrBackendTexture();
     }
 
@@ -147,7 +162,7 @@ static GrBackendTexture make_gl_backend_texture(
     EGLImageKHR image = eglCreateImageKHR(display, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
                                           clientBuffer, attribs);
     if (EGL_NO_IMAGE_KHR == image) {
-        SkDebugf("Could not create EGL image, err = (%#x)", (int) eglGetError() );
+        SKIA_LOG_E("Could not create EGL image, err = (%#x)", (int) eglGetError() );
         return GrBackendTexture();
     }
 
@@ -175,14 +190,14 @@ static GrBackendTexture make_gl_backend_texture(
     glBindTexture(target, texID);
     GLenum status = GL_NO_ERROR;
     if ((status = glGetError()) != GL_NO_ERROR) {
-        SkDebugf("glBindTexture failed (%#x)", (int) status);
+        SKIA_LOG_E("glBindTexture failed (%#x)", (int) status);
         glDeleteTextures(1, &texID);
         eglDestroyImageKHR(display, image);
         return GrBackendTexture();
     }
     glEGLImageTargetTexture2DOES(target, image);
     if ((status = glGetError()) != GL_NO_ERROR) {
-        SkDebugf("glEGLImageTargetTexture2DOES failed (%#x)", (int) status);
+        SKIA_LOG_E("glEGLImageTargetTexture2DOES failed (%#x)", (int) status);
         glDeleteTextures(1, &texID);
         eglDestroyImageKHR(display, image);
         return GrBackendTexture();
@@ -196,9 +211,12 @@ static GrBackendTexture make_gl_backend_texture(
     textureInfo.fFormat = GrBackendFormats::AsGLFormatEnum(backendFormat);
     textureInfo.fProtected = skgpu::Protected(isProtectedContent);
 
+    const size_t size = GrSurface::ComputeSize(backendFormat, {width, height},
+                                               /*colorSamplesPerPixel=*/1, skgpu::Mipmapped::kNo);
+
     *deleteProc = delete_gl_texture;
     *updateProc = update_gl_texture;
-    *imageCtx = new GLTextureHelper(texID, image, display, target);
+    *imageCtx = new GLTextureHelper(texID, image, display, target, size, textureInfo.fProtected);
 
     return GrBackendTextures::MakeGL(width, height, skgpu::Mipmapped::kNo, textureInfo);
 }
@@ -252,8 +270,27 @@ GrBackendTexture MakeGLBackendTexture(GrDirectContext* dContext,
         return GrBackendTexture();
     }
 
-    return make_gl_backend_texture(dContext, hardwareBuffer, width, height, deleteProc,
-                                   updateProc, imageCtx, isProtectedContent, backendFormat);
+    GrBackendTexture tex =
+            make_gl_backend_texture(dContext, hardwareBuffer, width, height, deleteProc,
+                                    updateProc, imageCtx, isProtectedContent, backendFormat);
+    // Retry if we can still fallback external texture target.
+    //
+    // Even when the format is known, an AHB can fail to be imported as a regular GL_TEXTURE_2D for
+    // reasons hidden from the GL API (e.g. lossy compression is meant for sample-only textures, in
+    // which case a driver might fail glEGLImageTargetTexture2DOES for regular texture targets).
+    //
+    // NOTE: We exclude this fallback when `isRenderable == true` since we never treat external
+    // formats as renderable. If we instead called MakeGLBackendTexture, we'd just fail the
+    // renderable validation check above.
+    if (!tex.isValid() &&
+        !isRenderable &&
+        backendFormat.textureType() != GrTextureType::kExternal) {
+        tex = make_gl_backend_texture(dContext, hardwareBuffer, width, height, deleteProc,
+                                      updateProc, imageCtx, isProtectedContent,
+                                      GrBackendFormats::MakeGLExternal());
+    }
+
+    return tex;
 }
 
 }  // namespace GrAHardwareBufferUtils

@@ -43,14 +43,14 @@
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebKit {
 using namespace WebCore;
 
-void WebBackForwardListProxy::removeItem(BackForwardItemIdentifier itemID)
+void WebBackForwardListProxy::removeItem(BackForwardFrameItemIdentifier frameItemID)
 {
-    BackForwardCache::singleton().remove(itemID);
-    WebCore::Page::clearPreviousItemFromAllPages(itemID);
+    WebCore::Page::clearPreviousItemFromAllPages(frameItemID);
 }
 
 WebBackForwardListProxy::WebBackForwardListProxy(WebPage& page)
@@ -64,7 +64,7 @@ void WebBackForwardListProxy::addItem(Ref<HistoryItem>&& item)
     if (!page)
         return;
 
-    LOG(BackForward, "(Back/Forward) WebProcess pid %i setting item %p for id %s with url %s", getCurrentProcessID(), item.ptr(), item->itemID().toString().utf8().data(), item->urlString().utf8().data());
+    LOG_WITH_STREAM(BackForward, stream << "(Back/Forward) WebProcess pid "_s << getCurrentProcessID() << " setting item "_s << item.ptr() << " for id "_s << item->itemID().toString() << " with url "_s << item->urlString());
     m_cachedBackForwardListCounts = std::nullopt;
     page->send(Messages::WebBackForwardList::BackForwardAddItem(toFrameState(item.get())));
 }
@@ -77,12 +77,12 @@ void WebBackForwardListProxy::setChildItem(BackForwardFrameItemIdentifier frameI
 
 void WebBackForwardListProxy::goToItem(HistoryItem& item)
 {
-    if (!m_page)
+    RefPtr page = m_page.get();
+    if (!page)
         return;
 
-    auto sendResult = m_page->sendSync(Messages::WebBackForwardList::BackForwardGoToItem(item.itemID()));
-    auto [backForwardListCounts] = sendResult.takeReplyOr(WebBackForwardListCounts { });
-    m_cachedBackForwardListCounts = backForwardListCounts;
+    m_cachedBackForwardListCounts = std::nullopt;
+    page->send(Messages::WebBackForwardList::BackForwardGoToItem(item.itemID()));
 }
 
 Vector<Ref<HistoryItem>> WebBackForwardListProxy::allItems(FrameIdentifier frameID)
@@ -110,7 +110,7 @@ RefPtr<HistoryItem> WebBackForwardListProxy::itemAtIndex(int itemIndex, FrameIde
     if (!page)
         return nullptr;
 
-    auto sendResult = page->sendSync(Messages::WebBackForwardList::BackForwardItemAtIndex(itemIndex, frameID));
+    auto sendResult = page->sendSync(Messages::WebBackForwardList::BackForwardItemAtIndexForWebContent(itemIndex, frameID));
     auto [frameState] = sendResult.takeReplyOr(nullptr);
     if (!frameState)
         return nullptr;
@@ -142,7 +142,7 @@ const WebBackForwardListCounts& WebBackForwardListProxy::cacheListCountsIfNecess
     if (!m_cachedBackForwardListCounts) {
         WebBackForwardListCounts backForwardListCounts;
         if (m_page) {
-            auto sendResult = WebProcess::singleton().protectedParentProcessConnection()->sendSync(Messages::WebBackForwardList::BackForwardListCounts(), m_page->identifier());
+            auto sendResult = protect(WebProcess::singleton().parentProcessConnection())->sendSync(Messages::WebBackForwardList::BackForwardListCounts(), m_page->identifier());
             if (sendResult.succeeded())
                 std::tie(backForwardListCounts) = sendResult.takeReply();
         }

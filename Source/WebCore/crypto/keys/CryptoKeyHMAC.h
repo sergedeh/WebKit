@@ -46,11 +46,11 @@ public:
     static RefPtr<CryptoKeyHMAC> generate(size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyHMAC> importRaw(size_t lengthBits, CryptoAlgorithmIdentifier hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     using CheckAlgCallback = Function<bool(CryptoAlgorithmIdentifier, const String&)>;
-    static RefPtr<CryptoKeyHMAC> importJwk(size_t lengthBits, CryptoAlgorithmIdentifier hash, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap, CheckAlgCallback&&);
+    static RefPtr<CryptoKeyHMAC> importJwk(size_t lengthBits, CryptoAlgorithmIdentifier hash, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap, NOESCAPE const CheckAlgCallback&);
 
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::HMAC; }
 
-    const Vector<uint8_t>& key() const { return m_key; }
+    const Vector<uint8_t>& key() const LIFETIME_BOUND { return m_key; }
     JsonWebKey exportJwk() const;
 
     CryptoAlgorithmIdentifier hashAlgorithmIdentifier() const { return m_hash; }

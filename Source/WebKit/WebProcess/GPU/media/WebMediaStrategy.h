@@ -48,8 +48,13 @@ private:
 #endif
 #if ENABLE(VIDEO) && ENABLE(GPU_PROCESS)
     RefPtr<WebCore::AudioVideoRenderer> createAudioVideoRenderer(LoggerHelper*, WebCore::HTMLMediaElementIdentifier, WebCore::MediaPlayerIdentifier) const final;
+    bool canDecodeExtendedType(WebCore::PlatformMediaDecodingType, const WebCore::ContentType&) final;
+    void ensureCodecsSupportChecksInitialized() final;
 #endif
     std::unique_ptr<WebCore::NowPlayingManager> createNowPlayingManager() const final;
+    void isActiveNowPlayingSessionInGPUProcessForTesting(WebCore::MediaSessionIdentifier, CompletionHandler<void(bool)>&&) final;
+    void isRemoteCommandTargetSessionInGPUProcessForTesting(WebCore::MediaSessionIdentifier, CompletionHandler<void(bool)>&&) final;
+    bool postNowPlayingRemoteControlCommandToGPUProcessForTesting(WebCore::PlatformMediaSession::RemoteControlCommandType, const WebCore::PlatformMediaSession::RemoteCommandArgument&) final;
     bool hasThreadSafeMediaSourceSupport() const final;
 #if ENABLE(MEDIA_SOURCE)
     void enableMockMediaSource() final;

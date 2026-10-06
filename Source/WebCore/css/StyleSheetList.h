@@ -43,20 +43,22 @@ public:
 
     bool isSupportedPropertyIndex(unsigned index) const { return index < length(); }
     WEBCORE_EXPORT unsigned length() const;
-    WEBCORE_EXPORT StyleSheet* item(unsigned index);
+    WEBCORE_EXPORT RefPtr<StyleSheet> item(unsigned index) const;
 
     CSSStyleSheet* namedItem(const AtomString&) const;
     bool isSupportedPropertyName(const AtomString&) const;
-    Vector<AtomString> supportedPropertyNames();
+    Vector<AtomString> NODELETE supportedPropertyNames();
 
-    Node* ownerNode() const;
+    Node* NODELETE ownerNode() const;
 
     void detach();
 
 private:
     StyleSheetList(Document&);
     StyleSheetList(ShadowRoot&);
-    const Vector<Ref<StyleSheet>>& styleSheets() const;
+
+    template<typename Func>
+    auto callOnStyleSheets(NOESCAPE const Func&) const;
 
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
     WeakPtr<ShadowRoot, WeakPtrImplWithEventTargetData> m_shadowRoot;

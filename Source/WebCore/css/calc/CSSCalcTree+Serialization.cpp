@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,6 +33,7 @@
 #include "CSSPrimitiveNumericTypes+Serialization.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSUnits.h"
+#include <limits>
 #include <ranges>
 #include <wtf/text/StringBuilder.h>
 
@@ -75,6 +76,7 @@ static void serializeMathFunction(StringBuilder&, const Child&, SerializationSta
 static void serializeMathFunction(StringBuilder&, const Symbol&, SerializationState&);
 static void serializeMathFunction(StringBuilder&, const SiblingCount&, SerializationState&);
 static void serializeMathFunction(StringBuilder&, const SiblingIndex&, SerializationState&);
+static void serializeMathFunction(StringBuilder&, const IndirectNode<Deg2Rad>&, SerializationState&);
 template<Numeric Op> static void serializeMathFunction(StringBuilder&, const Op&, SerializationState&);
 template<typename Op> static void serializeMathFunction(StringBuilder&, const IndirectNode<Op>&, SerializationState&);
 
@@ -86,11 +88,13 @@ static void serializeMathFunctionPrefix(StringBuilder&, const IndirectNode<Round
 static void serializeMathFunctionPrefix(StringBuilder&, const IndirectNode<RoundUp>&, SerializationState&);
 static void serializeMathFunctionPrefix(StringBuilder&, const IndirectNode<RoundDown>&, SerializationState&);
 static void serializeMathFunctionPrefix(StringBuilder&, const IndirectNode<RoundToZero>&, SerializationState&);
+static void serializeMathFunctionPrefix(StringBuilder&, const IndirectNode<ProgressNoClamp>&, SerializationState&);
 template<typename Op> static void serializeMathFunctionPrefix(StringBuilder&, const IndirectNode<Op>&, SerializationState&);
 
 static void serializeMathFunctionArguments(StringBuilder&, const IndirectNode<Sum>&, SerializationState&);
 static void serializeMathFunctionArguments(StringBuilder&, const IndirectNode<Product>&, SerializationState&);
 static void serializeMathFunctionArguments(StringBuilder&, const IndirectNode<Random>&, SerializationState&);
+static void serializeMathFunctionArguments(StringBuilder&, const IndirectNode<CalcMix>&, SerializationState&);
 static void serializeMathFunctionArguments(StringBuilder&, const IndirectNode<Anchor>&, SerializationState&);
 static void serializeMathFunctionArguments(StringBuilder&, const IndirectNode<AnchorSize>&, SerializationState&);
 template<typename Op> static void serializeMathFunctionArguments(StringBuilder&, const IndirectNode<Op>&, SerializationState&);
@@ -108,106 +112,113 @@ static void serializeCalculationTree(StringBuilder&, const IndirectNode<Sum>&, S
 static void serializeCalculationTree(StringBuilder&, const IndirectNode<Product>&, SerializationState&);
 static void serializeCalculationTree(StringBuilder&, const IndirectNode<Negate>&, SerializationState&);
 static void serializeCalculationTree(StringBuilder&, const IndirectNode<Invert>&, SerializationState&);
+static void serializeCalculationTree(StringBuilder&, const IndirectNode<Deg2Rad>&, SerializationState&);
 template<Numeric Op> void serializeCalculationTree(StringBuilder&, const Op&, SerializationState&);
 template<typename Op> static void serializeCalculationTree(StringBuilder&, const IndirectNode<Op>&, SerializationState&);
 
 // MARK: Sorting
 
-static unsigned sortPriority(CSSUnitType unit)
+// Sort keys are assigned sequentially via __COUNTER__ rather than hand-numbered,
+// so that adding, removing or reordering a case cannot accidentally collide with
+// or skip a value (which is how 'vmax' came to share 'svb's key and skip its own).
+// The base is captured once so the keys start at 0 regardless of any prior
+// __COUNTER__ use in this translation unit.
+static constexpr unsigned sortPriorityBase = __COUNTER__;
+#define SORT_PRIORITY_NEXT (__COUNTER__ - sortPriorityBase - 1)
+
+// Sentinels that sort after every real unit, independent of how many there are.
+static constexpr unsigned errorSortPriority = std::numeric_limits<unsigned>::max() - 1;
+static constexpr unsigned otherSortPriority = std::numeric_limits<unsigned>::max();
+
+static unsigned NODELETE sortPriority(CSSUnitType unit)
 {
     // Sort order: number, percentage, dimension (by unit, ordered ASCII case-insensitively), other.
 
     switch (unit) {
     // number
-    case CSSUnitType::CSS_NUMBER:
-    case CSSUnitType::CSS_INTEGER:      return 0;
+    case CSSUnitType::Number:
+    case CSSUnitType::Integer:      return SORT_PRIORITY_NEXT;
     // percentage
-    case CSSUnitType::CSS_PERCENTAGE:   return 1;
+    case CSSUnitType::Percentage:   return SORT_PRIORITY_NEXT;
 
     // dimension (by unit, ordered ASCII case-insensitively)
-    case CSSUnitType::CSS_CAP:          return 2;
-    case CSSUnitType::CSS_CH:           return 3;
-    case CSSUnitType::CSS_CM:           return 4;
-    case CSSUnitType::CSS_CQB:          return 5;
-    case CSSUnitType::CSS_CQH:          return 6;
-    case CSSUnitType::CSS_CQI:          return 7;
-    case CSSUnitType::CSS_CQMAX:        return 8;
-    case CSSUnitType::CSS_CQMIN:        return 9;
-    case CSSUnitType::CSS_CQW:          return 10;
-    case CSSUnitType::CSS_DEG:          return 11;
-    case CSSUnitType::CSS_DPCM:         return 12;
-    case CSSUnitType::CSS_DPI:          return 13;
-    case CSSUnitType::CSS_DPPX:         return 14;
-    case CSSUnitType::CSS_DVB:          return 15;
-    case CSSUnitType::CSS_DVH:          return 16;
-    case CSSUnitType::CSS_DVI:          return 17;
-    case CSSUnitType::CSS_DVMAX:        return 18;
-    case CSSUnitType::CSS_DVMIN:        return 19;
-    case CSSUnitType::CSS_DVW:          return 20;
-    case CSSUnitType::CSS_EM:           return 21;
-    case CSSUnitType::CSS_EX:           return 22;
-    case CSSUnitType::CSS_FR:           return 23;
-    case CSSUnitType::CSS_GRAD:         return 24;
-    case CSSUnitType::CSS_HZ:           return 25;
-    case CSSUnitType::CSS_IC:           return 26;
-    case CSSUnitType::CSS_IN:           return 27;
-    case CSSUnitType::CSS_KHZ:          return 28;
-    case CSSUnitType::CSS_LH:           return 29;
-    case CSSUnitType::CSS_LVB:          return 30;
-    case CSSUnitType::CSS_LVH:          return 31;
-    case CSSUnitType::CSS_LVI:          return 32;
-    case CSSUnitType::CSS_LVMAX:        return 33;
-    case CSSUnitType::CSS_LVMIN:        return 34;
-    case CSSUnitType::CSS_LVW:          return 35;
-    case CSSUnitType::CSS_MM:           return 36;
-    case CSSUnitType::CSS_MS:           return 37;
-    case CSSUnitType::CSS_PC:           return 38;
-    case CSSUnitType::CSS_PT:           return 39;
-    case CSSUnitType::CSS_PX:           return 40;
-    case CSSUnitType::CSS_Q:            return 41;
-    case CSSUnitType::CSS_RAD:          return 42;
-    case CSSUnitType::CSS_RCAP:         return 43;
-    case CSSUnitType::CSS_RCH:          return 44;
-    case CSSUnitType::CSS_REM:          return 45;
-    case CSSUnitType::CSS_REX:          return 46;
-    case CSSUnitType::CSS_RIC:          return 47;
-    case CSSUnitType::CSS_RLH:          return 48;
-    case CSSUnitType::CSS_S:            return 49;
-    case CSSUnitType::CSS_SVB:          return 50;
-    case CSSUnitType::CSS_SVH:          return 51;
-    case CSSUnitType::CSS_SVI:          return 52;
-    case CSSUnitType::CSS_SVMAX:        return 53;
-    case CSSUnitType::CSS_SVMIN:        return 54;
-    case CSSUnitType::CSS_SVW:          return 55;
-    case CSSUnitType::CSS_TURN:         return 56;
-    case CSSUnitType::CSS_VB:           return 57;
-    case CSSUnitType::CSS_VH:           return 58;
-    case CSSUnitType::CSS_VI:           return 59;
-    case CSSUnitType::CSS_VMAX:         return 50;
-    case CSSUnitType::CSS_VMIN:         return 61;
-    case CSSUnitType::CSS_VW:           return 62;
-    case CSSUnitType::CSS_X:            return 63;
+    case CSSUnitType::Cap:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Ch:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Cm:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Cqb:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Cqh:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Cqi:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Cqmax:        return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Cqmin:        return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Cqw:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Deg:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Dpcm:         return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Dpi:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Dppx:         return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Dvb:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Dvh:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Dvi:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Dvmax:        return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Dvmin:        return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Dvw:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Em:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Ex:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Fr:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Grad:         return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Hz:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Ic:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::In:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Khz:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Lh:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Lvb:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Lvh:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Lvi:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Lvmax:        return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Lvmin:        return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Lvw:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Mm:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Ms:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Pc:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Pt:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Px:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Q:            return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Rad:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Rcap:         return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Rch:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Rem:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Rex:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Ric:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Rlh:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::S:            return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Svb:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Svh:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Svi:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Svmax:        return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Svmin:        return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Svw:          return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Turn:         return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Vb:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Vh:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Vi:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Vmax:         return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Vmin:         return SORT_PRIORITY_NEXT;
+    case CSSUnitType::Vw:           return SORT_PRIORITY_NEXT;
+    case CSSUnitType::X:            return SORT_PRIORITY_NEXT;
 
     // Non-numeric types are not supported.
-    case CSSUnitType::CSS_ATTR:
-    case CSSUnitType::CSS_CALC:
-    case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_ANGLE:
-    case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
-    case CSSUnitType::CSS_DIMENSION:
-    case CSSUnitType::CSS_FONT_FAMILY:
-    case CSSUnitType::CSS_IDENT:
-    case CSSUnitType::CSS_PROPERTY_ID:
-    case CSSUnitType::CSS_QUIRKY_EM:
-    case CSSUnitType::CSS_STRING:
-    case CSSUnitType::CSS_UNKNOWN:
-    case CSSUnitType::CSS_VALUE_ID:
-    case CSSUnitType::CustomIdent:
+    case CSSUnitType::Calc:
+    case CSSUnitType::CalcPercentageWithAngle:
+    case CSSUnitType::CalcPercentageWithLength:
+    case CSSUnitType::QuirkyEm:
+    case CSSUnitType::Unknown:
         break;
     }
 
     ASSERT_NOT_REACHED();
-    return 64;
+    return errorSortPriority;
 }
+
+#undef SORT_PRIORITY_NEXT
 
 static unsigned sortPriority(const Child& child)
 {
@@ -218,7 +229,7 @@ static unsigned sortPriority(const Child& child)
             return sortPriority(toCSSUnit(root));
         },
         [](const auto&) -> unsigned {
-            return 65; // NOTE: 65 is greater than any numeric unit type, even the error case.
+            return otherSortPriority; // Sorts after every numeric unit, even the error case.
         }
     );
 }
@@ -366,6 +377,11 @@ void serializeMathFunctionPrefix(StringBuilder& builder, const IndirectNode<Roun
     builder.append(nameLiteralForSerialization(CSSValueRound), '(', nameLiteralForSerialization(RoundToZero::id), ", "_s);
 }
 
+void serializeMathFunctionPrefix(StringBuilder& builder, const IndirectNode<ProgressNoClamp>&, SerializationState&)
+{
+    builder.append(nameLiteralForSerialization(ProgressNoClamp::id), "(no-clamp "_s);
+}
+
 template<typename Op> void serializeMathFunctionPrefix(StringBuilder& builder, const IndirectNode<Op>&, SerializationState&)
 {
     builder.append(nameLiteralForSerialization(Op::id), '(');
@@ -384,13 +400,38 @@ void serializeMathFunctionArguments(StringBuilder& builder, const IndirectNode<P
 void serializeMathFunctionArguments(StringBuilder& builder, const IndirectNode<Random>& fn, SerializationState& state)
 {
     WTF::switchOn(fn->sharing,
-        [&](const Random::SharingOptions& options) {
-            if (std::holds_alternative<AtomString>(options.identifier) && options.elementShared)
-                builder.append(std::get<AtomString>(options.identifier), ' ', nameLiteralForSerialization(CSSValueElementShared), ", "_s);
-            else if (std::holds_alternative<AtomString>(options.identifier))
-                builder.append(std::get<AtomString>(options.identifier), ", "_s);
-            else if (options.elementShared)
-                builder.append(nameLiteralForSerialization(CSSValueElementShared), ", "_s);
+        [&](const Random::SharingAuto&) {
+            // `auto` serializes as omitted.
+        },
+        [&](const Random::Key& key) {
+            bool wroteSomething = false;
+            auto separate = [&] {
+                if (wroteSomething)
+                    builder.append(' ');
+                wroteSomething = true;
+            };
+            if (key.name) {
+                separate();
+                CSS::serializationForCSS(builder, state.serializationContext, *key.name);
+            }
+            if (key.elementScoped) {
+                separate();
+                builder.append(nameLiteralForSerialization(CSSValueElementScoped));
+            }
+            if (key.propertyScoped) {
+                separate();
+                WTF::switchOn(*key.propertyScoped,
+                    [&](const Random::Key::PropertyScoped&) {
+                        builder.append(nameLiteralForSerialization(CSSValuePropertyScoped));
+                    },
+                    [&](const Random::Key::PropertyIndexScoped&) {
+                        builder.append(nameLiteralForSerialization(CSSValuePropertyIndexScoped));
+                    }
+                );
+            }
+            // The parser never produces an empty <random-cache-key>.
+            ASSERT(wroteSomething);
+            builder.append(", "_s);
         },
         [&](const Random::SharingFixed& fixed) {
             builder.append(nameLiteralForSerialization(CSSValueFixed), ' ');
@@ -409,10 +450,23 @@ void serializeMathFunctionArguments(StringBuilder& builder, const IndirectNode<R
     }
 }
 
+void serializeMathFunctionArguments(StringBuilder& builder, const IndirectNode<CalcMix>& fn, SerializationState& state)
+{
+    auto separator = ""_s;
+    for (const auto& item : fn->children) {
+        builder.append(std::exchange(separator, ", "_s));
+        serializeCalculationTree(builder, item.value, state);
+        if (item.weight) {
+            builder.append(' ');
+            CSS::serializationForCSS(builder, state.serializationContext, *item.weight);
+        }
+    }
+}
+
 void serializeMathFunctionArguments(StringBuilder& builder, const IndirectNode<Anchor>& anchor, SerializationState& state)
 {
-    if (!anchor->elementName.isNull()) {
-        serializeIdentifier(anchor->elementName, builder);
+    if (anchor->elementName) {
+        CSS::serializationForCSS(builder, state.serializationContext, *anchor->elementName);
         builder.append(' ');
     }
 
@@ -458,20 +512,17 @@ static void serializeAnchorSizeDimension(StringBuilder& builder, Style::AnchorSi
 
 void serializeMathFunctionArguments(StringBuilder& builder, const IndirectNode<AnchorSize>& anchorSize, SerializationState& state)
 {
-    bool hasElementName = !anchorSize->elementName.isNull();
-
-    if (hasElementName)
-        serializeIdentifier(anchorSize->elementName, builder);
+    if (anchorSize->elementName)
+        CSS::serializationForCSS(builder, state.serializationContext, *anchorSize->elementName);
 
     if (anchorSize->dimension) {
-        if (hasElementName)
+        if (anchorSize->elementName)
             builder.append(' ');
-
         serializeAnchorSizeDimension(builder, *anchorSize->dimension);
     }
 
     if (anchorSize->fallback) {
-        if (hasElementName || anchorSize->dimension)
+        if (anchorSize->elementName || anchorSize->dimension)
             builder.append(", "_s);
 
         serializeWithoutOmittingPrefix(builder, *anchorSize->fallback, state);
@@ -488,10 +539,10 @@ template<typename Op> void serializeMathFunctionArguments(StringBuilder& builder
                 serializeCalculationTree(builder, *root, state);
             }
         },
-        [&](const AtomString& root) {
-            if (!root.isNull()) {
+        [&](const CSS::CustomIdent& root) {
+            if (!root.value.isNull()) {
                 builder.append(std::exchange(separator, ", "_s));
-                serializeIdentifier(root, builder);
+                CSS::serializationForCSS(builder, state.serializationContext, root);
             }
         },
         [&](const auto& root) {
@@ -506,7 +557,8 @@ void serializeWithoutOmittingPrefix(StringBuilder& builder, const Child& child, 
     WTF::switchOn(child,
         [&](Leaf auto& op) {
             serializeCalculationTree(builder, op, state);
-        }, [&](auto& op) {
+        },
+        [&](auto& op) {
             serializeMathFunction(builder, op, state);
         }
     );
@@ -534,7 +586,7 @@ template<Numeric Op> void serializeCalculationTree(StringBuilder& builder, const
 {
     // 2. If root is a numeric value, or a non-math function, serialize root per the normal rules for it and return the result.
 
-    CSS::serializationForCSS(builder, state.serializationContext, CSS::SerializableNumber { root.value, CSSPrimitiveValue::unitTypeString(toCSSUnit(root)) });
+    CSS::serializationForCSS(builder, state.serializationContext, CSS::SerializableNumber { root.value, unitTypeString(toCSSUnit(root)) });
 }
 
 void serializeCalculationTree(StringBuilder& builder, const Symbol& root, SerializationState&)
@@ -694,6 +746,19 @@ void serializeCalculationTree(StringBuilder& builder, const IndirectNode<Invert>
     builder.append(state.closeGroup());
 }
 
+void serializeCalculationTree(StringBuilder& builder, const IndirectNode<Deg2Rad>& root, SerializationState& state)
+{
+    // Deg2Rad is an implementation-only node inserted at parse time inside trig functions. It has
+    // no CSS-level representation, so serialize it transparently by just serializing its child.
+    serializeCalculationTree(builder, root->angle, state);
+}
+
+void serializeMathFunction(StringBuilder& builder, const IndirectNode<Deg2Rad>& root, SerializationState& state)
+{
+    // Deg2Rad has no CSS-level representation, so defer to the child.
+    serializeMathFunction(builder, root->angle, state);
+}
+
 template<typename Op> void serializeCalculationTree(StringBuilder& builder, const IndirectNode<Op>& root, SerializationState& state)
 {
     // 3. If root is anything but a Sum, Negate, Product, or Invert node, serialize a math function for the function corresponding to the node type, treating the node’s children as the function’s comma-separated calculation arguments, and return the result.
@@ -733,6 +798,17 @@ String serializationForCSS(const Child& child, const SerializationOptions& optio
     StringBuilder builder;
     serializationForCSS(builder, child, options);
     return builder.toString();
+}
+
+void serializationForCSSAsFunctionArgument(StringBuilder& builder, const Tree& tree, const SerializationOptions& options)
+{
+    SerializationState state {
+        .groupingParenthesis = SerializationState::GroupingParenthesis::Omit,
+        .stage = tree.stage,
+        .range = options.range,
+        .serializationContext = options.serializationContext,
+    };
+    serializeCalculationTree(builder, tree.root, state);
 }
 
 } // namespace CSSCalc

@@ -30,6 +30,7 @@
 #include "EventTarget.h"
 #include "EventTimingInteractionID.h"
 #include "PerformanceEntry.h"
+#include <wtf/ReducedResolutionSeconds.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -46,9 +47,9 @@ public:
     DOMHighResTimeStamp processingEnd() const { return m_processingEnd.milliseconds(); }
     bool cancelable() const { return m_cancelable; }
     RefPtr<Node> target() const;
-    uint64_t interactionId() const;
+    uint64_t NODELETE interactionId() const;
 
-    Type performanceEntryType() const final;
+    Type NODELETE performanceEntryType() const final;
     ASCIILiteral entryType() const final;
 
     static constexpr DOMHighResTimeStamp durationResolutionInMilliseconds = 8;
@@ -61,8 +62,8 @@ private:
 
     bool m_isFirst;
     bool m_cancelable;
-    Seconds m_processingStart;
-    Seconds m_processingEnd;
+    ReducedResolutionSeconds m_processingStart;
+    ReducedResolutionSeconds m_processingEnd;
     EventTimingInteractionID m_interactionID;
     WeakPtr<EventTarget, EventTarget::WeakPtrImplType> m_target;
 };

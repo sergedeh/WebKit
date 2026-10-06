@@ -50,10 +50,10 @@ public:
     ContextMenuController(Page&, UniqueRef<ContextMenuClient>&&);
     ~ContextMenuController();
 
-    Page& page();
-    ContextMenuClient& client() { return m_client.get(); }
+    Page& NODELETE page();
+    ContextMenuClient& client() LIFETIME_BOUND { return m_client.get(); }
 
-    ContextMenu* contextMenu() const { return m_contextMenu.get(); }
+    ContextMenu* contextMenu() const LIFETIME_BOUND { return m_contextMenu.get(); }
     WEBCORE_EXPORT void clearContextMenu();
 
     void handleContextMenuEvent(Event&);
@@ -67,13 +67,13 @@ public:
     WEBCORE_EXPORT void checkOrEnableIfNeeded(ContextMenuItem&) const;
 
     void setContextMenuContext(const ContextMenuContext& context) { m_context = context; }
-    const ContextMenuContext& context() const { return m_context; }
-    const HitTestResult& hitTestResult() const { return m_context.hitTestResult(); }
+    const ContextMenuContext& context() const LIFETIME_BOUND { return m_context; }
+    const HitTestResult& hitTestResult() const LIFETIME_BOUND { return m_context.hitTestResult(); }
 
 #if USE(ACCESSIBILITY_CONTEXT_MENUS)
     void showContextMenuAt(LocalFrame&, const IntPoint& clickPoint);
 #endif
-    
+
 #if ENABLE(SERVICE_CONTROLS)
     void showImageControlsMenu(Event&);
 #endif
@@ -93,7 +93,7 @@ private:
 #if PLATFORM(COCOA)
     void createAndAppendSpeechSubMenu(ContextMenuItem&);
     void createAndAppendSubstitutionsSubMenu(ContextMenuItem&);
-    void createAndAppendTransformationsSubMenu(ContextMenuItem&);
+    bool createAndAppendTransformationsSubMenu(ContextMenuItem&);
 #endif
 #if PLATFORM(GTK)
     void createAndAppendUnicodeSubMenu(ContextMenuItem&);

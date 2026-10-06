@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(WEBASSEMBLY)
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
 
 #include "WasmDebugServerUtilities.h"
 #include "WasmVirtualAddress.h"
@@ -49,7 +49,7 @@ public:
     }
 
     void read(StringView packet);
-    NO_RETURN_DUE_TO_CRASH void write(StringView packet);
+    void write(StringView packet);
     void handleMemoryRegionInfo(StringView packet);
 
 private:
@@ -59,7 +59,7 @@ private:
     bool readMemoryData(VirtualAddress, size_t length, StringBuilder& data);
 
     void handleWasmMemoryRegionInfo(VirtualAddress, uint32_t instanceId, uint32_t offset);
-    void handleWasmModuleRegionInfo(VirtualAddress, uint32_t moduleId, uint32_t offset);
+    void handleWasmModuleRegionInfo(VirtualAddress, uint32_t instanceId, uint32_t offset);
     void sendMemoryRegionReply(uint64_t start, uint64_t size, StringView permissions, StringView name);
     void sendMemoryRegionReply(uint64_t start, uint64_t size, StringView permissions, StringView name, StringView type);
     void sendUnmappedRegionReply(uint64_t start, uint64_t size);
@@ -68,4 +68,4 @@ private:
 } // namespace Wasm
 } // namespace JSC
 
-#endif // ENABLE(WEBASSEMBLY)
+#endif // ENABLE(WEBASSEMBLY_DEBUGGER)

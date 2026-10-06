@@ -46,6 +46,7 @@ public:
     bool isText() const { return m_inlineBox->isInlineTextBox(); }
     bool isInlineBox() const { return m_inlineBox->isInlineFlowBox(); }
     bool isRootInlineBox() const { return m_inlineBox->isRootInlineBox(); }
+    bool isRubyBase() const { return false; }
     bool isBlockLevelBox() const { return false; }
     bool isAtomicInlineBox() const { return renderer().isBlockLevelReplacedOrAtomicInline(); }
 
@@ -97,7 +98,7 @@ public:
         return m_inlineBox->root().blockFlow();
     }
 
-    const RenderStyle& style() const
+    CheckedRef<const Style::ComputedStyle> style() const
     {
         return m_inlineBox->lineStyle();
     }

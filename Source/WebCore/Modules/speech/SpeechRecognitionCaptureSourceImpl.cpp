@@ -46,7 +46,7 @@ static uint64_t nextLogIdentifier()
     return ++logIdentifier;
 }
 
-static RefPtr<Logger>& nullLogger()
+static RefPtr<Logger>& NODELETE nullLogger()
 {
     static NeverDestroyed<RefPtr<Logger>> logger;
     return logger;
@@ -67,7 +67,7 @@ SpeechRecognitionCaptureSourceImpl::SpeechRecognitionCaptureSourceImpl(SpeechRec
         nullLogger()->setEnabled(this, false);
     }
 
-    m_source->setLogger(Ref { *nullLogger() }.get(), nextLogIdentifier());
+    m_source->setLogger(protect(*nullLogger()).get(), nextLogIdentifier());
 #endif
 
     m_source->addAudioSampleObserver(*this);

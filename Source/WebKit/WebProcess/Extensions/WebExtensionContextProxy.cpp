@@ -56,6 +56,11 @@ void WebExtensionContextProxy::addFrameWithExtensionContent(WebFrame& frame)
     m_extensionContentFrames.add(frame);
 }
 
+bool WebExtensionContextProxy::isURLForThisExtension(const URL& url) const
+{
+    return url.isValid() && url.string().startsWith(m_baseURL.string());
+}
+
 std::optional<WebExtensionTabIdentifier> WebExtensionContextProxy::tabIdentifier(WebPage& page) const
 {
     if (m_popupPageMap.contains(page))
@@ -89,6 +94,18 @@ void WebExtensionContextProxy::setBackgroundPage(WebPage& page)
 {
     m_backgroundPage = page;
 }
+
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+void WebExtensionContextProxy::setOffscreenPage(WebPage& page)
+{
+    m_offscreenPage = page;
+}
+
+bool WebExtensionContextProxy::isOffscreenPage(WebPage& page) const
+{
+    return m_offscreenPage.get() == &page;
+}
+#endif
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
 void WebExtensionContextProxy::addInspectorPage(WebPage& page, std::optional<WebExtensionTabIdentifier> tabIdentifier, std::optional<WebExtensionWindowIdentifier> windowIdentifier)
@@ -169,6 +186,14 @@ void WebExtensionContextProxy::setBackgroundPageIdentifier(WebCore::PageIdentifi
         setBackgroundPage(*page);
 }
 
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+void WebExtensionContextProxy::setOffscreenPageIdentifier(WebCore::PageIdentifier pageIdentifier)
+{
+    if (RefPtr page = WebProcess::singleton().webPage(pageIdentifier))
+        setOffscreenPage(*page);
+}
+#endif
+
 void WebExtensionContextProxy::addPopupPageIdentifier(WebCore::PageIdentifier pageIdentifier, std::optional<WebExtensionTabIdentifier> tabIdentifier, std::optional<WebExtensionWindowIdentifier> windowIdentifier)
 {
     if (RefPtr page = WebProcess::singleton().webPage(pageIdentifier))
@@ -181,9 +206,9 @@ void WebExtensionContextProxy::addTabPageIdentifier(WebCore::PageIdentifier page
         addTabPage(*page, tabIdentifier, windowIdentifier);
 }
 
-void WebExtensionContextProxy::setStorageAccessLevel(bool allowedInContentScripts)
+void WebExtensionContextProxy::setStorageAccessLevel(WebExtensionDataType dataType, WebExtensionStorageAccessLevel accessLevel)
 {
-    m_isSessionStorageAllowedInContentScripts = allowedInContentScripts;
+    m_storageAccessLevels.set(dataType, accessLevel);
 }
 
 void WebExtensionContextProxy::setContentScriptWorld(WebCore::DOMWrapperWorld& world)

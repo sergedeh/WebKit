@@ -240,12 +240,17 @@ WI.LogContentView = class LogContentView extends WI.ContentView
             break;
         }
 
-        this._clearFocusableChildren();
+        function clearFocusableChildren() {
+            for (let focusableElement of messageView.element.querySelectorAll("[tabindex]"))
+                focusableElement.removeAttribute("tabindex");
+        }
+        clearFocusableChildren();
 
         // Some results don't populate until further backend dispatches occur (like the DOM tree).
         // We want to remove focusable children after those pending dispatches too.
-        let target = messageView.message ? messageView.message.target : WI.runtimeManager.activeExecutionContext.target;
-        target.connection.runAfterPendingDispatches(this._clearFocusableChildren.bind(this));
+        let activeCallFrame = WI.runtimeManager.useActiveCallFrame ? WI.debuggerManager.activeCallFrame : null;
+        let target = messageView.message?.target || activeCallFrame?.target || WI.runtimeManager.activeExecutionContext.target;
+        target.connection.runAfterPendingDispatches(clearFocusableChildren);
 
         if (!this._scopeBar.item(WI.LogContentView.Scopes.All).selected) {
             if (messageView instanceof WI.ConsoleCommandView || messageView.message instanceof WI.ConsoleCommandResultMessage)
@@ -255,9 +260,9 @@ WI.LogContentView = class LogContentView extends WI.ContentView
         console.assert(messageView.element instanceof Element);
         this._filterMessageElements([messageView.element]);
 
-        if (!this._isMessageVisible(messageView.element)) {
+        if (this._isMessageFilteredOut(messageView.element)) {
             this._immediatelyHiddenMessages.add(messageView);
-            this._showHiddenMessagesBannerIfNeeded();
+            this._updateHiddenMessagesBanner();
         }
 
         this._lastMessageView = messageView;
@@ -531,7 +536,7 @@ WI.LogContentView = class LogContentView extends WI.ContentView
             this._immediatelyHiddenMessages.add(this._lastMessageView);
         }
 
-        this._showHiddenMessagesBannerIfNeeded();
+        this._updateHiddenMessagesBanner();
     }
 
     _handleContextMenuEvent(event)
@@ -768,7 +773,7 @@ WI.LogContentView = class LogContentView extends WI.ContentView
                 if (i >= newRange[0] && i <= newRange[1] && !messageInRange.classList.contains(WI.LogContentView.SelectedStyleClassName)) {
                     messageInRange.classList.add(WI.LogContentView.SelectedStyleClassName);
                     this._selectedMessages.push(messageInRange);
-                } else if (i < newRange[0] || i > newRange[1] && messageInRange.classList.contains(WI.LogContentView.SelectedStyleClassName)) {
+                } else if ((i < newRange[0] || i > newRange[1]) && messageInRange.classList.contains(WI.LogContentView.SelectedStyleClassName)) {
                     messageInRange.classList.remove(WI.LogContentView.SelectedStyleClassName);
                     this._selectedMessages.remove(messageInRange);
                 }
@@ -791,14 +796,22 @@ WI.LogContentView = class LogContentView extends WI.ContentView
         }
     }
 
+    _isMessageFilteredOut(messageElement) {
+
+        if (messageElement.classList.contains(WI.LogContentView.FilteredOutStyleClassName))
+            return true;
+
+        if (this.hasPerformedSearch && messageElement.classList.contains(WI.LogContentView.FilteredOutBySearchStyleClassName))
+            return true;
+
+        return false;
+    }
+
     _isMessageVisible(message)
     {
-        var node = message;
+        let node = message;
 
-        if (node.classList.contains(WI.LogContentView.FilteredOutStyleClassName))
-            return false;
-
-        if (this.hasPerformedSearch && node.classList.contains(WI.LogContentView.FilteredOutBySearchStyleClassName))
+        if (this._isMessageFilteredOut(node))
             return false;
 
         if (message.classList.contains("console-group-title"))
@@ -879,7 +892,7 @@ WI.LogContentView = class LogContentView extends WI.ContentView
         if (this._currentSearchQuery)
             this.performSearch(this._currentSearchQuery);
 
-        this._showHiddenMessagesBannerIfNeeded();
+        this._updateHiddenMessagesBanner();
 
         this._scopesWithMessages.clear();
         this._showOrHideConditionallyVisibleScopeBarItemsAsNeeded();
@@ -924,22 +937,19 @@ WI.LogContentView = class LogContentView extends WI.ContentView
     _messageSourceBarSelectionDidChange(event)
     {
         this._filterMessageElements(this._allMessageElements());
-
-        this._showHiddenMessagesBannerIfNeeded();
     }
 
     _scopeBarSelectionDidChange(event)
     {
         this._filterMessageElements(this._allMessageElements());
 
-        this._showHiddenMessagesBannerIfNeeded();
         this._showOrHideConditionallyVisibleScopeBarItemsAsNeeded();
     }
 
     _filterMessageElements(messageElements)
     {
         messageElements.forEach(function(messageElement) {
-            let visible = false;
+            let visible;
             if (messageElement.__commandView instanceof WI.ConsoleCommandView || messageElement.__message instanceof WI.ConsoleCommandResultMessage)
                 visible = this._scopeBar.selectedItems.some((item) => item.id === WI.LogContentView.Scopes.Evaluations || item.id === WI.LogContentView.Scopes.All);
             else
@@ -948,7 +958,6 @@ WI.LogContentView = class LogContentView extends WI.ContentView
             let classList = messageElement.classList;
             if (visible) {
                 classList.remove(WI.LogContentView.FilteredOutStyleClassName);
-                this._immediatelyHiddenMessages.delete(messageElement.__messageView);
             } else {
                 this._selectedMessages.remove(messageElement);
                 classList.remove(WI.LogContentView.SelectedStyleClassName);
@@ -1148,13 +1157,6 @@ WI.LogContentView = class LogContentView extends WI.ContentView
         return null;
     }
 
-    _clearFocusableChildren()
-    {
-        var focusableElements = this.messagesElement.querySelectorAll("[tabindex]");
-        for (var i = 0, count = focusableElements.length; i < count; ++i)
-            focusableElements[i].removeAttribute("tabindex");
-    }
-
     findBannerPerformSearch(findBanner, searchQuery)
     {
         this.performSearch(searchQuery);
@@ -1190,6 +1192,7 @@ WI.LogContentView = class LogContentView extends WI.ContentView
         if (this._currentSearchQuery === "") {
             this.element.classList.remove(WI.LogContentView.SearchInProgressStyleClassName);
             this.dispatchEventToListeners(WI.ContentView.Event.NumberOfSearchResultsDidChange);
+            this._updateHiddenMessagesBanner();
             return;
         }
 
@@ -1198,6 +1201,7 @@ WI.LogContentView = class LogContentView extends WI.ContentView
             this._findBanner.numberOfResults = 0;
             this.element.classList.remove(WI.LogContentView.SearchInProgressStyleClassName);
             this.dispatchEventToListeners(WI.ContentView.Event.NumberOfSearchResultsDidChange);
+            this._updateHiddenMessagesBanner();
             return;
         }
 
@@ -1231,6 +1235,8 @@ WI.LogContentView = class LogContentView extends WI.ContentView
             this._selectedSearchMatch.highlight.classList.remove(WI.LogContentView.SelectedStyleClassName);
             this._selectedSearchMatch = null;
         }
+
+        this._updateHiddenMessagesBanner();
     }
 
     searchHidden()
@@ -1307,8 +1313,12 @@ WI.LogContentView = class LogContentView extends WI.ContentView
         this._provisionalMessages = [];
     }
 
-    _showHiddenMessagesBannerIfNeeded()
+    _updateHiddenMessagesBanner()
     {
+        for (let messageView of this._immediatelyHiddenMessages)
+            if (!this._isMessageFilteredOut(messageView.element))
+                this._immediatelyHiddenMessages.delete(messageView);
+
         if (!this._immediatelyHiddenMessages.size) {
             if (this._hiddenMessagesBannerElement)
                 this._hiddenMessagesBannerElement.remove();

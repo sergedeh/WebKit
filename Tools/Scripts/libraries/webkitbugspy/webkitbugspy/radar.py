@@ -28,6 +28,8 @@ import sys
 import time
 import webkitcorepy
 
+from urllib.parse import urlparse
+
 from webkitcorepy import Environment, decorators
 from webkitbugspy import Issue, Tracker as GenericTracker, User, name as library_name, version as library_version
 
@@ -41,6 +43,7 @@ class Priority(object):
 
 
 class Tracker(GenericTracker):
+    # Used by Tools/Scripts/hooks/prepare-commit-msg get_bugs_string().
     RES = [
         re.compile(r'<?rdar://problem/(?P<id>\d+)>?'),
         re.compile(r'<?radar://problem/(?P<id>\d+)>?'),
@@ -128,16 +131,29 @@ class Tracker(GenericTracker):
         self._invalid_keywords = set()
 
         self.library = self.radarclient()
-        authentication = authentication or (self.authentication() if self.library else None)
-        if authentication:
-            self.client = self.library.RadarClient(
-                authentication, self.library.ClientSystemIdentifier(library_name, str(library_version)),
+
+        self._authentication = authentication
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client:
+            return self._client
+
+        if self.authentication():
+            self._client = self.library.RadarClient(
+                self.authentication(), self.library.ClientSystemIdentifier(library_name, str(library_version)),
                 retry_policy=self.radarclient().RetryPolicy(),
             )
-        else:
-            self.client = None
+        return self._client
 
     def authentication(self):
+        if self._authentication:
+            return self._authentication
+
+        if not self.library:
+            return None
+
         identity = Environment.instance().get('RADAR_IDENTITY')
         username = Environment.instance().get('RADAR_USERNAME')
         password = Environment.instance().get('RADAR_PASSWORD')
@@ -146,22 +162,76 @@ class Tracker(GenericTracker):
 
         try:
             if identity and os.path.isdir(identity):
-                return self.library.AuthenticationStrategyNarrative(identity)
-            if username and password and totp_secret and totp_id:
-                return self.library.AuthenticationStrategySystemAccountOAuth(
+                self._authentication = self.library.AuthenticationStrategyNarrative(identity)
+            elif username and password and totp_secret and totp_id:
+                self._authentication = self.library.AuthenticationStrategySystemAccountOAuth(
                     username, password, totp_secret, totp_id,
                 )
-            return self.library.AuthenticationStrategyAppleConnect()
+            else:
+                self._authentication = self.library.AuthenticationStrategyAppleConnect()
         except Exception:
             sys.stderr.write('No valid authentication session for Radar\n')
+        return self._authentication
+
+    @classmethod
+    def parse_id(cls, string):
+        """Parse a radar URL string and return the numeric ID(s) as strings.
+
+        Returns a single ID string for one ID, a list of ID strings for
+        multiple IDs (ampersand-separated), or None for no match.
+        Accepts rdar://, radar://, and https://rdar.apple.com/ URL forms,
+        with optional angle brackets.
+        """
+        value = string.strip()
+        if not value:
             return None
 
+        # Strip optional angle brackets
+        if value.startswith('<') and value.endswith('>'):
+            value = value[1:-1].strip()
+
+        parsed = urlparse(value)
+
+        # https://rdar.apple.com/N form
+        if parsed.scheme == 'https' and parsed.netloc == 'rdar.apple.com':
+            id_part = parsed.path.lstrip('/')
+            if not id_part:
+                return None
+            parts = id_part.split('&')
+            ids = [p for p in parts if p.isdigit()]
+            if not ids:
+                return None
+            if len(ids) == 1:
+                return ids[0]
+            return ids
+
+        # rdar:// or radar:// forms
+        if parsed.scheme not in ('rdar', 'radar'):
+            return None
+
+        if parsed.netloc == 'problem':
+            id_part = parsed.path.lstrip('/')
+        else:
+            id_part = parsed.netloc
+
+        if not id_part:
+            return None
+
+        parts = id_part.split('&')
+        ids = [p for p in parts if p.isdigit()]
+        if not ids:
+            return None
+        if len(ids) == 1:
+            return ids[0]
+        return ids
+
     def from_string(self, string):
-        for regex in self.RES:
-            match = regex.match(string)
-            if match:
-                return self.issue(int(match.group('id')))
-        return None
+        result = type(self).parse_id(string)
+        if result is None:
+            return None
+        if isinstance(result, list):
+            result = result[0]
+        return self.issue(int(result))
 
     def user(self, name=None, username=None, email=None):
         user = super(Tracker, self).user(name=name, username=username, email=email)
@@ -215,6 +285,8 @@ class Tracker(GenericTracker):
         issue._link = 'rdar://{}'.format(issue.id)
         issue._labels = []
         issue._related_links = []  # We don't yet have a defined idiom for "related links" in radar
+        if member == 'attachments':
+            issue._attachments = []
         if (not self.client or not self.library) and member:
             sys.stderr.write('radarclient inaccessible on this machine\n')
             return issue
@@ -255,6 +327,13 @@ class Tracker(GenericTracker):
             issue._source_changes = []
             if radar.sourceChanges is not None:
                 issue._source_changes = radar.sourceChanges.splitlines()
+
+        if member == 'attachments':
+            for attachment in radar.attachments.items():
+                issue._attachments.append(Issue.Attachment(
+                    name=attachment.fileName,
+                    contents=lambda attachment=attachment: self._attachment_contents(attachment),
+                ))
 
         if member == 'keywords':
             issue._keywords = [kw.name for kw in (radar.keywords() or [])]
@@ -325,6 +404,14 @@ class Tracker(GenericTracker):
                 issue._related[r.type].append(self.issue(r.related_radar_id))
 
         return issue
+
+    def _attachment_contents(self, attachment):
+        '''Download an attachment's bytes, or None if it is locked.'''
+        try:
+            return attachment.content(client=self.client)
+        except self.radarclient().exceptions.AttachmentLockedException:
+            sys.stderr.write("'{}' is locked and cannot be downloaded\n".format(attachment.fileName))
+            return None
 
     @handle_access_exception
     def set(self, issue, assignee=None, opened=None, why=None, project=None, component=None, version=None, original=None, keywords=None, source_changes=None, state=None, substate=None, resolution=None, see_also=None, **properties):
@@ -525,6 +612,61 @@ class Tracker(GenericTracker):
         return None
 
     @handle_access_exception
+    def remove_relationship(self, issue, issue2, relationship):
+        if relationship not in self.RELATIONSHIP_TYPES:
+            sys.stderr.write(f'{relationship} is not a valid relationship type.')
+            return None
+        if relationship in (
+            self.radarclient().Relationship.TYPE_DUPLICATE_OF,
+            self.radarclient().Relationship.TYPE_ORIGINAL_OF,
+        ):
+            raise NotImplementedError(f'Cannot remove a {relationship} relationship')
+
+        radar = self.client.radar_for_id(issue.id)
+        if not radar:
+            sys.stderr.write(f"Failed to fetch '{issue.link}'\n")
+            return None
+
+        # 'delete_relationship' only accepts a relationship the radar already has
+        existing = next((
+            candidate for candidate in radar.relationships() or []
+            if candidate.type == relationship and candidate.related_radar_id == issue2.id
+        ), None)
+        if not existing:
+            return issue
+
+        radar.delete_relationship(existing)
+        radar.commit_changes()
+
+        if not issue._related:
+            self.populate(issue, 'related')
+        else:
+            issue._related[relationship] = [
+                candidate for candidate in issue._related[relationship] if candidate.id != issue2.id
+            ]
+        return issue
+
+    @handle_access_exception
+    def unrelate(self, issue, related_to=None, blocked_by=None, blocking=None, parent_of=None, subtask_of=None,
+                 cause_of=None, caused_by=None, duplicate_of=None, original_of=None, **relations):
+        if relations:
+            raise TypeError(f"'{list(relations.keys())[0]}' is an invalid relation")
+
+        for related, relationship in (
+            (related_to, self.radarclient().Relationship.TYPE_RELATED_TO),
+            (blocked_by, self.radarclient().Relationship.TYPE_BLOCKED_BY),
+            (blocking, self.radarclient().Relationship.TYPE_BLOCKING),
+            (parent_of, self.radarclient().Relationship.TYPE_PARENT_OF),
+            (subtask_of, self.radarclient().Relationship.TYPE_SUBTASK_OF),
+            (cause_of, self.radarclient().Relationship.TYPE_CAUSE_OF),
+            (caused_by, self.radarclient().Relationship.TYPE_CAUSED_BY),
+            (duplicate_of, self.radarclient().Relationship.TYPE_DUPLICATE_OF),
+            (original_of, self.radarclient().Relationship.TYPE_ORIGINAL_OF),
+        ):
+            if related:
+                self.remove_relationship(issue, related, relationship)
+        return issue
+
     def relate(self, issue, related_to=None, blocked_by=None, blocking=None, parent_of=None, subtask_of=None,
                cause_of=None, caused_by=None, duplicate_of=None, original_of=None, **relations):
         if relations:

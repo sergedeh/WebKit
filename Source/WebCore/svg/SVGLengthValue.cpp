@@ -31,6 +31,7 @@
 #include "CSSPropertyParserConsumer+NumberDefinitions.h"
 #include "CSSToLengthConversionData.h"
 #include "CSSTokenizer.h"
+#include "CSSUnits.h"
 #include "ExceptionOr.h"
 #include "SVGElement.h"
 #include "SVGLengthContext.h"
@@ -43,7 +44,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGLengthValue);
 
-static inline SVGLengthType cssLengthUnitToSVGLengthType(CSS::LengthPercentageUnit unit)
+static inline SVGLengthType NODELETE cssLengthUnitToSVGLengthType(CSS::LengthPercentageUnit unit)
 {
     switch (unit) {
     case CSS::LengthPercentageUnit::Px:                 return SVGLengthType::Pixels;
@@ -61,7 +62,7 @@ static inline SVGLengthType cssLengthUnitToSVGLengthType(CSS::LengthPercentageUn
     }
 }
 
-static inline CSS::LengthPercentageUnit svgLengthTypeToCSSLengthUnit(SVGLengthType type)
+static inline CSS::LengthPercentageUnit NODELETE svgLengthTypeToCSSLengthUnit(SVGLengthType type)
 {
     switch (type) {
     case SVGLengthType::Number:       return CSS::LengthPercentageUnit::Px;
@@ -120,14 +121,26 @@ SVGLengthValue SVGLengthValue::construct(SVGLengthMode lengthMode, StringView va
     SVGLengthValue length(lengthMode);
 
     parseError = SVGParsingError::None;
+
+    // Empty string should use fallback.
+    if (valueAsString.isEmpty()) {
+        if (!fallbackValue.isNull())
+            return SVGLengthValue(lengthMode, fallbackValue);
+        return length;
+    }
+
     if (length.setValueAsString(valueAsString).hasException())
         parseError = SVGParsingError::ParsingFailed;
     else if (negativeValuesMode == SVGLengthNegativeValuesMode::Forbid && length.valueInSpecifiedUnits() < 0)
         parseError = SVGParsingError::ForbiddenNegativeValue;
 
-    // If parsing failed or value is null, and we have a fallback, use it
-    if (!fallbackValue.isNull() && (parseError != SVGParsingError::None || valueAsString.isNull()))
+    // If parsing failed and we have a fallback, use it.
+    if (!fallbackValue.isNull() && parseError != SVGParsingError::None)
         return SVGLengthValue(lengthMode, fallbackValue);
+
+    // A forbidden negative value must be ignored even without an explicit fallback.
+    if (parseError == SVGParsingError::ForbiddenNegativeValue)
+        return SVGLengthValue(lengthMode);
 
     return length;
 }
@@ -200,6 +213,31 @@ float SVGLengthValue::value(const SVGLengthContext& context) const
     return result.releaseReturnValue();
 }
 
+static float convertToPixels(float value, CSS::LengthPercentageUnit unit)
+{
+    switch (unit) {
+    case CSS::LengthPercentageUnit::Px:
+        return value;
+    case CSS::LengthPercentageUnit::Cm:
+        return value * CSS::pixelsPerCm;
+    case CSS::LengthPercentageUnit::Mm:
+        return value * CSS::pixelsPerMm;
+    case CSS::LengthPercentageUnit::Q:
+        return value * CSS::pixelsPerQ;
+    case CSS::LengthPercentageUnit::In:
+        return value * CSS::pixelsPerInch;
+    case CSS::LengthPercentageUnit::Pt:
+        return value * CSS::pixelsPerPt;
+    case CSS::LengthPercentageUnit::Pc:
+        return value * CSS::pixelsPerPc;
+    default:
+        return value;
+    }
+}
+
+// FIXME: Returning float loses precision for callers that multiply by a viewport dimension
+// (e.g. resolveRectangle with objectBoundingBox units). Consider returning double to keep
+// the division by 100 in double precision. See https://bugs.webkit.org/show_bug.cgi?id=309035
 float SVGLengthValue::valueAsPercentage() const
 {
     return WTF::switchOn(m_value,
@@ -214,7 +252,7 @@ float SVGLengthValue::valueAsPercentage() const
                 if (raw->unit == CSS::LengthPercentageUnit::Percentage)
                     return raw->value / 100.0f;
 
-                return raw->value;
+                return convertToPixels(raw->value, raw->unit);
             }
 
             return 0.0f;
@@ -327,20 +365,11 @@ ExceptionOr<void> SVGLengthValue::setValueAsString(StringView string)
     if (string.isEmpty())
         return Exception { ExceptionCode::SyntaxError };
 
-    // Trim leading and trailing whitespace to match SVG parsing expectations.
-    auto trimmedString = string.trim(isASCIIWhitespace<char16_t>);
-    if (trimmedString.isEmpty())
-        return Exception { ExceptionCode::SyntaxError };
-
     // CSS::Range only clamps to boundaries, but we historically handled
     // overflow values like "-45e58" to 0 instead of FLT_MAX.
     // FIXME: Consider setting to a proper value
-    auto isFloatOverflow = [](const auto& parsedValue) {
-        if (auto raw = parsedValue.raw()) {
-            double value = raw->value;
-            return value > FLT_MAX || value < -FLT_MAX;
-        }
-        return true;
+    auto isFloatOverflow = [](const auto& value) {
+        return value > FLT_MAX || value < -FLT_MAX;
     };
 
     auto parserContext = CSSParserContext { SVGAttributeMode };
@@ -348,33 +377,34 @@ ExceptionOr<void> SVGLengthValue::setValueAsString(StringView string)
         .context = parserContext
     };
 
-    CSSTokenizer tokenizer(trimmedString.toString());
+    CSSTokenizer tokenizer(string);
     auto tokenRange = tokenizer.tokenRange();
 
-    if (auto number = CSSPropertyParserHelpers::MetaConsumer<CSS::Number<>>::consume(tokenRange, parserState, { })) {
-        if (!tokenRange.atEnd())
-            return Exception { ExceptionCode::SyntaxError };
+    // Leading whitespace is allowed; the consumers below take care of the trailing
+    // whitespace by way of CSSParserTokenRange::consumeIncludingWhitespace().
+    tokenRange.consumeWhitespace();
 
-        m_value = isFloatOverflow(*number) ? CSS::Number<>(0) : WTF::move(*number);
+    auto parsedValue = CSSPropertyParserHelpers::MetaConsumer<CSS::Number<>, CSS::LengthPercentage<>>::consume(tokenRange, parserState, { });
+    if (!parsedValue || !tokenRange.atEnd())
+        return Exception { ExceptionCode::SyntaxError };
 
-        return { };
-    }
-
-    tokenRange = tokenizer.tokenRange();
-    if (auto length = CSSPropertyParserHelpers::MetaConsumer<CSS::LengthPercentage<>>::consume(tokenRange, parserState, { })) {
-        if (!tokenRange.atEnd())
-            return Exception { ExceptionCode::SyntaxError };
-
-        // FIXME: Add support for calculated lengths.
-        if (length->isCalc())
-            return Exception { ExceptionCode::SyntaxError };
-
-        m_value = WTF::move(*length);
-
-        return { };
-    }
-
-    return Exception { ExceptionCode::SyntaxError };
+    return WTF::switchOn(WTF::move(*parsedValue),
+        [&](CSS::Number<>&& number) -> ExceptionOr<void> {
+            auto raw = number.raw();
+            if (!raw || isFloatOverflow(raw->value))
+                m_value = CSS::Number<>(0);
+            else
+                m_value = WTF::move(number);
+            return { };
+        },
+        [&](CSS::LengthPercentage<>&& length) -> ExceptionOr<void> {
+            // FIXME: Add support for calculated lengths.
+            if (length.isCalc())
+                return Exception { ExceptionCode::SyntaxError };
+            m_value = WTF::move(length);
+            return { };
+        }
+    );
 }
 
 ExceptionOr<void> SVGLengthValue::convertToSpecifiedUnits(const SVGLengthContext& context, SVGLengthType targetType)

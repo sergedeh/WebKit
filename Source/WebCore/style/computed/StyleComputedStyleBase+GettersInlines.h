@@ -34,6 +34,7 @@
 #include <WebCore/StyleBoxData.h>
 #include <WebCore/StyleCustomPropertyData.h>
 #include <WebCore/StyleDeprecatedFlexibleBoxData.h>
+#include <WebCore/StyleDisplay.h>
 #include <WebCore/StyleFillLayers.h>
 #include <WebCore/StyleFilterData.h>
 #include <WebCore/StyleFlexibleBoxData.h>
@@ -103,14 +104,19 @@ inline bool ComputedStyleBase::usesViewportUnits() const
     return m_nonInheritedFlags.usesViewportUnits;
 }
 
-inline bool ComputedStyleBase::usesContainerUnits() const
+inline bool ComputedStyleBase::isContainerDependent() const
 {
-    return m_nonInheritedFlags.usesContainerUnits;
+    return m_nonInheritedFlags.isContainerDependent;
 }
 
 inline bool ComputedStyleBase::useTreeCountingFunctions() const
 {
     return m_nonInheritedFlags.useTreeCountingFunctions;
+}
+
+inline const Color& ComputedStyleBase::colorForHighlight() const
+{
+    return m_inheritedRareData->colorForHighlight;
 }
 
 inline InsideLink ComputedStyleBase::insideLink() const
@@ -121,11 +127,6 @@ inline InsideLink ComputedStyleBase::insideLink() const
 inline bool ComputedStyleBase::isLink() const
 {
     return m_nonInheritedFlags.isLink;
-}
-
-inline bool ComputedStyleBase::emptyState() const
-{
-    return m_nonInheritedFlags.emptyState;
 }
 
 inline bool ComputedStyleBase::firstChildState() const
@@ -158,6 +159,11 @@ inline bool ComputedStyleBase::isEffectivelyTransparent() const
     return m_inheritedRareData->effectivelyTransparent;
 }
 
+inline bool ComputedStyleBase::effectiveWrapInsideAvoid() const
+{
+    return m_inheritedRareData->effectiveWrapInsideAvoid;
+}
+
 inline bool ComputedStyleBase::insideDefaultButton() const
 {
     return m_inheritedRareData->insideDefaultButton;
@@ -168,10 +174,22 @@ inline bool ComputedStyleBase::insideSubmitButton() const
     return m_inheritedRareData->insideSubmitButton;
 }
 
+inline bool ComputedStyleBase::inBaseAppearanceSubtree() const
+{
+    return m_inheritedRareData->inBaseAppearanceSubtree;
+}
+
 inline bool ComputedStyleBase::isInSubtreeWithBlendMode() const
 {
     return m_inheritedRareData->isInSubtreeWithBlendMode;
 }
+
+#if ENABLE(SMART_IMAGE_RESIZER)
+inline bool ComputedStyleBase::isAffectedBySmartImageResizer() const
+{
+    return m_inheritedRareData->isAffectedBySmartImageResizer;
+}
+#endif
 
 inline bool ComputedStyleBase::isForceHidden() const
 {
@@ -228,14 +246,9 @@ inline std::optional<size_t> ComputedStyleBase::usedPositionOptionIndex() const
     return m_nonInheritedData->rareData->usedPositionOptionIndex;
 }
 
-inline constexpr DisplayType ComputedStyleBase::originalDisplay() const
+inline constexpr Display ComputedStyleBase::originalDisplay() const
 {
-    return static_cast<DisplayType>(m_nonInheritedFlags.originalDisplay);
-}
-
-inline DisplayType ComputedStyleBase::effectiveDisplay() const
-{
-    return static_cast<DisplayType>(m_nonInheritedFlags.effectiveDisplay);
+    return Display::fromRaw(m_nonInheritedFlags.originalDisplay);
 }
 
 inline StyleAppearance ComputedStyleBase::usedAppearance() const
@@ -246,6 +259,11 @@ inline StyleAppearance ComputedStyleBase::usedAppearance() const
 inline ContentVisibility ComputedStyleBase::usedContentVisibility() const
 {
     return static_cast<ContentVisibility>(m_inheritedRareData->usedContentVisibility);
+}
+
+inline UserSelect ComputedStyleBase::usedUserSelectIgnoringEffectivelyInert() const
+{
+    return static_cast<UserSelect>(m_inheritedRareData->usedUserSelect);
 }
 
 inline TouchAction ComputedStyleBase::usedTouchAction() const
@@ -272,14 +290,34 @@ inline std::optional<PseudoElementType> ComputedStyleBase::pseudoElementType() c
     return m_nonInheritedFlags.pseudoElementType ? std::make_optional(static_cast<PseudoElementType>(m_nonInheritedFlags.pseudoElementType - 1)) : std::nullopt;
 }
 
+inline bool ComputedStyleBase::isListMarkerStyle() const
+{
+    return pseudoElementType() == PseudoElementType::Marker;
+}
+
+inline std::optional<PseudoElementType> pseudoElementType(const ComputedStyleBase& style)
+{
+    return style.pseudoElementType();
+}
+
 inline const AtomString& ComputedStyleBase::pseudoElementNameArgument() const
 {
     return m_nonInheritedData->rareData->pseudoElementNameArgument;
 }
 
+inline EnumSet<PseudoElementType> ComputedStyleBase::highlightPseudoElementTypes() const
+{
+    return EnumSet<PseudoElementType>::fromRaw(m_nonInheritedFlags.pseudoBits) & allHighlightPseudoElementTypes;
+}
+
 inline bool ComputedStyleBase::hasPseudoStyle(PseudoElementType pseudo) const
 {
     return m_nonInheritedFlags.hasPseudoStyle(pseudo);
+}
+
+inline PseudoElementBoxGeneration ComputedStyleBase::pseudoElementBoxGeneration() const
+{
+    return static_cast<PseudoElementBoxGeneration>(m_nonInheritedFlags.pseudoElementBoxGeneration);
 }
 
 inline bool ComputedStyleBase::hasAnyPublicPseudoStyles() const
@@ -301,16 +339,6 @@ inline const CustomPropertyData& ComputedStyleBase::nonInheritedCustomProperties
 
 // MARK: - Zoom
 
-inline bool ComputedStyleBase::evaluationTimeZoomEnabled() const
-{
-    return m_inheritedRareData->evaluationTimeZoomEnabled;
-}
-
-inline float ComputedStyleBase::deviceScaleFactor() const
-{
-    return m_inheritedRareData->deviceScaleFactor;
-}
-
 inline bool ComputedStyleBase::useSVGZoomRulesForLength() const
 {
     return m_nonInheritedData->rareData->useSVGZoomRulesForLength;
@@ -319,6 +347,11 @@ inline bool ComputedStyleBase::useSVGZoomRulesForLength() const
 inline float ComputedStyleBase::usedZoom() const
 {
     return m_inheritedRareData->usedZoom;
+}
+
+inline float ComputedStyleBase::deviceScaleFactor() const
+{
+    return m_inheritedRareData->deviceScaleFactor;
 }
 
 inline ZoomFactor ComputedStyleBase::usedZoomForLength() const
@@ -330,10 +363,7 @@ inline ZoomFactor ComputedStyleBase::usedZoomForLength() const
     if (useSVGZoomRulesForLength())
         return unzoomed;
 
-    if (evaluationTimeZoomEnabled())
-        return ZoomFactor(usedZoom());
-
-    return unzoomed;
+    return ZoomFactor(usedZoom());
 }
 
 // MARK: - Fonts
@@ -343,9 +373,9 @@ inline const FontCascade& ComputedStyleBase::fontCascade() const
     return m_inheritedData->fontData->fontCascade;
 }
 
-inline WebkitLocale ComputedStyleBase::computedLocale() const
+inline WebkitLocale ComputedStyleBase::usedLocale() const
 {
-    return fontDescription().computedLocale();
+    return fontDescription().usedLocale();
 }
 
 inline float ComputedStyleBase::usedLetterSpacing() const
@@ -393,6 +423,11 @@ inline const ScrollTimelines& ComputedStyleBase::scrollTimelines() const
 inline const ViewTimelines& ComputedStyleBase::viewTimelines() const
 {
     return m_nonInheritedData->rareData->viewTimelines;
+}
+
+inline const TimelineTriggers& ComputedStyleBase::timelineTriggers() const
+{
+    return m_nonInheritedData->rareData->timelineTriggers;
 }
 
 inline const Animations& ComputedStyleBase::animations() const
@@ -473,6 +508,11 @@ inline const BorderValue& ComputedStyleBase::borderTop() const
 inline const BorderValue& ComputedStyleBase::columnRule() const
 {
     return m_nonInheritedData->miscData->multiCol->columnRule;
+}
+
+inline bool ComputedStyleBase::hasLegacyLineClamp() const
+{
+    return static_cast<OverflowContinue>(m_nonInheritedData->rareData->overflowContinue) == OverflowContinue::WebkitLegacy && !m_nonInheritedData->rareData->maxLines.isAuto();
 }
 
 // MARK: - Properties/descriptors that are not yet generated

@@ -102,6 +102,8 @@ public:
 
     virtual IntSize presentationSize() const = 0;
     virtual uint32_t pixelFormat() const = 0;
+    virtual bool isEncoded() const { return false; }
+    virtual bool hasSameEncodedFormat(const VideoFrame&) const { return false; }
 
     virtual bool isRemoteProxy() const { return false; }
     virtual bool isLibWebRTC() const { return false; }
@@ -111,17 +113,18 @@ public:
 #endif
 #if PLATFORM(COCOA)
     virtual CVPixelBufferRef pixelBuffer() const { return nullptr; };
-    RetainPtr<CVPixelBufferRef> protectedPixelBuffer() const { return pixelBuffer(); }
 #endif
     WEBCORE_EXPORT virtual void setOwnershipIdentity(const ProcessIdentity&) { }
 
-    void initializeCharacteristics(MediaTime presentationTime, bool isMirrored, Rotation);
+    void NODELETE initializeCharacteristics(MediaTime presentationTime, bool isMirrored, Rotation);
 
     RefPtr<NativeImage> copyNativeImage() const;
-    const PlatformVideoColorSpace& colorSpace() const { return m_colorSpace; }
+    const PlatformVideoColorSpace& colorSpace() const LIFETIME_BOUND { return m_colorSpace; }
 
     bool hasNoTransformation() const { return m_rotation == VideoFrameRotation::None && !m_isMirrored; }
     bool has90DegreeRotation() const { return m_rotation == VideoFrameRotation::Left || m_rotation == VideoFrameRotation::Right; }
+
+    WEBCORE_EXPORT bool is10bits() const;
 
 protected:
     WEBCORE_EXPORT VideoFrame(MediaTime presentationTime, bool isMirrored, Rotation, PlatformVideoColorSpace&& = { });

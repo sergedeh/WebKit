@@ -29,12 +29,16 @@
 #if PLATFORM(MAC) && ENABLE(APPLE_PAY)
 
 #import "AppKitSPI.h"
+#import "DisbursementRequest.h"
 #import "PaymentAuthorizationViewController.h"
 #import "WebPageProxy.h"
+#import <WebCore/ApplePayDisbursementRequest.h>
 #import <pal/cocoa/PassKitSoftLink.h>
 #import <wtf/BlockPtr.h>
 
 namespace WebKit {
+
+using namespace WebCore;
 
 void WebPaymentCoordinatorProxy::platformCanMakePayments(CompletionHandler<void(bool)>&& completionHandler)
 {
@@ -47,7 +51,7 @@ void WebPaymentCoordinatorProxy::platformCanMakePayments(CompletionHandler<void(
 #endif
         return completionHandler(false);
 
-    protectedCanMakePaymentsQueue()->dispatch([theClass = retainPtr(PAL::getPKPaymentAuthorizationViewControllerClassSingleton()), completionHandler = WTF::move(completionHandler)]() mutable {
+    m_canMakePaymentsQueue->dispatch([theClass = retainPtr(PAL::getPKPaymentAuthorizationViewControllerClassSingleton()), completionHandler = WTF::move(completionHandler)]() mutable {
         RunLoop::mainSingleton().dispatch([canMakePayments = [theClass canMakePayments], completionHandler = WTF::move(completionHandler)]() mutable {
             completionHandler(canMakePayments);
         });
@@ -67,7 +71,7 @@ void WebPaymentCoordinatorProxy::platformShowPaymentUI(WebPageProxyIdentifier we
 
     RetainPtr<PKPaymentRequest> paymentRequest;
 #if HAVE(PASSKIT_DISBURSEMENTS)
-    std::optional<ApplePayDisbursementRequest> webDisbursementRequest = request.disbursementRequest();
+    std::optional<WebCore::ApplePayDisbursementRequest> webDisbursementRequest = request.disbursementRequest();
     if (webDisbursementRequest) {
         auto disbursementRequest = platformDisbursementRequest(request, originatingURL, webDisbursementRequest->requiredRecipientContactFields);
         paymentRequest = RetainPtr<PKPaymentRequest>((PKPaymentRequest *)disbursementRequest.get());
@@ -75,7 +79,7 @@ void WebPaymentCoordinatorProxy::platformShowPaymentUI(WebPageProxyIdentifier we
 #endif
         paymentRequest = platformPaymentRequest(originatingURL, linkIconURLs, request);
 
-    checkedClient()->getPaymentCoordinatorEmbeddingUserAgent(webPageProxyID, [weakThis = WeakPtr { *this }, paymentRequest, completionHandler = WTF::move(completionHandler)](const String& userAgent) mutable {
+    protect(m_client)->getPaymentCoordinatorEmbeddingUserAgent(webPageProxyID, [weakThis = WeakPtr { *this }, paymentRequest, completionHandler = WTF::move(completionHandler)](const String& userAgent) mutable {
         RefPtr paymentCoordinatorProxy = weakThis.get();
         if (!paymentCoordinatorProxy)
             return completionHandler(false);
@@ -100,7 +104,7 @@ void WebPaymentCoordinatorProxy::platformShowPaymentUI(WebPageProxyIdentifier we
             if (showPaymentUIRequestSeed != paymentCoordinatorProxy->m_showPaymentUIRequestSeed)
                 return completionHandler(false);
 
-            RetainPtr presentingWindow = paymentCoordinatorProxy->checkedClient()->paymentCoordinatorPresentingWindow(*paymentCoordinatorProxy);
+            RetainPtr presentingWindow = protect(paymentCoordinatorProxy->m_client)->paymentCoordinatorPresentingWindow(*paymentCoordinatorProxy);
             if (!presentingWindow)
                 return completionHandler(false);
 

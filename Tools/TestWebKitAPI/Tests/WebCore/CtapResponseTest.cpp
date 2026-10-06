@@ -33,12 +33,14 @@
 
 #include "FidoTestData.h"
 #include <JavaScriptCore/ArrayBuffer.h>
+#include <WebCore/AuthenticationExtensionsClientOutputs.h>
 #include <WebCore/AuthenticatorAttachment.h>
 #include <WebCore/AuthenticatorTransport.h>
 #include <WebCore/BufferSource.h>
 #include <WebCore/CBORReader.h>
 #include <WebCore/CBORValue.h>
 #include <WebCore/CBORWriter.h>
+#include <WebCore/CredentialPropertiesOutput.h>
 #include <WebCore/DeviceResponseConverter.h>
 #include <WebCore/FidoConstants.h>
 #include <WebCore/U2fResponseConverter.h>
@@ -48,7 +50,7 @@ namespace TestWebKitAPI {
 using namespace WebCore;
 using namespace fido;
 
-constexpr auto kTestAuthenticatorGetInfoResponseWithNoVersion = std::to_array<uint8_t>({
+constexpr auto kTestAuthenticatorGetInfoResponseWithNoVersion = WTF::toArray<uint8_t>({
     // Success status byte
     0x00,
     // Map of 6 elements
@@ -104,7 +106,7 @@ constexpr auto kTestAuthenticatorGetInfoResponseWithNoVersion = std::to_array<ui
     0x81, 0x01,
 });
 
-constexpr auto kTestAuthenticatorGetInfoResponseWithDuplicateVersion = std::to_array<uint8_t>({
+constexpr auto kTestAuthenticatorGetInfoResponseWithDuplicateVersion = WTF::toArray<uint8_t>({
     // Success status byte
     0x00,
     // Map of 6 elements
@@ -164,7 +166,7 @@ constexpr auto kTestAuthenticatorGetInfoResponseWithDuplicateVersion = std::to_a
     0x81, 0x01,
 });
 
-constexpr auto kTestAuthenticatorGetInfoResponseWithIncorrectAaguid = std::to_array<uint8_t>({
+constexpr auto kTestAuthenticatorGetInfoResponseWithIncorrectAaguid = WTF::toArray<uint8_t>({
     // Success status byte
     0x00,
     // Map of 6 elements
@@ -225,7 +227,7 @@ constexpr auto kTestAuthenticatorGetInfoResponseWithIncorrectAaguid = std::to_ar
 
 // The attested credential data, excluding the public key bytes. Append
 // with kTestECPublicKeyCOSE to get the complete attestation data.
-constexpr auto kTestAttestedCredentialDataPrefix = std::to_array<uint8_t>({
+constexpr auto kTestAttestedCredentialDataPrefix = WTF::toArray<uint8_t>({
     // 16-byte aaguid
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00,
@@ -242,7 +244,7 @@ constexpr auto kTestAttestedCredentialDataPrefix = std::to_array<uint8_t>({
 
 // The authenticator data, excluding the attested credential data bytes. Append
 // with attested credential data to get the complete authenticator data.
-constexpr auto kTestAuthenticatorDataPrefix = std::to_array<uint8_t>({
+constexpr auto kTestAuthenticatorDataPrefix = WTF::toArray<uint8_t>({
     // sha256 hash of rp id.
     0x11, 0x94, 0x22, 0x8D, 0xA8, 0xFD, 0xBD, 0xEE, 0xFD, 0x26, 0x1B, 0xD7,
     0xB6, 0x59, 0x5C, 0xFD, 0x70, 0xA5, 0x0D, 0x70, 0xC6, 0x40, 0x7B, 0xCF,
@@ -256,7 +258,7 @@ constexpr auto kTestAuthenticatorDataPrefix = std::to_array<uint8_t>({
 // Components of the CBOR needed to form an authenticator object.
 // Combined diagnostic notation:
 // {"fmt": "fido-u2f", "attStmt": {"sig": h'30...}, "authData": h'D4C9D9...'}
-constexpr auto kFormatFidoU2fCBOR = std::to_array<uint8_t>({
+constexpr auto kFormatFidoU2fCBOR = WTF::toArray<uint8_t>({
     // map(3)
     0xA3,
     // text(3)
@@ -269,14 +271,14 @@ constexpr auto kFormatFidoU2fCBOR = std::to_array<uint8_t>({
     0x66, 0x69, 0x64, 0x6F, 0x2D, 0x75, 0x32, 0x66
 });
 
-constexpr auto kAttStmtCBOR = std::to_array<uint8_t>({
+constexpr auto kAttStmtCBOR = WTF::toArray<uint8_t>({
     // text(7)
     0x67,
     // "attStmt"
     0x61, 0x74, 0x74, 0x53, 0x74, 0x6D, 0x74
 });
 
-constexpr auto kAuthDataCBOR = std::to_array<uint8_t>({
+constexpr auto kAuthDataCBOR = WTF::toArray<uint8_t>({
     // text(8)
     0x68,
     // "authData"
@@ -287,7 +289,7 @@ constexpr auto kAuthDataCBOR = std::to_array<uint8_t>({
     0x58, 0xC4
 });
 
-constexpr auto kTestDeviceAaguid = std::to_array<uint8_t>({
+constexpr auto kTestDeviceAaguid = WTF::toArray<uint8_t>({
     0xF8, 0xA0, 0x11, 0xF3, 0x8C, 0x0A, 0x4D, 0x15, 0x80, 0x06, 0x17, 0x11, 0x1F, 0x9E, 0xDC, 0x7D
 });
 
@@ -356,7 +358,7 @@ TEST(CTAPResponseTest, TestReadMakeCredentialResponse)
 {
     auto makeCredentialResponse = readCTAPMakeCredentialResponse(std::span { TestData::kTestMakeCredentialResponse }, AuthenticatorAttachment::CrossPlatform, { });
     ASSERT_TRUE(makeCredentialResponse);
-    auto cborAttestationObject = cbor::CBORReader::read(makeCredentialResponse->attestationObject()->toVector());
+    auto cborAttestationObject = cbor::CBORReader::read(makeCredentialResponse->attestationObject().toVector());
     ASSERT_TRUE(cborAttestationObject);
     ASSERT_TRUE(cborAttestationObject->isMap());
 
@@ -364,7 +366,7 @@ TEST(CTAPResponseTest, TestReadMakeCredentialResponse)
     auto it = attestationObjectMap.find(cbor::CBORValue(kFormatKey));
     ASSERT_TRUE(it != attestationObjectMap.end());
     ASSERT_TRUE(it->second.isString());
-    EXPECT_STREQ(it->second.getString().utf8().data(), "packed");
+    EXPECT_EQ(it->second.getString(), "packed"_s);
 
     it = attestationObjectMap.find(cbor::CBORValue(kAuthDataKey));
     ASSERT_TRUE(it != attestationObjectMap.end());
@@ -394,8 +396,8 @@ TEST(CTAPResponseTest, TestReadMakeCredentialResponse)
     ASSERT_EQ(certificate.getArray().size(), 1u);
     ASSERT_TRUE(certificate.getArray()[0].isByteString());
     EXPECT_EQ(certificate.getArray()[0].getByteString(), Vector<uint8_t> { TestData::kCtap2MakeCredentialCertificate });
-    EXPECT_EQ(makeCredentialResponse->rawId()->byteLength(), sizeof(TestData::kCtap2MakeCredentialCredentialId));
-    EXPECT_TRUE(equalSpans(makeCredentialResponse->rawId()->span(), std::span { TestData::kCtap2MakeCredentialCredentialId }));
+    EXPECT_EQ(makeCredentialResponse->rawId().byteLength(), sizeof(TestData::kCtap2MakeCredentialCredentialId));
+    EXPECT_TRUE(equalSpans(makeCredentialResponse->rawId().span(), std::span { TestData::kCtap2MakeCredentialCredentialId }));
 }
 
 // Leveraging example 5 of section 6.1 of the CTAP spec.
@@ -435,8 +437,8 @@ TEST(CTAPResponseTest, TestReadGetAssertionResponse3)
     EXPECT_TRUE(equalSpans(getAssertionResponse->signature()->span(), std::span { TestData::kCtap2GetAssertionSignature }));
     EXPECT_EQ(getAssertionResponse->userHandle()->byteLength(), sizeof(TestData::kCtap2GetAssertionUserHandle));
     EXPECT_TRUE(equalSpans(getAssertionResponse->userHandle()->span(), std::span { TestData::kCtap2GetAssertionUserHandle }));
-    EXPECT_STREQ(getAssertionResponse->name().utf8().data(), "johnpsmith@example.com");
-    EXPECT_STREQ(getAssertionResponse->displayName().utf8().data(), "John P. Smith");
+    EXPECT_EQ(getAssertionResponse->name(), "johnpsmith@example.com"_s);
+    EXPECT_EQ(getAssertionResponse->displayName(), "John P. Smith"_s);
     EXPECT_EQ(getAssertionResponse->numberOfCredentials(), 1u);
 }
 
@@ -445,11 +447,11 @@ TEST(CTAPResponseTest, TestParseRegisterResponseData)
 {
     auto response = readU2fRegisterResponse(TestData::kRelyingPartyId, std::span { TestData::kTestU2fRegisterResponse }, AuthenticatorAttachment::CrossPlatform);
     ASSERT_TRUE(response);
-    EXPECT_EQ(response->rawId()->byteLength(), sizeof(TestData::kU2fSignKeyHandle));
-    EXPECT_TRUE(equalSpans(response->rawId()->span(), std::span { TestData::kU2fSignKeyHandle }));
+    EXPECT_EQ(response->rawId().byteLength(), sizeof(TestData::kU2fSignKeyHandle));
+    EXPECT_TRUE(equalSpans(response->rawId().span(), std::span { TestData::kU2fSignKeyHandle }));
     auto expectedAttestationObject = getTestAttestationObjectBytes();
-    EXPECT_EQ(response->attestationObject()->byteLength(), expectedAttestationObject.size());
-    EXPECT_TRUE(equalSpans(response->attestationObject()->span(), expectedAttestationObject.span()));
+    EXPECT_EQ(response->attestationObject().byteLength(), expectedAttestationObject.size());
+    EXPECT_TRUE(equalSpans(response->attestationObject().span(), expectedAttestationObject.span()));
 }
 
 // Test malformed user public key.
@@ -547,8 +549,8 @@ TEST(CTAPResponseTest, TestParseSignResponseData)
 {
     auto response = readU2fSignResponse(TestData::kRelyingPartyId, getTestCredentialRawIdBytes(), getTestSignResponse(), AuthenticatorAttachment::CrossPlatform);
     ASSERT_TRUE(response);
-    EXPECT_EQ(response->rawId()->byteLength(), sizeof(TestData::kU2fSignKeyHandle));
-    EXPECT_TRUE(equalSpans(response->rawId()->span(), std::span { TestData::kU2fSignKeyHandle }));
+    EXPECT_EQ(response->rawId().byteLength(), sizeof(TestData::kU2fSignKeyHandle));
+    EXPECT_TRUE(equalSpans(response->rawId().span(), std::span { TestData::kU2fSignKeyHandle }));
     EXPECT_EQ(response->authenticatorData()->byteLength(), sizeof(TestData::kTestSignAuthenticatorData));
     EXPECT_TRUE(equalSpans(response->authenticatorData()->span(), std::span { TestData::kTestSignAuthenticatorData }));
     EXPECT_EQ(response->signature()->byteLength(), sizeof(TestData::kU2fSignature));
@@ -557,7 +559,7 @@ TEST(CTAPResponseTest, TestParseSignResponseData)
 
 TEST(CTAPResponseTest, TestParseU2fSignWithNullKeyHandle)
 {
-    auto response = readU2fSignResponse(TestData::kRelyingPartyId, BufferSource(), getTestSignResponse(), AuthenticatorAttachment::CrossPlatform);
+    auto response = readU2fSignResponse(TestData::kRelyingPartyId, JSC::ArrayBuffer::create(static_cast<size_t>(0U), 1), getTestSignResponse(), AuthenticatorAttachment::CrossPlatform);
     EXPECT_FALSE(response);
 }
 
@@ -666,6 +668,36 @@ TEST(CTAPResponseTest, TestReadMakeCredentialResponseWithHmacSecret)
     ASSERT_TRUE(extensions.prf);
     ASSERT_TRUE(extensions.prf->enabled);
     EXPECT_TRUE(*extensions.prf->enabled);
+}
+
+static Vector<uint8_t> encodeExtensionOutputs(cbor::CBORValue::MapValue&& map)
+{
+    auto encoded = cbor::CBORWriter::write(cbor::CBORValue(WTF::move(map)));
+    return encoded.value();
+}
+
+static Vector<uint8_t> encodeCredPropsExtensionOutputs(cbor::CBORValue::MapValue&& credPropsMap)
+{
+    cbor::CBORValue::MapValue root;
+    root[cbor::CBORValue("credProps")] = cbor::CBORValue(WTF::move(credPropsMap));
+    return encodeExtensionOutputs(WTF::move(root));
+}
+
+TEST(CTAPResponseTest, TestExtensionOutputsCredPropsWithoutRk)
+{
+    {
+        auto outputs = AuthenticationExtensionsClientOutputs::fromCBOR(encodeCredPropsExtensionOutputs({ }));
+        ASSERT_TRUE(outputs);
+        EXPECT_TRUE(outputs->credProps.has_value());
+    }
+
+    {
+        cbor::CBORValue::MapValue credProps;
+        credProps[cbor::CBORValue("unknownKey")] = cbor::CBORValue(true);
+        auto outputs = AuthenticationExtensionsClientOutputs::fromCBOR(encodeCredPropsExtensionOutputs(WTF::move(credProps)));
+        ASSERT_TRUE(outputs);
+        EXPECT_TRUE(outputs->credProps.has_value());
+    }
 }
 
 } // namespace TestWebKitAPI

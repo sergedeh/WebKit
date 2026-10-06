@@ -30,10 +30,11 @@
 
 #import "LayerHostingContext.h"
 #import "LayerHostingContextManager.h"
+#import "Logging.h"
 #import "MediaPlayerPrivateRemoteMessages.h"
 #import "RemoteVideoFrameObjectHeap.h"
 #import <QuartzCore/QuartzCore.h>
-#import <WebCore/DestinationColorSpace.h>
+#import <WebCore/ColorSpace.h>
 #import <WebCore/FloatRect.h>
 #import <WebCore/FloatSize.h>
 #import <WebCore/HostingContext.h>
@@ -54,7 +55,7 @@ void RemoteMediaPlayerProxy::mediaPlayerFirstVideoFrameAvailable()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
     m_layerHostingContextManager->setVideoLayerSizeIfPossible();
-    protectedConnection()->send(Messages::MediaPlayerPrivateRemote::FirstVideoFrameAvailable(), m_id);
+    protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::FirstVideoFrameAvailable(), m_id);
 }
 
 void RemoteMediaPlayerProxy::mediaPlayerRenderingModeChanged()
@@ -68,15 +69,21 @@ void RemoteMediaPlayerProxy::mediaPlayerRenderingModeChanged()
         false;
 #endif
 
-    if (auto hostingContext = m_layerHostingContextManager->createHostingContextIfNeeded(protectedPlayer()->platformLayer(), canShowWhileLocked))
-        protectedConnection()->send(Messages::MediaPlayerPrivateRemote::LayerHostingContextChanged(*hostingContext, m_layerHostingContextManager->videoLayerSize()), m_id);
+    if (auto hostingContext = m_layerHostingContextManager->createHostingContextIfNeeded(m_player->platformLayer(), canShowWhileLocked))
+        protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::LayerHostingContextChanged(*hostingContext, m_layerHostingContextManager->videoLayerSize()), m_id);
 
-    protectedConnection()->send(Messages::MediaPlayerPrivateRemote::RenderingModeChanged(), m_id);
+    protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::RenderingModeChanged(), m_id);
 }
 
 void RemoteMediaPlayerProxy::requestHostingContext(CompletionHandler<void(WebCore::HostingContext)>&& completionHandler)
 {
-    m_layerHostingContextManager->requestHostingContext(WTF::move(completionHandler));
+    m_layerHostingContextManager->requestHostingContext()->whenSettled(RunLoop::mainSingleton(), [completionHandler = WTF::move(completionHandler)](auto&& result) mutable {
+        if (!result) {
+            completionHandler({ });
+            return;
+        }
+        completionHandler(WTF::move(*result));
+    });
 }
 
 void RemoteMediaPlayerProxy::setVideoLayerSizeFenced(const WebCore::FloatSize& size, WTF::MachSendRightAnnotated&& sendRightAnnotated)
@@ -85,14 +92,14 @@ void RemoteMediaPlayerProxy::setVideoLayerSizeFenced(const WebCore::FloatSize& s
 
     ALWAYS_LOG(LOGIDENTIFIER, size.width(), "x", size.height());
     m_layerHostingContextManager->setVideoLayerSizeFenced(size, WTF::MachSendRightAnnotated { sendRightAnnotated }, [&] {
-        protectedPlayer()->setVideoLayerSizeFenced(size, WTF::move(sendRightAnnotated));
+        m_player->setVideoLayerSizeFenced(size, WTF::move(sendRightAnnotated));
     });
 }
 
 void RemoteMediaPlayerProxy::mediaPlayerOnNewVideoFrameMetadata(WebCore::VideoFrameMetadata&& metadata, RetainPtr<CVPixelBufferRef>&& buffer)
 {
-    auto properties = protectedVideoFrameObjectHeap()->add(WebCore::VideoFrameCV::create({ }, false, WebCore::VideoFrame::Rotation::None, WTF::move(buffer)));
-    protectedConnection()->send(Messages::MediaPlayerPrivateRemote::PushVideoFrameMetadata(metadata, properties), m_id);
+    auto properties = protect(m_videoFrameObjectHeap)->add(WebCore::VideoFrameCV::create({ }, false, WebCore::VideoFrame::Rotation::None, WTF::move(buffer)));
+    protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::PushVideoFrameMetadata(metadata, properties), m_id);
 }
 
 WebCore::FloatSize RemoteMediaPlayerProxy::mediaPlayerVideoLayerSize() const
@@ -100,46 +107,44 @@ WebCore::FloatSize RemoteMediaPlayerProxy::mediaPlayerVideoLayerSize() const
     return m_layerHostingContextManager->videoLayerSize();
 }
 
-void RemoteMediaPlayerProxy::nativeImageForCurrentTime(CompletionHandler<void(std::optional<WTF::MachSendRight>&&, WebCore::DestinationColorSpace)>&& completionHandler)
+void RemoteMediaPlayerProxy::nativeImageForCurrentTime(CompletionHandler<void(std::optional<WTF::MachSendRight>&&, WebCore::ColorSpace)>&& completionHandler)
 {
     using namespace WebCore;
 
-    RefPtr player = m_player;
-    if (!player) {
-        completionHandler(std::nullopt, DestinationColorSpace::SRGB());
+    if (!m_player) {
+        completionHandler(std::nullopt, ColorSpace::SRGB());
         return;
     }
 
-    auto nativeImage = player->nativeImageForCurrentTime();
+    auto nativeImage = m_player->nativeImageForCurrentTime();
     if (!nativeImage) {
-        completionHandler(std::nullopt, DestinationColorSpace::SRGB());
+        completionHandler(std::nullopt, ColorSpace::SRGB());
         return;
     }
 
     auto platformImage = nativeImage->platformImage();
     if (!platformImage) {
-        completionHandler(std::nullopt, DestinationColorSpace::SRGB());
+        completionHandler(std::nullopt, ColorSpace::SRGB());
         return;
     }
 
     auto surface = WebCore::IOSurface::createFromImage(nullptr, platformImage.get());
     if (!surface) {
-        completionHandler(std::nullopt, DestinationColorSpace::SRGB());
+        completionHandler(std::nullopt, ColorSpace::SRGB());
         return;
     }
 
     completionHandler(surface->createSendRight(), nativeImage->colorSpace());
 }
 
-void RemoteMediaPlayerProxy::colorSpace(CompletionHandler<void(WebCore::DestinationColorSpace)>&& completionHandler)
+void RemoteMediaPlayerProxy::colorSpace(CompletionHandler<void(WebCore::ColorSpace)>&& completionHandler)
 {
-    RefPtr player = m_player;
-    if (!player) {
-        completionHandler(WebCore::DestinationColorSpace::SRGB());
+    if (!m_player) {
+        completionHandler(WebCore::ColorSpace::SRGB());
         return;
     }
 
-    completionHandler(player->colorSpace());
+    completionHandler(m_player->colorSpace());
 }
 
 } // namespace WebKit

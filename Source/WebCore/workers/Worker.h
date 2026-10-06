@@ -66,19 +66,19 @@ public:
 
     USING_CAN_MAKE_WEAKPTR(AbstractWorker);
 
-    static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, JSC::RuntimeFlags, Variant<RefPtr<TrustedScriptURL>, String>&&, WorkerOptions&&);
+    static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, JSC::RuntimeFlags, Variant<Ref<TrustedScriptURL>, String>&&, WorkerOptions&&);
     virtual ~Worker();
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
+    ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, Vector<JSC::Strong<JSC::JSObject>>&&);
 
     void terminate();
     bool wasTerminated() const { return m_wasTerminated; }
 
     String identifier() const { return m_identifier; }
-    const String& name() const { return m_options.name; }
+    const String& name() const LIFETIME_BOUND { return m_options.name; }
 
     ScriptExecutionContext* scriptExecutionContext() const final;
-    using ActiveDOMObject::protectedScriptExecutionContext;
 
     void dispatchEvent(Event&) final;
     void reportError(const String&);
@@ -118,7 +118,6 @@ private:
     bool m_shouldBypassMainWorldContentSecurityPolicy { false };
     bool m_isSuspendedForBackForwardCache { false };
     JSC::RuntimeFlags m_runtimeFlags;
-    Deque<RefPtr<Event>> m_pendingEvents;
     bool m_wasTerminated { false };
     bool m_didStartWorkerGlobalScope { false };
     const ScriptExecutionContextIdentifier m_clientIdentifier;

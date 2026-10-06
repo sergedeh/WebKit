@@ -74,16 +74,15 @@ private:
     RemoteTextureView& operator=(RemoteTextureView&&) = delete;
 
     WebCore::WebGPU::TextureView& backing() { return m_backing; }
-    Ref<IPC::StreamServerConnection> protectedStreamConnection() const;
 
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
     void setLabel(String&&);
     void destruct();
 
-    Ref<WebCore::WebGPU::TextureView> m_backing;
+    const Ref<WebCore::WebGPU::TextureView> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;
 };

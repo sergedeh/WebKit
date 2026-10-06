@@ -64,19 +64,22 @@ SOAuthorizationCoordinator::SOAuthorizationCoordinator()
     if (!m_hasAppSSO)
         return;
 #endif
-    m_soAuthorizationDelegate = adoptNS([[WKSOAuthorizationDelegate alloc] init]);
+    lazyInitialize(m_soAuthorizationDelegate, adoptNS([[WKSOAuthorizationDelegate alloc] init]));
     [NSURLSession _disableAppSSO];
 }
 
 void SOAuthorizationCoordinator::canAuthorize(const URL& url, CompletionHandler<void(bool)>&& completionHandler)
 {
     if (!m_hasAppSSO) {
+        AUTHORIZATIONCOORDINATOR_RELEASE_LOG("canAuthorize: No AppSSO framework");
         completionHandler(false);
         return;
     }
     if ([PAL::getSOAuthorizationClassSingleton() respondsToSelector:@selector(canPerformAuthorizationWithURL:responseCode:callerBundleIdentifier:useInternalExtensions:completion:)]) {
+        AUTHORIZATIONCOORDINATOR_RELEASE_LOG("canAuthorize: Calling async canPerformAuthorizationWithURL");
         [PAL::getSOAuthorizationClassSingleton() canPerformAuthorizationWithURL:url.createNSURL().get() responseCode:0 callerBundleIdentifier:nil useInternalExtensions:YES completion:makeBlockPtr([completionHandler = WTF::move(completionHandler)] (BOOL result) mutable {
             ensureOnMainRunLoop([completionHandler = WTF::move(completionHandler), result] () mutable {
+                AUTHORIZATIONCOORDINATOR_RELEASE_LOG_STATIC("canAuthorize: Async canPerformAuthorizationWithURL completed, result=%d", result);
                 completionHandler(result);
             });
         }).get()];

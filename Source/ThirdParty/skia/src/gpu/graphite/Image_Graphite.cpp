@@ -14,14 +14,16 @@
 #include "include/gpu/graphite/Image.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/Surface.h"
+#include "include/private/SkLog.h"
 #include "src/gpu/SkBackingFit.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/Device.h"
 #include "src/gpu/graphite/DrawContext.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/ResourceProvider.h"
 #include "src/gpu/graphite/Texture.h"
+#include "src/gpu/graphite/TextureFormat.h"
+#include "src/gpu/graphite/TextureInfoPriv.h"
 #include "src/gpu/graphite/TextureUtils.h"
 #include "src/gpu/graphite/task/CopyTask.h"
 
@@ -35,21 +37,48 @@ namespace skgpu::graphite {
 // Graphite does not cache based on the image's unique ID so always request a new one.
 Image::Image(TextureProxyView view,
              const SkColorInfo& info)
-    : Image_Base(SkImageInfo::Make(view.proxy()->dimensions(), info), kNeedNewImageUniqueID)
+    : Image_Base(SkImageInfo::Make(view.proxy()->dimensions(), info),
+                                   kNeedNewImageUniqueID,
+                                   view.refProxy())
     , fTextureProxyView(std::move(view)) {}
 
 Image::~Image() = default;
 
-sk_sp<Image> Image::WrapDevice(sk_sp<Device> device) {
-    TextureProxyView proxy = device->readSurfaceView();
-    if (!proxy) {
+sk_sp<Image> Image::WrapDevice(sk_sp<Device> device, std::optional<SkColorInfo> overrideInfo) {
+    TextureProxyView view = device->target();
+    if (!view || !device->isTexturable()) {
         return nullptr;
     }
+
+    // If an overrideInfo is provided, it needs to be compatible with the format still and the
+    // changes to alpha type need to make sense.
+    TextureFormat format = view.proxy()->format();
+    if (overrideInfo.has_value()) {
+        if (!AreColorTypeAndFormatCompatible(overrideInfo->colorType(), format)) {
+            return nullptr;
+        }
+        // For alpha type, it should match the device's alpha type or be changing from kOpaque back
+        // to kPremul or kUnpremul.
+        const SkAlphaType overrideAT = overrideInfo->alphaType();
+        const SkAlphaType devAT = device->imageInfo().alphaType();
+        if (overrideAT != devAT &&
+            (devAT != kOpaque_SkAlphaType || (overrideAT != kPremul_SkAlphaType &&
+                                              overrideAT != kUnpremul_SkAlphaType))) {
+            return nullptr;
+        }
+
+        // Update the swizzle on the texture view to match the change in color type
+        Swizzle readSwizzle = ReadSwizzleForColorType(overrideInfo->colorType(), format);
+        view = view.replaceSwizzle(readSwizzle);
+    } else {
+        // Leave the texture view alone since its swizzle should match the device already
+        overrideInfo = device->imageInfo().colorInfo();
+    }
+
     // NOTE: If the device was created with an approx backing fit, its SkImageInfo reports the
     // logical dimensions, but its proxy has the approximate fit. These larger dimensions are
     // propagated to the SkImageInfo of this image view.
-    sk_sp<Image> image = sk_make_sp<Image>(std::move(proxy),
-                                           device->imageInfo().colorInfo());
+    sk_sp<Image> image = sk_make_sp<Image>(std::move(view), *overrideInfo);
     image->linkDevice(std::move(device));
     return image;
 }
@@ -72,7 +101,7 @@ sk_sp<Image> Image::Copy(Recorder* recorder,
     SkASSERT(srcView.proxy()->isFullyLazy() ||
             SkIRect::MakeSize(srcView.proxy()->dimensions()).contains(subset));
 
-    if (!recorder->priv().caps()->supportsReadPixels(srcView.proxy()->textureInfo())) {
+    if (!recorder->priv().caps()->isCopyableSrc(srcView.proxy()->textureInfo())) {
         if (!recorder->priv().caps()->isTexturable(srcView.proxy()->textureInfo())) {
             // The texture is not blittable nor texturable so copying cannot be done.
             return nullptr;
@@ -110,8 +139,8 @@ sk_sp<Image> Image::Copy(Recorder* recorder,
     }
 
     if (mipmapped == Mipmapped::kYes) {
-        if (!GenerateMipmaps(recorder, drawContext, dst, srcColorInfo)) {
-            SKGPU_LOG_W("Image::Copy failed to generate mipmaps");
+        if (!GenerateMipmaps(recorder, drawContext, dst)) {
+            SKIA_LOG_W("Image::Copy failed to generate mipmaps");
             return nullptr;
         }
     }
@@ -175,7 +204,7 @@ bool Image::readPixelsGraphite(SkRecorder* recorder,
             return false;
         }
         return context->priv().readPixels(dst,
-                                          fTextureProxyView.proxy(),
+                                          fTextureProxyView,
                                           this->imageInfo(),
                                           srcX,
                                           srcY);

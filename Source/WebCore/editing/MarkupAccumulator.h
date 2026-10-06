@@ -76,7 +76,7 @@ public:
     static void appendCharactersReplacingEntities(StringBuilder&, const String&, OptionSet<EntityMask>);
     void enableURLReplacement(HashMap<String, String>&& replacementURLStrings, HashMap<Ref<CSSStyleSheet>, String>&& replacementURLStringsForCSSStyleSheet);
 
-    static SerializationSyntax serializationSyntax(Document&);
+    static SerializationSyntax NODELETE serializationSyntax(Document&);
 
 protected:
     unsigned length() const { return m_markup.length(); }
@@ -111,13 +111,13 @@ private:
     void appendNamespace(StringBuilder&, const AtomString& prefix, const AtomString& namespaceURI, Namespaces&, bool allowEmptyDefaultNS = false);
     enum class IsCreatedByURLReplacement : bool { No, Yes };
     std::pair<String, IsCreatedByURLReplacement> resolveURLIfNeeded(const Element&, const String&) const;
-    bool shouldIncludeShadowRoots() const;
+    bool NODELETE shouldIncludeShadowRoots() const;
     bool includeShadowRoot(const ShadowRoot&) const;
     void serializeNodesWithNamespaces(Node& targetNode, SerializedNodes, const Namespaces*);
     bool inXMLFragmentSerialization() const { return m_serializationSyntax == SerializationSyntax::XML; }
     void generateUniquePrefix(QualifiedName&, const Namespaces&);
     QualifiedName xmlAttributeSerialization(const Attribute&, Namespaces*);
-    LocalFrame* frameForAttributeReplacement(const Element&) const;
+    LocalFrame* NODELETE frameForAttributeReplacement(const Element&) const;
     Attribute replaceAttributeIfNecessary(const Element&, const Attribute&);
     bool appendURLAttributeForReplacementIfNecessary(StringBuilder&, const Element&, Namespaces*);
     RefPtr<const ShadowRoot> suitableShadowRoot(const Node&);
@@ -128,6 +128,7 @@ private:
     const ResolveURLs m_resolveURLs;
     const SerializationSyntax m_serializationSyntax;
     unsigned m_prefixLevel { 0 };
+    Vector<std::pair<WeakRef<const Element, WeakPtrImplWithEventTargetData>, AtomString>> m_resolvedElementQualifiedNameStack;
     SerializeShadowRoots m_serializeShadowRoots;
     Vector<Ref<ShadowRoot>> m_explicitShadowRoots;
     Vector<MarkupExclusionRule> m_exclusionRules;

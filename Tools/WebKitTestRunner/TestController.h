@@ -55,6 +55,7 @@ OBJC_CLASS NSColor;
 OBJC_CLASS NSString;
 OBJC_CLASS UIKeyboardInputMode;
 OBJC_CLASS UIPasteboardConsistencyEnforcer;
+OBJC_CLASS GCMouse;
 OBJC_CLASS WKMouseDeviceObserver;
 OBJC_CLASS WKWebViewConfiguration;
 
@@ -66,6 +67,20 @@ class TestInvocation;
 class TestOptions;
 struct Options;
 struct TestCommand;
+
+#if HAVE(MOUSE_DEVICE_OBSERVATION)
+class FakeMouseDevice {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FakeMouseDevice);
+    WTF_MAKE_NONCOPYABLE(FakeMouseDevice);
+public:
+    FakeMouseDevice();
+    ~FakeMouseDevice();
+private:
+    RetainPtr<GCMouse> m_fakeMouse;
+    std::unique_ptr<ClassMethodSwizzler> m_currentSwizzler;
+    std::unique_ptr<ClassMethodSwizzler> m_miceSwizzler;
+};
+#endif
 
 class AsyncTask {
 public:
@@ -113,6 +128,10 @@ public:
     WKStringRef testPluginDirectory() const { return m_testPluginDirectory.get(); }
 
     PlatformWebView* mainWebView() { return m_mainWebView.get(); }
+    PlatformWebView* viewForPage(WKPageRef);
+    PlatformWebView* targetView() { return m_targetView ? m_targetView : m_mainWebView.get(); }
+    void setTargetView(PlatformWebView* view) { m_targetView = view; }
+    void setTargetViewFromMessage(WKScriptMessageRef);
     WKContextRef context() { return m_context.get(); }
     WKUserContentControllerRef userContentController() { return m_userContentController.get(); }
 
@@ -185,6 +204,7 @@ public:
     static ASCIILiteral webProcessName();
     static ASCIILiteral networkProcessName();
     static ASCIILiteral gpuProcessName();
+    static ASCIILiteral serviceWorkerProcessName();
 
     WorkQueueManager& workQueueManager() { return m_workQueueManager; }
 
@@ -197,11 +217,17 @@ public:
     void setShouldSwapToEphemeralSessionOnNextNavigation(bool value) { m_shouldSwapToEphemeralSessionOnNextNavigation = value; }
     void setShouldSwapToDefaultSessionOnNextNavigation(bool value) { m_shouldSwapToDefaultSessionOnNextNavigation = value; }
 
+    void setGlobalPrivacyControl(bool value) { m_globalPrivacyControlEnabled = value; }
+    bool globalPrivacyControl() const { return m_globalPrivacyControlEnabled.value_or(false); }
+
     void setBlockAllPlugins(bool shouldBlock);
     void setPluginSupportedMode(const String&);
 
+    void dumpResourceLoadCallbacks();
+    void dumpResourceResponseMIMETypes(String&&);
     void dumpPolicyDelegateCallbacks() { m_dumpPolicyDelegateCallbacks = true; }
     void dumpFullScreenCallbacks() { m_dumpFullScreenCallbacks = true; }
+    void dumpFullScreenOrigin() { m_dumpFullScreenOrigin = true; }
     void waitBeforeFinishingFullscreenExit() { m_waitBeforeFinishingFullscreenExit = true; }
     void scrollDuringEnterFullscreen() { m_scrollDuringEnterFullscreen = true; }
     void finishFullscreenExit();
@@ -302,6 +328,7 @@ public:
 
     void getAllStorageAccessEntries(CompletionHandler<void(WKTypeRef)>&&);
     void setRequestStorageAccessThrowsExceptionUntilReload(bool enabled);
+    void setStorageAccessAPIPerPageScopeEnabled(bool);
     void loadedSubresourceDomains(CompletionHandler<void(WKTypeRef)>&&);
     void clearLoadedSubresourceDomains();
     void clearAppBoundSession();
@@ -338,11 +365,7 @@ public:
 
     void removeAllSessionCredentials(CompletionHandler<void(WKTypeRef)>&&);
 
-    void clearIndexedDatabases();
-    void clearLocalStorage();
     void syncLocalStorage();
-
-    void clearServiceWorkerRegistrations();
 
     void clearMemoryCache();
     void clearDOMCache(WKStringRef origin);
@@ -354,8 +377,16 @@ public:
     void setQuota(uint64_t);
     void setOriginQuotaRatioEnabled(bool);
 
+#if !PLATFORM(COCOA)
+    // Mirrors -[TestWebsiteDataStoreDelegate requestStorageSpace:...]. Returns the quota to use,
+    // which is the unchanged current quota when the request is denied.
+    unsigned long long decideStorageQuota(unsigned long long currentQuota, unsigned long long currentUsage, unsigned long long spaceRequired);
+#endif
+
     bool didReceiveServerRedirectForProvisionalNavigation() const { return m_didReceiveServerRedirectForProvisionalNavigation; }
     void clearDidReceiveServerRedirectForProvisionalNavigation() { m_didReceiveServerRedirectForProvisionalNavigation = false; }
+
+    WKRetainPtr<WKStringRef> lastProvisionalNavigationFailureURL() const;
 
     void addMockMediaDevice(WKStringRef persistentID, WKStringRef label, WKStringRef type, WKDictionaryRef properties);
     void clearMockMediaDevices();
@@ -427,8 +458,6 @@ public:
     void setIsMediaKeySystemPermissionGranted(bool);
     WKRetainPtr<WKStringRef> takeViewPortSnapshot();
 
-    WKRetainPtr<WKArrayRef> getAndClearReportedWindowProxyAccessDomains();
-
     WKPreferencesRef platformPreferences() { return m_preferences.get(); }
 
     bool grantNotificationPermission(WKStringRef origin);
@@ -450,6 +479,7 @@ public:
     void resumeBackgroundFetch(WKStringRef);
     void simulateClickBackgroundFetch(WKStringRef);
     void setBackgroundFetchPermission(bool);
+    void setVirtualWalletBehavior(WKStringRef action, WKStringRef protocol, WKStringRef responseJSON);
     WKRetainPtr<WKStringRef> lastAddedBackgroundFetchIdentifier() const;
     WKRetainPtr<WKStringRef> lastRemovedBackgroundFetchIdentifier() const;
     WKRetainPtr<WKStringRef> lastUpdatedBackgroundFetchIdentifier() const;
@@ -472,11 +502,33 @@ public:
 
     void setHasMouseDeviceForTesting(bool);
 
+#if HAVE(MOUSE_DEVICE_OBSERVATION)
+    std::unique_ptr<FakeMouseDevice> m_fakeMouseDevice;
+#endif
+
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     void exitImmersive();
 #endif
 
     void uiScriptDidComplete(const String& result, unsigned scriptCallbackID);
+    void cursorDidChange(WKStringRef cursorInfo);
+
+#if PLATFORM(MAC)
+    // Client accessibility testing support
+    void initializeWebProcessAccessibility();
+#endif
+
+#if !PLATFORM(COCOA)
+    void doAfterProcessingAllPendingMouseEvents(CompletionHandler<void()>&&);
+    void doAfterProcessingAllPendingKeyEvents(CompletionHandler<void()>&&);
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+    void doAfterProcessingAllPendingWheelEvents(CompletionHandler<void()>&&);
+    void doAfterProcessingAllPendingTouchEvents(CompletionHandler<void()>&&);
+    void doAfterProcessingAllPendingTouchAndWheelEvents(CompletionHandler<void()>&&);
+#endif
+#endif
+
+    static uint64_t responseHeaderCount(WKURLResponseRef);
 
 private:
     WKRetainPtr<WKPageConfigurationRef> generatePageConfiguration(const TestOptions&);
@@ -542,6 +594,13 @@ private:
     void decidePolicyForGeolocationPermissionRequestIfPossible();
     void decidePolicyForUserMediaPermissionRequestIfPossible();
 
+    void installResourceLoadClient();
+    void didSendRequest(WKPageRef, WKURLRequestRef);
+    void didPerformRedirect(WKPageRef, WKURLResponseRef, WKURLRequestRef);
+    void didReceiveResponse(WKPageRef, WKURLRef, WKURLResponseRef);
+    void didCompleteWithError(WKPageRef, WKURLRef, WKURLResponseRef, WKErrorRef);
+    String platformResponseMIMEType(WKURLResponseRef);
+
 #if PLATFORM(IOS_FAMILY)
     UIPasteboardConsistencyEnforcer *pasteboardConsistencyEnforcer();
     void restorePortraitOrientationIfNeeded();
@@ -557,15 +616,34 @@ private:
 
     // WKPageInjectedBundleClient
     static void didReceivePageMessageFromInjectedBundle(WKPageRef, WKStringRef messageName, WKTypeRef messageBody, const void*);
-    static void didReceiveSynchronousPageMessageFromInjectedBundleWithListener(WKPageRef, WKStringRef messageName, WKTypeRef messageBody, WKMessageListenerRef, const void*);
+    static void didReceiveSynchronousPageMessageFromInjectedBundleWithListenerFromMainFrameProcess(WKPageRef, WKStringRef messageName, WKTypeRef messageBody, bool fromMainFrameProcess, WKMessageListenerRef, const void*);
 
     void didReceiveMessageFromInjectedBundle(WKStringRef messageName, WKTypeRef messageBody);
-    void didReceiveSynchronousMessageFromInjectedBundle(WKStringRef messageName, WKTypeRef messageBody, WKMessageListenerRef);
+    void didReceiveSynchronousMessageFromInjectedBundle(WKStringRef messageName, WKTypeRef messageBody, WKMessageListenerRef, bool fromMainFrameProcess = false);
     WKRetainPtr<WKTypeRef> getInjectedBundleInitializationUserData();
 
     void didReceiveKeyDownMessageFromInjectedBundle(WKDictionaryRef messageBodyDictionary, bool synchronous);
     void didReceiveRawKeyDownMessageFromInjectedBundle(WKDictionaryRef messageBodyDictionary, bool synchronous);
     void didReceiveRawKeyUpMessageFromInjectedBundle(WKDictionaryRef messageBodyDictionary, bool synchronous);
+
+#if PLATFORM(MAC)
+    // Client accessibility testing support
+    uint64_t storeAXElement(CFTypeRef);
+    CFTypeRef getAXElement(uint64_t token);
+    CFDataRef getRemoteAccessibilityToken();
+    WKRetainPtr<WKTypeRef> handleAXGetRoot();
+    RetainPtr<CFTypeRef> axCopyAttributeValue(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsString(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsElement(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsElementArray(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsNumber(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsBoolean(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXElementsAreEqual(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsPoint(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsSize(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXSearchPredicate(WKDictionaryRef);
+    void handleAXPerformAction(WKDictionaryRef);
+#endif
 
     // WKContextClient
     static void networkProcessDidCrashWithDetails(WKContextRef, WKProcessID, WKProcessTerminationReason, const void*);
@@ -708,9 +786,11 @@ private:
     HashSet<String> m_notificationOriginsToDenyOnPrompt;
 
     HashSet<String> m_geolocationPermissionQueryOrigins;
+    HashMap<String, bool> m_localNetworkAccessPermissions;
 
     std::unique_ptr<PlatformWebView> m_mainWebView;
     Vector<UniqueRef<PlatformWebView>> m_auxiliaryWebViews;
+    PlatformWebView* m_targetView { nullptr };
     WKRetainPtr<WKContextRef> m_context;
     WKRetainPtr<WKPreferencesRef> m_preferences;
     WKRetainPtr<WKUserContentControllerRef> m_userContentController;
@@ -738,6 +818,7 @@ private:
 
     bool m_useWaitToDumpWatchdogTimer { true };
     bool m_forceNoTimeout { false };
+    std::string m_ipAddressSpaceOverrides;
 
     bool m_didPrintWebProcessCrashedMessage { false };
     bool m_shouldExitWhenAuxiliaryProcessCrashes { true };
@@ -784,6 +865,7 @@ private:
     bool m_shouldDecideResponsePolicyAfterDelay { false };
 
     bool m_didReceiveServerRedirectForProvisionalNavigation { false };
+    WKRetainPtr<WKURLRef> m_lastProvisionalNavigationFailureURL;
 
     WKRetainPtr<WKArrayRef> m_openPanelFileURLs;
 #if PLATFORM(IOS_FAMILY)
@@ -823,6 +905,7 @@ private:
         Vector<WKRetainPtr<WKJSHandleRef>> m_callbacks;
     };
     Callbacks m_tooltipCallbacks;
+    Callbacks m_cursorCallbacks;
     Callbacks m_beginSwipeCallbacks;
     Callbacks m_willEndSwipeCallbacks;
     Callbacks m_didEndSwipeCallbacks;
@@ -834,6 +917,15 @@ private:
     bool m_allowsAnySSLCertificate { true };
     bool m_shouldSwapToEphemeralSessionOnNextNavigation { false };
     bool m_shouldSwapToDefaultSessionOnNextNavigation { false };
+    std::optional<bool> m_globalPrivacyControlEnabled;
+
+#if !PLATFORM(COCOA)
+    // Cocoa answers storage space requests from TestWebsiteDataStoreDelegate. Other ports have no
+    // such delegate, so the quota set by testRunner.setQuota() is tracked here and applied from the
+    // page UI client instead.
+    uint64_t m_quota { 0 };
+    bool m_allowStorageQuotaIncrease { true };
+#endif
     
 #if PLATFORM(COCOA)
     bool m_hasSetApplicationBundleIdentifier { false };
@@ -854,10 +946,21 @@ private:
     size_t m_downloadIndex { 0 };
     bool m_shouldDownloadContentDispositionAttachments { true };
     bool m_dumpPolicyDelegateCallbacks { false };
+    bool m_hasResourceLoadClient { false };
+    bool m_dumpResourceLoadCallbacks { false };
+    String m_resourceResponseMIMETypesToDump;
     bool m_dumpFullScreenCallbacks { false };
+    bool m_dumpAllHTTPRedirectedResponseHeaders { false };
+    bool m_dumpFullScreenOrigin { false };
     bool m_waitBeforeFinishingFullscreenExit { false };
     bool m_scrollDuringEnterFullscreen { false };
     bool m_useWorkQueue { false };
+
+#if PLATFORM(MAC)
+    // Client accessibility testing support
+    std::atomic<uint64_t> m_nextAXElementToken { 1 };
+    HashMap<uint64_t, RetainPtr<CFTypeRef>> m_axElementTokens;
+#endif
 
 #if ENABLE(WPE_PLATFORM)
     bool m_useWPELegacyAPI { false };

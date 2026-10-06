@@ -69,6 +69,7 @@ enum class ProcessAssertionType : uint8_t {
     FinishTaskCanSleep,
     FinishTaskInterruptable,
     BoostedJetsam,
+    BackgroundIdleJetsam,
 };
 
 ASCIILiteral processAssertionTypeDescription(ProcessAssertionType);
@@ -121,7 +122,7 @@ private:
     const ProcessID m_pid;
     const String m_reason;
 #if USE(RUNNINGBOARD)
-    RetainPtr<RBSAssertion> m_rbsAssertion;
+    const RetainPtr<RBSAssertion> m_rbsAssertion;
     RetainPtr<WKRBSAssertionDelegate> m_delegate;
     bool m_wasInvalidated { false };
 #endif

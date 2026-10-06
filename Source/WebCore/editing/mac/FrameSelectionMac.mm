@@ -31,6 +31,7 @@
 #import "ChromeClient.h"
 #import "DocumentPage.h"
 #import "DocumentView.h"
+#import "FrameLoader.h"
 #import "LocalFrame.h"
 #import "RenderView.h"
 
@@ -41,7 +42,7 @@ void FrameSelection::notifyAccessibilityForSelectionChange(const AXTextStateChan
     if (!AXObjectCache::accessibilityEnabled())
         return;
 
-    if (CheckedPtr cache = m_document->existingAXObjectCache()) {
+    if (CheckedPtr cache = protect(m_document)->existingAXObjectCache()) {
         if (m_selection.start().isNotNull() && m_selection.end().isNotNull())
             cache->postTextStateChangeNotification(m_selection.start(), intent, m_selection);
         else {
@@ -62,7 +63,7 @@ void FrameSelection::notifyAccessibilityForSelectionChange(const AXTextStateChan
     if (!m_selection.isCaret())
         return;
 
-    auto* renderView = m_document->renderView();
+    CheckedPtr renderView = m_document->renderView();
     if (!renderView)
         return;
     RefPtr frameView = m_document->view();

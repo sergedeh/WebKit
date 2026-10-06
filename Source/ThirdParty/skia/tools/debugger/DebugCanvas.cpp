@@ -20,8 +20,8 @@
 #include "include/core/SkString.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkVertices.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTo.h"
 #include "include/utils/SkPaintFilterCanvas.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkRectPriv.h"
@@ -161,9 +161,6 @@ void DebugCanvas::drawTo(SkCanvas* originalCanvas, int index, int m) {
     SkASSERT(index < fCommandVector.size());
 
     int saveCount = originalCanvas->save();
-
-    originalCanvas->resetMatrix();
-    SkCanvasPriv::ResetClip(originalCanvas);
 
     DebugPaintFilterCanvas filterCanvas(originalCanvas);
     SkCanvas* finalCanvas = fOverdrawViz ? &filterCanvas : originalCanvas;

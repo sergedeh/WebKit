@@ -26,11 +26,17 @@
 
 #include "config.h"
 #include "StyleCurrentColor.h"
+#include "StyleResolvedColors.h"
 
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace Style {
+
+WebCore::Color resolveColor(const CurrentColor&, const ResolvedColors& resolvedColors)
+{
+    return resolvedColors.currentColor();
+}
 
 // MARK: - Serialization
 
@@ -39,7 +45,7 @@ void serializationForCSSTokenization(StringBuilder& builder, const CSS::Serializ
     builder.append("currentcolor"_s);
 }
 
-String serializationForCSSTokenization(const CSS::SerializationContext&, const CurrentColor&)
+WTF::String serializationForCSSTokenization(const CSS::SerializationContext&, const CurrentColor&)
 {
     return "currentcolor"_s;
 }

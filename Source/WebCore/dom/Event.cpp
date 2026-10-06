@@ -28,13 +28,14 @@
 #include "EventNames.h"
 #include "EventPath.h"
 #include "EventTarget.h"
-#include "EventTargetInlines.h"
 #include "InspectorInstrumentation.h"
 #include "JSDOMGlobalObject.h"
+#include "JSNodeCustomInlines.h"
 #include "LocalDOMWindow.h"
 #include "Performance.h"
 #include "ScriptWrappableInlines.h"
 #include "UserGestureIndicator.h"
+#include "WebCoreOpaqueRootInlines.h"
 #include "WorkerGlobalScope.h"
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -57,16 +58,16 @@ ALWAYS_INLINE Event::Event(MonotonicTime createTime, enum EventInterfaceType eve
     , m_defaultHandled { false }
     , m_isDefaultEventHandlerIgnored { false }
     , m_isTrusted { isTrusted == IsTrusted::Yes }
+    , m_isTrustedForBindingsOnly { false }
     , m_isExecutingPassiveEventListener { false }
     , m_currentTargetIsInShadowTree { false }
     , m_isAutofillEvent { false }
-    , m_isShadowRootAttachedEvent { false }
     , m_eventPhase { NONE }
-    , m_eventInterface(enumToUnderlyingType(eventInterface))
+    , m_eventInterface(std::to_underlying(eventInterface))
     , m_type { type }
     , m_createTime { createTime }
 {
-    ASSERT(m_eventInterface == enumToUnderlyingType(eventInterface));
+    ASSERT(m_eventInterface == std::to_underlying(eventInterface));
 }
 
 Event::Event(enum EventInterfaceType eventInterface, IsTrusted isTrusted)
@@ -93,6 +94,7 @@ Event::Event(enum EventInterfaceType eventInterface, const AtomString& eventType
 {
     ASSERT(!eventType.isNull());
     m_isConstructedFromInitializer = true;
+    m_isTrustedForBindingsOnly = initializer.trustedForBindingsOnly;
 }
 
 Event::~Event() = default;
@@ -122,7 +124,10 @@ void Event::initEvent(const AtomString& eventTypeArg, bool canBubbleArg, bool ca
     m_immediatePropagationStopped = false;
     m_wasCanceled = false;
     m_isTrusted = false;
-    m_target = nullptr;
+    {
+        Locker targetLocker { m_targetLock };
+        m_target = nullptr;
+    }
     m_type = eventTypeArg;
     m_canBubble = canBubbleArg;
     m_cancelable = cancelableArg;
@@ -135,19 +140,12 @@ void Event::setTarget(RefPtr<EventTarget>&& target)
     if (m_target == target)
         return;
 
-    m_target = WTF::move(target);
+    {
+        Locker targetLocker { m_targetLock };
+        m_target = WTF::move(target);
+    }
     if (m_target)
         receivedTarget();
-}
-
-RefPtr<EventTarget> Event::protectedTarget() const
-{
-    return m_target;
-}
-
-RefPtr<EventTarget> Event::protectedCurrentTarget() const
-{
-    return m_currentTarget;
 }
 
 void Event::setCurrentTarget(RefPtr<EventTarget>&& currentTarget, std::optional<bool> isInShadowTree)
@@ -170,9 +168,9 @@ Vector<Ref<EventTarget>> Event::composedPath(JSC::JSGlobalObject& lexicalGlobalO
 {
     if (!m_eventPath)
         return Vector<Ref<EventTarget>>();
-    if (JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject)->world().shadowRootIsAlwaysOpen())
+    if (downcast<JSDOMGlobalObject>(&lexicalGlobalObject)->world().shadowRootIsAlwaysOpen())
         return m_eventPath->computePathTreatingAllShadowRootsAsOpen();
-    return m_eventPath->computePathUnclosedToTarget(*protectedCurrentTarget());
+    return m_eventPath->computePathUnclosedToTarget(*protect(currentTarget()));
 }
 
 void Event::setUnderlyingEvent(Event* underlyingEvent)
@@ -214,6 +212,16 @@ void Event::resetAfterDispatch()
 
     InspectorInstrumentation::eventDidResetAfterDispatch(*this);
 }
+
+template<typename Visitor>
+void Event::visitInGCThread(Visitor& visitor)
+{
+    Locker targetLocker { m_targetLock };
+    addWebCoreOpaqueRoot(visitor, dynamicDowncast<Node>(m_target.get()));
+}
+
+template void Event::visitInGCThread(JSC::AbstractSlotVisitor&);
+template void Event::visitInGCThread(JSC::SlotVisitor&);
 
 String Event::debugDescription() const
 {

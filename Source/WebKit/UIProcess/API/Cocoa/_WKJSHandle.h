@@ -23,24 +23,15 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#import <WebKit/WKFoundation.h>
-
-@class WKContentWorld;
-@class WKFrameInfo;
+#import <WebKit/WKJSHandle.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
-WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA))
-@interface _WKJSHandle : NSObject<NSCopying>
-
-+ (instancetype)new NS_UNAVAILABLE;
-- (instancetype)init NS_UNAVAILABLE;
-
-@property (nonatomic, readonly, copy) WKFrameInfo *frame;
+WK_CLASS_AVAILABLE(macos(26.4), ios(26.4), visionos(26.4))
+@interface _WKJSHandle : WKJSHandle
 @property (nonatomic, readonly, weak) WKContentWorld *world;
-
+@property (nonatomic, readonly, copy) WKFrameInfo *frame;
 - (void)windowFrameInfo:(void (^)(WKFrameInfo * _Nullable))completionHandler;
-
 @end
 
 NS_ASSUME_NONNULL_END

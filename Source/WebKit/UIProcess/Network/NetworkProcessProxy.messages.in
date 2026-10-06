@@ -50,13 +50,13 @@ messages -> NetworkProcessProxy WantsDispatchMessage {
     ContentExtensionRules(WebKit::UserContentControllerIdentifier identifier)
 #endif
 
-    TerminateWebProcess(WebCore::ProcessIdentifier webProcessIdentifier)
+    TerminateWebProcess(WebCore::ProcessIdentifier webProcessIdentifier, enum:uint16_t IPC::MessageName invalidMessageName)
 
     StartServiceWorkerBackgroundProcessing(WebCore::ProcessIdentifier serviceWorkerProcessIdentifier)
     EndServiceWorkerBackgroundProcessing(WebCore::ProcessIdentifier serviceWorkerProcessIdentifier)
     RequestBackgroundFetchPermission(PAL::SessionID sessionID, struct WebCore::ClientOrigin origin) -> (bool result)
     NotifyBackgroundFetchChange(PAL::SessionID sessionID, String backgroundFetchIdentifier, enum:uint8_t WebKit::BackgroundFetchChange change)
-    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::Site site, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID sessionID) -> (std::optional<WebCore::ProcessIdentifier> remoteProcessIdentifier)
+    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::Site site, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID sessionID, enum:bool WebCore::CrossOriginEmbedderPolicyValue workerCrossOriginEmbedderPolicy) -> (std::optional<WebCore::ProcessIdentifier> remoteProcessIdentifier)
     RemoteWorkerContextConnectionNoLongerNeeded(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::ProcessIdentifier identifier)
     RegisterRemoteWorkerClientProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::ProcessIdentifier clientProcessIdentifier, WebCore::ProcessIdentifier remoteWorkerProcessIdentifier);
     UnregisterRemoteWorkerClientProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::ProcessIdentifier clientProcessIdentifier, WebCore::ProcessIdentifier remoteWorkerProcessIdentifier);
@@ -76,8 +76,11 @@ messages -> NetworkProcessProxy WantsDispatchMessage {
     ResourceLoadDidCompleteWithError(WebKit::WebPageProxyIdentifier pageIdentifier, struct WebKit::ResourceLoadInfo resourceLoadInfo, WebCore::ResourceResponse response, WebCore::ResourceError error)
 
     DidAllowPrivateTokenUsageByThirdPartyForTesting(PAL::SessionID sessionID, bool wasAllowed, URL resourceURL)
-    
-    TriggerBrowsingContextGroupSwitchForNavigation(WebKit::WebPageProxyIdentifier pageIdentifier, WebCore::NavigationIdentifier navigationID, enum:uint8_t WebCore::BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecision, WebCore::Site responseSite, WebKit::NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume) -> (bool success)
+
+    RequestLocalNetworkAccessPermission(PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier pageID, struct WebCore::ClientOrigin origin, enum:uint8_t WebCore::IPAddressSpace addressSpace) -> (enum:uint8_t WebCore::PermissionState state)
+    QueryLocalNetworkAccessPermission(PAL::SessionID sessionID, std::optional<WebKit::WebPageProxyIdentifier> pageID, struct WebCore::ClientOrigin origin, enum:uint8_t WebCore::IPAddressSpace addressSpace) -> (enum:uint8_t std::optional<WebCore::PermissionState> state)
+
+    ConsiderProcessSwapForNavigationResponse(WebKit::WebPageProxyIdentifier pageIdentifier, WebCore::NavigationIdentifier navigationID, enum:uint8_t WebCore::BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecision, enum:uint8_t WebCore::NavigationResponseProcessSwapReason reason, WebCore::Site responseSite, WebKit::NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime) -> (std::optional<WebCore::ProcessIdentifier> destinationWebProcess)
 
 #if USE(SOUP)
     DidExceedMemoryLimit()
@@ -108,6 +111,8 @@ messages -> NetworkProcessProxy WantsDispatchMessage {
     DeleteWebsiteDataInWebProcessesForOrigin(OptionSet<WebKit::WebsiteDataType> websiteDataTypes, struct WebCore::ClientOrigin origin, PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier webPageProxyID) -> ()
     ReloadExecutionContextsForOrigin(struct WebCore::ClientOrigin origin, PAL::SessionID sessionID, std::optional<WebCore::FrameIdentifier> triggeringFrame) -> ()
 
+    DidPerformEvictionForDomains(PAL::SessionID sessionID, Vector<WebCore::RegistrableDomain> domains)
+
 #if USE(RUNNINGBOARD)
     WakeUpWebProcessForIPC(WebCore::ProcessIdentifier processIdentifier)
 #endif
@@ -115,6 +120,10 @@ messages -> NetworkProcessProxy WantsDispatchMessage {
 #if ENABLE(NETWORK_ISSUE_REPORTING)
     ReportNetworkIssue(WebKit::WebPageProxyIdentifier webPageProxyIdentifier, URL requestURL)
 #endif
+
+    ReceivedQualifiedServerTrust(WebKit::WebPageProxyIdentifier webPageProxyIdentifier, WebCore::CertificateInfo serverTrust, WebCore::CertificateInfo qualifiedServerTrust)
+
+    HandOverTransferredImageBuffers(Vector<WebCore::ImageBufferTransferIdentifier> transferIdentifiers, WebCore::ProcessIdentifier destinationProcess)
 }
 
 }

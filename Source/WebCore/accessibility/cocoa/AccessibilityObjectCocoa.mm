@@ -30,16 +30,36 @@
 #if PLATFORM(COCOA)
 
 #import "AXObjectCacheInlines.h"
+#import "ChromeClient.h"
+#import "FontCascadeInlines.h"
+#import "StyleComputedStyle.h"
+#import "StyleShadow.h"
+#import "StyleSpeakAs.h"
+#import "StyleTextShadow.h"
+#import "StyleVerticalAlign.h"
 #import "TextIterator.h"
-#import "WebAccessibilityObjectWrapperBase.h"
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
+#if PLATFORM(MAC)
+#import "WebAccessibilityObjectWrapperMac.h"
+#import <AppKit/NSAccessibilityConstants.h>
+#else
+#import "StyleSpeakAs.h"
+#import "WAKResponder.h"
+#import "WebAccessibilityObjectWrapperIOS.h"
+#endif
+
 namespace WebCore {
+
+void AccessibilityObject::makeFirstResponderForPlatformWidget(ChromeClient& client, Widget& widget)
+{
+    client.makeFirstResponder((NSResponder *)protect(widget.platformWidget()).get());
+}
 
 Style::SpeakAs AccessibilityObject::speakAs() const
 {
     if (auto* style = this->style())
-        return style->speakAs();
+        return style->speakAsOutOfLine();
     return CSS::Keyword::Normal { };
 }
 
@@ -82,13 +102,11 @@ std::optional<NSRange> AccessibilityObject::visibleCharacterRange() const
 
 // NSAttributedString support.
 
-#ifndef NSAttachmentCharacter
-#define NSAttachmentCharacter 0xfffc
-#endif
+static constexpr UniChar attachmentCharacterValue = 0xfffc;
 
 static void addObjectWrapperToArray(const AccessibilityObject& object, NSMutableArray *array)
 {
-    auto* wrapper = object.wrapper();
+    RetainPtr wrapper = object.wrapper();
     if (!wrapper)
         return;
 
@@ -115,7 +133,7 @@ void attributedStringSetNumber(NSMutableAttributedString *attrString, NSString *
 
 static void attributedStringAppendWrapper(NSMutableAttributedString *attrString, WebAccessibilityObjectWrapper *wrapper)
 {
-    const auto attachmentCharacter = static_cast<UniChar>(NSAttachmentCharacter);
+    const auto attachmentCharacter = attachmentCharacterValue;
     [attrString appendAttributedString:adoptNS([[NSMutableAttributedString alloc] initWithString:[NSString stringWithCharacters:&attachmentCharacter length:1]
 #if PLATFORM(MAC)
         attributes:@{ NSAccessibilityAttachmentTextAttribute : (__bridge id)adoptCF(NSAccessibilityCreateAXUIElementRef(wrapper)).get() }
@@ -158,11 +176,7 @@ RetainPtr<NSArray> AccessibilityObject::contentForRange(const SimpleRange& range
 
 RetainPtr<NSAttributedString> AccessibilityObject::attributedStringForTextMarkerRange(AXTextMarkerRange&& textMarkerRange, SpellCheck spellCheck) const
 {
-#if PLATFORM(MAC)
-    auto range = rangeForTextMarkerRange(axObjectCache(), textMarkerRange);
-#else
     auto range = textMarkerRange.simpleRange();
-#endif
     return range ? attributedStringForRange(*range, spellCheck) : nil;
 }
 
@@ -187,17 +201,17 @@ RetainPtr<NSAttributedString> AccessibilityObject::attributedStringForRange(cons
     return result;
 }
 
-RetainPtr<CTFontRef> fontFrom(const RenderStyle& style)
+RetainPtr<CTFontRef> fontFrom(const Style::ComputedStyle& style)
 {
-    return style.fontCascade().primaryFont()->ctFont();
+    return style.primaryFont().ctFont();
 }
 
-Color textColorFrom(const RenderStyle& style)
+Color textColorFrom(const Style::ComputedStyle& style)
 {
     return style.visitedDependentColor();
 }
 
-Color backgroundColorFrom(const RenderStyle& style)
+Color backgroundColorFrom(const Style::ComputedStyle& style)
 {
     return style.visitedDependentBackgroundColor();
 }
@@ -212,7 +226,7 @@ RetainPtr<CTFontRef> AccessibilityObject::font() const
 FontOrientation AccessibilityObject::fontOrientation() const
 {
     if (CheckedPtr style = this->style())
-        return const_cast<RenderStyle*>(style.get())->fontAndGlyphOrientation().first;
+        return const_cast<Style::ComputedStyle*>(style.get())->fontAndGlyphOrientation().first;
     return FontOrientation::Horizontal;
 }
 #endif
@@ -232,19 +246,19 @@ Color AccessibilityObject::backgroundColor() const
 bool AccessibilityObject::isSubscript() const
 {
     const CheckedPtr style = this->style();
-    return style && WTF::holdsAlternative<CSS::Keyword::Sub>(style->verticalAlign());
+    return style && WTF::holdsAlternative<CSS::Keyword::Sub>(style->verticalAlignOutOfLine());
 }
 
 bool AccessibilityObject::isSuperscript() const
 {
     const CheckedPtr style = this->style();
-    return style && WTF::holdsAlternative<CSS::Keyword::Super>(style->verticalAlign());
+    return style && WTF::holdsAlternative<CSS::Keyword::Super>(style->verticalAlignOutOfLine());
 }
 
 bool AccessibilityObject::hasTextShadow() const
 {
     const CheckedPtr style = this->style();
-    return style && style->hasTextShadow();
+    return style && !style->textShadowOutOfLine().isNone();
 }
 
 LineDecorationStyle AccessibilityObject::lineDecorationStyle() const
@@ -259,14 +273,14 @@ AttributedStringStyle AccessibilityObject::stylesForAttributedString() const
     if (!style)
         return { };
 
-    auto& alignment = style->verticalAlign();
+    auto& alignment = style->verticalAlignOutOfLine();
     return {
         fontFrom(*style),
         textColorFrom(*style),
         backgroundColorFrom(*style),
         WTF::holdsAlternative<CSS::Keyword::Sub>(alignment),
         WTF::holdsAlternative<CSS::Keyword::Super>(alignment),
-        style->hasTextShadow(),
+        !style->textShadowOutOfLine().isNone(),
         lineDecorationStyle()
     };
 }

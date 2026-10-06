@@ -37,11 +37,10 @@ class WEBCORE_EXPORT ServiceWorkerProvider {
 public:
     virtual ~ServiceWorkerProvider();
 
-    static ServiceWorkerProvider& singleton();
-    static void setSharedProvider(ServiceWorkerProvider&);
+    static ServiceWorkerProvider& NODELETE singleton();
+    static void NODELETE setSharedProvider(ServiceWorkerProvider&);
 
     virtual SWClientConnection& serviceWorkerConnection() = 0;
-    Ref<SWClientConnection> protectedServiceWorkerConnection();
     virtual SWClientConnection* existingServiceWorkerConnection() = 0;
     virtual void terminateWorkerForTesting(ServiceWorkerIdentifier, CompletionHandler<void()>&&) = 0;
 

@@ -3,68 +3,11 @@ PASS :vertex_returns_position:case="bare_position"
 PASS :vertex_returns_position:case="nested_position"
 PASS :vertex_returns_position:case="no_bare_position"
 PASS :vertex_returns_position:case="no_nested_position"
-FAIL :entry_point_call_target:stage="%40fragment";entry_point="with" assert_unreached:
-  - VALIDATION FAILED: Missing expected compilationInfo 'error' message.
-
-
-    ---- shader ----
-
-    @fragment
-    fn bar()  {
-
-    }
-
-    fn foo() {
-      bar();
-    }
-
-    expectCompileResult@http://127.0.0.1:8000/webgpu/webgpu/shader/validation/shader_validation_test.js:73:28
-    @http://127.0.0.1:8000/webgpu/webgpu/shader/validation/functions/restrictions.spec.js:97:24
-  - EXPECTATION FAILED: Expected validation error
-      at (elided: below max severity)
- Reached unreachable code
+PASS :entry_point_call_target:stage="%40fragment";entry_point="with"
 PASS :entry_point_call_target:stage="%40fragment";entry_point="without"
-FAIL :entry_point_call_target:stage="%40vertex";entry_point="with" assert_unreached:
-  - VALIDATION FAILED: Missing expected compilationInfo 'error' message.
-
-
-    ---- shader ----
-
-    @vertex
-    fn bar() -> @builtin(position) vec4f {
-      return vec4f();
-    }
-
-    fn foo() {
-      let tmp = bar();
-    }
-
-    expectCompileResult@http://127.0.0.1:8000/webgpu/webgpu/shader/validation/shader_validation_test.js:73:28
-    @http://127.0.0.1:8000/webgpu/webgpu/shader/validation/functions/restrictions.spec.js:97:24
-  - EXPECTATION FAILED: Expected validation error
-      at (elided: below max severity)
- Reached unreachable code
+PASS :entry_point_call_target:stage="%40vertex";entry_point="with"
 PASS :entry_point_call_target:stage="%40vertex";entry_point="without"
-FAIL :entry_point_call_target:stage="%40compute%20%40workgroup_size(1,1,1)";entry_point="with" assert_unreached:
-  - VALIDATION FAILED: Missing expected compilationInfo 'error' message.
-
-
-    ---- shader ----
-
-    @compute @workgroup_size(1,1,1)
-    fn bar()  {
-
-    }
-
-    fn foo() {
-      bar();
-    }
-
-    expectCompileResult@http://127.0.0.1:8000/webgpu/webgpu/shader/validation/shader_validation_test.js:73:28
-    @http://127.0.0.1:8000/webgpu/webgpu/shader/validation/functions/restrictions.spec.js:97:24
-  - EXPECTATION FAILED: Expected validation error
-      at (elided: below max severity)
- Reached unreachable code
+PASS :entry_point_call_target:stage="%40compute%20%40workgroup_size(1,1,1)";entry_point="with"
 PASS :entry_point_call_target:stage="%40compute%20%40workgroup_size(1,1,1)";entry_point="without"
 PASS :function_return_types:case="u32"
 PASS :function_return_types:case="i32"
@@ -158,45 +101,7 @@ PASS :function_parameter_types:case="invalid_ptr4"
 PASS :function_parameter_types:case="invalid_ptr5"
 PASS :function_parameter_types:case="invalid_ptr6"
 PASS :function_parameter_types:case="invalid_ptr7"
-FAIL :function_parameter_types:case="invalid_ptr8" assert_unreached:
-  - VALIDATION FAILED: Missing expected compilationInfo 'error' message.
-
-
-    ---- shader ----
-
-
-
-
-    struct runtime_array_struct {
-      arr : array<u32>
-    }
-
-    struct constructible {
-      a : i32,
-      b : u32,
-      c : f32,
-      d : bool,
-    }
-
-    struct host_shareable {
-      a : i32,
-      b : u32,
-      c : f32,
-    }
-
-    struct struct_with_array {
-      a : array<constructible, 4>
-    }
-
-
-
-    fn foo(param : ptr<function, texture_external>) {
-    }
-    expectCompileResult@http://127.0.0.1:8000/webgpu/webgpu/shader/validation/shader_validation_test.js:73:28
-    @http://127.0.0.1:8000/webgpu/webgpu/shader/validation/functions/restrictions.spec.js:313:24
-  - EXPECTATION FAILED: Expected validation error
-      at (elided: below max severity)
- Reached unreachable code
+PASS :function_parameter_types:case="invalid_ptr8"
 PASS :function_parameter_matching:decl="u32"
 PASS :function_parameter_matching:decl="i32"
 PASS :function_parameter_matching:decl="f32"
@@ -374,22 +279,7 @@ PASS :function_attributes:case="compute";placement="ret"
 PASS :function_attributes:case="const";placement="func"
 PASS :function_attributes:case="const";placement="param"
 PASS :function_attributes:case="const";placement="ret"
-FAIL :function_attributes:case="diagnostic";placement="func" assert_unreached:
-  - VALIDATION FAILED: Unexpected compilationInfo 'error' message.
-    2:1: error: invalid attribute for function declaration
-
-    ---- shader ----
-
-    @diagnostic(off, derivative_uniformity)
-    fn b( foo: i32) ->  i32{
-      return 1;
-    }
-
-      at (elided: below max severity)
-  - EXCEPTION: Error: Unexpected validation error occurred: 1 error generated while compiling the shader:
-    2:0: invalid attribute for function declaration
-    attemptEndTestScope@http://127.0.0.1:8000/webgpu/webgpu/util/device_pool.js:457:44
- Reached unreachable code
+PASS :function_attributes:case="diagnostic";placement="func"
 PASS :function_attributes:case="diagnostic";placement="param"
 PASS :function_attributes:case="diagnostic";placement="ret"
 PASS :function_attributes:case="fragment";placement="func"

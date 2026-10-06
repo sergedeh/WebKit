@@ -29,6 +29,8 @@
 #include "NetworkCacheFileSystem.h"
 #include <wtf/MainThread.h>
 #include <wtf/RunLoop.h>
+#include <wtf/Threading.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/RunLoopSourcePriority.h>
 
@@ -38,7 +40,7 @@ namespace NetworkCache {
 IOChannel::IOChannel(const String& filePath, Type type, std::optional<WorkQueue::QOS> qos)
 {
     auto path = FileSystem::fileSystemRepresentation(filePath);
-    GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(path.data()));
+    GRefPtr<GFile> file = gFileNewForPath(path);
 
     Locker locker { m_lock };
     switch (type) {
@@ -92,7 +94,7 @@ void IOChannel::read(size_t offset, size_t size, Ref<WTF::WorkQueueBase>&& queue
 
                 size_t bufferSize = std::min<size_t>(size, fileSize - offset);
                 uint8_t* bufferData = static_cast<uint8_t*>(fastMalloc(bufferSize));
-                GRefPtr<GBytes> buffer = adoptGRef(g_bytes_new_with_free_func(bufferData, bufferSize, fastFree, bufferData));
+                GRefPtr<GBytes> buffer = adoptGRef(g_bytes_new_with_free_func(bufferData, bufferSize, fastFreeCallback, bufferData));
                 gsize bytesRead;
                 if (g_input_stream_read_all(m_inputStream.get(), bufferData, bufferSize, &bytesRead, nullptr, nullptr)) {
                     GRefPtr<GBytes> bytes = bufferSize == bytesRead ? buffer : adoptGRef(g_bytes_new_from_bytes(buffer.get(), 0, bytesRead));

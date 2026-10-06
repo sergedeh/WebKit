@@ -40,6 +40,19 @@ namespace WebKit {
 #define MESSAGE_CHECK(assertion, connection) MESSAGE_CHECK_BASE(assertion, connection)
 #define MESSAGE_CHECK_COMPLETION(assertion, connection, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, connection, completion)
 
+// Via the "allowsFirstPartyForCookies" check, we know which domains a given IPC::Connection should have access to.
+bool NetworkBroadcastChannelRegistry::isOriginAllowedForConnection(IPC::Connection& connection, const WebCore::ClientOrigin& origin) const
+{
+    RefPtr webProcessConnection = m_networkProcess->webProcessConnection(connection);
+    if (!webProcessConnection)
+        return false;
+
+    WebCore::RegistrableDomain registrableDomain { origin.topOrigin };
+    auto allowCookieAccess = m_networkProcess->allowsFirstPartyForCookies(webProcessConnection->webProcessIdentifier(), registrableDomain);
+
+    return allowCookieAccess == NetworkProcess::AllowCookieAccess::Allow;
+}
+
 static bool isValidClientOrigin(const WebCore::ClientOrigin& clientOrigin)
 {
     return !clientOrigin.topOrigin.isNull() && !clientOrigin.clientOrigin.isNull();
@@ -62,6 +75,8 @@ NetworkBroadcastChannelRegistry::~NetworkBroadcastChannelRegistry() = default;
 void NetworkBroadcastChannelRegistry::registerChannel(IPC::Connection& connection, const WebCore::ClientOrigin& origin, const String& name)
 {
     MESSAGE_CHECK(isValidClientOrigin(origin), connection);
+    MESSAGE_CHECK(!name.isNull(), connection);
+    MESSAGE_CHECK(isOriginAllowedForConnection(connection, origin), connection);
 
     auto& channelsForOrigin = m_broadcastChannels.ensure(origin, [] { return NameToConnectionIdentifiersMap { }; }).iterator->value;
     auto& connectionIdentifiersForName = channelsForOrigin.ensure(name, [] { return Vector<IPC::Connection::UniqueID> { }; }).iterator->value;
@@ -72,6 +87,8 @@ void NetworkBroadcastChannelRegistry::registerChannel(IPC::Connection& connectio
 void NetworkBroadcastChannelRegistry::unregisterChannel(IPC::Connection& connection, const WebCore::ClientOrigin& origin, const String& name)
 {
     MESSAGE_CHECK(isValidClientOrigin(origin), connection);
+    MESSAGE_CHECK(!name.isNull(), connection);
+    MESSAGE_CHECK(isOriginAllowedForConnection(connection, origin), connection);
 
     auto channelsForOriginIterator = m_broadcastChannels.find(origin);
     ASSERT(channelsForOriginIterator != m_broadcastChannels.end());
@@ -86,9 +103,11 @@ void NetworkBroadcastChannelRegistry::unregisterChannel(IPC::Connection& connect
     connectionIdentifiersForNameIterator->value.removeFirst(connection.uniqueID());
 }
 
-void NetworkBroadcastChannelRegistry::postMessage(IPC::Connection& connection, const WebCore::ClientOrigin& origin, const String& name, WebCore::MessageWithMessagePorts&& message, CompletionHandler<void()>&& completionHandler)
+void NetworkBroadcastChannelRegistry::postMessage(IPC::Connection& connection, const WebCore::ClientOrigin& origin, const String& name, WebCore::MessageWithMessagePorts&& message, Vector<URL>&& blobURLs, CompletionHandler<void()>&& completionHandler)
 {
     MESSAGE_CHECK_COMPLETION(isValidClientOrigin(origin), connection, completionHandler());
+    MESSAGE_CHECK_COMPLETION(!name.isNull(), connection, completionHandler());
+    MESSAGE_CHECK_COMPLETION(isOriginAllowedForConnection(connection, origin), connection, completionHandler());
 
     auto channelsForOriginIterator = m_broadcastChannels.find(origin);
     ASSERT(channelsForOriginIterator != m_broadcastChannels.end());
@@ -99,7 +118,13 @@ void NetworkBroadcastChannelRegistry::postMessage(IPC::Connection& connection, c
     if (connectionIdentifiersForNameIterator == channelsForOriginIterator->value.end())
         return completionHandler();
 
-    auto callbackAggregator = CallbackAggregator::create(WTF::move(completionHandler));
+    CompletionHandlerCallingScope blobURLsInFlight;
+    if (RefPtr webProcessConnection = m_networkProcess->webProcessConnection(connection))
+        blobURLsInFlight = webProcessConnection->retainBlobURLsWhileMessageIsInFlight(blobURLs);
+
+    auto callbackAggregator = CallbackAggregator::create([completionHandler = WTF::move(completionHandler), blobURLsInFlight = WTF::move(blobURLsInFlight)]() mutable {
+        completionHandler();
+    });
     for (auto& connectionID : connectionIdentifiersForNameIterator->value) {
         // Only dispatch the post the messages to BroadcastChannels outside the source process.
         if (connectionID == connection.uniqueID())
@@ -115,26 +140,18 @@ void NetworkBroadcastChannelRegistry::postMessage(IPC::Connection& connection, c
 
 void NetworkBroadcastChannelRegistry::removeConnection(IPC::Connection& connection)
 {
-    Vector<WebCore::ClientOrigin> originsToRemove;
-    for (auto& entry : m_broadcastChannels) {
-        Vector<String> namesToRemove;
-        for (auto& innerEntry : entry.value) {
+    m_broadcastChannels.removeIf([&](auto& entry) {
+        entry.value.removeIf([&](auto& innerEntry) {
             innerEntry.value.removeFirst(connection.uniqueID());
-            if (innerEntry.value.isEmpty())
-                namesToRemove.append(innerEntry.key);
-        }
-        for (auto& nameToRemove : namesToRemove)
-            entry.value.remove(nameToRemove);
-        if (entry.value.isEmpty())
-            originsToRemove.append(entry.key);
-    }
-    for (auto& originToRemove : originsToRemove)
-        m_broadcastChannels.remove(originToRemove);
+            return innerEntry.value.isEmpty();
+        });
+        return entry.value.isEmpty();
+    });
 }
 
 std::optional<SharedPreferencesForWebProcess> NetworkBroadcastChannelRegistry::sharedPreferencesForWebProcess(const IPC::Connection& connection) const
 {
-    RefPtr webProcessConnection = m_networkProcess->protectedWebProcessConnection(connection);
+    auto* webProcessConnection = m_networkProcess->webProcessConnection(connection);
     if (!webProcessConnection)
         return std::nullopt;
     return webProcessConnection->sharedPreferencesForWebProcess();

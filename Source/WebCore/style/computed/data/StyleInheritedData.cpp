@@ -25,7 +25,7 @@
 
 #include "StyleComputedStyle+DifferenceLogging.h"
 #include "StyleComputedStyle+InitialInlines.h"
-#include "StylePrimitiveKeyword+Logging.h"
+#include "StyleKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 
 namespace WebCore {
@@ -37,12 +37,10 @@ InheritedData::InheritedData()
     : borderHorizontalSpacing(ComputedStyle::initialBorderHorizontalSpacing())
     , borderVerticalSpacing(ComputedStyle::initialBorderVerticalSpacing())
     , lineHeight(ComputedStyle::initialLineHeight())
-#if ENABLE(TEXT_AUTOSIZING)
-    , specifiedLineHeight(ComputedStyle::initialLineHeight())
-#endif
+    , textAutosizingAdjustedLineHeight(ComputedStyle::initialLineHeight())
     , fontData(FontData::create())
-    , color(ComputedStyle::initialColor())
-    , visitedLinkColor(ComputedStyle::initialColor())
+    , color(WebCore::Color::black)
+    , visitedLinkColor(WebCore::Color::black)
 {
 }
 
@@ -51,9 +49,7 @@ inline InheritedData::InheritedData(const InheritedData& o)
     , borderHorizontalSpacing(o.borderHorizontalSpacing)
     , borderVerticalSpacing(o.borderVerticalSpacing)
     , lineHeight(o.lineHeight)
-#if ENABLE(TEXT_AUTOSIZING)
-    , specifiedLineHeight(o.specifiedLineHeight)
-#endif
+    , textAutosizingAdjustedLineHeight(o.textAutosizingAdjustedLineHeight)
     , fontData(o.fontData)
     , color(o.color)
     , visitedLinkColor(o.visitedLinkColor)
@@ -76,7 +72,7 @@ bool InheritedData::operator==(const InheritedData& other) const
 bool InheritedData::fastPathInheritedEqual(const InheritedData& other) const
 {
     // These properties also need to have "fast-path-inherited" codegen property set.
-    // Cases where other properties depend on these values need to disallow the fast path (via RenderStyle::setDisallowsFastPathInheritance).
+    // Cases where other properties depend on these values need to disallow the fast path (via Style::ComputedStyle::setDisallowsFastPathInheritance).
     return color == other.color
         && visitedLinkColor == other.visitedLinkColor;
 }
@@ -84,9 +80,7 @@ bool InheritedData::fastPathInheritedEqual(const InheritedData& other) const
 bool InheritedData::nonFastPathInheritedEqual(const InheritedData& other) const
 {
     return lineHeight == other.lineHeight
-#if ENABLE(TEXT_AUTOSIZING)
-        && specifiedLineHeight == other.specifiedLineHeight
-#endif
+        && textAutosizingAdjustedLineHeight == other.textAutosizingAdjustedLineHeight
         && fontData == other.fontData
         && borderHorizontalSpacing == other.borderHorizontalSpacing
         && borderVerticalSpacing == other.borderVerticalSpacing;
@@ -106,11 +100,7 @@ void InheritedData::dumpDifferences(TextStream& ts, const InheritedData& other) 
     LOG_IF_DIFFERENT(borderHorizontalSpacing);
     LOG_IF_DIFFERENT(borderVerticalSpacing);
     LOG_IF_DIFFERENT(lineHeight);
-
-#if ENABLE(TEXT_AUTOSIZING)
-    LOG_IF_DIFFERENT(specifiedLineHeight);
-#endif
-
+    LOG_IF_DIFFERENT(textAutosizingAdjustedLineHeight);
     LOG_IF_DIFFERENT(color);
     LOG_IF_DIFFERENT(visitedLinkColor);
 }

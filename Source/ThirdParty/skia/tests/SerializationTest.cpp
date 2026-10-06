@@ -44,11 +44,13 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkDashPathEffect.h"
 #include "include/effects/SkImageFilters.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkTemplates.h"
-#include "src/base/SkAutoMalloc.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkOnce.h"
+#include "include/private/SkTemplates.h"
 #include "src/core/SkAnnotationKeys.h"
+#include "src/core/SkAutoMalloc.h"
+#include "src/core/SkFontDescriptor.h"
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkPicturePriv.h"
 #include "src/core/SkReadBuffer.h"
@@ -75,6 +77,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <utility>
 
@@ -380,7 +383,13 @@ static void compare_bitmaps(skiatest::Reporter* reporter,
     REPORTER_ASSERT(reporter, 0 == pixelErrors);
 }
 
+static constexpr bool debug_synthetics = false;
+
 static sk_sp<const SkData> serialize_typeface_proc(SkTypeface* typeface, void* ctx) {
+    if constexpr (debug_synthetics) {
+        SkDEBUGF("Synthetic bold:%d oblique:%d\n",
+                 typeface->isSyntheticBold(), typeface->isSyntheticOblique());
+    }
     // Write out typeface ID followed by entire typeface.
     SkDynamicMemoryWStream stream;
     sk_sp<SkData> data(typeface->serialize(SkTypeface::SerializeBehavior::kDoIncludeData));
@@ -397,6 +406,10 @@ static sk_sp<SkTypeface> deserialize_typeface_proc(SkStream& stream, void* ctx) 
     }
 
     sk_sp<SkTypeface> typeface = SkTypeface::MakeDeserialize(&stream, ToolUtils::TestFontMgr());
+    if constexpr (debug_synthetics) {
+        SkDEBUGF("Synthetic bold:%d oblique:%d\n",
+                 typeface->isSyntheticBold(), typeface->isSyntheticOblique());
+    }
     return typeface;
 }
 
@@ -482,12 +495,55 @@ static sk_sp<SkTypeface> makeColrWithNonDefaultPalette(skiatest::Reporter* repor
     return typeface;
 }
 
+static sk_sp<SkTypeface> makeSynthetic(skiatest::Reporter* reporter, const char* resource) {
+    std::unique_ptr<SkStreamAsset> syn(GetResourceAsStream(resource));
+    if (!syn) {
+        REPORT_FAILURE(reporter, "syn", SkString(resource));
+        return nullptr;
+    }
+
+    SkFontArguments params;
+    params.setSyntheticBold(true);
+    params.setSyntheticOblique(true);
+
+    sk_sp<SkFontMgr> fm = ToolUtils::TestFontMgr();
+
+    sk_sp<SkTypeface> typeface = fm->makeFromStream(std::move(syn), params);
+    if (!typeface) {
+        return nullptr;  // Not all SkFontMgr can makeFromStream().
+    }
+
+    return typeface;
+}
+
 static void TestPictureTypefaceSerialization(const SkSerialProcs* serial_procs,
                                              const SkDeserialProcs* deserial_procs,
                                              skiatest::Reporter* reporter) {
     {
         // Load typeface from file to test CreateFromFile with index.
         auto typeface = ToolUtils::CreateTypefaceFromResource("fonts/test.ttc", 1);
+        if (!typeface) {
+            INFOF(reporter, "Could not run test because test.ttc not found.");
+        } else {
+            serialize_and_compare_typeface(std::move(typeface), "A!", serial_procs, deserial_procs,
+                                           reporter);
+        }
+    }
+
+    {
+        // Load typeface as stream with all synthetics.
+        auto typeface = makeSynthetic(reporter, "fonts/Em.ttf");
+        if (!typeface) {
+            INFOF(reporter, "Could not run test because Em.ttf not found.");
+        } else {
+            serialize_and_compare_typeface(std::move(typeface), "☓⬛", serial_procs, deserial_procs,
+                                           reporter);
+        }
+    }
+
+    {
+        // Load typeface as stream with request for non-bold with synthetics but a bold available.
+        auto typeface = makeSynthetic(reporter, "fonts/test.ttc");
         if (!typeface) {
             INFOF(reporter, "Could not run test because test.ttc not found.");
         } else {
@@ -517,6 +573,15 @@ static void TestPictureTypefaceSerialization(const SkSerialProcs* serial_procs,
                                             deserial_procs, reporter);
         }
     }
+}
+DEF_TEST(Serialization_PictureTypeface, reporter) {
+    TestPictureTypefaceSerialization(nullptr, nullptr, reporter);
+
+    SkSerialProcs serial_procs;
+    serial_procs.fTypefaceProc = serialize_typeface_proc;
+    SkDeserialProcs deserial_procs;
+    deserial_procs.fTypefaceStreamProc = deserialize_typeface_proc;
+    TestPictureTypefaceSerialization(&serial_procs, &deserial_procs, reporter);
 }
 
 SkString DumpTypeface(const SkTypeface& typeface) {
@@ -575,12 +640,18 @@ SkString DumpFontMetrics(const SkFontMetrics& metrics) {
 static void TestTypefaceSerialization(skiatest::Reporter* reporter,
                                       const sk_sp<SkTypeface>& typeface) {
     SkDynamicMemoryWStream typefaceWStream;
-    typeface->serialize(&typefaceWStream);
+    if (!typeface->serialize(&typefaceWStream)) {
+        REPORT_FAILURE(reporter, "serialize typeface", SkString());
+        return;
+    }
 
     std::unique_ptr<SkStream> typefaceStream = typefaceWStream.detachAsStream();
     sk_sp<SkTypeface> cloneTypeface =
             SkTypeface::MakeDeserialize(typefaceStream.get(), ToolUtils::TestFontMgr());
-    SkASSERT(cloneTypeface);
+    if (!cloneTypeface) {
+        REPORTER_ASSERT(reporter, cloneTypeface);
+        return;
+    }
 
     SkString name, cloneName;
     typeface->getFamilyName(&name);
@@ -609,6 +680,106 @@ static void TestTypefaceSerialization(skiatest::Reporter* reporter,
 DEF_TEST(Serialization_Typeface, reporter) {
     TestTypefaceSerialization(reporter, ToolUtils::DefaultTypeface());
     TestTypefaceSerialization(reporter, ToolUtils::SampleUserTypeface());
+}
+
+DEF_TEST(Serialization_Typeface_Sanitizer, reporter) {
+    sk_sp<SkTypeface> typeface = ToolUtils::DefaultTypeface();
+    if (!typeface) {
+        return;
+    }
+    sk_sp<SkData> serializedData =
+            typeface->serialize(SkTypeface::SerializeBehavior::kDoIncludeData);
+    if (!serializedData) {
+        REPORT_FAILURE(reporter, "serialize typeface", SkString());
+        return;
+    }
+
+    {  // Default (no sanitizer) behavior
+        SkMemoryStream stream(serializedData);
+        sk_sp<SkTypeface> clone = SkTypeface::MakeDeserialize(&stream, ToolUtils::TestFontMgr());
+        REPORTER_ASSERT(reporter, clone != nullptr);
+    }
+
+    {  // Sanitizer succeeds (no data change necessary)
+        SkMemoryStream stream(serializedData);
+        auto pass_through = [](sk_sp<const SkData> data) -> sk_sp<SkData> {
+            return SkData::MakeWithCopy(data->data(), data->size());
+        };
+        sk_sp<SkTypeface> clone =
+                SkTypeface::MakeDeserialize(&stream, ToolUtils::TestFontMgr(), pass_through);
+        REPORTER_ASSERT(reporter, clone != nullptr);
+    }
+
+    {  // Pretend sanitizer rejects data
+        SkMemoryStream stream(serializedData);
+        auto reject = [](sk_sp<const SkData> data) -> sk_sp<SkData> { return nullptr; };
+        sk_sp<SkTypeface> clone =
+                SkTypeface::MakeDeserialize(&stream, ToolUtils::TestFontMgr(), reject);
+        REPORTER_ASSERT(reporter, clone == nullptr);
+    }
+}
+
+class SpyDecoder {
+public:
+    SpyDecoder() {
+        sInstance = this;
+        static SkOnce once;
+        once([] {
+            SkTypeface::Register(kSpyFactoryId,
+                                 [](std::unique_ptr<SkStreamAsset> stream,
+                                    const SkFontArguments& args) -> sk_sp<SkTypeface> {
+                                     if (sInstance) {
+                                         size_t len = stream->getLength();
+                                         auto data = SkData::MakeUninitialized(len);
+                                         stream->read(data->writable_data(), len);
+                                         sInstance->fData = std::move(data);
+                                     }
+                                     // Return a valid typeface to avoid decoding failure
+                                     return ToolUtils::DefaultTypeface();
+                                 });
+        });
+    }
+
+    sk_sp<const SkData> fData = nullptr;
+    static constexpr SkTypeface::FactoryId kSpyFactoryId = SkSetFourByteTag('s', 'p', 'y', 'f');
+
+private:
+    inline static SpyDecoder* sInstance = nullptr;
+};
+
+DEF_TEST(Serialization_Typeface_Sanitizer_Spy, reporter) {
+    SpyDecoder spy;
+
+    static constexpr const char kSanitizedBytes[] = "sanitized_bytes";
+
+    // Construct the serialized stream manually with our spy factory id and custom font bytes
+    SkFontDescriptor desc;
+    desc.setFactoryId(SpyDecoder::kSpyFactoryId);
+    desc.setFamilyName("SpyFont");
+
+    auto originalData = SkData::MakeWithCString("original_bytes");
+    desc.setStream(SkMemoryStream::Make(originalData));
+
+    SkDynamicMemoryWStream wstream;
+    REPORTER_ASSERT(reporter, desc.serialize(&wstream));
+
+    sk_sp<SkData> serializedData = wstream.detachAsData();
+
+    // Deserialize using a mutating sanitizer callback
+    SkMemoryStream stream(serializedData);
+    auto mutating_sanitizer = [](sk_sp<const SkData> data) -> sk_sp<SkData> {
+        return SkData::MakeWithCString(kSanitizedBytes);
+    };
+
+    sk_sp<SkTypeface> clone =
+            SkTypeface::MakeDeserialize(&stream, ToolUtils::TestFontMgr(), mutating_sanitizer);
+    REPORTER_ASSERT(reporter, clone != nullptr);
+
+    // Verify end-to-end that the decoder factory received the sanitized bytes, not the
+    // original bytes
+    REPORTER_ASSERT(reporter, spy.fData != nullptr);
+    REPORTER_ASSERT(reporter, spy.fData->size() == sizeof(kSanitizedBytes));
+    REPORTER_ASSERT(reporter, strcmp((const char*)spy.fData->data(), kSanitizedBytes) == 0);
 }
 
 static void setup_bitmap_for_canvas(SkBitmap* bitmap) {
@@ -881,14 +1052,6 @@ DEF_TEST(Serialization, reporter) {
             }
         }
     }
-
-    TestPictureTypefaceSerialization(nullptr, nullptr, reporter);
-
-    SkSerialProcs serial_procs;
-    serial_procs.fTypefaceProc = serialize_typeface_proc;
-    SkDeserialProcs deserial_procs;
-    deserial_procs.fTypefaceStreamProc = deserialize_typeface_proc;
-    TestPictureTypefaceSerialization(&serial_procs, &deserial_procs, reporter);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

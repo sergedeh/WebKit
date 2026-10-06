@@ -64,12 +64,14 @@ struct RTCPacketOptions {
     };
 
     struct SerializableData {
-        DifferentiatedServicesCodePoint dscp;
         int32_t packetId;
+#if !PLATFORM(COCOA)
+        DifferentiatedServicesCodePoint dscp;
         int rtpSendtimeExtensionId;
         int64_t srtpAuthTagLength;
         std::span<const char> srtpAuthKey;
         int64_t srtpPacketIndex;
+#endif
     };
 
     explicit RTCPacketOptions(const webrtc::AsyncSocketPacketOptions& options)
@@ -78,7 +80,7 @@ struct RTCPacketOptions {
 
     explicit RTCPacketOptions(const SerializableData&);
 
-    SerializableData serializableData() const;
+    SerializableData NODELETE serializableData() const;
 
     webrtc::AsyncSocketPacketOptions options;
 };

@@ -26,7 +26,9 @@
 import Foundation
 import Security
 
-@objc @implementation extension WKIdentityDocumentPresentmentMobileDocumentRequest {
+@objc
+@implementation
+extension WKIdentityDocumentPresentmentMobileDocumentRequest {
     var presentmentRequests: [WKIdentityDocumentPresentmentMobileDocumentPresentmentRequest]
     var authenticationCertificates: [[WKIdentityDocumentPresentmentRequestAuthenticationCertificate]]
 
@@ -39,7 +41,9 @@ import Security
     }
 }
 
-@objc @implementation extension WKIdentityDocumentPresentmentMobileDocumentPresentmentRequest {
+@objc
+@implementation
+extension WKIdentityDocumentPresentmentMobileDocumentPresentmentRequest {
     var documentSets: [[WKIdentityDocumentPresentmentMobileDocumentIndividualDocumentRequest]]
     var isMandatory: Bool
 
@@ -49,17 +53,27 @@ import Security
     }
 }
 
-@objc @implementation extension WKIdentityDocumentPresentmentMobileDocumentIndividualDocumentRequest {
+@objc
+@implementation
+extension WKIdentityDocumentPresentmentMobileDocumentIndividualDocumentRequest {
     var documentType: String
     var namespaces: [String: [String: WKIdentityDocumentPresentmentMobileDocumentElementInfo]]
+    var issuerIdentifiers: [Data]?
 
-    init(documentType: String, namespaces: [String : [String : WKIdentityDocumentPresentmentMobileDocumentElementInfo]]) {
+    init(
+        documentType: String,
+        namespaces: [String: [String: WKIdentityDocumentPresentmentMobileDocumentElementInfo]],
+        issuerIdentifiers: [Data]?
+    ) {
         self.documentType = documentType
         self.namespaces = namespaces
+        self.issuerIdentifiers = issuerIdentifiers
     }
 }
 
-@objc @implementation extension WKIdentityDocumentPresentmentMobileDocumentElementInfo {
+@objc
+@implementation
+extension WKIdentityDocumentPresentmentMobileDocumentElementInfo {
     var isRetaining: Bool
 
     init(isRetaining: Bool) {
@@ -67,8 +81,10 @@ import Security
     }
 }
 
-@objc @implementation extension WKIdentityDocumentPresentmentRequestAuthenticationCertificate {
-     var certificate: SecCertificate
+@objc
+@implementation
+extension WKIdentityDocumentPresentmentRequestAuthenticationCertificate {
+    var certificate: SecCertificate
 
     init(certificate: SecCertificate) {
         self.certificate = certificate

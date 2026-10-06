@@ -125,15 +125,6 @@ HRESULT CreateResource(ID3D11Device *device,
 }
 
 HRESULT CreateResource(ID3D11Device *device,
-                       const ShaderData *desc,
-                       void * /*initData*/,
-                       ID3D11ComputeShader **resourceOut)
-{
-    SCOPED_ANGLE_HISTOGRAM_TIMER_US("GPU.ANGLE.D3D11.CreateComputeShaderUs");
-    return device->CreateComputeShader(desc->get(), desc->size(), nullptr, resourceOut);
-}
-
-HRESULT CreateResource(ID3D11Device *device,
                        const D3D11_DEPTH_STENCIL_DESC *desc,
                        void * /*initData*/,
                        ID3D11DepthStencilState **resourceOut)
@@ -488,7 +479,7 @@ angle::Result ResourceManager11::allocate(d3d::Context *context,
                                           Resource11<T> *resourceOut)
 {
     ID3D11Device *device = renderer->getDevice();
-    T *resource          = nullptr;
+    angle::ComPtr<T> resource;
 
     GetInitDataFromD3D11<T> *shadowInitData = initData;
     if (!shadowInitData && mInitializeAllocations)
@@ -501,12 +492,12 @@ angle::Result ResourceManager11::allocate(d3d::Context *context,
 
     if (!shadowInitData && mInitializeAllocations)
     {
-        ANGLE_TRY(ClearResource(context, renderer, desc, resource));
+        ANGLE_TRY(ClearResource(context, renderer, desc, resource.Get()));
     }
 
     ASSERT(resource);
     incrResource(GetResourceTypeFromD3D11<T>(), ComputeMemoryUsage(desc));
-    *resourceOut = std::move(Resource11<T>(resource, this));
+    *resourceOut = std::move(Resource11<T>(std::move(resource), this));
     return angle::Result::Continue;
 }
 

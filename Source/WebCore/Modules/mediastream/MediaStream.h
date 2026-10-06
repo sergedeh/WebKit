@@ -65,7 +65,8 @@ public:
 
     static Ref<MediaStream> create(Document&);
     static Ref<MediaStream> create(Document&, MediaStream&);
-    static Ref<MediaStream> create(Document&, const Vector<Ref<MediaStreamTrack>>&);
+    enum class CheckDuplicate : bool { No, Yes };
+    static Ref<MediaStream> create(Document&, Vector<Ref<MediaStreamTrack>>&&, CheckDuplicate = CheckDuplicate::Yes);
 
     enum class AllowEventTracks : bool { No, Yes };
     static Ref<MediaStream> create(Document&, Ref<MediaStreamPrivate>&&, AllowEventTracks = AllowEventTracks::No);
@@ -77,8 +78,8 @@ public:
     void removeTrack(MediaStreamTrack&);
     MediaStreamTrack* getTrackById(String);
 
-    MediaStreamTrack* getFirstAudioTrack() const;
-    MediaStreamTrack* getFirstVideoTrack() const;
+    MediaStreamTrack* NODELETE getFirstAudioTrack() const;
+    MediaStreamTrack* NODELETE getFirstVideoTrack() const;
 
     MediaStreamTrackVector getAudioTracks() const;
     MediaStreamTrackVector getVideoTracks() const;
@@ -91,18 +92,17 @@ public:
     bool active() const { return m_isActive; }
     bool muted() const { return m_private->muted(); }
 
-    template<typename Function> bool hasMatchingTrack(Function&& function) const { return std::ranges::any_of(m_trackMap.values(), std::forward<Function>(function)); }
+    template<typename Function> bool hasMatchingTrack(Function&& function) const { return std::ranges::any_of(m_tracks, std::forward<Function>(function)); }
 
     MediaStreamPrivate& privateStream() { return m_private.get(); }
-    Ref<MediaStreamPrivate> protectedPrivateStream();
 
     void startProducingData();
     void stopProducingData();
-    void inactivate();
+    void NODELETE inactivate();
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::MediaStream; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
 
     void addTrackFromPlatform(Ref<MediaStreamTrack>&&);
 
@@ -113,12 +113,12 @@ public:
     void allowEventTracksForTesting() { m_allowEventTracks = AllowEventTracks::Yes; }
 
 protected:
-    MediaStream(Document&, const Vector<Ref<MediaStreamTrack>>&);
+    MediaStream(Document&, Vector<Ref<MediaStreamTrack>>&&);
     MediaStream(Document&, Ref<MediaStreamPrivate>&&, AllowEventTracks = AllowEventTracks::No);
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_private->logger(); }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& NODELETE logChannel() const final;
     ASCIILiteral logClassName() const final { return "MediaStream"_s; }
 #endif
 
@@ -143,21 +143,19 @@ private:
 
     // ActiveDOMObject.
     void stop() final { inactivate(); }
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     void updateActiveState();
     void activityEventTimerFired();
     void setIsActive(bool);
     void statusDidChange();
 
-    MediaStreamTrackVector filteredTracks(NOESCAPE const Function<bool(const MediaStreamTrack&)>&) const;
-
-    Document* document() const;
+    Document* NODELETE document() const;
     RefPtr<MediaSessionManagerInterface> mediaSessionManager() const;
 
     const Ref<MediaStreamPrivate> m_private;
 
-    MemoryCompactRobinHoodHashMap<String, Ref<MediaStreamTrack>> m_trackMap;
+    Vector<Ref<MediaStreamTrack>> m_tracks;
 
     MediaProducerMediaStateFlags m_state;
 

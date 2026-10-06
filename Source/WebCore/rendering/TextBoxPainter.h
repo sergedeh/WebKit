@@ -40,24 +40,27 @@ namespace WebCore {
 class Color;
 class Document;
 class RenderCombineText;
-class RenderStyle;
 class RenderText;
 struct CompositionUnderline;
 struct MarkedText;
 struct StyledMarkedText;
 class TextPainter;
 
+namespace Style {
+class ComputedStyle;
+}
+
 class TextBoxPainter {
 public:
-    TextBoxPainter(const LayoutIntegration::InlineContent&, const InlineDisplay::Box&, const RenderStyle&, PaintInfo&, const LayoutPoint& paintOffset);
+    TextBoxPainter(const LayoutIntegration::InlineContent&, const InlineDisplay::Box&, const Style::ComputedStyle&, PaintInfo&, const LayoutPoint& paintOffset);
     ~TextBoxPainter();
 
     void paint();
 
-    static inline FloatSize rotateShadowOffset(const SpaceSeparatedPoint<Style::Length<CSS::AllUnzoomed>>& offset, WritingMode, const Style::ZoomFactor&);
+    static inline FloatSize rotateShadowOffset(const SpaceSeparatedPoint<Style::Length<>>& offset, WritingMode, const Style::ZoomFactor&);
 
 protected:
-    auto& textBox() const { return m_textBox; }
+    auto& textBox() const LIFETIME_BOUND { return m_textBox; }
     InlineIterator::TextBoxIterator makeIterator() const;
 
     void paintBackgroundFill();
@@ -70,6 +73,8 @@ protected:
     void paintPlatformDocumentMarkers();
 
     void paintForeground(const StyledMarkedText&);
+    bool hasSynthesizedGlyph() const;
+    void paintSynthesizedGlyph();
     bool paintForegroundForShapeRange(TextPainter&);
     TextDecorationPainter createDecorationPainter(const StyledMarkedText&, const FloatRect&);
     void paintBackgroundDecorations(TextDecorationPainter&, const StyledMarkedText&, const FloatRect&);
@@ -84,25 +89,34 @@ protected:
     bool computeHaveSelection() const;
     std::pair<unsigned, unsigned> selectionStartEnd() const;
     MarkedText createMarkedTextFromSelectionInBox();
-    const FontCascade& fontCascade() const;
+    const FontCascade& NODELETE fontCascade() const;
     WritingMode writingMode() const { return m_style->writingMode(); }
     FloatPoint textOriginFromPaintRect(const FloatRect&) const;
-    bool isInsideShapedContent() const;
+    bool NODELETE isInsideShapedContent() const;
 
     struct DecoratingBox {
         InlineIterator::InlineBoxIterator inlineBox;
-        const CheckedRef<const RenderStyle> style;
+        const CheckedRef<const Style::ComputedStyle> style;
         TextDecorationPainter::Styles textDecorationStyles;
         FloatPoint location;
+        float contentWidth { 0.f };
     };
     using DecoratingBoxList = Vector<DecoratingBox>;
-    void collectDecoratingBoxesForBackgroundPainting(DecoratingBoxList&, const InlineIterator::TextBoxIterator&, FloatPoint textBoxLocation, const TextDecorationPainter::Styles&);
+    void collectDecoratingBoxesForBackgroundPainting(DecoratingBoxList&, const InlineIterator::TextBoxIterator&, const FloatRect& textBoxRect, const TextDecorationPainter::Styles&);
+    void collectDecoratingBoxesForForegroundPainting(DecoratingBoxList&, const InlineIterator::TextBoxIterator&, const FloatRect& textBoxRect, const TextDecorationPainter::Styles&);
+
+    // Applies 'text-decoration-inset' to a decorating box, returning the decoration's adjusted
+    // logical origin and inline length. Honors box-decoration-break (via the inline box's closed
+    // edges) so the start inset only affects the first fragment and the end inset the last, and shares
+    // a symmetric inset's translation across bidi runs / marked-text pieces while applying the
+    // extend/trim overhang only at the piece that reaches the decoration's visual edge.
+    std::pair<FloatPoint, float> insetAdjustedDecorationLocationAndWidth(const DecoratingBox&, const StyledMarkedText&) const;
 
     // FIXME: We could just talk to the display box directly.
     const InlineIterator::BoxModernPath m_textBox;
     const CheckedRef<const RenderText> m_renderer;
     const CheckedRef<const Document> m_document;
-    const CheckedRef<const RenderStyle> m_style;
+    const CheckedRef<const Style::ComputedStyle> m_style;
     const FloatRect m_logicalRect;
     const TextRun m_paintTextRun;
     PaintInfo& m_paintInfo;
@@ -117,7 +131,7 @@ protected:
     bool m_compositionWithCustomUnderlines { false };
 };
 
-inline FloatSize TextBoxPainter::rotateShadowOffset(const SpaceSeparatedPoint<Style::Length<CSS::AllUnzoomed>>& offset, WritingMode writingMode, const Style::ZoomFactor& zoomFactor)
+inline FloatSize TextBoxPainter::rotateShadowOffset(const SpaceSeparatedPoint<Style::Length<>>& offset, WritingMode writingMode, const Style::ZoomFactor& zoomFactor)
 {
     if (writingMode.isHorizontal()) {
         return {

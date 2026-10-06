@@ -34,11 +34,11 @@
  * @title: JSCVirtualMachine
  * @see_also: JSCContext
  *
- * JSCVirtualMachine represents a group of JSCContext<!-- -->s. It allows
+ * JSCVirtualMachine represents a group of JSCContext objects. It allows
  * concurrent JavaScript execution by creating a different instance of
  * JSCVirtualMachine in each thread.
  *
- * To create a group of JSCContext<!-- -->s pass the same JSCVirtualMachine
+ * To create a group of JSCContext objects pass the same JSCVirtualMachine
  * instance to every JSCContext constructor.
  */
 
@@ -115,7 +115,11 @@ static void jsc_virtual_machine_class_init(JSCVirtualMachineClass* klass)
 
 GRefPtr<JSCVirtualMachine> jscVirtualMachineGetOrCreate(JSContextGroupRef jsContextGroup)
 {
-    GRefPtr<JSCVirtualMachine> vm = wrapperMap().get(jsContextGroup);
+    GRefPtr<JSCVirtualMachine> vm;
+    {
+        Locker locker { wrapperCacheMutex };
+        vm = wrapperMap().get(jsContextGroup);
+    }
     if (!vm) {
         vm = adoptGRef(jsc_virtual_machine_new());
         jscVirtualMachineSetContextGroup(vm.get(), jsContextGroup);

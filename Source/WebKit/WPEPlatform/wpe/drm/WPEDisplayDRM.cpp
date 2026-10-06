@@ -52,6 +52,16 @@
 /**
  * WPEDisplayDRM:
  *
+ * A [class@WPEPlatform.Display] implementation for DRM/KMS.
+ *
+ * [class@DisplayDRM] is the built-in [class@WPEPlatform.Display]
+ * implementation that drives the screen directly through DRM/KMS, without a
+ * windowing system. Use [ctor@DisplayDRM.new] to create a new instance and
+ * [method@DisplayDRM.connect] to connect to a particular DRM device by name.
+ * [method@DisplayDRM.get_device] gives access to the underlying `gbm_device`,
+ * while [method@DisplayDRM.supports_atomic] and
+ * [method@DisplayDRM.supports_modifiers] report the capabilities of the
+ * device.
  */
 struct _WPEDisplayDRMPrivate {
     std::unique_ptr<WPE::DRM::Session> session;
@@ -71,7 +81,7 @@ struct _WPEDisplayDRMPrivate {
 };
 WEBKIT_DEFINE_FINAL_TYPE_WITH_CODE(WPEDisplayDRM, wpe_display_drm, WPE_TYPE_DISPLAY, WPEDisplay,
     wpeEnsureExtensionPointsRegistered();
-    g_io_extension_point_implement(WPE_DISPLAY_EXTENSION_POINT_NAME, g_define_type_id, "wpe-display-drm", -100))
+    g_io_extension_point_implement(WPE_DISPLAY_EXTENSION_POINT_NAME, g_define_type_id, "drm", -100))
 
 static void wpeDisplayDRMConstructed(GObject* object)
 {
@@ -371,7 +381,7 @@ static gboolean wpeDisplayDRMSetup(WPEDisplayDRM* displayDRM, const char* device
     std::optional<double> scaleFromEnvironment;
     if (const auto scaleString = StringView::fromLatin1(getenv("WPE_DRM_SCALE"))) {
         RELEASE_ASSERT(scaleString.is8Bit());
-        auto trimmedScaleString = scaleString.trim(isASCIIWhitespace<Latin1Character>);
+        auto trimmedScaleString = scaleString.trim(isASCIIWhitespace);
         size_t parsedLength = 0;
         auto scale = parseDouble(trimmedScaleString, parsedLength);
         if (parsedLength == trimmedScaleString.length() && scaleIsInBounds(scale))

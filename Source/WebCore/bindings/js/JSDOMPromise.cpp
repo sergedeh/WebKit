@@ -29,39 +29,56 @@
 #include "JSDOMGlobalObject.h"
 #include "LocalDOMWindow.h"
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/CallFrameInlines.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>
+#include <JavaScriptCore/MarkedVector.h>
+#include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 
-using namespace JSC;
-
 namespace WebCore {
+
+using namespace JSC;
 
 auto DOMPromise::whenSettledWithResult(Function<void(JSDOMGlobalObject*, bool, JSC::JSValue)>&& callback) -> IsCallbackRegistered
 {
     if (isSuspended())
         return IsCallbackRegistered::No;
-    return whenPromiseIsSettled(globalObject(), promise(), WTF::move(callback));
+    return whenPromiseIsSettled(globalObject(), promise(), WTF::move(callback), nullptr);
 }
 
-auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSPromise* promise, Function<void(JSDOMGlobalObject*, bool, JSC::JSValue)>&& callback) -> IsCallbackRegistered
+auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSPromise* promise, Function<void(JSDOMGlobalObject*, bool, JSC::JSValue)>&& callback, JSC::JSObject* protectedWrapper, ShouldCallCallbackOnRegistrationFailure shouldCallCallbackOnRegistrationFailure) -> IsCallbackRegistered
 {
     auto& lexicalGlobalObject = *globalObject;
     auto& vm = lexicalGlobalObject.vm();
     JSLockHolder lock(vm);
-    auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String { }, [callback = WTF::move(callback)] (JSGlobalObject* globalObject, CallFrame* callFrame) mutable {
-        auto* castedThis = JSC::jsDynamicCast<JSC::JSPromise*>(callFrame->thisValue());
+    auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String { }, [callback = WTF::move(callback), shouldCallCallbackOnRegistrationFailure] (JSGlobalObject* globalObject, CallFrame* callFrame) mutable {
+        if (shouldCallCallbackOnRegistrationFailure == ShouldCallCallbackOnRegistrationFailure::Yes && !callFrame) {
+            std::exchange(callback, { })(downcast<JSDOMGlobalObject>(globalObject), false, { });
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+
+        auto* castedThis = dynamicDowncast<JSC::JSPromise>(callFrame->thisValue());
         ASSERT(castedThis);
         // We exchange callback so that all captured variables are deallocated after the call. This is quicker than waiting for the handler function to be GCed.
         if (castedThis)
-            std::exchange(callback, { })(JSC::jsCast<JSDOMGlobalObject*>(globalObject), castedThis->status() == JSC::JSPromise::Status::Fulfilled, castedThis->result());
+            std::exchange(callback, { })(downcast<JSDOMGlobalObject>(globalObject), castedThis->status() == JSC::JSPromise::Status::Fulfilled, castedThis->result());
         return JSC::JSValue::encode(JSC::jsUndefined());
     });
 
-    auto* thisHandler = JSC::JSBoundFunction::create(vm, globalObject, handler, promise, { }, 0, jsEmptyString(vm), JSC::makeSource("createWhenPromiseSettledFunction"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
-    if (!thisHandler) [[unlikely]]
+    JSC::MarkedArgumentBuffer boundArgs;
+    if (protectedWrapper)
+        boundArgs.append(protectedWrapper);
+    ASSERT(!boundArgs.hasOverflowed());
+
+    auto* thisHandler = JSC::JSBoundFunction::create(vm, globalObject, handler, promise, boundArgs, protectedWrapper ? 1 : 0, jsEmptyString(vm), JSC::makeSource("createWhenPromiseSettledFunction"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
+    if (!thisHandler) [[unlikely]] {
+        if (shouldCallCallbackOnRegistrationFailure == ShouldCallCallbackOnRegistrationFailure::Yes)
+            handler->function()(globalObject, nullptr);
         return IsCallbackRegistered::No;
+    }
 
     promise->performPromiseThenExported(vm, globalObject, thisHandler, thisHandler, JSC::jsUndefined());
     return IsCallbackRegistered::Yes;

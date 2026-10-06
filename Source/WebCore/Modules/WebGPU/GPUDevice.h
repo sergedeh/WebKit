@@ -39,6 +39,9 @@
 #include "ScriptExecutionContext.h"
 #include "WebGPUDevice.h"
 #include <optional>
+#include <wtf/CurrentThread.h>
+#include <wtf/HashSet.h>
+#include <wtf/Lock.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashMap.h>
@@ -83,6 +86,7 @@ struct GPUTextureDescriptor;
 class HTMLVideoElement;
 class WebXRSession;
 class XRGPUBinding;
+template<typename T> struct UniquelyAnnotatedDescriptor;
 
 namespace WebGPU {
 class XRBinding;
@@ -91,88 +95,112 @@ class XRBinding;
 class GPUDevice : public RefCounted<GPUDevice>, public ActiveDOMObject, public EventTarget {
     WTF_MAKE_TZONE_ALLOCATED(GPUDevice);
 public:
-    static Ref<GPUDevice> create(ScriptExecutionContext* scriptExecutionContext, Ref<WebGPU::Device>&& backing, String&& queueLabel, GPUAdapterInfo& info)
-    {
-        return adoptRef(*new GPUDevice(scriptExecutionContext, WTF::move(backing), WTF::move(queueLabel), info));
-    }
+    static Ref<GPUDevice> create(ScriptExecutionContext*, Ref<WebGPU::Device>&&, String&& queueLabel, GPUAdapterInfo&);
+
+    static HashSet<GPUDevice*>& NODELETE instances() WTF_REQUIRES_LOCK(instancesLock());
+    static Lock& NODELETE instancesLock() WTF_RETURNS_LOCK(s_instancesLock);
 
     virtual ~GPUDevice();
+
+    uint32_t owningThreadUID() const { return m_owningThreadUID; }
+    bool isContextThread() const { return m_owningThreadUID == currentThreadID(); }
 
     // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
+    void contextDestroyed() final;
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    String label() const;
+    String NODELETE label() const;
     void setLabel(String&&);
 
-    Ref<GPUSupportedFeatures> features() const;
-    Ref<GPUSupportedLimits> limits() const;
+    Ref<GPUSupportedFeatures> NODELETE features() const;
+    Ref<GPUSupportedLimits> NODELETE limits() const;
 
-    Ref<GPUQueue> queue() const;
+    Ref<GPUQueue> NODELETE queue() const;
 
     void destroy(ScriptExecutionContext&);
 
     RefPtr<WebGPU::XRBinding> createXRBinding(const WebXRSession&);
-    ExceptionOr<Ref<GPUBuffer>> createBuffer(const GPUBufferDescriptor&);
-    ExceptionOr<Ref<GPUTexture>> createTexture(const GPUTextureDescriptor&);
+    ExceptionOr<Ref<GPUBuffer>> createBuffer(GPUBufferDescriptor&&);
+    ExceptionOr<Ref<GPUTexture>> createTexture(GPUTextureDescriptor&&);
     std::optional<String> errorValidatingSupportedFormat(GPUTextureFormat) const;
-    ExceptionOr<Ref<GPUSampler>> createSampler(const std::optional<GPUSamplerDescriptor>&);
-    ExceptionOr<Ref<GPUExternalTexture>> importExternalTexture(const GPUExternalTextureDescriptor&);
+    ExceptionOr<Ref<GPUSampler>> createSampler(std::optional<GPUSamplerDescriptor>&&);
+    ExceptionOr<Ref<GPUExternalTexture>> importExternalTexture(GPUExternalTextureDescriptor&&);
 
-    ExceptionOr<Ref<GPUBindGroupLayout>> createBindGroupLayout(const GPUBindGroupLayoutDescriptor&);
-    ExceptionOr<Ref<GPUPipelineLayout>> createPipelineLayout(const GPUPipelineLayoutDescriptor&);
-    ExceptionOr<Ref<GPUBindGroup>> createBindGroup(const GPUBindGroupDescriptor&);
+    ExceptionOr<Ref<GPUBindGroupLayout>> createBindGroupLayout(GPUBindGroupLayoutDescriptor&&);
+    ExceptionOr<Ref<GPUPipelineLayout>> createPipelineLayout(GPUPipelineLayoutDescriptor&&);
+    ExceptionOr<Ref<GPUBindGroup>> createBindGroup(GPUBindGroupDescriptor&&);
 
-    ExceptionOr<Ref<GPUShaderModule>> createShaderModule(const GPUShaderModuleDescriptor&);
-    ExceptionOr<Ref<GPUComputePipeline>> createComputePipeline(const GPUComputePipelineDescriptor&);
-    ExceptionOr<Ref<GPURenderPipeline>> createRenderPipeline(const GPURenderPipelineDescriptor&);
+    ExceptionOr<Ref<GPUShaderModule>> createShaderModule(GPUShaderModuleDescriptor&&);
+    ExceptionOr<Ref<GPUComputePipeline>> createComputePipeline(UniquelyAnnotatedDescriptor<GPUComputePipelineDescriptor>&&);
+    ExceptionOr<Ref<GPURenderPipeline>> createRenderPipeline(UniquelyAnnotatedDescriptor<GPURenderPipelineDescriptor>&&);
     using CreateComputePipelineAsyncPromise = DOMPromiseDeferred<IDLInterface<GPUComputePipeline>>;
-    void createComputePipelineAsync(const GPUComputePipelineDescriptor&, CreateComputePipelineAsyncPromise&&);
+    void createComputePipelineAsync(UniquelyAnnotatedDescriptor<GPUComputePipelineDescriptor>&&, CreateComputePipelineAsyncPromise&&);
     using CreateRenderPipelineAsyncPromise = DOMPromiseDeferred<IDLInterface<GPURenderPipeline>>;
-    ExceptionOr<void> createRenderPipelineAsync(const GPURenderPipelineDescriptor&, CreateRenderPipelineAsyncPromise&&);
+    ExceptionOr<void> createRenderPipelineAsync(UniquelyAnnotatedDescriptor<GPURenderPipelineDescriptor>&&, CreateRenderPipelineAsyncPromise&&);
 
-    ExceptionOr<Ref<GPUCommandEncoder>> createCommandEncoder(const std::optional<GPUCommandEncoderDescriptor>&);
-    ExceptionOr<Ref<GPURenderBundleEncoder>> createRenderBundleEncoder(const GPURenderBundleEncoderDescriptor&);
+    ExceptionOr<Ref<GPUCommandEncoder>> createCommandEncoder(std::optional<GPUCommandEncoderDescriptor>&&);
+    ExceptionOr<Ref<GPURenderBundleEncoder>> createRenderBundleEncoder(GPURenderBundleEncoderDescriptor&&);
 
-    ExceptionOr<Ref<GPUQuerySet>> createQuerySet(const GPUQuerySetDescriptor&);
+    ExceptionOr<Ref<GPUQuerySet>> createQuerySet(GPUQuerySetDescriptor&&);
 
     void pushErrorScope(GPUErrorFilter);
-    using ErrorScopePromise = DOMPromiseDeferred<IDLNullable<IDLUnion<IDLInterface<GPUOutOfMemoryError>, IDLInterface<GPUValidationError>, IDLInterface<GPUInternalError>>>>;
+    using ErrorScopePromise = DOMPromiseDeferred<IDLNullable<IDLInterface<GPUError>>>;
     void popErrorScope(ErrorScopePromise&&);
 
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) override;
+    using EventTarget::addEventListener;
+    void listenForUncapturedErrors();
 
     using LostPromise = DOMPromiseProxy<IDLInterface<GPUDeviceLostInfo>>;
-    LostPromise& lost();
+    LostPromise& lost() LIFETIME_BOUND;
+
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
 
     WebGPU::Device& backing() { return m_backing; }
     const WebGPU::Device& backing() const { return m_backing; }
     void removeBufferToUnmap(GPUBuffer&);
     void addBufferToUnmap(GPUBuffer&);
-    Ref<GPUAdapterInfo> adapterInfo() const;
+    Ref<GPUAdapterInfo> NODELETE adapterInfo() const;
+    size_t NODELETE memoryCost() const;
 
 #if ENABLE(VIDEO)
     WeakPtr<GPUExternalTexture> takeExternalTextureForVideoElement(const HTMLVideoElement&);
 #endif
 
+    bool hasActiveInspectorCanvasCallTracer() const { return m_hasActiveInspectorCanvasCallTracer; }
+    void setHasActiveInspectorCanvasCallTracer(bool active) { m_hasActiveInspectorCanvasCallTracer = active; }
+
 private:
+    friend class GPUBuffer;
+    friend class GPUTexture;
+
     GPUDevice(ScriptExecutionContext*, Ref<WebGPU::Device>&&, String&& queueLabel, GPUAdapterInfo&);
+
+    void didChangeBufferMemoryCost(GPUBuffer&);
+    void didChangeTextureMemoryCost(GPUTexture&);
+    void willDestroyBuffer(GPUBuffer&);
+    void willDestroyTexture(GPUTexture&);
+    void notifyMemoryCostChanged();
 
     // FIXME: We probably need to override more methods to make this work properly.
     RefPtr<GPUPipelineLayout> createAutoPipelineLayout();
 
     // EventTarget.
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::GPUDevice; }
-    ScriptExecutionContext* scriptExecutionContext() const final;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
+
+    static Lock s_instancesLock;
 
     const UniqueRef<LostPromise> m_lostPromise;
     const Ref<WebGPU::Device> m_backing;
     const Ref<GPUQueue> m_queue;
-    RefPtr<GPUPipelineLayout> m_autoPipelineLayout;
+    const RefPtr<GPUPipelineLayout> m_autoPipelineLayout;
     WeakHashSet<GPUBuffer> m_buffersToUnmap;
+    WeakHashSet<GPUBuffer> m_buffers;
+    WeakHashSet<GPUTexture> m_textures;
 
 #if ENABLE(VIDEO)
     GPUExternalTexture* externalTextureForDescriptor(const GPUExternalTextureDescriptor&);
@@ -181,11 +209,15 @@ private:
     std::pair<RefPtr<HTMLVideoElement>, RefPtr<GPUExternalTexture>> m_previouslyImportedExternalTexture;
     std::pair<Vector<GPUBindGroupEntry>, RefPtr<GPUBindGroup>> m_lastCreatedExternalTextureBindGroup;
 #endif
-    Ref<GPUSupportedFeatures> m_features;
-    Ref<GPUSupportedLimits> m_limits;
-    Ref<GPUAdapterInfo> m_adapterInfo;
+    const Ref<GPUSupportedFeatures> m_features;
+    const Ref<GPUSupportedLimits> m_limits;
+    const Ref<GPUAdapterInfo> m_adapterInfo;
+    const uint32_t m_owningThreadUID;
 
     bool m_waitingForDeviceLostPromise { false };
+    bool m_listeningForUncapturedErrors { false };
+    bool m_hasActiveInspectorCanvasCallTracer { false };
+    bool m_isDestroyed { false };
 };
 
 } // namespace WebCore

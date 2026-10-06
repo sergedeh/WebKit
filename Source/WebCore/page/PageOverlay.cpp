@@ -26,6 +26,7 @@
 #include "config.h"
 #include "PageOverlay.h"
 
+#include "DocumentView.h"
 #include "GraphicsContext.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
@@ -43,7 +44,7 @@ static const double fadeAnimationFrameRate = 30;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PageOverlay);
 
-static PageOverlay::PageOverlayID generatePageOverlayID()
+static PageOverlay::PageOverlayID NODELETE generatePageOverlayID()
 {
     static PageOverlay::PageOverlayID pageOverlayID;
     return ++pageOverlayID;
@@ -79,12 +80,34 @@ PageOverlayController* PageOverlay::controller() const
     return &m_page->pageOverlayController();
 }
 
+void PageOverlay::setAssociatedFrame(LocalFrame* frame)
+{
+    m_associatedFrame = frame;
+}
+
+LocalFrame* PageOverlay::associatedFrame() const
+{
+    return m_associatedFrame.get();
+}
+
+// The associated frame if set (per-frame overlays under Site Isolation); otherwise the local main
+// frame, preserving the legacy single-overlay geometry for page-level overlays.
+LocalFrame* PageOverlay::frameForGeometry() const
+{
+    if (LocalFrame* associatedFrame = m_associatedFrame.get())
+        return associatedFrame;
+    return protect(m_page)->localMainFrame();
+}
+
 IntRect PageOverlay::bounds() const
 {
     if (!m_overrideFrame.isEmpty())
         return { { }, m_overrideFrame.size() };
 
-    RefPtr frameView = m_page->protectedMainFrame()->virtualView();
+    // Scope to the associated frame under Site Isolation; the page's main frame can be a RemoteFrame
+    // whose view has no contents size, which would give empty bounds.
+    RefPtr localFrame = frameForGeometry();
+    RefPtr frameView = localFrame ? localFrame->view() : nullptr;
     if (!frameView)
         return IntRect();
 
@@ -135,7 +158,8 @@ IntSize PageOverlay::viewToOverlayOffset() const
         return IntSize();
 
     case OverlayType::Document: {
-        RefPtr frameView = m_page->protectedMainFrame()->virtualView();
+        RefPtr localFrame = frameForGeometry();
+        RefPtr frameView = localFrame ? localFrame->view() : nullptr;
         return frameView ? toIntSize(frameView->viewToContents(IntPoint())) : IntSize();
     }
     }
@@ -186,7 +210,8 @@ void PageOverlay::drawRect(GraphicsContext& graphicsContext, const IntRect& dirt
     GraphicsContextStateSaver stateSaver(graphicsContext);
 
     if (m_overlayType == PageOverlay::OverlayType::Document) {
-        if (RefPtr frameView = m_page->protectedMainFrame()->virtualView()) {
+        RefPtr localFrame = frameForGeometry();
+        if (RefPtr frameView = localFrame ? localFrame->view() : nullptr) {
             auto offset = frameView->scrollOrigin();
             graphicsContext.translate(toFloatSize(offset));
             paintRect.moveBy(-offset);
@@ -200,8 +225,11 @@ bool PageOverlay::mouseEvent(const PlatformMouseEvent& mouseEvent)
 {
     IntPoint mousePositionInOverlayCoordinates(flooredIntPoint(mouseEvent.position()));
 
-    if (m_overlayType == PageOverlay::OverlayType::Document)
-        mousePositionInOverlayCoordinates = m_page->protectedMainFrame()->protectedVirtualView()->windowToContents(mousePositionInOverlayCoordinates);
+    if (m_overlayType == PageOverlay::OverlayType::Document) {
+        RefPtr localFrame = frameForGeometry();
+        if (RefPtr frameView = localFrame ? localFrame->view() : nullptr)
+            mousePositionInOverlayCoordinates = frameView->windowToContents(mousePositionInOverlayCoordinates);
+    }
     mousePositionInOverlayCoordinates.moveBy(-frame().location());
 
     // Ignore events outside the bounds.
@@ -307,11 +335,6 @@ void PageOverlay::clear()
 GraphicsLayer& PageOverlay::layer() const
 {
     return controller()->layerForOverlay(*this);
-}
-
-Ref<GraphicsLayer> PageOverlay::protectedLayer() const
-{
-    return layer();
 }
 
 } // namespace WebKit

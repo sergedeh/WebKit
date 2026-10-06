@@ -2,10 +2,9 @@ add_custom_target(WebKitTestRunner-forwarding-headers
     COMMAND ${PERL_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-forwarding-headers.pl --include-path ${WebKitTestRunner_DIR} --output ${FORWARDING_HEADERS_DIR} --platform wpe
 )
 list(APPEND WebKitTestRunner_DEPENDENCIES WebKitTestRunner-forwarding-headers)
+list(APPEND TestRunnerInjectedBundle_DEPENDENCIES WebKitTestRunner-forwarding-headers)
 
 list(APPEND WebKitTestRunner_SOURCES
-    cairo/TestInvocationCairo.cpp
-
     libwpe/EventSenderProxyClientLibWPE.cpp
     libwpe/EventSenderProxyLibWPE.cpp
     libwpe/PlatformWebViewClientLibWPE.cpp

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StyleJustifyItems.h"
 
+#include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 
@@ -48,7 +49,7 @@ StyleSelfAlignmentData JustifyItems::resolve() const
 
     switch (primary()) {
     case PrimaryKind::Normal:
-        return { ItemPosition::Normal };
+        return resolveOverflowPosition(ItemPosition::Normal);
     case PrimaryKind::Stretch:
         return { ItemPosition::Stretch };
     case PrimaryKind::Baseline:
@@ -94,8 +95,8 @@ StyleSelfAlignmentData JustifyItems::resolve() const
 
 auto CSSValueConversion<JustifyItems>::operator()(BuilderState& state, const CSSValue& value) -> JustifyItems
 {
-    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
-        switch (primitiveValue->valueID()) {
+    if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
+        switch (keywordValue->valueID()) {
         // normal
         case CSSValueNormal:
             return CSS::Keyword::Normal { };
@@ -135,7 +136,7 @@ auto CSSValueConversion<JustifyItems>::operator()(BuilderState& state, const CSS
         }
     }
 
-    auto pair = requiredPairDowncast<CSSPrimitiveValue>(state, value);
+    auto pair = requiredPairDowncast<CSSKeywordValue>(state, value);
     if (!pair)
         return CSS::Keyword::Legacy { };
 
@@ -151,6 +152,8 @@ auto CSSValueConversion<JustifyItems>::operator()(BuilderState& state, const CSS
 
     auto consumeAfterOverflowPosition = [&](auto overflowPosition, auto secondValueID) -> JustifyItems {
         switch (secondValueID) {
+        case CSSValueNormal:
+            return { CSS::Keyword::Normal { }, overflowPosition };
         case CSSValueCenter:
             return { CSS::Keyword::Center { }, overflowPosition };
         case CSSValueStart:

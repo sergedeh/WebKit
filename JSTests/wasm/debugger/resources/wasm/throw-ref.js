@@ -1,6 +1,6 @@
 // WebAssembly module with REAL throw_ref exception handling tests
 //
-// This binary is extracted from JSTests/wasm/spec-tests/throw_ref.wast.js
+// This binary corresponds to the throw_ref.wast test from the WebAssembly exception-handling spec suite.
 // It uses the newer exception handling proposal with:
 //   - try_table (0x1f) instead of try (0x06)
 //   - catch_ref and catch_all_ref for catching with exception reference
@@ -382,6 +382,7 @@ let tests = [
     ["throw_ref-stack-polymorphism", [], true] // should throw
 ];
 
+print("DEBUGGER_READY");
 let iteration = 0;
 for (; ;) {
     for (let [name, args, shouldThrow, expected] of tests) {

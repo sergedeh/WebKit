@@ -86,11 +86,9 @@ public:
     virtual const ResourceRequest& iOSOriginalRequest() const { return request(); }
 #endif
 
-    WEBCORE_EXPORT FrameLoader* frameLoader() const;
-    WEBCORE_EXPORT RefPtr<FrameLoader> protectedFrameLoader() const;
+    WEBCORE_EXPORT FrameLoader* NODELETE frameLoader() const;
     DocumentLoader* documentLoader() const { return m_documentLoader.get(); }
-    WEBCORE_EXPORT RefPtr<DocumentLoader> protectedDocumentLoader() const;
-    const ResourceRequest& originalRequest() const { return m_originalRequest; }
+    const ResourceRequest& originalRequest() const LIFETIME_BOUND { return m_originalRequest; }
 
     WEBCORE_EXPORT void start();
     WEBCORE_EXPORT void cancel(const ResourceError&, LoadWillContinueInAnotherProcess = LoadWillContinueInAnotherProcess::No);
@@ -110,13 +108,12 @@ public:
     bool wasAuthenticationChallengeBlocked() const { return m_wasAuthenticationChallengeBlocked; }
 
     virtual void releaseResources();
-    const ResourceResponse& response() const { return m_response; }
+    const ResourceResponse& response() const LIFETIME_BOUND { return m_response; }
 
     const FragmentedSharedBuffer* resourceData() const;
-    RefPtr<const FragmentedSharedBuffer> protectedResourceData() const;
     void clearResourceData();
     
-    virtual bool isSubresourceLoader() const;
+    virtual bool NODELETE isSubresourceLoader() const;
 
     virtual void willSendRequest(ResourceRequest&&, const ResourceResponse& redirectResponse, CompletionHandler<void(ResourceRequest&&)>&& callback);
     virtual void didSendData(unsigned long long bytesSent, unsigned long long totalBytesToBeSent);
@@ -139,46 +136,42 @@ public:
     virtual void didReceivePreviewResponse(ResourceResponse&&) { };
 #endif
 
-    const URL& url() const { return m_request.url(); }
+    const URL& url() const LIFETIME_BOUND { return m_request.url(); }
     ResourceHandle* handle() const { return m_handle.get(); }
     bool shouldSendResourceLoadCallbacks() const { return m_options.sendLoadCallbacks == SendCallbackPolicy::SendCallbacks; }
     void setSendCallbackPolicy(SendCallbackPolicy sendLoadCallbacks) { m_options.sendLoadCallbacks = sendLoadCallbacks; }
     bool shouldSniffContent() const { return m_options.sniffContent == ContentSniffingPolicy::SniffContent; }
     ContentEncodingSniffingPolicy contentEncodingSniffingPolicy() const { return m_options.contentEncodingSniffingPolicy; }
     WEBCORE_EXPORT bool isAllowedToAskUserForCredentials() const;
-    WEBCORE_EXPORT bool shouldIncludeCertificateInfo() const;
-    
+    WEBCORE_EXPORT bool NODELETE shouldIncludeCertificateInfo() const;
+
     virtual CachedResource* cachedResource() const { return nullptr; }
-    CachedResourceHandle<CachedResource> protectedCachedResource() const { return cachedResource(); }
 
     bool reachedTerminalState() const { return m_reachedTerminalState; }
 
-    const ResourceRequest& request() const { return m_request; }
+    const ResourceRequest& request() const LIFETIME_BOUND { return m_request; }
     void setRequest(ResourceRequest&& request) { m_request = WTF::move(request); }
 
     void setDataBufferingPolicy(DataBufferingPolicy);
 
-    void willSwitchToSubstituteResource();
-
-    const ResourceLoadTiming& loadTiming() { return m_loadTiming; }
+    const ResourceLoadTiming& loadTiming() LIFETIME_BOUND { return m_loadTiming; }
 
 #if PLATFORM(COCOA)
     void schedule(WTF::SchedulePair&);
     void unschedule(WTF::SchedulePair&);
 #endif
 
-    WEBCORE_EXPORT LocalFrame* frame() const;
-    RefPtr<LocalFrame> protectedFrame() const;
+    WEBCORE_EXPORT LocalFrame* NODELETE frame() const;
 
-    const ResourceLoaderOptions& options() const { return m_options; }
+    const ResourceLoaderOptions& options() const LIFETIME_BOUND { return m_options; }
 
-    const ResourceRequest& deferredRequest() const { return m_deferredRequest; }
+    const ResourceRequest& deferredRequest() const LIFETIME_BOUND { return m_deferredRequest; }
     ResourceRequest takeDeferredRequest() { return std::exchange(m_deferredRequest, { }); }
 
-    bool isPDFJSResourceLoad() const;
+    bool NODELETE isPDFJSResourceLoad() const;
 
 #if ENABLE(CONTENT_EXTENSIONS)
-    WEBCORE_EXPORT ResourceMonitor* resourceMonitorIfExists();
+    WEBCORE_EXPORT ResourceMonitor* NODELETE resourceMonitorIfExists();
 #endif
 
 protected:
@@ -206,7 +199,6 @@ protected:
 #if USE(QUICK_LOOK)
     const RefPtr<LegacyPreviewLoader> m_previewLoader;
 #endif
-    bool m_canCrossOriginRequestsAskUserForCredentials { true };
 
 private:
     virtual void willCancel(const ResourceError&) = 0;
@@ -215,6 +207,8 @@ private:
     void addBuffer(const FragmentedSharedBuffer&, DataPayloadType);
     void loadDataURL();
     void finishNetworkLoad();
+
+    bool startKeepAliveLoadForWebKitLegacy(FrameLoader&);
 
     bool shouldAllowResourceToAskForCredentials() const;
 
